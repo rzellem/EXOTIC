@@ -1089,7 +1089,10 @@ if __name__ =="__main__":
             sys.exit()
         
         if fileorcommandline == 1:
-            saveDirectory = str(input("Enter the Directory to Save Plots into: "))+"/"
+            saveDirectory = str(input("Enter the Directory to Save Plots into: "))
+        # In case the user forgets the trailing / for the folder
+        if saveDirectory[-1] != "/":
+            saveDirectory += "/"
 
         if fileorcommandline == 1:
             targetName = str(input("Enter the Planet Name: "))
@@ -1845,8 +1848,6 @@ if __name__ =="__main__":
         plt.title(targetName+ ' Normalized Flux vs. Phase '+date)
         plt.savefig (saveDirectory+'NormalizedFluxPhase'+targetName+date+'.png')
         plt.close()
-
-        #import pdb; pdb.set_trace()
 
         print(' ')
         print ('****************************************')

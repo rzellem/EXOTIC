@@ -925,7 +925,23 @@ if __name__ =="__main__":
         print('**************************************************************')
         print('')
         directToWatch = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
-        directoryP= directToWatch+"/*.FITS"
+        directoryP = directToWatch
+        # Add / to end of directory if user does not input it
+        if directToWatch[-1] != "/":
+            directToWatch += "/"
+        # Check for .FITS files
+        inputfiles = g.glob(directToWatch+"*.FITS")
+        # If none exist, try other extensions
+        if len(inputfiles) == 0:
+            inputfiles = g.glob(directToWatch+"*.FIT")
+        if len(inputfiles) == 0:
+            inputfiles = g.glob(directToWatch+"*.fits")
+        if len(inputfiles) == 0:
+            inputfiles = g.glob(directToWatch+"*.fit")
+        if(len(inputfiles)==0):
+            print("Error: .FITS files not found in "+directToWatch+". Please try again.")
+            sys.exit()
+
         targetName = str(input("Enter the Planet Name: "))
 
         carryOn = input('Type continue after the first image has been taken and saved: ')
@@ -962,10 +978,86 @@ if __name__ =="__main__":
         print('Complete Reduction Routine')
         print('**************************')
         print('')
+
+        fileorcommandline = int(input('How would you like to input your initial parameters? Enter "1" to use the Command Line or "2" to use an input file: '))
+
+        # Read in input file rather than using the command line
+        if fileorcommandline == 2:
+            initfilename = str(input("Enter the Directory and Filename of your Initialization File: "))
+            if initfilename == 'ok':
+                initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
+
+            # Parse input file
+            try: 
+                initf = open(initfilename,'r')
+            except FileNotFoundError:
+                print("Initialization file not found. Please try again.")
+                sys.exit()
+
+            inits = []
+            for line in initf:
+                if line[0] == "#": continue
+                inits.append(line)
+            initf.close()
+
+            for line in inits:
+                if line.split("\t")[0] == 'directory with fits files':
+                    directoryP = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'directory to save plots':
+                    saveDirectory = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'planet name':
+                    targetName = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'observation date':
+                    date = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Obs. Latitude (+=N,-=S)':
+                    latiStr = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Obs. Longitude (+=E,-=W)':
+                    longitStr = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Target Star RA (hh:mm:ss)':
+                    raStr = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Target Star Dec (+/-hh:mm:ss)':
+                    decStr = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Target Star pixel coords (x,y)':
+                    targetpixloc = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Number of Comparison Stars':
+                    numCompStars = int(line.split("\t")[-1].rstrip())
+
+            # Initial position of target star
+            UIprevTPX = int(targetpixloc.split(",")[0]) 
+            UIprevTPY = int(targetpixloc.split(",")[-1]) 
+
+            # Read in locations of comp stars
+            compStarList = []
+            for line in inits[-1*numCompStars:]:
+                rxp, ryp = [int(i) for i in line.split("\t")[-1].rstrip().split(',')]
+                compStarList.append((rxp,ryp))
+                
+
         #File directory name and initial guess at target and comp star locations on image.
-        directoryP= str(input("Enter the Directory of the FITS Image Files: "))+"/*.FITS"
-        saveDirectory = str(input("Enter the Directory to Save Plots into: "))+"/"
-        targetName = str(input("Enter the Planet Name: "))
+        if fileorcommandline == 1:
+            directoryP= str(input("Enter the Directory of the FITS Image Files: "))
+
+        # Add / to end of directory if user does not input it
+        if directoryP[-1] != "/":
+            directoryP += "/"
+        # Check for .FITS files
+        inputfiles = g.glob(directoryP+"*.FITS")
+        # If none exist, try other extensions
+        if len(inputfiles) == 0:
+            inputfiles = g.glob(directoryP+"*.FIT")
+        if len(inputfiles) == 0:
+            inputfiles = g.glob(directoryP+"*.fits")
+        if len(inputfiles) == 0:
+            inputfiles = g.glob(directoryP+"*.fit")
+        if len(inputfiles) == 0:
+            print("ERROR: No fits files found in "+directoryP+". Please try again.")        
+            sys.exit()
+        
+        if fileorcommandline == 1:
+            saveDirectory = str(input("Enter the Directory to Save Plots into: "))+"/"
+
+        if fileorcommandline == 1:
+            targetName = str(input("Enter the Planet Name: "))
 
         #check to make sure the target can be found in the exoplanet archive right after they enter its name
         scrape()
@@ -982,13 +1074,15 @@ if __name__ =="__main__":
                         confirmLnNum = findPlanetLineConf(targetName, confData)
                     #after they enter the correct name, it will pull the needed parameters
                     pDict = getParams(confData, compData, extData, targetName)
-        print('Successfuly found '+targetName+' in the NASA Exoplanet Archive!')
+        print('\nSuccessfuly found '+targetName+' in the NASA Exoplanet Archive!')
         
         #observation date
-        date= str(input("Enter the Observation Date: "))
+        if fileorcommandline == 1:
+            date= str(input("Enter the Observation Date: "))
         
         #latitude and longitude
-        latiStr= str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
+        if fileorcommandline == 1:
+            latiStr= str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
         noSpaceLati = latiStr.replace(" ", "")
         latiSign = noSpaceLati[0]
         #check to make sure they have a sign
@@ -1003,7 +1097,8 @@ if __name__ =="__main__":
             lati = float(latiStr[1:])
 
         #handle longitude
-        longitStr= str(input("Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
+        if fileorcommandline == 1:
+            longitStr= str(input("Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
         noSpaceLongit = longitStr.replace(" ", "")
         longitSign = noSpaceLongit[0]
         #check to make sure they have the sign
@@ -1016,11 +1111,17 @@ if __name__ =="__main__":
             longit = -1*float(longitStr[1:])
         else:
             longit = float(longitStr[1:])
+        
         print(' ')
         print('Locate Your Target Star')
         print('***************************************')
-        raStr= str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-        decStr= str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+        if fileorcommandline == 1:
+            raStr= str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
+            decStr= str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+
+        # **************************************************************************************************************
+        # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
+        # **************************************************************************************************************
 
         #convert UI RA and DEC into degrees
 
@@ -1056,16 +1157,17 @@ if __name__ =="__main__":
             decDeg = round((float(decD)+float(decMin)/60.0+float(decSec)/3600.0),4) 
 
         #TARGET STAR
-        UIprevTPX = int(input(targetName+ " X Pixel Coordinate: "))
-        UIprevTPY = int(input (targetName+ " Y Pixel Coordinate: "))
-        numCompStars= int(input("How many comparison stars would you like to use? (1-10) "))
-
-        #MULTIPLE COMPARISON STARS
-        compStarList= []
-        for num in range(1,numCompStars+1):
-            rxp = int(input("Comparison Star "+str(num)+" X Pixel Coordinate: "))
-            ryp = int(input("Comparison Star "+str(num)+" Y Pixel Coordinate: "))
-            compStarList.append((rxp,ryp))
+        if fileorcommandline == 1:
+            UIprevTPX = int(input(targetName+ " X Pixel Coordinate: "))
+            UIprevTPY = int(input (targetName+ " Y Pixel Coordinate: "))
+            numCompStars= int(input("How many comparison stars would you like to use? (1-10) "))
+       
+            #MULTIPLE COMPARISON STARS
+            compStarList= []
+            for num in range(1,numCompStars+1):
+                rxp = int(input("Comparison Star "+str(num)+" X Pixel Coordinate: "))
+                ryp = int(input("Comparison Star "+str(num)+" Y Pixel Coordinate: "))
+                compStarList.append((rxp,ryp))
 
         #---HANDLE CALIBRATION IMAGES------------------------------------------------
 
@@ -1079,17 +1181,34 @@ if __name__ =="__main__":
             flats = str(input ('Do you have flats? (y/n) '))
             if (flats == 'y' or flats =='yes' or flats == 'Y' or flats == 'Yes'):
                 flatsBool = True
-                flatsPath = str(input('Enter the directory path to your flats (must be in their own separate folder): '))+"/*.FITS"
-                
-                flatsImgList= []
-                for flatFile in g.glob(flatsPath):
-                    flatData = fits.getdata(flatFile, ext=0)
-                    flatsImgList.append(flatData)
-                notNormFlat = np.median(flatsImgList, axis=0)
+                flatsPath = str(input('Enter the directory path to your flats (must be in their own separate folder): '))#+"/*.FITS"
 
-                #NORMALIZE
-                medi = np.median(notNormFlat)
-                generalFlat = notNormFlat/medi
+                # Add / to end of directory if user does not input it
+                if flatsPath[-1] != "/":
+                    flatsPath += "/"
+                # Check for .FITS files
+                inputflats = g.glob(flatsPath+"*.FITS")
+                # If none exist, try other extensions
+                if len(inputflats) == 0:
+                    inputflats = g.glob(flatsPath+"*.FIT")
+                if len(inputflats) == 0:
+                    inputflats = g.glob(flatsPath+"*.fits")
+                if len(inputflats) == 0:
+                    inputflats = g.glob(flatsPath+"*.fit")
+                
+                if(len(inputflats)==0):
+                    print("Error: no flats found in"+flatsPath+". Proceeding with reduction WITHOUT flatfields.")
+                    flatsBool = False
+                else:
+                    flatsImgList= []
+                    for flatFile in inputflats:
+                        flatData = fits.getdata(flatFile, ext=0)
+                        flatsImgList.append(flatData)
+                    notNormFlat = np.median(flatsImgList, axis=0)
+
+                    #NORMALIZE
+                    medi = np.median(notNormFlat)
+                    generalFlat = notNormFlat/medi
                 
             else:
                 flatsBool = False
@@ -1098,13 +1217,29 @@ if __name__ =="__main__":
             darks = str(input ('Do you have darks? (y/n) '))
             if (darks == 'y' or darks =='yes' or darks == 'Y' or darks == 'Yes'):
                 darksBool = True
-                darksPath = str(input('Enter the directory path to your darks (must be in their own separate folder): '))+"/*.FITS"
+                darksPath = str(input('Enter the directory path to your darks (must be in their own separate folder): '))#+"/*.FITS"
 
-                darksImgList= []
-                for darkFile in g.glob(darksPath):
-                    darkData = fits.getdata(darkFile, ext=0)
-                    darksImgList.append(darkData)
-                generalDark = np.median(darksImgList, axis=0)
+                # Add / to end of directory if user does not input it
+                if darksPath[-1] != "/":
+                    darksPath += "/"
+                # Check for .FITS files
+                inputdarks = g.glob(darksPath+"*.FITS")
+                # If none exist, try other extensions
+                if len(inputdarks) == 0:
+                    inputdarks = g.glob(darksPath+"*.FIT")
+                if len(inputdarks) == 0:
+                    inputdarks = g.glob(darksPath+"*.fits")
+                if len(inputdarks) == 0:
+                    inputdarks = g.glob(darksPath+"*.fit")
+                if(len(inputdarks)==0):
+                    print("Error: no darks found in"+darksPath+". Proceeding with reduction WITHOUT flatfields.")
+                    darksBool = False
+                else:
+                    darksImgList= []
+                    for darkFile in inputdarks:
+                        darkData = fits.getdata(darkFile, ext=0)
+                        darksImgList.append(darkData)
+                    generalDark = np.median(darksImgList, axis=0)
             else:
                 darksBool = False
 
@@ -1113,10 +1248,23 @@ if __name__ =="__main__":
             biases = str(input ('Do you have biases? (y/n) '))
             if (biases == 'y' or biases =='yes' or biases == 'Y' or biases == 'Yes'):
                 biasesBool= True
-                biasesPath = str(input('Enter the directory path to your biases (must be in their own separate folder): '))+"/*.FITS"
+                biasesPath = str(input('Enter the directory path to your biases (must be in their own separate folder): '))#+"/*.FITS"
+
+                # Add / to end of directory if user does not input it
+                if biasesPath[-1] != "/":
+                    biasesPath += "/"
+                # Check for .FITS files
+                inputbiases = g.glob(biasesPath+"*.FITS")
+                # If none exist, try other extensions
+                if len(inputbiases) == 0:
+                    inputbiases = g.glob(biasesPath+"*.FIT")
+                if len(inputbiases) == 0:
+                    inputbiases = g.glob(biasesPath+"*.fits")
+                if len(inputbiases) == 0:
+                    inputbiases = g.glob(biasesPath+"*.fit")
 
                 biasesImgList= []
-                for biasFile in g.glob(biasesPath):
+                for biasFile in inputbiases:
                     biasData = fits.getdata(biasFile, ext=0)
                     biasesImgList.append(biasData)
                 generalBias = np.median(biasesImgList, axis=0)
@@ -1320,7 +1468,7 @@ if __name__ =="__main__":
 
         fileNumber= 1
         #----TIME SORT THE FILES-------------------------------------------------------------
-        for fileName in g.glob(directoryP):  #Loop through all the fits files in the directory and executes data reduction
+        for fileName in inputfiles:  #Loop through all the fits files in the directory and executes data reduction
 
             fitsHead= fits.open(fileName) #opens the file
             #TIME
@@ -1521,8 +1669,10 @@ if __name__ =="__main__":
                     arrayNormUnc = np.array(normUncertainties)
 
                     #Execute sigma_clip
-                    
-                    filtered_data= sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
+                    try:
+                        filtered_data= sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
+                    except TypeError:
+                        filtered_data= sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
 
                     #-----LM LIGHTCURVE FIT--------------------------------------                 
 
@@ -1774,7 +1924,10 @@ if __name__ =="__main__":
 
         #Final 3-sigma Clip
         residuals = (goodFluxes/fittedModel) -1.0
-        finalFilter= sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=median, copy=False)
+        try:
+            finalFilter= sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=median, copy=False)
+        except TypeError:
+            finalFilter= sigma_clip(residuals, sigma=3, cenfunc=median, copy=False)
 
         finalFluxes= goodFluxes[~finalFilter.mask]
         finalTimes= goodTimes[~finalFilter.mask]

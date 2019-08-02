@@ -1,0 +1,20 @@
+# Input file for EXOTIC
+# Edit this file to match the inputs for your planet and observations
+# Fields should be separated with a tab and left column text should NOT be changed
+
+directory with fits files	/Users/rzellem/Documents/EXOTIC/Sample-Data/HatP32Dec202017
+directory to save plots		/Users/rzellem/Documents/EXOTIC/Sample-Data
+
+planet name			HAT-P-32b
+
+observation date		December 17, 2017
+Obs. Latitude (+=N,-=S)		+32.2226
+Obs. Longitude (+=E,-=W)	-110.9747
+
+Target Star RA (hh:mm:ss)	02:04:10.2775457769
+Target Star Dec (+/-hh:mm:ss)	+46:41:16.210382751
+Target Star pixel coords (x,y)	424, 286
+
+Number of Comparison Stars	2
+CompStar1 pixel coords (x,y)	465, 183
+CompStar2 pixel coords (x,y)	512, 263

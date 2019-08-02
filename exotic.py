@@ -994,10 +994,13 @@ if __name__ =="__main__":
                 print("Initialization file not found. Please try again.")
                 sys.exit()
 
-            inits = []
-            for line in initf:
-                if line[0] == "#": continue
-                inits.append(line)
+            # inits = []
+            # for line in initf:
+            #     if line[0] == "#": continue
+            #     inits.append(line)
+            # initf.close()
+
+            inits = initf.readlines()
             initf.close()
 
             for line in inits:
@@ -1005,6 +1008,12 @@ if __name__ =="__main__":
                     directoryP = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'directory to save plots':
                     saveDirectory = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'directory of flats':
+                    flatsPath = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'directory of darks':
+                    darksPath = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'directory of biases':
+                    biasesPath = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'planet name':
                     targetName = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'observation date':
@@ -1021,6 +1030,32 @@ if __name__ =="__main__":
                     targetpixloc = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Number of Comparison Stars':
                     numCompStars = int(line.split("\t")[-1].rstrip())
+
+            if flatsPath == "none" or flatsPath == "no" or flatsPath == "n/a":
+                flats = "no"
+                flatsBool = False
+            else:
+                flats = "yes"
+                flatsBool = True
+
+            if darksPath == "none" or darksPath == "no" or darksPath == "n/a":
+                darks = "no"
+                darksBool = False
+            else:
+                darks = "yes"
+                darksBool = True
+
+            if biasesPath == "none" or biasesPath == "no" or biasesPath == "n/a":
+                biases = "no"
+                biasesBool = False
+            else:
+                biases = "yes"
+                biasesBool = True
+
+            if flatsBool + darksBool + biasesBool:
+                cals = "yes"
+            else:
+                cals = "no"
 
             # Initial position of target star
             UIprevTPX = int(targetpixloc.split(",")[0]) 
@@ -1170,15 +1205,16 @@ if __name__ =="__main__":
                 compStarList.append((rxp,ryp))
 
         #---HANDLE CALIBRATION IMAGES------------------------------------------------
-
-        cals = str(input ('Do you have any calibration images (flats, darks or biases)? (y/n) '))
+        if fileorcommandline == 1:
+            cals = str(input ('Do you have any calibration images (flats, darks or biases)? (y/n) '))
 
         #if they have cals, handle them by calculating the median flat, dark or bias
         if (cals == 'y' or cals =='yes' or cals == 'Y' or cals == 'Yes'):
 
             #flats
             #THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME 
-            flats = str(input ('Do you have flats? (y/n) '))
+            if fileorcommandline == 1:
+                flats = str(input ('Do you have flats? (y/n) '))
             if (flats == 'y' or flats =='yes' or flats == 'Y' or flats == 'Yes'):
                 flatsBool = True
                 flatsPath = str(input('Enter the directory path to your flats (must be in their own separate folder): '))#+"/*.FITS"
@@ -1214,7 +1250,8 @@ if __name__ =="__main__":
                 flatsBool = False
 
             #darks
-            darks = str(input ('Do you have darks? (y/n) '))
+            if fileorcommandline == 1:
+                darks = str(input ('Do you have darks? (y/n) '))
             if (darks == 'y' or darks =='yes' or darks == 'Y' or darks == 'Yes'):
                 darksBool = True
                 darksPath = str(input('Enter the directory path to your darks (must be in their own separate folder): '))#+"/*.FITS"
@@ -1244,8 +1281,8 @@ if __name__ =="__main__":
                 darksBool = False
 
             #biases
-            
-            biases = str(input ('Do you have biases? (y/n) '))
+            if fileorcommandline == 1:
+                biases = str(input ('Do you have biases? (y/n) '))
             if (biases == 'y' or biases =='yes' or biases == 'Y' or biases == 'Yes'):
                 biasesBool= True
                 biasesPath = str(input('Enter the directory path to your biases (must be in their own separate folder): '))#+"/*.FITS"

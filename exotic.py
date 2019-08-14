@@ -1586,7 +1586,7 @@ if __name__ =="__main__":
             #determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
 
             for apertureR in range(int(2*max(targsigX,targsigY)),int(5*max(targsigX,targsigY))+1): #aperture loop 
-                for annulusR in range(int(2*max(targsigX,targsigY),int(4*max(targsigX,targsigY))): #annulus loop
+                for annulusR in range(int(2*max(targsigX,targsigY)),int(4*max(targsigX,targsigY))): #annulus loop
                     fileNumber=1
                     print ('Testing Comp Star #'+str(compCounter+1)+' w/ Aperture '+str(apertureR)+' and Annulus '+str(annulusR))
                     for imageFile in timeSortedNames:

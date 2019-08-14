@@ -88,7 +88,17 @@ from gaelLCFuncs import *
 #Pickle Import
 import pickle
 
+#UTC to BJD converter import
 from barycorrpy import utc_tdb
+
+#MCMC imports
+import pymc3 as pm
+import theano
+import logging
+import pdb
+import theano.tensor as tt 
+import theano.compile.ops as tco
+
 
 
 #---HELPER FUNCTIONS----------------------------------------------------------------------
@@ -156,7 +166,7 @@ def scrape():
         }
 
     response = requests.request("GET", url, headers=headers, params=confirmedstring)
-    #import pdb; pdb.set_trace()
+    
     confirmedText = response.text
 
     #print(response.text)
@@ -986,7 +996,10 @@ if __name__ =="__main__":
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            initfilename = str(input("Enter the Directory and Filename of your Initialization File: "))
+            print("\nYour current working directory is: ",os.getcwd())
+            print("\nPotential initialization files I've found in "+os.getcwd()+" are: ")
+            [print(i) for i in g.glob(os.getcwd()+"/*.txt")]
+            initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
             if initfilename == 'ok':
                 initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
 
@@ -1757,7 +1770,7 @@ if __name__ =="__main__":
                     #print('Median Uncertainty Value: '+ str(round(np.median(arrayNormUnc),5)))
                     chi2_init = np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.)/(len(arrayFinalFlux[~filtered_data.mask])-len(res.x))
                     #print("Non-Reduced chi2: ",np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.))
-                    #import pdb; pdb.set_trace()
+                    
                     
                     #chi2 = np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.)/(len(arrayFinalFlux[~filtered_data.mask])-len(res.x)-1)
 
@@ -1892,15 +1905,9 @@ if __name__ =="__main__":
         #####################
         #The transit function is based on the analytic expressions of Mandel and Agol et al 2002. and Gael Roudier's transit model
 
-        import pymc3 as pm
-        import theano
-        import logging
-        import pdb
         log= logging.getLogger(__name__)
         pymc3log = logging.getLogger('pymc3')
         pymc3log.setLevel(logging.ERROR)
-        import theano.tensor as tt 
-        import theano.compile.ops as tco
 
         # OBSERVATIONS
         
@@ -1981,9 +1988,13 @@ if __name__ =="__main__":
         fitAm2 = float(np.median(trace['Am2', burn:]))
 
         #Plot Traces
-        pm.traceplot(trace[burn:])
-        plt.savefig(saveDirectory+ 'Traces'+targetName+date+'.png')
-        plt.close()
+        # Rob updated this with a try command as ArviZ isn't working on his machine....
+        try:
+            pm.traceplot(trace[burn:])
+            plt.savefig(saveDirectory+ 'Traces'+targetName+date+'.png')
+            plt.close()
+        except ImportError:
+            pass
 
         #Gelman Rubin
         print("Gelman Rubin Convergence Test:")
@@ -2037,7 +2048,7 @@ if __name__ =="__main__":
 
         ## key cahnge of dividing residuals by the airmass model too
         finalResiduals = finalFluxes/finalModel - 1.0
-        #import pdb; pdb.set_trace()
+        
         maxbs = np.round(3*np.std(finalResiduals),-2) *1e6
         bins = np.linspace(-maxbs,maxbs,7)
 
@@ -2055,7 +2066,11 @@ if __name__ =="__main__":
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
 
-        f.savefig(saveDirectory+'FinalLightCurve'+targetName+date+'.pdf', bbox_inches="tight")
+        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        try:
+            f.savefig(saveDirectory+'FinalLightCurve'+targetName+date+".pdf", bbox_inches="tight")
+        except AttributeError:
+            f.savefig(saveDirectory+'FinalLightCurve'+targetName+date+".png", bbox_inches="tight")
         plt.show()
 
         ###################
@@ -2149,9 +2164,9 @@ if __name__ =="__main__":
             outParamsFile.write('#PRIORS=Period='+str(planetPeriod)+' +/- '+str(ogPeriodErr)+',a/R*='+str(semi)+',Tc='+str(round(bjdMidTranCur,8))+' +/- '+str(round(propMidTUnct,8))+',T0='+str(round(bjdMidTOld,8))+' +/- '+str(round(ogMidTErr,8))+',inc='+str(inc)+',ecc='+str(eccent)+',u1='+str(linearLimb)+',u2='+str(quadLimb)+'\n') #code yields
             outParamsFile.write('#RESULTS=Tc='+str(round(fitMidT,8))+' +/- '+str(round(midTranUncert,8))+',Rp/R*='+str(round(fitRadius,6))+' +/- '+str(round(radUncert,6))+',Am1='+str(round(fitAm1,5))+' +/- '+str(round(am1Uncert,5))+',Am2='+str(round(fitAm2,5))+' +/- '+str(round(am2Uncert,5))+'\n')#code yields
             outParamsFile.write('#NOTES=\n')
-            outParamsFile.write('#DATE NORM_FLUX MERR DETREND_1 DETREND_2 DETREND_3 DETREND_4\n')
+            outParamsFile.write('#DATE NORM_FLUX MERR DETREND_1\n')
             for aavsoC in range(0,len(finalTimes)):
-                outParamsFile.write(str(round(finalTimes[aavsoC],8))+','+str(round(finalFluxes[aavsoC],7))+','+str(round(finalNormUnc[aavsoC],6))+','+str(round(finalAirmasses[aavsoC],6))+','+'n/a,n/a,n/a\n')
+                outParamsFile.write(str(round(finalTimes[aavsoC],8))+','+str(round(finalFluxes[aavsoC],7))+','+str(round(finalNormUnc[aavsoC],6))+','+str(round(finalAirmasses[aavsoC],6))+'\n')
         #CODE YIELDED DATA IN PREV LINE FORMAT
             outParamsFile.close()
             print('AAVSO File Saved')

@@ -1040,14 +1040,26 @@ if __name__ == "__main__":
                     darksPath = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'directory of biases':
                     biasesPath = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'planet name':
-                    targetName = line.split("\t")[-1].rstrip()
+
+                if line.split("\t")[0] == 'AAVSO output?':
+                        AAVSOoutput = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'AAVSO Observer Account Number':
+                    usercode = line.split("\t")[-1].rstrip()
+
                 if line.split("\t")[0] == 'observation date':
                     date = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Obs. Latitude (+=N,-=S)':
                     latiStr = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Obs. Longitude (+=E,-=W)':
                     longitStr = line.split("\t")[-1].rstrip()
+
+                if line.split("\t")[0] == 'Pixel Binning':
+                    binning = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Exposure Time Header Field':
+                    exposureTime = line.split("\t")[-1].rstrip()
+
+                if line.split("\t")[0] == 'planet name':
+                        targetName = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Target Star RA (hh:mm:ss)':
                     raStr = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Target Star Dec (+/-hh:mm:ss)':
@@ -1056,6 +1068,17 @@ if __name__ == "__main__":
                     targetpixloc = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Number of Comparison Stars':
                     numCompStars = int(line.split("\t")[-1].rstrip())
+
+            try:
+                usercode = int(usercode)
+            except ValueError:
+                print("Sorry, a valid AAVSO number is not detected. Please try again.")
+                sys.exit()
+
+            if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
+                AAVSOBool = False
+            else:
+                AAVSOBool = True
 
             if flatsPath == "none" or flatsPath == "no" or flatsPath == "n/a":
                 flats = "no"
@@ -1353,6 +1376,25 @@ if __name__ == "__main__":
             flatsBool = False
             darksBool = False
             biasesBool = False
+
+
+        if fileorcommandline == 1:
+            AAVSOoutput = str(input('Do you want to use the AAVSO format output? (y/n)'))
+            usercode = str(input('Please enter your AAVSO Observer Account Number: '))
+
+            try:
+                usercode = int(usercode)
+            except ValueError:
+                print("Sorry, a valid AAVSO number is not detected. Please try again.")
+                sys.exit()
+
+            if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
+                AAVSOBool = False
+            else:
+                AAVSOBool = True
+
+            binning = str(input('Please enter your pixel binning: '))
+            exposureTime = str(input('Please enter your exposure time (seconds): '))
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -1926,6 +1968,15 @@ if __name__ == "__main__":
         plt.savefig(saveDirectory + 'NormalizedFluxPhase' + targetName + date + '.png')
         plt.close()
 
+        # Save normalized flux to text file prior to MCMC
+        outParamsFile = open(saveDirectory + 'NormalizedFlux' + targetName + date + '.txt', 'w+')
+        outParamsFile.write(str("BJD") + ',' + str("Norm Flux") + ',' + str("Norm Err") + ',' + str("AM") + '\n')
+        for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
+            outParamsFile.write(str(round(ti, 8)) + ',' + str(round(fi, 7)) + ',' + str(round(erri, 6)) + ',' + str(round(ami, 2)) + '\n')
+        # CODE YIELDED DATA IN PREV LINE FORMAT
+        outParamsFile.close()
+        print('Output File Saved')
+
         print(' ')
         print('****************************************')
         print('Fitting a Light Curve Model to Your Data')
@@ -2176,15 +2227,7 @@ if __name__ == "__main__":
         print('')
 
         # AAVSO Format
-        ans = str(input("Do you want to save the results in the AAVSO data format? (y/n): "))
-        while ans.lower() != 'y' and ans.lower() != 'n':
-            ans = str(input("Do you want to save the results in the AAVSO data format? (y/n): "))
-        if ans.lower() == 'y':
-            print('')
-            print('You will need to create an AAVSO Observer Account if you have not done so already.')
-            userCode = str(input("Enter your AAVSO Observer Code "))
-            exposureTime = float(input("Enter the length of your exposure time in seconds:  "))
-            binning = str(input("Enter the binning on your camera (if you don't know, type '1x1'):  "))
+        if AAVSOBool:
             outParamsFile = open(saveDirectory + 'AAVSO' + targetName + date + '.txt', 'w+')
             outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
             outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI

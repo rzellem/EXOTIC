@@ -2002,8 +2002,7 @@ if __name__ == "__main__":
         amC2Guess = 0  # guess b airmass term is 0
         sigC2 = .1  # this is a huge guess so it's always going to be less than this
         sigRad = (np.median(standardDev1)) / (2 * rprs)  # uncertainty is the uncertainty in the dataset w/ propogation
-        propMidTUnct = uncTMid(ogPeriodErr, ogMidTErr, goodTimes, planetPeriod,
-                               bjdMidTOld)  # use method to calculate propogated midTUncertainty
+        #propMidTUnct = uncTMid(ogPeriodErr, ogMidTErr, goodTimes, planetPeriod,bjdMidTOld)  # use method to calculate propogated midTUncertainty
 
         contextupdt(times=goodTimes, airm=goodAirmasses)  # update my global constant variable
 
@@ -2030,9 +2029,8 @@ if __name__ == "__main__":
 
             # PRIORS
             ### Double check these priors
-            BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4,
-                                     upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
-            midT = BoundedNormal('Tmid', mu=extractTime, sd=propMidTUnct)
+            #BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
+            midT=  pm.Uniform('midT', upper= goodTimes[len(goodTimes)-1], lower= goodTimes[0])  
             BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
             radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
             airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))

@@ -36,6 +36,7 @@ Zellem et. al 2019, Eastman et al. 2013, Mandel and Agol 2002, Eastman et al. 20
 
 Lightcurve model developed by Dr. Gael Roudier.
 Photometry tools developed by Kyle Pearson.
+Additional features and bug fixes added by Rob Zellem and John Engelke.
 Documentation co-written by Alexandra Iturralde.
 
 

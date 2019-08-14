@@ -339,10 +339,13 @@ def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime (hdul):
-    gDateTime= hdul[0].header ['Date-Obs'] #gets the gregorian date and time from the fits file header
-    dt= dup.parse(gDateTime)
-    time= astropy.time.Time(dt)
-    julianTime= time.jd
+    if ('JULIAN' in hdul[0].header):
+        julianTime= float(hdul[0].header['JULIAN'])
+    else:    
+        gDateTime= hdul[0].header ['Date-Obs'] #gets the gregorian date and time from the fits file header
+        dt= dup.parse(gDateTime)
+        time= astropy.time.Time(dt)
+        julianTime= time.jd
     return (julianTime)
 
 # Method that gets and returns the current phase of the target
@@ -357,11 +360,11 @@ def getPhase (curTime, pPeriod, tMid):
 def getAirMass (hdul):
     #try this and if not fit for normalized time?
     if('TELALT' in hdul[0].header):
-        alt = hdul[0].header ['TELALT'] #gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
+        alt = float(hdul[0].header ['TELALT']) #gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
         cosam= math.cos((math.pi/180)*(90.0-alt))
         am= 1/(cosam)
     elif ('AIRMASS' in hdul[0].header):
-        am = hdul[0].header ['AIRMASS']
+        am = float(hdul[0].header ['AIRMASS'])
     else:
         am = 1
     return (am)
@@ -494,7 +497,7 @@ def fit_centroid(data,pos,init=None,psf_output=False,lossfn='linear',box=25):
         #return np.sum( (data[yv,xv]-model)**2 ) # method for minimize
 
     lo = [pos[0]-box,pos[1]-box,0,1,1,0]
-    up = [pos[0]+box,pos[1]+box,64000,40,40,np.max(data[yv,xv])]
+    up = [pos[0]+box,pos[1]+box,100000,40,40,np.max(data[yv,xv])]
     res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point')
     del init
 
@@ -905,7 +908,7 @@ if __name__ =="__main__":
     fileNumber=1 #initializes file number to one
     minSTD= 100000 #sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2= 100000
-    distFC= 20 #gaussian search area
+    distFC= 25 #gaussian search area
     context= {}
 
     #---USER INPUTS--------------------------------------------------------------------------
@@ -1272,7 +1275,7 @@ if __name__ =="__main__":
                 if len(inputdarks) == 0:
                     inputdarks = g.glob(darksPath+"*.fit")
                 if(len(inputdarks)==0):
-                    print("Error: no darks found in"+darksPath+". Proceeding with reduction WITHOUT flatfields.")
+                    print("Error: no darks found in"+darksPath+". Proceeding with reduction WITHOUT darks.")
                     darksBool = False
                 else:
                     darksImgList= []
@@ -1302,12 +1305,15 @@ if __name__ =="__main__":
                     inputbiases = g.glob(biasesPath+"*.fits")
                 if len(inputbiases) == 0:
                     inputbiases = g.glob(biasesPath+"*.fit")
-
-                biasesImgList= []
-                for biasFile in inputbiases:
-                    biasData = fits.getdata(biasFile, ext=0)
-                    biasesImgList.append(biasData)
-                generalBias = np.median(biasesImgList, axis=0)
+                if(len(inputbiases)==0):
+                    print("Error: no darks found in"+biasesPath+". Proceeding with reduction WITHOUT biases.")
+                    darksBool = False
+                else:
+                    biasesImgList= []
+                    for biasFile in inputbiases:
+                        biasData = fits.getdata(biasFile, ext=0)
+                        biasesImgList.append(biasData)
+                    generalBias = np.median(biasesImgList, axis=0)
             else: 
                 biasesBool = False
         else:
@@ -1509,6 +1515,15 @@ if __name__ =="__main__":
         fileNumber= 1
         #----TIME SORT THE FILES-------------------------------------------------------------
         for fileName in inputfiles:  #Loop through all the fits files in the directory and executes data reduction
+            
+            fitsHead= fits.open(fileName) #opens the file
+            
+            # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
+            # if (fitsHead[0].header ['FILTER']== 'Harris-B'):
+            #     #TIME
+            #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
+            #     timeList.append(timeVal) #adds to time value list
+            #     fileNameList.append (fileName)
 
             fitsHead= fits.open(fileName) #opens the file
             #TIME
@@ -1535,7 +1550,7 @@ if __name__ =="__main__":
         firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
         #fit Target in the first image and use it to determine aperture and annulus range
-        targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY], box=15)
+        targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY], box=30)
         minAperture= int(2*max(targsigX,targsigY))
         maxAperture = int(5*max(targsigX,targsigY)+1)
         minAnnulus = 2
@@ -1551,14 +1566,14 @@ if __name__ =="__main__":
             UIprevRPX, UIprevRPY= compStarList[compCounter]
 
             print('Target X: '+str(round(targx))+' Target Y: '+str(round(targy)))
-            refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY], box=15)
+            refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY], box=30)
             print('Comparison X: '+str(round(refx))+' Comparison Y: '+str(round(refy)))
             print('')
 
             #determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
 
             for apertureR in range(int(2*max(targsigX,targsigY)),int(5*max(targsigX,targsigY))+1): #aperture loop 
-                for annulusR in range(2,6): #annulus loop
+                for annulusR in range(int(2*max(targsigX,targsigY),int(4*max(targsigX,targsigY))): #annulus loop
                     fileNumber=1
                     print ('Testing Comp Star #'+str(compCounter+1)+' w/ Aperture '+str(apertureR)+' and Annulus '+str(annulusR))
                     for imageFile in timeSortedNames:
@@ -1618,7 +1633,7 @@ if __name__ =="__main__":
                         tGuessAmp = targSearchA.max()-targSearchA.min()
                         myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()]
 
-                        tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX,prevTPY],init = myPriors, box=15)
+                        tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX,prevTPY],init = myPriors, box=30)
                         currTPX= tx
                         currTPY= ty
 
@@ -1628,7 +1643,7 @@ if __name__ =="__main__":
 
                         rGuessAmp = refSearchA.max()-refSearchA.min()
                         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
-                        rx, ry,  ramplitude, rsigX, rsigY, roff = fit_centroid (imageData, [prevRPX, prevRPY], init = myRefPriors, box=15)
+                        rx, ry,  ramplitude, rsigX, rsigY, roff = fit_centroid (imageData, [prevRPX, prevRPY], init = myRefPriors, box=30)
                         currRPX= rx
                         currRPY= ry
 
@@ -1692,7 +1707,7 @@ if __name__ =="__main__":
                     #Convert the raw flux values to arrays and then divide them to get the normalized flux data
                     rawFinalFluxData= np.array(targetFluxVals)/np.array(referenceFluxVals)
 
-                    # --- 3 Sigma Clip -----------------------------------------
+                    # --- 5 Sigma Clip from mean to get rid of ridiculous outliers (based on sigma of entire dataset)-----------------------------------------
 
                     #Convert Everything to numpy Arrays
                     arrayFinalFlux= np.array(rawFinalFluxData) #finalFluxData
@@ -1814,6 +1829,23 @@ if __name__ =="__main__":
             bjdPhase= getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
             goodPhasesList.append(bjdPhase)
         goodPhases= np.array(goodPhasesList)
+
+        #another 3 sigma clip based on residuals of LM fit
+        try:
+            interFilter= sigma_clip(residualVals, sigma=3, maxiters=1, cenfunc=median, copy=False)
+        except TypeError:
+            interFilter= sigma_clip(residualVals, sigma=3, cenfunc=median, copy=False)
+
+        goodFluxes= goodFluxes[~interFilter.mask]
+        goodTimes= goodTimes[~interFilter.mask]
+        goodPhases= goodPhases[~interFilter.mask]
+        goodAirmasses= goodAirmasses[~interFilter.mask]
+        goodTargets= goodTargets[~interFilter.mask]
+        goodReferences= goodReferences[~interFilter.mask]
+        goodTUnc = goodTUnc[~interFilter.mask]
+        goodRUnc =  goodRUnc[~interFilter.mask]
+        goodNormUnc = goodNormUnc[~interFilter.mask]
+
         #Centroid position plots
         plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, sortedTimeList)
 
@@ -1924,11 +1956,11 @@ if __name__ =="__main__":
             obs = pm.Normal('obs', mu = gaelModel(*nodes), tau= 1./(standardDev1**2), observed= goodFluxes)
 
         #Sample from the model
-        final_chain_length = int(125000)
+        final_chain_length = int(100000)
 
         with lcMod:
             step= pm.Metropolis() #Metropolis-Hastings Sampling Technique
-            trace= pm.sample(final_chain_length,step)
+            trace= pm.sample(final_chain_length,step, chains = 2)
 
         #----Plot the Results from the MCMC -------------------------------------------------------------------
         print('')

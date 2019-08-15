@@ -13,7 +13,7 @@ This section contains the link to the complete instructions for how to run EXOTI
 
 ![EXOTIC Instructions](Documentation/EXOTIC-Instructions.pdf)
 
-To demonstrate how to use the data reduction pipeline, the linked document above will walk through a sample reduction of a dataset taken by a 6” telescope of the exoplanet HAT-P-32b (VMag = 11.44) observed on December 20, 2017. The corresponding explanation of the science behind the reduction mechanism can be found in the How it Works section. 
+To demonstrate how to use the data reduction pipeline, the linked document above will walk through a sample reduction of a dataset taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The corresponding explanation of the science behind the reduction mechanism can be found in the How it Works section. 
 
 The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
 
@@ -36,7 +36,7 @@ Zellem et. al 2019, Eastman et al. 2013, Mandel and Agol 2002, Eastman et al. 20
 
 Lightcurve model developed by Dr. Gael Roudier.
 Photometry tools developed by Kyle Pearson.
-Additional features and bug fixes added by Rob Zellem and John Engelke.
+Additional features and bug fixes added by Dr. Rob Zellem and John Engelke.
 Documentation co-written by Alexandra Iturralde.
 
 

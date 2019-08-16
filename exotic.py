@@ -16,6 +16,7 @@
 
 ####################################################################
 # EXOplanet Transit Interpretation Code (EXOTIC)
+# Version: 0.2.9
 #
 # Author: Ethan Blaser
 # Mentors: Dr. Robert Zellem and Anya Biferno
@@ -1044,7 +1045,7 @@ if __name__ == "__main__":
                 if line.split("\t")[0] == 'AAVSO output?':
                         AAVSOoutput = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'AAVSO Observer Account Number':
-                    usercode = line.split("\t")[-1].rstrip()
+                    userCode = line.split("\t")[-1].rstrip()
 
                 if line.split("\t")[0] == 'observation date':
                     date = line.split("\t")[-1].rstrip()
@@ -1068,12 +1069,6 @@ if __name__ == "__main__":
                     targetpixloc = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Number of Comparison Stars':
                     numCompStars = int(line.split("\t")[-1].rstrip())
-
-            try:
-                usercode = int(usercode)
-            except ValueError:
-                print("Sorry, a valid AAVSO number is not detected. Please try again.")
-                sys.exit()
 
             if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
                 AAVSOBool = False
@@ -1210,6 +1205,9 @@ if __name__ == "__main__":
             raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
             decStr = str(input(
                 "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+        
+        if fileorcommandline == 2:
+            print("Reading star positions from init file.")
 
         # **************************************************************************************************************
         # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
@@ -1274,10 +1272,13 @@ if __name__ == "__main__":
             # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
             if fileorcommandline == 1:
                 flats = str(input('Do you have flats? (y/n) '))
-            if flats == 'y' or flats == 'yes' or flats == 'Y' or flats == 'Yes':
-                flatsBool = True
-                flatsPath = str(input(
-                    'Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+
+                if flats == 'y' or flats == 'yes' or flats == 'Y' or flats == 'Yes':
+                    flatsBool = True
+                    flatsPath = str(input(
+                        'Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+                else:
+                    flatsBool = False
 
                 # Add / to end of directory if user does not input it
                 if flatsPath[-1] != "/":
@@ -1312,11 +1313,16 @@ if __name__ == "__main__":
             # darks
             if fileorcommandline == 1:
                 darks = str(input('Do you have darks? (y/n) '))
-            if darks == 'y' or darks == 'yes' or darks == 'Y' or darks == 'Yes':
-                darksBool = True
-                darksPath = str(input(
-                    'Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
 
+                if (darks == 'y' or darks == 'yes' or darks == 'Y' or darks == 'Yes'):
+                    darksBool = True
+                    darksPath = str(input(
+                        'Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
+                else:
+                    darksBool = False
+            
+            # Only do the dark correction if user selects this option
+            if darksBool:
                 # Add / to end of directory if user does not input it
                 if darksPath[-1] != "/":
                     darksPath += "/"
@@ -1338,17 +1344,20 @@ if __name__ == "__main__":
                         darkData = fits.getdata(darkFile, ext=0)
                         darksImgList.append(darkData)
                     generalDark = np.median(darksImgList, axis=0)
-            else:
-                darksBool = False
+            
 
             # biases
             if fileorcommandline == 1:
                 biases = str(input('Do you have biases? (y/n) '))
-            if biases == 'y' or biases == 'yes' or biases == 'Y' or biases == 'Yes':
-                biasesBool = True
-                biasesPath = str(input(
-                    'Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
 
+                if biases == 'y' or biases == 'yes' or biases == 'Y' or biases == 'Yes':
+                    biasesBool = True
+                    biasesPath = str(input(
+                        'Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
+                else:
+                    biasesBool = False
+
+            if biasesBool:
                 # Add / to end of directory if user does not input it
                 if biasesPath[-1] != "/":
                     biasesPath += "/"
@@ -1380,21 +1389,13 @@ if __name__ == "__main__":
 
         if fileorcommandline == 1:
             AAVSOoutput = str(input('Do you want to use the AAVSO format output? (y/n)'))
-            usercode = str(input('Please enter your AAVSO Observer Account Number: '))
-
-            try:
-                usercode = int(usercode)
-            except ValueError:
-                print("Sorry, a valid AAVSO number is not detected. Please try again.")
-                sys.exit()
-
             if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
                 AAVSOBool = False
             else:
                 AAVSOBool = True
-
-            binning = str(input('Please enter your pixel binning: '))
-            exposureTime = str(input('Please enter your exposure time (seconds): '))
+                userCode = str(input('Please enter your AAVSO Observer Account Number: '))
+                binning = str(input('Please enter your pixel binning: '))
+                exposureTime = str(input('Please enter your exposure time (seconds): ')) 
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -1411,7 +1412,7 @@ if __name__ == "__main__":
         hostName = pDict['sName']
         # Orbital Period
         print('')
-        print(targetName + ' Orbital Period (jd): ' + str(pDict['pPer']))
+        print(targetName + ' Orbital Period (days): ' + str(pDict['pPer']))
         agreement = input("Do you agree? (y/n) ")
         while agreement.lower() != 'y' and agreement.lower() != 'n':
             agreement = str(input("Do you agree? (y/n) "))
@@ -1421,7 +1422,7 @@ if __name__ == "__main__":
             planetPeriod = float(input("Enter the Orbital Period in days: "))
         # Orbital Period Error
         print('')
-        print(targetName + ' Orbital Period Uncertainty (jd): ' + str(pDict['pPerUnc']))
+        print(targetName + ' Orbital Period Uncertainty (days): ' + str(pDict['pPerUnc']))
         print('Keep in mind that "1.2e-34" is the same as 1.2 x 10^-34')
         agreement = str(input("Do you agree? (y/n) "))
         while agreement.lower() != 'y' and agreement.lower() != 'n':
@@ -1432,14 +1433,14 @@ if __name__ == "__main__":
             ogPeriodErr = float(input("Enter the Uncertainty for the Orbital Period in days: "))
         # Mid Transit Time
         print('')
-        print(targetName + ' Time of Mid-Transit (jd): ' + str(pDict['midT']))
+        print(targetName + ' Time of Mid-Transit (BJD): ' + str(pDict['midT']))
         agreement = str(input("Do you agree? (y/n) "))
         while agreement.lower() != 'y' and agreement.lower() != 'n':
             agreement = str(input("Do you agree? (y/n) "))
         if agreement.lower() == 'y':
             timeMidTransit = pDict['midT']
         else:
-            timeMidTransit = float(input("Enter a reported Time of Mid-Transit in days: "))
+            timeMidTransit = float(input("Enter a reported Time of Mid-Transit in BJD: "))
 
         # Mid Transit Time Uncertainty
         print('')
@@ -2240,6 +2241,10 @@ if __name__ == "__main__":
             outParamsFile.write('#FILTER=CV\n')  # possibly UI but probably not
             outParamsFile.write('#DETREND_PARAMETERS=AIRMASS\n')  # fixed
             outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
+            # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
+            #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
+            #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
+            #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
             outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
                 semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
                 round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(

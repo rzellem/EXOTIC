@@ -16,7 +16,7 @@ directory of biases		none
 # File Output Format
 #-----------------------------------------------------------------------------------
 AAVSO output?			y
-AAVSO Observer Account Number	13
+AAVSO Observer Account Number	RTZ
 
 #-----------------------------------------------------------------------------------
 # Observation Time/Location

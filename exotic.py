@@ -15,8 +15,7 @@
 
 
 ####################################################################
-# EXOplanet Transit Interpretation Code (EXOTIC)
-# Version: 0.2.9
+# EXOplanet Transit Interpretation Code (EXOTIC)s
 #
 # Author: Ethan Blaser
 # Mentors: Dr. Robert Zellem and Anya Biferno
@@ -1056,7 +1055,7 @@ if __name__ == "__main__":
 
                 if line.split("\t")[0] == 'Pixel Binning':
                     binning = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Exposure Time Header Field':
+                if line.split("\t")[0] == 'Exposure Time (seconds)':
                     exposureTime = line.split("\t")[-1].rstrip()
 
                 if line.split("\t")[0] == 'planet name':

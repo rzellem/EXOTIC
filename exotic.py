@@ -1279,32 +1279,33 @@ if __name__ == "__main__":
                 else:
                     flatsBool = False
 
-                # Add / to end of directory if user does not input it
-                if flatsPath[-1] != "/":
-                    flatsPath += "/"
-                # Check for .FITS files
-                inputflats = g.glob(flatsPath + "*.FITS")
-                # If none exist, try other extensions
-                if len(inputflats) == 0:
-                    inputflats = g.glob(flatsPath + "*.FIT")
-                if len(inputflats) == 0:
-                    inputflats = g.glob(flatsPath + "*.fits")
-                if len(inputflats) == 0:
-                    inputflats = g.glob(flatsPath + "*.fit")
+                if flatsBool:
+                    # Add / to end of directory if user does not input it
+                    if flatsPath[-1] != "/":
+                        flatsPath += "/"
+                    # Check for .FITS files
+                    inputflats = g.glob(flatsPath + "*.FITS")
+                    # If none exist, try other extensions
+                    if len(inputflats) == 0:
+                        inputflats = g.glob(flatsPath + "*.FIT")
+                    if len(inputflats) == 0:
+                        inputflats = g.glob(flatsPath + "*.fits")
+                    if len(inputflats) == 0:
+                        inputflats = g.glob(flatsPath + "*.fit")
 
-                if len(inputflats) == 0:
-                    print("Error: no flats found in" + flatsPath + ". Proceeding with reduction WITHOUT flatfields.")
-                    flatsBool = False
-                else:
-                    flatsImgList = []
-                    for flatFile in inputflats:
-                        flatData = fits.getdata(flatFile, ext=0)
-                        flatsImgList.append(flatData)
-                    notNormFlat = np.median(flatsImgList, axis=0)
+                    if len(inputflats) == 0:
+                        print("Error: no flats found in" + flatsPath + ". Proceeding with reduction WITHOUT flatfields.")
+                        flatsBool = False
+                    else:
+                        flatsImgList = []
+                        for flatFile in inputflats:
+                            flatData = fits.getdata(flatFile, ext=0)
+                            flatsImgList.append(flatData)
+                        notNormFlat = np.median(flatsImgList, axis=0)
 
-                    # NORMALIZE
-                    medi = np.median(notNormFlat)
-                    generalFlat = notNormFlat / medi
+                        # NORMALIZE
+                        medi = np.median(notNormFlat)
+                        generalFlat = notNormFlat / medi
 
             else:
                 flatsBool = False

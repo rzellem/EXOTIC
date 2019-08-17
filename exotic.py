@@ -2084,6 +2084,11 @@ if __name__ == "__main__":
         # Gelman Rubin
         print("Gelman Rubin Convergence Test:")
         print(pm.gelman_rubin(trace))
+        
+        # TODO set the MCMC chain length low, then run a gelman_rubin(trace) to see if <=1.1
+        # (RTZ will probably make this 1.01 to be safe)
+        # if they are not below this value, then run more chains
+        # Hopefully this will keep the code running for less time
 
         fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)
         airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))
@@ -2246,9 +2251,8 @@ if __name__ == "__main__":
             #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
             #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
             outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
-                semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
-                round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
-                eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
+                semi) + ',inc=' + str(inc) + ',ecc=' + str(eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
+            # code yields
             outParamsFile.write(
                 '#RESULTS=Tc=' + str(round(fitMidT, 8)) + ' +/- ' + str(round(midTranUncert, 8)) + ',Rp/R*=' + str(
                     round(fitRadius, 6)) + ' +/- ' + str(round(radUncert, 6)) + ',Am1=' + str(

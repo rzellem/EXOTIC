@@ -1844,7 +1844,7 @@ if __name__ == "__main__":
 
                     # compute chi^2 from least squares fit
                     # print('Median Uncertainty Value: '+ str(round(np.median(arrayNormUnc),5)))
-                    chi2_init = np.sum(((arrayFinalFlux[~filtered_data.mask] - lsFit) / arrayNormUnc) ** 2.) / (
+                    chi2_init = np.sum(((arrayFinalFlux[~filtered_data.mask] - lsFit) / arrayNormUnc[~filtered_data.mask]) ** 2.) / (
                             len(arrayFinalFlux[~filtered_data.mask]) - len(res.x))
                     # print("Non-Reduced chi2: ",np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.))
 

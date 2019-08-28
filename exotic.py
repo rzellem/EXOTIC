@@ -927,7 +927,7 @@ if __name__ == "__main__":
     fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
-    distFC = 25  # gaussian search area
+    distFC = 10  # gaussian search area
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
@@ -1625,7 +1625,7 @@ if __name__ == "__main__":
 
         # fit Target in the first image and use it to determine aperture and annulus range
         targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
-                                                                                box=30)
+                                                                                box=10)
         minAperture = int(2 * max(targsigX, targsigY))
         maxAperture = int(5 * max(targsigX, targsigY) + 1)
         minAnnulus = 2
@@ -1642,7 +1642,7 @@ if __name__ == "__main__":
 
             print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
             refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
-                                                                              box=30)
+                                                                              box=10)
             print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)))
             print('')
 
@@ -1713,7 +1713,7 @@ if __name__ == "__main__":
                         myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()]
 
                         tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
-                                                                              init=myPriors, box=30)
+                                                                              init=myPriors, box=10)
                         currTPX = tx
                         currTPY = ty
 
@@ -1724,7 +1724,7 @@ if __name__ == "__main__":
                         rGuessAmp = refSearchA.max() - refSearchA.min()
                         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
                         rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
-                                                                              init=myRefPriors, box=30)
+                                                                              init=myRefPriors, box=10)
                         currRPX = rx
                         currRPY = ry
 
@@ -2162,7 +2162,7 @@ if __name__ == "__main__":
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".pdf", bbox_inches="tight")
         except AttributeError:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".png", bbox_inches="tight")
-        plt.show()
+        plt.close()
 
         ###################
         # CHI SQUARED ROLL

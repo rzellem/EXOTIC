@@ -927,7 +927,7 @@ if __name__ == "__main__":
     fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
-    distFC = 10  # gaussian search area
+    distFC = 15  # gaussian search area
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
@@ -1710,7 +1710,7 @@ if __name__ == "__main__":
                         # Guess at Gaussian Parameters and feed them in to help gaussian fitter
 
                         tGuessAmp = targSearchA.max() - targSearchA.min()
-                        myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()]
+                        myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()] #########ERROR HERE
 
                         tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
                                                                               init=myPriors, box=10)
@@ -1913,6 +1913,7 @@ if __name__ == "__main__":
         forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
         bjdMidTOld = float(forPhaseResult[0])
 
+        #convert all the phases based on the updated bjd times
         for convertedTime in goodTimes:
             bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
             goodPhasesList.append(bjdPhase)
@@ -2115,6 +2116,13 @@ if __name__ == "__main__":
         # Final Light Curve Model
         finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
 
+
+        #recaclculate phases based on fitted mid transit time
+        adjPhases= []
+        for bTime in finalTimes:
+            newPhase = ((bTime - fitMidT) / planetPeriod) % 1
+            adjPhases.append(newPhase)
+        adjustedPhases = np.array(adjPhases)
         #########################
         # PLOT FINAL LIGHT CURVE
         #########################
@@ -2125,11 +2133,11 @@ if __name__ == "__main__":
         ax_res = plt.subplot2grid((4, 5), (3, 0), colspan=5, rowspan=1)
         f.suptitle(targetName)
 
-        x = finalPhases
+        x = adjustedPhases
         ax_res.set_xlabel('Phase')
 
         # make symmetric about 0 phase
-        maxdist = max(np.abs(finalPhases[0]), finalPhases[-1])
+        maxdist = max(np.abs(adjustedPhases[0]), adjustedPhases[-1])
         ax_res.set_xlim([-maxdist, maxdist])
         ax_lc.set_xlim([-maxdist, maxdist])
 
@@ -2144,15 +2152,15 @@ if __name__ == "__main__":
 
         # residual plot
         ax_res.plot(x, finalResiduals, 'ko')
-        ax_res.plot(x, np.zeros(len(finalPhases)), 'r-', lw=2, alpha=0.85)
+        ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=0.85)
         ax_res.set_ylabel('Residuals')
         ax_res.set_ylim([-.04, .04])
 
         correctedSTD = np.std(finalResiduals)
         # ax_lc.errorbar( x, self.y/self.data[t]['airmass'], yerr=self.yerr/self.data[t]['airmass'], ls='none', marker='o', color='black')
-        ax_lc.errorbar(finalPhases, finalFluxes / finalAirmassModel, yerr=finalNormUnc / finalAirmassModel, ls='none',
+        ax_lc.errorbar(adjustedPhases, finalFluxes / finalAirmassModel, yerr=finalNormUnc / finalAirmassModel, ls='none',
                        marker='o', color='black')
-        ax_lc.plot(finalPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
+        ax_lc.plot(ajustedPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)

@@ -2160,7 +2160,7 @@ if __name__ == "__main__":
         # ax_lc.errorbar( x, self.y/self.data[t]['airmass'], yerr=self.yerr/self.data[t]['airmass'], ls='none', marker='o', color='black')
         ax_lc.errorbar(adjustedPhases, finalFluxes / finalAirmassModel, yerr=finalNormUnc / finalAirmassModel, ls='none',
                        marker='o', color='black')
-        ax_lc.plot(ajustedPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
+        ax_lc.plot(adjustedPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)

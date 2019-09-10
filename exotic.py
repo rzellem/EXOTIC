@@ -2120,9 +2120,10 @@ if __name__ == "__main__":
         #recaclculate phases based on fitted mid transit time
         adjPhases= []
         for bTime in finalTimes:
-            newPhase = ((bTime - fitMidT) / planetPeriod) % 1
+            newPhase = ((bTime - fitMidT) / planetPeriod)
             adjPhases.append(newPhase)
         adjustedPhases = np.array(adjPhases)
+        
         #########################
         # PLOT FINAL LIGHT CURVE
         #########################

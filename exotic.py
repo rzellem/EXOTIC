@@ -1875,6 +1875,7 @@ if __name__ == "__main__":
                         goodTUnc = arrayTUnc[~filtered_data.mask]
                         goodRUnc = arrayRUnc[~filtered_data.mask]
                         goodNormUnc = arrayNormUnc[~filtered_data.mask]
+                        goodResids = residualVals
 
                     # Reinitialize the the arrays to be empty
                     airMassList = []
@@ -1919,11 +1920,11 @@ if __name__ == "__main__":
             goodPhasesList.append(bjdPhase)
         goodPhases = np.array(goodPhasesList)
 
-        # another 3 sigma clip based on residuals of LM fit
+        # another 3 sigma clip based on residuals of the best LM fit
         try:
-            interFilter = sigma_clip(residualVals, sigma=3, maxiters=1, cenfunc=median, copy=False)
+            interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=median, copy=False)
         except TypeError:
-            interFilter = sigma_clip(residualVals, sigma=3, cenfunc=median, copy=False)
+            interFilter = sigma_clip(goodResids, sigma=3, cenfunc=median, copy=False)
 
         goodFluxes = goodFluxes[~interFilter.mask]
         goodTimes = goodTimes[~interFilter.mask]

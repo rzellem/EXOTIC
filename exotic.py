@@ -1386,13 +1386,14 @@ if __name__ == "__main__":
             darksBool = False
             biasesBool = False
 
-
+        #Handle AAVSO Formatting
         if fileorcommandline == 1:
             AAVSOoutput = str(input('Do you want to use the AAVSO format output? (y/n)'))
             if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
                 AAVSOBool = False
             else:
                 AAVSOBool = True
+                userNameEmails = str(input('Please enter your name and email address in the form: Your Name (youremail@example.com) .  '))
                 userCode = str(input('Please enter your AAVSO Observer Account Number: '))
                 binning = str(input('Please enter your pixel binning: '))
                 exposureTime = str(input('Please enter your exposure time (seconds): ')) 
@@ -2245,6 +2246,7 @@ if __name__ == "__main__":
             outParamsFile = open(saveDirectory + 'AAVSO' + targetName + date + '.txt', 'w+')
             outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
             outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI
+            outParamsFile.write('OBSERVERS=' + userNameEmails + '\n')#UI
             outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
             outParamsFile.write('#DELIM=,\n')  # fixed
             outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed

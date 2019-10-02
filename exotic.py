@@ -2246,7 +2246,6 @@ if __name__ == "__main__":
             outParamsFile = open(saveDirectory + 'AAVSO' + targetName + date + '.txt', 'w+')
             outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
             outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI
-            outParamsFile.write('OBSERVERS=' + userNameEmails + '\n')#UI
             outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
             outParamsFile.write('#DELIM=,\n')  # fixed
             outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
@@ -2270,7 +2269,7 @@ if __name__ == "__main__":
                     round(fitRadius, 6)) + ' +/- ' + str(round(radUncert, 6)) + ',Am1=' + str(
                     round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
                     round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
-            outParamsFile.write('#NOTES=\n')
+            outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
             outParamsFile.write('#DATE NORM_FLUX MERR DETREND_1\n')
             for aavsoC in range(0, len(finalTimes)):
                 outParamsFile.write(

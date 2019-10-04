@@ -2057,7 +2057,7 @@ if __name__ == "__main__":
 
         with lcMod:
             step = pm.Metropolis()  # Metropolis-Hastings Sampling Technique
-            trace = pm.sample(final_chain_length, step, chains=2)
+            trace = pm.sample(final_chain_length, step, chains=None)
 
         # ----Plot the Results from the MCMC -------------------------------------------------------------------
         print('')

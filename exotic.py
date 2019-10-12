@@ -690,7 +690,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     plt.xlabel('Time (jd)')
     plt.ylabel('X Pixel Position')
     plt.title(targetName + ' X Centroid Position ' + date)
-    plt.savefig(saveDirectory + targetName + ' XCentroidPosition' + date + '.png')
+    plt.savefig(saveDirectory +'XCentroidPosition'+ targetName + date + '.png')
     plt.close()
 
     # Y TARGET
@@ -698,7 +698,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     plt.xlabel('Time (jd)')
     plt.ylabel('Y Pixel Position')
     plt.title(targetName + ' Y Centroid Position ' + date)
-    plt.savefig(saveDirectory + targetName + 'YCentroidPos' + date + '.png')
+    plt.savefig(saveDirectory+ 'YCentroidPos'  + targetName + date + '.png')
     plt.close()
 
     # X COMP
@@ -1498,6 +1498,7 @@ if __name__ == "__main__":
         else:
             eccent = float(input("Enter the Orbital Eccentricity (0 if null): "))
 
+        #LIMB DARKENING
         print('')
         print('***************************')
         print('Limb Darkening Coefficients')
@@ -1608,6 +1609,7 @@ if __name__ == "__main__":
 
         # Time sorts the file names based on the fits file header
         timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
+        tsnCopy = timeSortedNames
 
         # sorts the times for later plotting use
         sortedTimeList = sorted(timeList)
@@ -1638,6 +1640,9 @@ if __name__ == "__main__":
             print('***************************************************************')
             print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
             print('***************************************************************')
+
+            #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
+            timeSortedNames = tsnCopy
 
             UIprevRPX, UIprevRPY = compStarList[compCounter]
 
@@ -1693,12 +1698,24 @@ if __name__ == "__main__":
                         prevRPX = prevRPX - xShift
                         prevRPY = prevRPY - yShift
 
+                        #set target search area
                         txmin = int(prevTPX) - distFC  # left
                         txmax = int(prevTPX) + distFC  # right
                         tymin = int(prevTPY) - distFC  # top
                         tymax = int(prevTPY) + distFC  # bottom
+                        
+                        #boolean that represents if either the target or comp star gets too close to the detector
+                        driftBool = False
 
-                        targSearchA = imageData[tymin:tymax, txmin:txmax]
+                        #check if your target star is too close to the edge of the detector
+                        if (txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0])): 
+                            print('*************************************************************************************')
+                            print ('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
+                            #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
+                            print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored')
+                            driftBool = True
+
+                            #mask off the rest of timeSortedNames and then ignore the rest of the procedure until
 
                         # Set reference search area
                         rxmin = int(prevRPX) - distFC  # left
@@ -1706,86 +1723,103 @@ if __name__ == "__main__":
                         rymin = int(prevRPY) - distFC  # top
                         rymax = int(prevRPY) + distFC  # bottom
 
-                        refSearchA = imageData[rymin:rymax, rxmin:rxmax]
+                        #check if the reference is too close to the edge of the detector
+                        if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData) or rymax >= len(imageData[0])):
+                            print('*************************************************************************************') 
+                            print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
+                            #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
+                            print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
+                            print('*************************************************************************************')
+                            driftBool = True
 
-                        # Guess at Gaussian Parameters and feed them in to help gaussian fitter
+                        #if the star isn't too close, then proceed as normal
+                        if (driftBool == False):
+                            targSearchA = imageData[tymin:tymax, txmin:txmax]
+                            refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
-                        tGuessAmp = targSearchA.max() - targSearchA.min()
-                        myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()] #########ERROR HERE
+                            # Guess at Gaussian Parameters and feed them in to help gaussian fitter
 
-                        tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
-                                                                              init=myPriors, box=10)
-                        currTPX = tx
-                        currTPY = ty
+                            tGuessAmp = targSearchA.max() - targSearchA.min()
+                            myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()] #########ERROR HERE
 
-                        # append to list of target centroid positions for later plotting
-                        xTargCent.append(currTPX)
-                        yTargCent.append(currTPY)
+                            tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
+                                                                                init=myPriors, box=10)
+                            currTPX = tx
+                            currTPY = ty
 
-                        rGuessAmp = refSearchA.max() - refSearchA.min()
-                        myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
-                        rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
-                                                                              init=myRefPriors, box=10)
-                        currRPX = rx
-                        currRPY = ry
+                            # append to list of target centroid positions for later plotting
+                            xTargCent.append(currTPX)
+                            yTargCent.append(currTPY)
 
-                        # append to list of reference centroid positions for later plotting
-                        xRefCent.append(currRPX)
-                        yRefCent.append(currRPY)
+                            rGuessAmp = refSearchA.max() - refSearchA.min()
+                            myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
+                            rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
+                                                                                init=myRefPriors, box=10)
+                            currRPX = rx
+                            currRPY = ry
 
-                        if tamplitude < 0 or tsigX < 0 or tsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
-                            print('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
+                            # append to list of reference centroid positions for later plotting
+                            xRefCent.append(currRPX)
+                            yRefCent.append(currRPY)
 
-                        elif ramplitude < 0 or rsigX < 0 or rsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
-                            print('Could not fit 2D gaussian to Comparison Star for File Number' + str(fileNumber))
+                            if tamplitude < 0 or tsigX < 0 or tsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
+                                print('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
 
+                            elif ramplitude < 0 or rsigX < 0 or rsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
+                                print('Could not fit 2D gaussian to Comparison Star for File Number' + str(fileNumber))
+
+                            else:
+                                # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
+
+                                # gets the flux value of the target star and subtracts the background light
+                                tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
+
+                                targetFluxVals.append(
+                                    tFluxVal)  # adds tFluxVal to the total list of flux values of target star
+                                targUncertanties.append(
+                                    math.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
+
+                                # gets the flux value of the reference star and subracts the background light
+                                rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
+
+                                referenceFluxVals.append(
+                                    rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
+                                refUncertanties.append(math.sqrt(rFluxVal))
+
+                                # TIME
+                                currTime = getJulianTime(hDul)
+                                timesListed.append(currTime)
+
+                                # ORBITAL PHASE
+                                currentPhase = getPhase(currTime, planetPeriod,
+                                                        timeMidTransit)  # gets the phase of the target planet in the image file
+                                phasesList.append(currentPhase)  # adds to list of phases
+
+                                # AIRMASS
+                                airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
+                                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+
+                                # UPDATE PIXEL COORDINATES and SIGMAS
+                                # target
+                                prevTPX = currTPX
+                                prevTPY = currTPY
+                                prevTSigX = tsigX
+                                prevTSigY = tsigY
+                                # reference
+                                prevRPX = currRPX
+                                prevRPY = currRPY
+                                prevRSigX = rsigX
+                                prevTSigY = rsigY
+
+                            # UPDATE FILE COUNT
+                            prevImageData = imageData
+                            fileNumber = fileNumber + 1
+                            hDul.close()  # close the stream
+
+                        #otherwise, mask off the rest of the files from time sorted names including the current one
                         else:
-                            # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
-
-                            # gets the flux value of the target star and subtracts the background light
-                            tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
-
-                            targetFluxVals.append(
-                                tFluxVal)  # adds tFluxVal to the total list of flux values of target star
-                            targUncertanties.append(
-                                math.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
-
-                            # gets the flux value of the reference star and subracts the background light
-                            rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
-
-                            referenceFluxVals.append(
-                                rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
-                            refUncertanties.append(math.sqrt(rFluxVal))
-
-                            # TIME
-                            currTime = getJulianTime(hDul)
-                            timesListed.append(currTime)
-
-                            # ORBITAL PHASE
-                            currentPhase = getPhase(currTime, planetPeriod,
-                                                    timeMidTransit)  # gets the phase of the target planet in the image file
-                            phasesList.append(currentPhase)  # adds to list of phases
-
-                            # AIRMASS
-                            airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
-                            airMassList.append(airMass)  # adds that airmass value to the list of airmasses
-
-                            # UPDATE PIXEL COORDINATES and SIGMAS
-                            # target
-                            prevTPX = currTPX
-                            prevTPY = currTPY
-                            prevTSigX = tsigX
-                            prevTSigY = tsigY
-                            # reference
-                            prevRPX = currRPX
-                            prevRPY = currRPY
-                            prevRSigX = rsigX
-                            prevTSigY = rsigY
-
-                        # UPDATE FILE COUNT
-                        prevImageData = imageData
-                        fileNumber = fileNumber + 1
-                        hDul.close()  # close the stream
+                            timeSortedNames = timeSortedNames[:fileNumber-1]
+                            break
 
                     # EXIT THE FILE LOOP
 
@@ -1938,10 +1972,14 @@ if __name__ == "__main__":
         goodNormUnc = goodNormUnc[~interFilter.mask]
 
         # Centroid position plots
-        plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, sortedTimeList)
+        plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, timeSortedNames)
 
         # Calculate the standard deviation of the normalized flux values
         standardDev1 = np.std(goodFluxes)
+
+        ######################################
+        # PLOTS ROUND 1
+        ####################################
 
         # Make plots of raw target and reference values
         plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')

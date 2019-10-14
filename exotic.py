@@ -686,32 +686,32 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     # X TARGET
-    plt.plot(times, xTarg, '-bo')
-    plt.xlabel('Time (jd)')
+    plt.plot(times-np.nanmin(times), xTarg, '-bo')
+    plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Position')
     plt.title(targetName + ' X Centroid Position ' + date)
     plt.savefig(saveDirectory +'XCentroidPosition'+ targetName + date + '.png')
     plt.close()
 
     # Y TARGET
-    plt.plot(times, yTarg, '-bo')
-    plt.xlabel('Time (jd)')
+    plt.plot(times-np.nanmin(times), yTarg, '-bo')
+    plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Position')
     plt.title(targetName + ' Y Centroid Position ' + date)
     plt.savefig(saveDirectory+ 'YCentroidPos'  + targetName + date + '.png')
     plt.close()
 
     # X COMP
-    plt.plot(times, xRef, '-ro')
-    plt.xlabel('Time (jd)')
+    plt.plot(times-np.nanmin(times), xRef, '-ro')
+    plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Position')
     plt.title('Comp Star X Centroid Position ' + date)
     plt.savefig(saveDirectory + 'CompStarXCentroidPos' + date + '.png')
     plt.close()
 
     # Y COMP
-    plt.plot(times, yRef, '-ro')
-    plt.xlabel('Time (jd)')
+    plt.plot(times-np.nanmin(times), yRef, '-ro')
+    plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Position')
     plt.title('Comp Star Y Centroid Position ' + date)
     plt.savefig(saveDirectory + 'CompStarYCentroidPos' + date + '.png')
@@ -719,21 +719,21 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
 
     # X DISTANCE BETWEEN TARGET AND COMP
     plt.figure()
-    plt.xlabel('Time (jd)')
+    plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Distance')
     for e in range(0, len(xTarg)):
-        plt.plot(times[e], abs(int(xTarg[e]) - int(xRef[e])), 'bo')
+        plt.plot(times[e]-np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
     plt.title('Distance between Target and Comparison X position')
     plt.savefig(saveDirectory + 'XCentroidDistance' + targetName + date + '.png')
     plt.close()
 
     # Y DISTANCE BETWEEN TARGET AND COMP
     plt.figure()
-    plt.xlabel('Time (jd)')
+    plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Difference')
     d = 0
     for d in range(0, len(yTarg)):
-        plt.plot(times[d], abs(int(yTarg[d]) - int(yRef[d])), 'bo')
+        plt.plot(times[d]-np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
     plt.title('Difference between Target and Comparison Y position')
     plt.savefig(saveDirectory + 'YCentroidDistance' + targetName + date + '.png')
     plt.close()

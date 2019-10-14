@@ -685,6 +685,7 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
 
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times):
+    times = np.array(times)
     # X TARGET
     plt.plot(times-np.nanmin(times), xTarg, '-bo')
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
@@ -1726,7 +1727,7 @@ if __name__ == "__main__":
                         rymax = int(prevRPY) + distFC  # bottom
 
                         #check if the reference is too close to the edge of the detector
-                        if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData) or rymax >= len(imageData[0])):
+                        if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
                             print('*************************************************************************************') 
                             print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
                             #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
@@ -1946,6 +1947,9 @@ if __name__ == "__main__":
         goodTimes = resultos[0]
         goodPhasesList = []
 
+        # Centroid position plots
+        plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes)
+
         # convert the exoplanet archive mid transit time to bjd
         tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
         forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
@@ -1972,9 +1976,6 @@ if __name__ == "__main__":
         goodTUnc = goodTUnc[~interFilter.mask]
         goodRUnc = goodRUnc[~interFilter.mask]
         goodNormUnc = goodNormUnc[~interFilter.mask]
-
-        # Centroid position plots
-        plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, timeSortedNames)
 
         # Calculate the standard deviation of the normalized flux values
         standardDev1 = np.std(goodFluxes)

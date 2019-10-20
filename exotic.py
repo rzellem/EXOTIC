@@ -1046,8 +1046,8 @@ if __name__ == "__main__":
                         AAVSOoutput = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'AAVSO Observer Account Number':
                     userCode = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == "Observers' names/emails":
-                    userNameEmails = line.split("\t")[-1].rstrip()
+                # if line.split("\t")[0] == "Observers' names/emails":
+                    # userNameEmails = line.split("\t")[-1].rstrip()
 
                 if line.split("\t")[0] == 'observation date':
                     date = line.split("\t")[-1].rstrip()
@@ -1396,7 +1396,7 @@ if __name__ == "__main__":
                 AAVSOBool = False
             else:
                 AAVSOBool = True
-                userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
+                # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
                 userCode = str(input('Please enter your AAVSO Observer Account Number: '))
                 binning = str(input('Please enter your pixel binning: '))
                 exposureTime = str(input('Please enter your exposure time (seconds): ')) 
@@ -2310,7 +2310,7 @@ if __name__ == "__main__":
                     round(fitRadius, 6)) + ' +/- ' + str(round(radUncert, 6)) + ',Am1=' + str(
                     round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
                     round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
-            outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
+            # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
             outParamsFile.write('#DATE NORM_FLUX MERR DETREND_1\n')
             for aavsoC in range(0, len(finalTimes)):
                 outParamsFile.write(

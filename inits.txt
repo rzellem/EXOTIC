@@ -17,7 +17,6 @@ directory of biases		none
 #-----------------------------------------------------------------------------------
 AAVSO output?			y
 AAVSO Observer Account Number	RTZ
-Observers' names/emails		Rob Zellem (rzellem@jpl.nasa.gov), Ethan Blaser (test@ok.com)
 
 #-----------------------------------------------------------------------------------
 # Observation Time/Location

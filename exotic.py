@@ -34,6 +34,7 @@ import glob as g
 
 # julian conversion imports
 import astropy.time
+import astropy.coordinates
 import dateutil.parser as dup
 
 # UTC to BJD converter import
@@ -1958,19 +1959,24 @@ if __name__ == "__main__":
             print('********************************************')
             print('')
 
-            # convert all the final times into BJD
-            timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc')
-            resultos = utc_tdb.JDUTC_to_BJDTDB(timesToConvert, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
+            # convert all the final times into BJD - using astropy alone
+            targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
+            obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
+            timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
+            ltt_bary = timesToConvert.light_travel_time(targetloc)
+            time_barycentre = timesToConvert.tdb + ltt_bary
+            resultos = time_barycentre.value
             goodTimes = resultos[0]
             goodPhasesList = []
 
             # Centroid position plots
             plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes)
 
-            # convert the exoplanet archive mid transit time to bjd
-            tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
-            forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
-            bjdMidTOld = float(forPhaseResult[0])
+            # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
+            # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
+            # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
+            # bjdMidTOld = float(forPhaseResult[0])
+            bjdMidTOld = timeMidTransit[:]
 
             #convert all the phases based on the updated bjd times
             for convertedTime in goodTimes:

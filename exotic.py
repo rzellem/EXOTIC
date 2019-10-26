@@ -1002,6 +1002,9 @@ if __name__ == "__main__":
         print('**************************')
         print('')
 
+        fitsortext = int(input(
+            'Enter "1" to perform aperture photometry on fits files or "2" to start with pre-reduced data in a .txt format: '))
+
         fileorcommandline = int(input(
             'How would you like to input your initial parameters? Enter "1" to use the Command Line or "2" to use an input file: '))
 
@@ -1113,25 +1116,36 @@ if __name__ == "__main__":
                 rxp, ryp = [int(i) for i in line.split("\t")[-1].rstrip().split(',')]
                 compStarList.append((rxp, ryp))
 
-        # File directory name and initial guess at target and comp star locations on image.
-        if fileorcommandline == 1:
-            directoryP = str(input("Enter the Directory of the FITS Image Files: "))
+        if fitsortext == 1:
+            # File directory name and initial guess at target and comp star locations on image.
+            if fileorcommandline == 1:
+                directoryP = str(input("Enter the Directory of the FITS Image Files: "))
 
-        # Add / to end of directory if user does not input it
-        if directoryP[-1] != "/":
-            directoryP += "/"
-        # Check for .FITS files
-        inputfiles = g.glob(directoryP + "*.FITS")
-        # If none exist, try other extensions
-        if len(inputfiles) == 0:
-            inputfiles = g.glob(directoryP + "*.FIT")
-        if len(inputfiles) == 0:
-            inputfiles = g.glob(directoryP + "*.fits")
-        if len(inputfiles) == 0:
-            inputfiles = g.glob(directoryP + "*.fit")
-        if len(inputfiles) == 0:
-            print("ERROR: No fits files found in " + directoryP + ". Please try again.")
-            sys.exit()
+            # Add / to end of directory if user does not input it
+            if directoryP[-1] != "/":
+                directoryP += "/"
+            # Check for .FITS files
+            inputfiles = g.glob(directoryP + "*.FITS")
+            # If none exist, try other extensions
+            if len(inputfiles) == 0:
+                inputfiles = g.glob(directoryP + "*.FIT")
+            if len(inputfiles) == 0:
+                inputfiles = g.glob(directoryP + "*.fits")
+            if len(inputfiles) == 0:
+                inputfiles = g.glob(directoryP + "*.fit")
+            if len(inputfiles) == 0:
+                print("ERROR: No fits files found in " + directoryP + ". Please try again.")
+                sys.exit()
+        else:
+            datafile = str(input("Enter the path and filename of your data file: "))
+
+            try:
+                initf = open(datafile, 'r')
+            except FileNotFoundError:
+                print("Initialization file not found. Please try again.")
+                sys.exit()
+
+            processeddata = initf.readlines()
 
         if fileorcommandline == 1:
             saveDirectory = str(input("Enter the Directory to Save Plots into: "))
@@ -1142,6 +1156,7 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             targetName = str(input("Enter the Planet Name: "))
 
+        print("Looking up ", targetName)
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
         scrape()
         with open('eaConf.txt') as confirmedFile:
@@ -1164,230 +1179,231 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             date = str(input("Enter the Observation Date: "))
 
-        # latitude and longitude
-        if fileorcommandline == 1:
-            latiStr = str(input(
-                "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
-        noSpaceLati = latiStr.replace(" ", "")
-        latiSign = noSpaceLati[0]
-        # check to make sure they have a sign
-        while latiSign != '+' and latiSign != '-':
-            print("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-            latiStr = str(input(
-                "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
+        if fitsortext == 1:
+            # latitude and longitude
+            if fileorcommandline == 1:
+                latiStr = str(input(
+                    "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
             noSpaceLati = latiStr.replace(" ", "")
             latiSign = noSpaceLati[0]
-        if latiSign == '-':
-            lati = -1 * float(latiStr[1:])
-        else:
-            lati = float(latiStr[1:])
+            # check to make sure they have a sign
+            while latiSign != '+' and latiSign != '-':
+                print("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
+                latiStr = str(input(
+                    "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
+                noSpaceLati = latiStr.replace(" ", "")
+                latiSign = noSpaceLati[0]
+            if latiSign == '-':
+                lati = -1 * float(latiStr[1:])
+            else:
+                lati = float(latiStr[1:])
 
-        # handle longitude
-        if fileorcommandline == 1:
-            longitStr = str(input(
-                "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
-        noSpaceLongit = longitStr.replace(" ", "")
-        longitSign = noSpaceLongit[0]
-        # check to make sure they have the sign
-        while longitSign != '+' and longitSign != '-':
-            print("You forgot the sign for the latitude! East is '+' and West is '-'. Please try again.")
-            longitStr = str(input(
-                "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
+            # handle longitude
+            if fileorcommandline == 1:
+                longitStr = str(input(
+                    "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
             noSpaceLongit = longitStr.replace(" ", "")
             longitSign = noSpaceLongit[0]
-        if longitSign == '-':
-            longit = -1 * float(longitStr[1:])
-        else:
-            longit = float(longitStr[1:])
+            # check to make sure they have the sign
+            while longitSign != '+' and longitSign != '-':
+                print("You forgot the sign for the latitude! East is '+' and West is '-'. Please try again.")
+                longitStr = str(input(
+                    "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
+                noSpaceLongit = longitStr.replace(" ", "")
+                longitSign = noSpaceLongit[0]
+            if longitSign == '-':
+                longit = -1 * float(longitStr[1:])
+            else:
+                longit = float(longitStr[1:])
 
-        print(' ')
-        print('Locate Your Target Star')
-        print('***************************************')
-        if fileorcommandline == 1:
-            raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-            decStr = str(input(
-                "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-        
-        if fileorcommandline == 2:
-            print("Reading star positions from init file.")
+            print(' ')
+            print('Locate Your Target Star')
+            print('***************************************')
+            if fileorcommandline == 1:
+                raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
+                decStr = str(input(
+                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+            
+            if fileorcommandline == 2:
+                print("Reading star positions from init file.")
 
-        # **************************************************************************************************************
-        # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
-        # **************************************************************************************************************
+            # **************************************************************************************************************
+            # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
+            # **************************************************************************************************************
 
-        # convert UI RA and DEC into degrees
+            # convert UI RA and DEC into degrees
 
-        # parse their ra string
-        # remove the spaces in their answer and split by the colons
-        # take first character to be the sign and write a check if they forget
-        noSpaceRa = raStr.replace(" ", "")
-        noSpaceColonRa = noSpaceRa.replace(":", "")
-        # noCapsSpaceRa = noSpaceColonRa.lower()
+            # parse their ra string
+            # remove the spaces in their answer and split by the colons
+            # take first character to be the sign and write a check if they forget
+            noSpaceRa = raStr.replace(" ", "")
+            noSpaceColonRa = noSpaceRa.replace(":", "")
+            # noCapsSpaceRa = noSpaceColonRa.lower()
 
-        raHr = noSpaceColonRa[:2]
-        raMin = noSpaceColonRa[2:4]
-        raSec = noSpaceColonRa[4:]
-        raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
+            raHr = noSpaceColonRa[:2]
+            raMin = noSpaceColonRa[2:4]
+            raSec = noSpaceColonRa[4:]
+            raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
 
-        noSpaceDec = decStr.replace(" ", "")
-        noSpaceColonDec = noSpaceDec.replace(":", "")
-        # noCapsSpaceDec = noSpaceColonDec.lower()
-
-        decSign = noSpaceColonDec[0]
-        while decSign != '+' and decSign != '-':
-            print('You forgot the sign for the dec! Please try again.')
-            decStr = str(input(
-                "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
             noSpaceDec = decStr.replace(" ", "")
             noSpaceColonDec = noSpaceDec.replace(":", "")
+            # noCapsSpaceDec = noSpaceColonDec.lower()
+
             decSign = noSpaceColonDec[0]
-        decD = noSpaceColonDec[1:3]
-        decMin = noSpaceColonDec[3:5]
-        decSec = noSpaceColonDec[5:]
-        if decSign == '-':
-            decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
-                           4) * -1  # account for the negative
-        else:
-            decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
+            while decSign != '+' and decSign != '-':
+                print('You forgot the sign for the dec! Please try again.')
+                decStr = str(input(
+                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+                noSpaceDec = decStr.replace(" ", "")
+                noSpaceColonDec = noSpaceDec.replace(":", "")
+                decSign = noSpaceColonDec[0]
+            decD = noSpaceColonDec[1:3]
+            decMin = noSpaceColonDec[3:5]
+            decSec = noSpaceColonDec[5:]
+            if decSign == '-':
+                decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
+                            4) * -1  # account for the negative
+            else:
+                decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
 
-            # TARGET STAR
-        if fileorcommandline == 1:
-            UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
-            UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))
-            numCompStars = int(input("How many comparison stars would you like to use? (1-10) "))
-
-            # MULTIPLE COMPARISON STARS
-            compStarList = []
-            for num in range(1, numCompStars + 1):
-                rxp = int(input("Comparison Star " + str(num) + " X Pixel Coordinate: "))
-                ryp = int(input("Comparison Star " + str(num) + " Y Pixel Coordinate: "))
-                compStarList.append((rxp, ryp))
-
-        # ---HANDLE CALIBRATION IMAGES------------------------------------------------
-        if fileorcommandline == 1:
-            cals = str(input('Do you have any calibration images (flats, darks or biases)? (y/n) '))
-
-        # if they have cals, handle them by calculating the median flat, dark or bias
-        if cals == 'y' or cals == 'yes' or cals == 'Y' or cals == 'Yes':
-
-            # flats
-            # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
+                # TARGET STAR
             if fileorcommandline == 1:
-                flats = str(input('Do you have flats? (y/n) '))
+                UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
+                UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))
+                numCompStars = int(input("How many comparison stars would you like to use? (1-10) "))
 
-                if flats == 'y' or flats == 'yes' or flats == 'Y' or flats == 'Yes':
-                    flatsBool = True
-                    flatsPath = str(input(
-                        'Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+                # MULTIPLE COMPARISON STARS
+                compStarList = []
+                for num in range(1, numCompStars + 1):
+                    rxp = int(input("Comparison Star " + str(num) + " X Pixel Coordinate: "))
+                    ryp = int(input("Comparison Star " + str(num) + " Y Pixel Coordinate: "))
+                    compStarList.append((rxp, ryp))
+
+            # ---HANDLE CALIBRATION IMAGES------------------------------------------------
+            if fileorcommandline == 1:
+                cals = str(input('Do you have any calibration images (flats, darks or biases)? (y/n) '))
+
+            # if they have cals, handle them by calculating the median flat, dark or bias
+            if cals == 'y' or cals == 'yes' or cals == 'Y' or cals == 'Yes':
+
+                # flats
+                # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
+                if fileorcommandline == 1:
+                    flats = str(input('Do you have flats? (y/n) '))
+
+                    if flats == 'y' or flats == 'yes' or flats == 'Y' or flats == 'Yes':
+                        flatsBool = True
+                        flatsPath = str(input(
+                            'Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+                    else:
+                        flatsBool = False
+
+                    if flatsBool:
+                        # Add / to end of directory if user does not input it
+                        if flatsPath[-1] != "/":
+                            flatsPath += "/"
+                        # Check for .FITS files
+                        inputflats = g.glob(flatsPath + "*.FITS")
+                        # If none exist, try other extensions
+                        if len(inputflats) == 0:
+                            inputflats = g.glob(flatsPath + "*.FIT")
+                        if len(inputflats) == 0:
+                            inputflats = g.glob(flatsPath + "*.fits")
+                        if len(inputflats) == 0:
+                            inputflats = g.glob(flatsPath + "*.fit")
+
+                        if len(inputflats) == 0:
+                            print("Error: no flats found in" + flatsPath + ". Proceeding with reduction WITHOUT flatfields.")
+                            flatsBool = False
+                        else:
+                            flatsImgList = []
+                            for flatFile in inputflats:
+                                flatData = fits.getdata(flatFile, ext=0)
+                                flatsImgList.append(flatData)
+                            notNormFlat = np.median(flatsImgList, axis=0)
+
+                            # NORMALIZE
+                            medi = np.median(notNormFlat)
+                            generalFlat = notNormFlat / medi
+
                 else:
                     flatsBool = False
 
-                if flatsBool:
-                    # Add / to end of directory if user does not input it
-                    if flatsPath[-1] != "/":
-                        flatsPath += "/"
-                    # Check for .FITS files
-                    inputflats = g.glob(flatsPath + "*.FITS")
-                    # If none exist, try other extensions
-                    if len(inputflats) == 0:
-                        inputflats = g.glob(flatsPath + "*.FIT")
-                    if len(inputflats) == 0:
-                        inputflats = g.glob(flatsPath + "*.fits")
-                    if len(inputflats) == 0:
-                        inputflats = g.glob(flatsPath + "*.fit")
+                # darks
+                if fileorcommandline == 1:
+                    darks = str(input('Do you have darks? (y/n) '))
 
-                    if len(inputflats) == 0:
-                        print("Error: no flats found in" + flatsPath + ". Proceeding with reduction WITHOUT flatfields.")
-                        flatsBool = False
+                    if (darks == 'y' or darks == 'yes' or darks == 'Y' or darks == 'Yes'):
+                        darksBool = True
+                        darksPath = str(input(
+                            'Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
                     else:
-                        flatsImgList = []
-                        for flatFile in inputflats:
-                            flatData = fits.getdata(flatFile, ext=0)
-                            flatsImgList.append(flatData)
-                        notNormFlat = np.median(flatsImgList, axis=0)
+                        darksBool = False
+                
+                # Only do the dark correction if user selects this option
+                if darksBool:
+                    # Add / to end of directory if user does not input it
+                    if darksPath[-1] != "/":
+                        darksPath += "/"
+                    # Check for .FITS files
+                    inputdarks = g.glob(darksPath + "*.FITS")
+                    # If none exist, try other extensions
+                    if len(inputdarks) == 0:
+                        inputdarks = g.glob(darksPath + "*.FIT")
+                    if len(inputdarks) == 0:
+                        inputdarks = g.glob(darksPath + "*.fits")
+                    if len(inputdarks) == 0:
+                        inputdarks = g.glob(darksPath + "*.fit")
+                    if len(inputdarks) == 0:
+                        print("Error: no darks found in" + darksPath + ". Proceeding with reduction WITHOUT darks.")
+                        darksBool = False
+                    else:
+                        darksImgList = []
+                        for darkFile in inputdarks:
+                            darkData = fits.getdata(darkFile, ext=0)
+                            darksImgList.append(darkData)
+                        generalDark = np.median(darksImgList, axis=0)
+                
 
-                        # NORMALIZE
-                        medi = np.median(notNormFlat)
-                        generalFlat = notNormFlat / medi
+                # biases
+                if fileorcommandline == 1:
+                    biases = str(input('Do you have biases? (y/n) '))
 
-            else:
-                flatsBool = False
+                    if biases == 'y' or biases == 'yes' or biases == 'Y' or biases == 'Yes':
+                        biasesBool = True
+                        biasesPath = str(input(
+                            'Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
+                    else:
+                        biasesBool = False
 
-            # darks
-            if fileorcommandline == 1:
-                darks = str(input('Do you have darks? (y/n) '))
-
-                if (darks == 'y' or darks == 'yes' or darks == 'Y' or darks == 'Yes'):
-                    darksBool = True
-                    darksPath = str(input(
-                        'Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
-                else:
-                    darksBool = False
-            
-            # Only do the dark correction if user selects this option
-            if darksBool:
-                # Add / to end of directory if user does not input it
-                if darksPath[-1] != "/":
-                    darksPath += "/"
-                # Check for .FITS files
-                inputdarks = g.glob(darksPath + "*.FITS")
-                # If none exist, try other extensions
-                if len(inputdarks) == 0:
-                    inputdarks = g.glob(darksPath + "*.FIT")
-                if len(inputdarks) == 0:
-                    inputdarks = g.glob(darksPath + "*.fits")
-                if len(inputdarks) == 0:
-                    inputdarks = g.glob(darksPath + "*.fit")
-                if len(inputdarks) == 0:
-                    print("Error: no darks found in" + darksPath + ". Proceeding with reduction WITHOUT darks.")
-                    darksBool = False
-                else:
-                    darksImgList = []
-                    for darkFile in inputdarks:
-                        darkData = fits.getdata(darkFile, ext=0)
-                        darksImgList.append(darkData)
-                    generalDark = np.median(darksImgList, axis=0)
-            
-
-            # biases
-            if fileorcommandline == 1:
-                biases = str(input('Do you have biases? (y/n) '))
-
-                if biases == 'y' or biases == 'yes' or biases == 'Y' or biases == 'Yes':
-                    biasesBool = True
-                    biasesPath = str(input(
-                        'Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
+                if biasesBool:
+                    # Add / to end of directory if user does not input it
+                    if biasesPath[-1] != "/":
+                        biasesPath += "/"
+                    # Check for .FITS files
+                    inputbiases = g.glob(biasesPath + "*.FITS")
+                    # If none exist, try other extensions
+                    if len(inputbiases) == 0:
+                        inputbiases = g.glob(biasesPath + "*.FIT")
+                    if len(inputbiases) == 0:
+                        inputbiases = g.glob(biasesPath + "*.fits")
+                    if len(inputbiases) == 0:
+                        inputbiases = g.glob(biasesPath + "*.fit")
+                    if len(inputbiases) == 0:
+                        print("Error: no darks found in" + biasesPath + ". Proceeding with reduction WITHOUT biases.")
+                        darksBool = False
+                    else:
+                        biasesImgList = []
+                        for biasFile in inputbiases:
+                            biasData = fits.getdata(biasFile, ext=0)
+                            biasesImgList.append(biasData)
+                        generalBias = np.median(biasesImgList, axis=0)
                 else:
                     biasesBool = False
-
-            if biasesBool:
-                # Add / to end of directory if user does not input it
-                if biasesPath[-1] != "/":
-                    biasesPath += "/"
-                # Check for .FITS files
-                inputbiases = g.glob(biasesPath + "*.FITS")
-                # If none exist, try other extensions
-                if len(inputbiases) == 0:
-                    inputbiases = g.glob(biasesPath + "*.FIT")
-                if len(inputbiases) == 0:
-                    inputbiases = g.glob(biasesPath + "*.fits")
-                if len(inputbiases) == 0:
-                    inputbiases = g.glob(biasesPath + "*.fit")
-                if len(inputbiases) == 0:
-                    print("Error: no darks found in" + biasesPath + ". Proceeding with reduction WITHOUT biases.")
-                    darksBool = False
-                else:
-                    biasesImgList = []
-                    for biasFile in inputbiases:
-                        biasData = fits.getdata(biasFile, ext=0)
-                        biasesImgList.append(biasData)
-                    generalBias = np.median(biasesImgList, axis=0)
             else:
+                flatsBool = False
+                darksBool = False
                 biasesBool = False
-        else:
-            flatsBool = False
-            darksBool = False
-            biasesBool = False
 
         #Handle AAVSO Formatting
         if fileorcommandline == 1:
@@ -1582,445 +1598,464 @@ if __name__ == "__main__":
         print('Linear Term: ' + linearString)
         print('Quadratic Term: ' + quadString)
 
-        print('')
-        print('**************************')
-        print('Starting Reduction Process')
-        print('**************************')
+        if fitsortext == 1:
+            print('')
+            print('**************************')
+            print('Starting Reduction Process')
+            print('**************************')
 
-        #########################################
-        # FLUX DATA EXTRACTION AND MANIPULATION
-        #########################################
+            #########################################
+            # FLUX DATA EXTRACTION AND MANIPULATION
+            #########################################
 
-        fileNumber = 1
-        # ----TIME SORT THE FILES-------------------------------------------------------------
-        for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
+            fileNumber = 1
+            # ----TIME SORT THE FILES-------------------------------------------------------------
+            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
-            fitsHead = fits.open(fileName)  # opens the file
+                fitsHead = fits.open(fileName)  # opens the file
 
-            # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
-            # if fitsHead[0].header ['FILTER']== 'Harris-B':
-            #     #TIME
-            #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
-            #     timeList.append(timeVal) #adds to time value list
-            #     fileNameList.append (fileName)
+                # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
+                # if fitsHead[0].header ['FILTER']== 'Harris-B':
+                #     #TIME
+                #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
+                #     timeList.append(timeVal) #adds to time value list
+                #     fileNameList.append (fileName)
 
-            fitsHead = fits.open(fileName)  # opens the file
-            # TIME
-            timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
-            timeList.append(timeVal)  # adds to time value list
-            fileNameList.append(fileName)
+                fitsHead = fits.open(fileName)  # opens the file
+                # TIME
+                timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
+                timeList.append(timeVal)  # adds to time value list
+                fileNameList.append(fileName)
 
-        # Time sorts the file names based on the fits file header
-        timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
-        tsnCopy = timeSortedNames
+            # Time sorts the file names based on the fits file header
+            timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
+            tsnCopy = timeSortedNames
 
-        # sorts the times for later plotting use
-        sortedTimeList = sorted(timeList)
+            # sorts the times for later plotting use
+            sortedTimeList = sorted(timeList)
 
-        if len(sortedTimeList) == 0:
-            print("Error: .FITS files not found in " + directoryP)
-            sys.exit()
+            if len(sortedTimeList) == 0:
+                print("Error: .FITS files not found in " + directoryP)
+                sys.exit()
 
-        # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
+            # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 
-        # Loops through all of the possible aperture and annulus radius
-        # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
+            # Loops through all of the possible aperture and annulus radius
+            # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
 
-        hdul = fits.open(timeSortedNames[0])  # opens the fits file
-        firstImageData = fits.getdata(timeSortedNames[0], ext=0)
+            hdul = fits.open(timeSortedNames[0])  # opens the fits file
+            firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
-        # fit Target in the first image and use it to determine aperture and annulus range
-        targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
+            # fit Target in the first image and use it to determine aperture and annulus range
+            targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
+                                                                                    box=10)
+            minAperture = int(2 * max(targsigX, targsigY))
+            maxAperture = int(5 * max(targsigX, targsigY) + 1)
+            minAnnulus = 2
+            maxAnnulus = 5
+
+            # fit centroids for first image to determine priors to be used later
+            for compCounter in range(0, len(compStarList)):
+                print('')
+                print('***************************************************************')
+                print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
+                print('***************************************************************')
+
+                #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
+                timeSortedNames = tsnCopy
+
+                UIprevRPX, UIprevRPY = compStarList[compCounter]
+
+                print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
+                refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
                                                                                 box=10)
-        minAperture = int(2 * max(targsigX, targsigY))
-        maxAperture = int(5 * max(targsigX, targsigY) + 1)
-        minAnnulus = 2
-        maxAnnulus = 5
+                print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)))
+                print('')
 
-        # fit centroids for first image to determine priors to be used later
-        for compCounter in range(0, len(compStarList)):
-            print('')
-            print('***************************************************************')
-            print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
-            print('***************************************************************')
+                # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
 
-            #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
-            timeSortedNames = tsnCopy
+                for apertureR in range(int(2 * max(targsigX, targsigY)),
+                                    int(5 * max(targsigX, targsigY)) + 1):  # aperture loop
+                    for annulusR in range(int(2 * max(targsigX, targsigY)),
+                                        int(4 * max(targsigX, targsigY))):  # annulus loop
+                        fileNumber = 1
+                        print('Testing Comp Star #' + str(compCounter + 1) + ' w/ Aperture ' + str(
+                            apertureR) + ' and Annulus ' + str(annulusR))
+                        for imageFile in timeSortedNames:
 
-            UIprevRPX, UIprevRPY = compStarList[compCounter]
+                            hDul = fits.open(imageFile)  # opens the fits file
+                            imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
 
-            print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
-            refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
-                                                                              box=10)
-            print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)))
-            print('')
-
-            # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
-
-            for apertureR in range(int(2 * max(targsigX, targsigY)),
-                                   int(5 * max(targsigX, targsigY)) + 1):  # aperture loop
-                for annulusR in range(int(2 * max(targsigX, targsigY)),
-                                      int(4 * max(targsigX, targsigY))):  # annulus loop
-                    fileNumber = 1
-                    print('Testing Comp Star #' + str(compCounter + 1) + ' w/ Aperture ' + str(
-                        apertureR) + ' and Annulus ' + str(annulusR))
-                    for imageFile in timeSortedNames:
-
-                        hDul = fits.open(imageFile)  # opens the fits file
-                        imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
-
-                        # apply cals correction if applicable
-                        if darksBool:
-                            imageData = imageData - generalDark
-                        elif biasesBool:
-                            imageData = imageData - generalBias
-                        else:
-                            pass
-
-                        if flatsBool:
-                            imageData = imageData / generalFlat
-
-                        header = fits.getheader(imageFile)
-
-                        # Find the target star in the image and get its pixel coordinates if it is the first file
-                        if fileNumber == 1:
-                            # Initializing the star location guess as the user inputted pixel coordinates
-                            prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY  # 398, 275, 419, 203
-                            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
-                            prevImageData = imageData  # no shift should be registered
-
-                        # ------ CENTROID FITTING ----------------------------------------
-
-                        # corrects for any image shifts that result from a tracking slip
-                        shift, error, diffphase = register_translation(prevImageData, imageData)
-                        xShift = shift[1]
-                        yShift = shift[0]
-
-                        prevTPX = prevTPX - xShift
-                        prevTPY = prevTPY - yShift
-                        prevRPX = prevRPX - xShift
-                        prevRPY = prevRPY - yShift
-
-                        #set target search area
-                        txmin = int(prevTPX) - distFC  # left
-                        txmax = int(prevTPX) + distFC  # right
-                        tymin = int(prevTPY) - distFC  # top
-                        tymax = int(prevTPY) + distFC  # bottom
-                        
-                        #boolean that represents if either the target or comp star gets too close to the detector
-                        driftBool = False
-
-                        #check if your target star is too close to the edge of the detector
-                        if (txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0])): 
-                            print('*************************************************************************************')
-                            print ('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
-                            #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
-                            print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored')
-                            driftBool = True
-
-                            #mask off the rest of timeSortedNames and then ignore the rest of the procedure until
-
-                        # Set reference search area
-                        rxmin = int(prevRPX) - distFC  # left
-                        rxmax = int(prevRPX) + distFC  # right
-                        rymin = int(prevRPY) - distFC  # top
-                        rymax = int(prevRPY) + distFC  # bottom
-
-                        #check if the reference is too close to the edge of the detector
-                        if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
-                            print('*************************************************************************************') 
-                            print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
-                            #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
-                            print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
-                            print('*************************************************************************************')
-                            driftBool = True
-
-                        #if the star isn't too close, then proceed as normal
-                        if (driftBool == False):
-                            targSearchA = imageData[tymin:tymax, txmin:txmax]
-                            refSearchA = imageData[rymin:rymax, rxmin:rxmax]
-
-                            # Guess at Gaussian Parameters and feed them in to help gaussian fitter
-
-                            tGuessAmp = targSearchA.max() - targSearchA.min()
-                            myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()] #########ERROR HERE
-
-                            tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
-                                                                                init=myPriors, box=10)
-                            currTPX = tx
-                            currTPY = ty
-
-                            # append to list of target centroid positions for later plotting
-                            xTargCent.append(currTPX)
-                            yTargCent.append(currTPY)
-
-                            rGuessAmp = refSearchA.max() - refSearchA.min()
-                            myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
-                            rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
-                                                                                init=myRefPriors, box=10)
-                            currRPX = rx
-                            currRPY = ry
-
-                            # append to list of reference centroid positions for later plotting
-                            xRefCent.append(currRPX)
-                            yRefCent.append(currRPY)
-
-                            if tamplitude < 0 or tsigX < 0 or tsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
-                                print('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
-
-                            elif ramplitude < 0 or rsigX < 0 or rsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
-                                print('Could not fit 2D gaussian to Comparison Star for File Number' + str(fileNumber))
-
+                            # apply cals correction if applicable
+                            if darksBool:
+                                imageData = imageData - generalDark
+                            elif biasesBool:
+                                imageData = imageData - generalBias
                             else:
-                                # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
+                                pass
 
-                                # gets the flux value of the target star and subtracts the background light
-                                tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
+                            if flatsBool:
+                                imageData = imageData / generalFlat
 
-                                targetFluxVals.append(
-                                    tFluxVal)  # adds tFluxVal to the total list of flux values of target star
-                                targUncertanties.append(
-                                    math.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
+                            header = fits.getheader(imageFile)
 
-                                # gets the flux value of the reference star and subracts the background light
-                                rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
+                            # Find the target star in the image and get its pixel coordinates if it is the first file
+                            if fileNumber == 1:
+                                # Initializing the star location guess as the user inputted pixel coordinates
+                                prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY  # 398, 275, 419, 203
+                                prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
+                                prevImageData = imageData  # no shift should be registered
 
-                                referenceFluxVals.append(
-                                    rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
-                                refUncertanties.append(math.sqrt(rFluxVal))
+                            # ------ CENTROID FITTING ----------------------------------------
 
-                                # TIME
-                                currTime = getJulianTime(hDul)
-                                timesListed.append(currTime)
+                            # corrects for any image shifts that result from a tracking slip
+                            shift, error, diffphase = register_translation(prevImageData, imageData)
+                            xShift = shift[1]
+                            yShift = shift[0]
 
-                                # ORBITAL PHASE
-                                currentPhase = getPhase(currTime, planetPeriod,
-                                                        timeMidTransit)  # gets the phase of the target planet in the image file
-                                phasesList.append(currentPhase)  # adds to list of phases
+                            prevTPX = prevTPX - xShift
+                            prevTPY = prevTPY - yShift
+                            prevRPX = prevRPX - xShift
+                            prevRPY = prevRPY - yShift
 
-                                # AIRMASS
-                                airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
-                                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+                            #set target search area
+                            txmin = int(prevTPX) - distFC  # left
+                            txmax = int(prevTPX) + distFC  # right
+                            tymin = int(prevTPY) - distFC  # top
+                            tymax = int(prevTPY) + distFC  # bottom
+                            
+                            #boolean that represents if either the target or comp star gets too close to the detector
+                            driftBool = False
 
-                                # UPDATE PIXEL COORDINATES and SIGMAS
-                                # target
-                                prevTPX = currTPX
-                                prevTPY = currTPY
-                                prevTSigX = tsigX
-                                prevTSigY = tsigY
-                                # reference
-                                prevRPX = currRPX
-                                prevRPY = currRPY
-                                prevRSigX = rsigX
-                                prevTSigY = rsigY
+                            #check if your target star is too close to the edge of the detector
+                            if (txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0])): 
+                                print('*************************************************************************************')
+                                print ('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
+                                #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
+                                print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored')
+                                driftBool = True
 
-                            # UPDATE FILE COUNT
-                            prevImageData = imageData
-                            fileNumber = fileNumber + 1
-                            hDul.close()  # close the stream
+                                #mask off the rest of timeSortedNames and then ignore the rest of the procedure until
 
-                        #otherwise, mask off the rest of the files from time sorted names including the current one
-                        else:
-                            timeSortedNames = timeSortedNames[:fileNumber-1]
-                            break
+                            # Set reference search area
+                            rxmin = int(prevRPX) - distFC  # left
+                            rxmax = int(prevRPX) + distFC  # right
+                            rymin = int(prevRPY) - distFC  # top
+                            rymax = int(prevRPY) + distFC  # bottom
 
-                    # EXIT THE FILE LOOP
+                            #check if the reference is too close to the edge of the detector
+                            if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
+                                print('*************************************************************************************') 
+                                print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
+                                #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
+                                print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
+                                print('*************************************************************************************')
+                                driftBool = True
 
-                    # NORMALIZE BY REF STAR
-                    # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                    rawFinalFluxData = np.array(targetFluxVals) / np.array(referenceFluxVals)
+                            #if the star isn't too close, then proceed as normal
+                            if (driftBool == False):
+                                targSearchA = imageData[tymin:tymax, txmin:txmax]
+                                refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
-                    # --- 5 Sigma Clip from mean to get rid of ridiculous outliers (based on sigma of entire dataset)-----------------------------------------
+                                # Guess at Gaussian Parameters and feed them in to help gaussian fitter
 
-                    # Convert Everything to numpy Arrays
-                    arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
-                    arrayTargets = np.array(targetFluxVals)  # finalFluxData
-                    arrayTimes = np.array(timesListed)
-                    arrayPhases = np.array(phasesList)
-                    arrayTargets = np.array(targetFluxVals)
-                    arrayReferences = np.array(referenceFluxVals)
-                    arrayAirmass = np.array(airMassList)
-                    arrayTUnc = np.array(targUncertanties)
-                    arrayRUnc = np.array(refUncertanties)
+                                tGuessAmp = targSearchA.max() - targSearchA.min()
+                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()] #########ERROR HERE
 
-                    normUncertainties = (arrayTargets / arrayReferences) * np.sqrt(
-                        ((arrayTUnc / arrayTargets) ** 2.) + ((arrayRUnc / arrayReferences) ** 2.))
-                    arrayNormUnc = np.array(normUncertainties)
+                                tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
+                                                                                    init=myPriors, box=10)
+                                currTPX = tx
+                                currTPY = ty
 
-                    # Execute sigma_clip
-                    try:
-                        filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
-                    except TypeError:
-                        filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
+                                # append to list of target centroid positions for later plotting
+                                xTargCent.append(currTPX)
+                                yTargCent.append(currTPY)
 
-                    # -----LM LIGHTCURVE FIT--------------------------------------
+                                rGuessAmp = refSearchA.max() - refSearchA.min()
+                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
+                                rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
+                                                                                    init=myRefPriors, box=10)
+                                currRPX = rx
+                                currRPY = ry
 
-                    midTranCur = nearestTransitTime(timesListed, planetPeriod, timeMidTransit)
+                                # append to list of reference centroid positions for later plotting
+                                xRefCent.append(currRPX)
+                                yRefCent.append(currRPY)
 
-                    initvals = [midTranCur, rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
-                    up = [arrayTimes[-1], 1, np.inf, 1.0]
-                    low = [0, 0, -np.inf, -1.0]
-                    bound = [low, up]
+                                if tamplitude < 0 or tsigX < 0 or tsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
+                                    print('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
 
-                    # define residual function to be minimized
-                    def lc2min(x):
-                        gaelMod = lcmodel(x[0], x[1], x[2], x[3], arrayTimes[~filtered_data.mask],
-                                          arrayAirmass[~filtered_data.mask], plots=False)
-                        # airMod= ( x[2]*(np.exp(x[3]*arrayAirmass[~filtered_data.mask])))
-                        # return arrayFinalFlux[~filtered_data.mask]/airMod - gaelMod/airMod
-                        return ((arrayFinalFlux[~filtered_data.mask] / gaelMod) - 1.)
+                                elif ramplitude < 0 or rsigX < 0 or rsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
+                                    print('Could not fit 2D gaussian to Comparison Star for File Number' + str(fileNumber))
+
+                                else:
+                                    # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
+
+                                    # gets the flux value of the target star and subtracts the background light
+                                    tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
+
+                                    targetFluxVals.append(
+                                        tFluxVal)  # adds tFluxVal to the total list of flux values of target star
+                                    targUncertanties.append(
+                                        math.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
+
+                                    # gets the flux value of the reference star and subracts the background light
+                                    rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
+
+                                    referenceFluxVals.append(
+                                        rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
+                                    refUncertanties.append(math.sqrt(rFluxVal))
+
+                                    # TIME
+                                    currTime = getJulianTime(hDul)
+                                    timesListed.append(currTime)
+
+                                    # ORBITAL PHASE
+                                    currentPhase = getPhase(currTime, planetPeriod,
+                                                            timeMidTransit)  # gets the phase of the target planet in the image file
+                                    phasesList.append(currentPhase)  # adds to list of phases
+
+                                    # AIRMASS
+                                    airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
+                                    airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+
+                                    # UPDATE PIXEL COORDINATES and SIGMAS
+                                    # target
+                                    prevTPX = currTPX
+                                    prevTPY = currTPY
+                                    prevTSigX = tsigX
+                                    prevTSigY = tsigY
+                                    # reference
+                                    prevRPX = currRPX
+                                    prevRPY = currRPY
+                                    prevRSigX = rsigX
+                                    prevTSigY = rsigY
+
+                                # UPDATE FILE COUNT
+                                prevImageData = imageData
+                                fileNumber = fileNumber + 1
+                                hDul.close()  # close the stream
+
+                            #otherwise, mask off the rest of the files from time sorted names including the current one
+                            else:
+                                timeSortedNames = timeSortedNames[:fileNumber-1]
+                                break
+
+                        # EXIT THE FILE LOOP
+
+                        # NORMALIZE BY REF STAR
+                        # Convert the raw flux values to arrays and then divide them to get the normalized flux data
+                        rawFinalFluxData = np.array(targetFluxVals) / np.array(referenceFluxVals)
+
+                        # --- 5 Sigma Clip from mean to get rid of ridiculous outliers (based on sigma of entire dataset)-----------------------------------------
+
+                        # Convert Everything to numpy Arrays
+                        arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
+                        arrayTargets = np.array(targetFluxVals)  # finalFluxData
+                        arrayTimes = np.array(timesListed)
+                        arrayPhases = np.array(phasesList)
+                        arrayTargets = np.array(targetFluxVals)
+                        arrayReferences = np.array(referenceFluxVals)
+                        arrayAirmass = np.array(airMassList)
+                        arrayTUnc = np.array(targUncertanties)
+                        arrayRUnc = np.array(refUncertanties)
+
+                        normUncertainties = (arrayTargets / arrayReferences) * np.sqrt(
+                            ((arrayTUnc / arrayTargets) ** 2.) + ((arrayRUnc / arrayReferences) ** 2.))
+                        arrayNormUnc = np.array(normUncertainties)
+
+                        # Execute sigma_clip
+                        try:
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
+                        except TypeError:
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
+
+                        # -----LM LIGHTCURVE FIT--------------------------------------
+
+                        midTranCur = nearestTransitTime(timesListed, planetPeriod, timeMidTransit)
+
+                        initvals = [midTranCur, rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
+                        up = [arrayTimes[-1], 1, np.inf, 1.0]
+                        low = [0, 0, -np.inf, -1.0]
+                        bound = [low, up]
+
+                        # define residual function to be minimized
+                        def lc2min(x):
+                            gaelMod = lcmodel(x[0], x[1], x[2], x[3], arrayTimes[~filtered_data.mask],
+                                            arrayAirmass[~filtered_data.mask], plots=False)
+                            # airMod= ( x[2]*(np.exp(x[3]*arrayAirmass[~filtered_data.mask])))
+                            # return arrayFinalFlux[~filtered_data.mask]/airMod - gaelMod/airMod
+                            return ((arrayFinalFlux[~filtered_data.mask] / gaelMod) - 1.)
 
 
-                    res = least_squares(lc2min, x0=initvals, bounds=bound, method='trf')  # results of least squares fit
+                        res = least_squares(lc2min, x0=initvals, bounds=bound, method='trf')  # results of least squares fit
 
-                    # Calculate the standard deviation of the residuals
-                    residualVals = res.fun
-                    standardDev2 = np.std(residualVals, dtype=np.float64)  # calculates standard deviation of data
+                        # Calculate the standard deviation of the residuals
+                        residualVals = res.fun
+                        standardDev2 = np.std(residualVals, dtype=np.float64)  # calculates standard deviation of data
 
-                    lsFit = lcmodel(res.x[0], res.x[1], res.x[2], res.x[3], arrayTimes[~filtered_data.mask],
-                                    arrayAirmass[~filtered_data.mask], plots=False)
+                        lsFit = lcmodel(res.x[0], res.x[1], res.x[2], res.x[3], arrayTimes[~filtered_data.mask],
+                                        arrayAirmass[~filtered_data.mask], plots=False)
 
-                    # compute chi^2 from least squares fit
-                    # print('Median Uncertainty Value: '+ str(round(np.median(arrayNormUnc),5)))
-                    chi2_init = np.sum(((arrayFinalFlux[~filtered_data.mask] - lsFit) / arrayNormUnc[~filtered_data.mask]) ** 2.) / (
-                            len(arrayFinalFlux[~filtered_data.mask]) - len(res.x))
-                    # print("Non-Reduced chi2: ",np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.))
+                        # compute chi^2 from least squares fit
+                        # print('Median Uncertainty Value: '+ str(round(np.median(arrayNormUnc),5)))
+                        chi2_init = np.sum(((arrayFinalFlux[~filtered_data.mask] - lsFit) / arrayNormUnc[~filtered_data.mask]) ** 2.) / (
+                                len(arrayFinalFlux[~filtered_data.mask]) - len(res.x))
+                        # print("Non-Reduced chi2: ",np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.))
 
-                    # chi2 = np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.)/(len(arrayFinalFlux[~filtered_data.mask])-len(res.x)-1)
+                        # chi2 = np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.)/(len(arrayFinalFlux[~filtered_data.mask])-len(res.x)-1)
 
-                    print('The Residual Standard Devation is: ' + str(round(standardDev2, 6)))
-                    print('The Reduced Chi-Squared is: ' + str(round(chi2_init, 6)))
-                    print(' ')
-                    if minSTD > standardDev2:  # If the standard deviation is less than the previous min
-                        bestCompStar = compCounter + 1
-                        minSTD = standardDev2  # set the minimum standard deviation to that
+                        print('The Residual Standard Devation is: ' + str(round(standardDev2, 6)))
+                        print('The Reduced Chi-Squared is: ' + str(round(chi2_init, 6)))
+                        print(' ')
+                        if minSTD > standardDev2:  # If the standard deviation is less than the previous min
+                            bestCompStar = compCounter + 1
+                            minSTD = standardDev2  # set the minimum standard deviation to that
 
-                        arrayNormUnc = arrayNormUnc * np.sqrt(chi2_init)  # scale errorbars by chi2
-                        minAnnulus = annulusR  # then set min aperature and annulus to those values
-                        minAperture = apertureR
-                        # gets the centroid trace plots to ensure tracking is working
-                        finXTargCent = xTargCent
-                        finYTargCent = yTargCent
-                        finXRefCent = xRefCent
-                        finYRefCent = yRefCent
-                        # sets the lists we want to print to correspond to the optimal aperature
-                        goodFluxes = arrayFinalFlux[~filtered_data.mask]
-                        nonBJDTimes = arrayTimes[~filtered_data.mask]
-                        nonBJDPhases = arrayPhases[~filtered_data.mask]
-                        goodAirmasses = arrayAirmass[~filtered_data.mask]
-                        goodTargets = arrayTargets[~filtered_data.mask]
-                        goodReferences = arrayReferences[~filtered_data.mask]
-                        goodTUnc = arrayTUnc[~filtered_data.mask]
-                        goodRUnc = arrayRUnc[~filtered_data.mask]
-                        goodNormUnc = arrayNormUnc[~filtered_data.mask]
-                        goodResids = residualVals
+                            arrayNormUnc = arrayNormUnc * np.sqrt(chi2_init)  # scale errorbars by chi2
+                            minAnnulus = annulusR  # then set min aperature and annulus to those values
+                            minAperture = apertureR
+                            # gets the centroid trace plots to ensure tracking is working
+                            finXTargCent = xTargCent
+                            finYTargCent = yTargCent
+                            finXRefCent = xRefCent
+                            finYRefCent = yRefCent
+                            # sets the lists we want to print to correspond to the optimal aperature
+                            goodFluxes = arrayFinalFlux[~filtered_data.mask]
+                            nonBJDTimes = arrayTimes[~filtered_data.mask]
+                            nonBJDPhases = arrayPhases[~filtered_data.mask]
+                            goodAirmasses = arrayAirmass[~filtered_data.mask]
+                            goodTargets = arrayTargets[~filtered_data.mask]
+                            goodReferences = arrayReferences[~filtered_data.mask]
+                            goodTUnc = arrayTUnc[~filtered_data.mask]
+                            goodRUnc = arrayRUnc[~filtered_data.mask]
+                            goodNormUnc = arrayNormUnc[~filtered_data.mask]
+                            goodResids = residualVals
 
-                    # Reinitialize the the arrays to be empty
-                    airMassList = []
-                    phasesList = []
-                    timesListed = []
-                    targetFluxVals = []
-                    referenceFluxVals = []
-                    targUncertanties = []
-                    refUncertanties = []
-                    normUncertainties = []
-                    xTargCent = []
-                    yTargCent = []
-                    xRefCent = []
-                    yRefCent = []
+                        # Reinitialize the the arrays to be empty
+                        airMassList = []
+                        phasesList = []
+                        timesListed = []
+                        targetFluxVals = []
+                        referenceFluxVals = []
+                        targUncertanties = []
+                        refUncertanties = []
+                        normUncertainties = []
+                        xTargCent = []
+                        yTargCent = []
+                        xRefCent = []
+                        yRefCent = []
 
-                # Exit aperture loop
-            # Exit annulus loop
-        # Exit the Comp Stars Loop
-        print('')
-        print('*********************************************')
-        print('Best Comparison Star: #' + str(bestCompStar))
-        print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-        print('Optimal Aperture: ' + str(minAperture))
-        print('Optimal Annulus: ' + str(minAnnulus))
-        print('********************************************')
-        print('')
+                    # Exit aperture loop
+                # Exit annulus loop
+            # Exit the Comp Stars Loop
+            print('')
+            print('*********************************************')
+            print('Best Comparison Star: #' + str(bestCompStar))
+            print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+            print('Optimal Aperture: ' + str(minAperture))
+            print('Optimal Annulus: ' + str(minAnnulus))
+            print('********************************************')
+            print('')
 
-        # convert all the final times into BJD
-        timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc')
-        resultos = utc_tdb.JDUTC_to_BJDTDB(timesToConvert, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
-        goodTimes = resultos[0]
-        goodPhasesList = []
+            # convert all the final times into BJD
+            timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc')
+            resultos = utc_tdb.JDUTC_to_BJDTDB(timesToConvert, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
+            goodTimes = resultos[0]
+            goodPhasesList = []
 
-        # Centroid position plots
-        plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes)
+            # Centroid position plots
+            plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes)
 
-        # convert the exoplanet archive mid transit time to bjd
-        tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
-        forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
-        bjdMidTOld = float(forPhaseResult[0])
+            # convert the exoplanet archive mid transit time to bjd
+            tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
+            forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
+            bjdMidTOld = float(forPhaseResult[0])
 
-        #convert all the phases based on the updated bjd times
-        for convertedTime in goodTimes:
-            bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
-            goodPhasesList.append(bjdPhase)
-        goodPhases = np.array(goodPhasesList)
+            #convert all the phases based on the updated bjd times
+            for convertedTime in goodTimes:
+                bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
+                goodPhasesList.append(bjdPhase)
+            goodPhases = np.array(goodPhasesList)
 
-        # another 3 sigma clip based on residuals of the best LM fit
-        try:
-            interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=median, copy=False)
-        except TypeError:
-            interFilter = sigma_clip(goodResids, sigma=3, cenfunc=median, copy=False)
+            # another 3 sigma clip based on residuals of the best LM fit
+            try:
+                interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=median, copy=False)
+            except TypeError:
+                interFilter = sigma_clip(goodResids, sigma=3, cenfunc=median, copy=False)
 
-        goodFluxes = goodFluxes[~interFilter.mask]
-        goodTimes = goodTimes[~interFilter.mask]
-        goodPhases = goodPhases[~interFilter.mask]
-        goodAirmasses = goodAirmasses[~interFilter.mask]
-        goodTargets = goodTargets[~interFilter.mask]
-        goodReferences = goodReferences[~interFilter.mask]
-        goodTUnc = goodTUnc[~interFilter.mask]
-        goodRUnc = goodRUnc[~interFilter.mask]
-        goodNormUnc = goodNormUnc[~interFilter.mask]
+            goodFluxes = goodFluxes[~interFilter.mask]
+            goodTimes = goodTimes[~interFilter.mask]
+            goodPhases = goodPhases[~interFilter.mask]
+            goodAirmasses = goodAirmasses[~interFilter.mask]
+            goodTargets = goodTargets[~interFilter.mask]
+            goodReferences = goodReferences[~interFilter.mask]
+            goodTUnc = goodTUnc[~interFilter.mask]
+            goodRUnc = goodRUnc[~interFilter.mask]
+            goodNormUnc = goodNormUnc[~interFilter.mask]
 
-        # Calculate the standard deviation of the normalized flux values
-        standardDev1 = np.std(goodFluxes)
+            # Calculate the standard deviation of the normalized flux values
+            standardDev1 = np.std(goodFluxes)
 
-        ######################################
-        # PLOTS ROUND 1
-        ####################################
+            ######################################
+            # PLOTS ROUND 1
+            ####################################
 
-        # Make plots of raw target and reference values
-        plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
-        plt.xlabel('Time (BJD)')
-        plt.ylabel('Total Flux')
-        plt.rc('grid', linestyle="-", color='black')
-        plt.grid(True)
-        plt.title(targetName + ' Raw Flux Values ' + date)
-        plt.savefig(saveDirectory + 'TargetRawFlux' + targetName + date + '.png')
-        plt.close()
+            # Make plots of raw target and reference values
+            plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
+            plt.xlabel('Time (BJD)')
+            plt.ylabel('Total Flux')
+            plt.rc('grid', linestyle="-", color='black')
+            plt.grid(True)
+            plt.title(targetName + ' Raw Flux Values ' + date)
+            plt.savefig(saveDirectory + 'TargetRawFlux' + targetName + date + '.png')
+            plt.close()
 
-        plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
-        plt.xlabel('Time (BJD)')
-        plt.ylabel('Total Flux')
-        plt.rc('grid', linestyle="-", color='black')
-        plt.grid(True)
-        plt.title('Comparison Star Raw Flux Values ' + date)
-        plt.savefig(saveDirectory + 'CompRawFlux' + targetName + date + '.png')
-        plt.close()
+            plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
+            plt.xlabel('Time (BJD)')
+            plt.ylabel('Total Flux')
+            plt.rc('grid', linestyle="-", color='black')
+            plt.grid(True)
+            plt.title('Comparison Star Raw Flux Values ' + date)
+            plt.savefig(saveDirectory + 'CompRawFlux' + targetName + date + '.png')
+            plt.close()
 
-        # Plots final reduced light curve (after the 3 sigma clip)
-        plt.errorbar(goodPhases, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
-        plt.xlabel('Phase')
-        plt.ylabel('Normalized Flux')
-        plt.rc('grid', linestyle="-", color='black')
-        plt.grid(True)
-        plt.title(targetName + ' Normalized Flux vs. Phase ' + date)
-        plt.savefig(saveDirectory + 'NormalizedFluxPhase' + targetName + date + '.png')
-        plt.close()
+            # Plots final reduced light curve (after the 3 sigma clip)
+            plt.errorbar(goodPhases, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
+            plt.xlabel('Phase')
+            plt.ylabel('Normalized Flux')
+            plt.rc('grid', linestyle="-", color='black')
+            plt.grid(True)
+            plt.title(targetName + ' Normalized Flux vs. Phase ' + date)
+            plt.savefig(saveDirectory + 'NormalizedFluxPhase' + targetName + date + '.png')
+            plt.close()
 
-        # Save normalized flux to text file prior to MCMC
-        outParamsFile = open(saveDirectory + 'NormalizedFlux' + targetName + date + '.txt', 'w+')
-        outParamsFile.write(str("BJD") + ',' + str("Norm Flux") + ',' + str("Norm Err") + ',' + str("AM") + '\n')
-        for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
-            outParamsFile.write(str(round(ti, 8)) + ',' + str(round(fi, 7)) + ',' + str(round(erri, 6)) + ',' + str(round(ami, 2)) + '\n')
-        # CODE YIELDED DATA IN PREV LINE FORMAT
-        outParamsFile.close()
-        print('Output File Saved')
+            # Save normalized flux to text file prior to MCMC
+            outParamsFile = open(saveDirectory + 'NormalizedFlux' + targetName + date + '.txt', 'w+')
+            outParamsFile.write(str("BJD") + ',' + str("Norm Flux") + ',' + str("Norm Err") + ',' + str("AM") + '\n')
+            for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
+                outParamsFile.write(str(round(ti, 8)) + ',' + str(round(fi, 7)) + ',' + str(round(erri, 6)) + ',' + str(round(ami, 2)) + '\n')
+            # CODE YIELDED DATA IN PREV LINE FORMAT
+            outParamsFile.close()
+            print('Output File Saved')
+        else:
+            goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
+            for i in processeddata:
+                try:
+                    goodTimes.append(float(i.split(",")[0]))
+                    goodFluxes.append(float(i.split(",")[1]))
+                    goodNormUnc.append(float(i.split(",")[2]))
+                    goodAirmasses.append(float(i.split(",")[3]))
+                except ValueError:
+                    continue
+
+            goodTimes = np.array(goodTimes)
+            goodFluxes = np.array(goodFluxes)
+            goodNormUnc = np.array(goodNormUnc)
+            goodAirmasses = np.array(goodAirmasses)
+
+            bjdMidTOld = goodTimes[0]
+            standardDev1 = np.std(goodFluxes)
 
         print(' ')
         print('****************************************')
@@ -2146,12 +2181,13 @@ if __name__ == "__main__":
 
         finalFluxes = goodFluxes[~finalFilter.mask]
         finalTimes = goodTimes[~finalFilter.mask]
-        finalPhases = goodPhases[~finalFilter.mask]
+        # finalPhases = goodPhases[~finalFilter.mask]
+        finalPhases = (finalTimes - fitMidT)/planetPeriod + 1.
         finalAirmasses = goodAirmasses[~finalFilter.mask]
-        finalTargets = goodTargets[~finalFilter.mask]
-        finalReferences = goodReferences[~finalFilter.mask]
-        finalTUnc = goodTUnc[~finalFilter.mask]
-        finalRUnc = goodRUnc[~finalFilter.mask]
+        # finalTargets = goodTargets[~finalFilter.mask]
+        # finalReferences = goodReferences[~finalFilter.mask]
+        # finalTUnc = goodTUnc[~finalFilter.mask]
+        # finalRUnc = goodRUnc[~finalFilter.mask]
         finalNormUnc = goodNormUnc[~finalFilter.mask]
 
         finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))

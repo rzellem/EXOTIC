@@ -1916,10 +1916,17 @@ if __name__ == "__main__":
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
-                            finXTargCent = xTargCent
-                            finYTargCent = yTargCent
-                            finXRefCent = xRefCent
-                            finYRefCent = yRefCent
+                            finXTargCentArray = np.array(xTargCent)
+                            finYTargCentArray = np.array(yTargCent)
+                            finXRefCentArray = np.array(xRefCent)
+                            finYRefCentArray = np.array(yRefCent)
+                            
+                            #APPLY DATA FILTER
+                            #apply data filter sets the lists we want to print to correspond to the optimal aperature
+                            finXTargCent = finXTargCentArray[~filtered_data.mask]
+                            finYTargCent = finYTargCentArray[~filtered_data.mask]
+                            finXRefCent  = finXRefCentArray[~filtered_data.mask]
+                            finYRefCent  = finYRefCentArray[~filtered_data.mask]
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = arrayFinalFlux[~filtered_data.mask]
                             nonBJDTimes = arrayTimes[~filtered_data.mask]

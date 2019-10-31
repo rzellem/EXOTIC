@@ -1973,7 +1973,8 @@ if __name__ == "__main__":
             ltt_bary = timesToConvert.light_travel_time(targetloc)
             time_barycentre = timesToConvert.tdb + ltt_bary
             resultos = time_barycentre.value
-            goodTimes = resultos[0]
+            #goodTimes = resultos[0]
+            goodTimes = resultos
             goodPhasesList = []
 
             # Centroid position plots

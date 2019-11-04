@@ -1984,7 +1984,7 @@ if __name__ == "__main__":
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
-            bjdMidTOld = timeMidTransit[:]
+            bjdMidTOld = timeMidTransit
 
             #convert all the phases based on the updated bjd times
             for convertedTime in goodTimes:

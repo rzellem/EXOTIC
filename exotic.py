@@ -334,6 +334,8 @@ def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
 def getJulianTime(hdul):
     if 'JULIAN' in hdul[0].header:
         julianTime = float(hdul[0].header['JULIAN'])
+    elif "MJD-OBS" in hdul[0].header:
+        julianTime = float(hdul[0].header["MJD-OBS"])+2400000.5
     else:
         gDateTime = hdul[0].header['Date-Obs']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)

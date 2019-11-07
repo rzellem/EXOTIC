@@ -28,6 +28,7 @@ import os
 import logging
 import sys
 from numpy import mean, median
+import platform
 
 # glob import
 import glob as g
@@ -1141,11 +1142,13 @@ if __name__ == "__main__":
                 sys.exit()
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
+            if datafile == 'ok':
+                datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
 
             try:
                 initf = open(datafile, 'r')
             except FileNotFoundError:
-                print("Initialization file not found. Please try again.")
+                print("Data file not found. Please try again.")
                 sys.exit()
 
             processeddata = initf.readlines()
@@ -2166,7 +2169,10 @@ if __name__ == "__main__":
 
         with lcMod:
             step = pm.Metropolis()  # Metropolis-Hastings Sampling Technique
-            trace = pm.sample(final_chain_length, step, chains=2)
+            if "Windows" in platform.system():
+                trace = pm.sample(final_chain_length, step, chains=None, cores=1) # For some reason, Windows machines do not like using multi-cores with pymc3....
+            else:
+                trace = pm.sample(final_chain_length, step)
 
         # ----Plot the Results from the MCMC -------------------------------------------------------------------
         print('')

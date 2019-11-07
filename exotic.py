@@ -931,7 +931,7 @@ if __name__ == "__main__":
     fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
-    distFC = 15  # gaussian search area
+    distFC = 10  # gaussian search area
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
@@ -1760,13 +1760,32 @@ if __name__ == "__main__":
                                 targSearchA = imageData[tymin:tymax, txmin:txmax]
                                 refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
+                                targPos = [prevTPX, prevTPY]
+                                
+                                #get minimum background value bigger than 0
+                                targImFlat = np.sort(np.array(targSearchA).ravel())
+
+                                for el in targImFlat:
+                                    if (el > 0):
+                                        tGuessBkg = el
+                                        break
+                                
+                                refImFlat = np.sort(np.array(refSearchA).ravel())
+                                for rel in refImFlat:
+                                    if (rel > 0):
+                                        rGuessBkg = rel
+                                        break
+                                
+
                                 # Guess at Gaussian Parameters and feed them in to help gaussian fitter
 
-                                tGuessAmp = targSearchA.max() - targSearchA.min()
-                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()] #########ERROR HERE
+                                tGuessAmp = targSearchA.max() - tGuessBkg
+                                if (tGuessAmp<0):
+                                    print('Error: the Darks have a higher pixel counts than the image itself')
+                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, tGuessBkg] #########ERROR HERE
 
-                                tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY],
-                                                                                    init=myPriors, box=10)
+                                tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
+                                                                                    init=myPriors, box=distFC)
                                 currTPX = tx
                                 currTPY = ty
 
@@ -1774,10 +1793,10 @@ if __name__ == "__main__":
                                 xTargCent.append(currTPX)
                                 yTargCent.append(currTPY)
 
-                                rGuessAmp = refSearchA.max() - refSearchA.min()
-                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
+                                rGuessAmp = refSearchA.max() - rGuessBkg
+                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, rGuessBkg]
                                 rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
-                                                                                    init=myRefPriors, box=10)
+                                                                                    init=myRefPriors, box=distFC)
                                 currRPX = rx
                                 currRPY = ry
 
@@ -1876,10 +1895,10 @@ if __name__ == "__main__":
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
                         midTranCur = nearestTransitTime(timesListed, planetPeriod, timeMidTransit)
-
-                        initvals = [midTranCur, rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
+                        #midTranCur was in the initval first
+                        initvals = [np.median(arrayTimes), rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
                         up = [arrayTimes[-1], 1, np.inf, 1.0]
-                        low = [0, 0, -np.inf, -1.0]
+                        low = [arrayTimes[0], 0, -np.inf, -1.0]
                         bound = [low, up]
 
                         # define residual function to be minimized
@@ -2147,7 +2166,7 @@ if __name__ == "__main__":
 
         with lcMod:
             step = pm.Metropolis()  # Metropolis-Hastings Sampling Technique
-            trace = pm.sample(final_chain_length, step, chains=None)
+            trace = pm.sample(final_chain_length, step, chains=2)
 
         # ----Plot the Results from the MCMC -------------------------------------------------------------------
         print('')

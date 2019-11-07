@@ -2388,7 +2388,7 @@ if __name__ == "__main__":
                     round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
                     round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
             # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
-            outParamsFile.write('#DATE NORM_FLUX MERR DETREND_1\n')
+            outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1\n')
             for aavsoC in range(0, len(finalTimes)):
                 outParamsFile.write(
                     str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalFluxes[aavsoC], 7)) + ',' + str(

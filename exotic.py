@@ -15,9 +15,10 @@
 
 
 ####################################################################
-# EXOplanet Transit Interpretation Code (EXOTIC)s
+# EXOplanet Transit Interpretation Code (EXOTIC)
 #
 # Author: Ethan Blaser
+# Sub-authors: Rob Zellem, Kyle Pearson, John Engelke
 # Mentors: Dr. Robert Zellem and Anya Biferno
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
@@ -626,53 +627,32 @@ def chisquared(observed_values, expected_values, uncertainty):
 # make and plot the chi squared traces
 def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     print("Performing Chi^2 Burn")
-    counter = 0
-    chiSquaredList1 = []
-    chainLength = []
-    if "Windows" in platform.system():
-        midTArr1 = myTrace.get_values('Tmid', combine=False)
-        radiusArr1 = myTrace.get_values('RpRs', combine=False)
-        am1Arr1 = myTrace.get_values('Am1', combine=False)
-        am2Arr1 = myTrace.get_values('Am2', combine=False)
-    else:
-        chiSquaredList2 = []
-        midTArr1, midTArr2 = myTrace.get_values('Tmid', combine=False)
-        radiusArr1, radiusArr2 = myTrace.get_values('RpRs', combine=False)
-        am1Arr1, am1Arr2 = myTrace.get_values('Am1', combine=False)
-        am2Arr1, am2Arr2 = myTrace.get_values('Am2', combine=False)
 
-    while counter < len(midTArr1):
-        # first chain
-        midT1 = midTArr1[counter]
-        rad1 = radiusArr1[counter]
-        am11 = am1Arr1[counter]
-        am21 = am2Arr1[counter]
+    midTArr = myTrace.get_values('Tmid', combine=False)
+    radiusArr = myTrace.get_values('RpRs', combine=False)
+    am1Arr = myTrace.get_values('Am1', combine=False)
+    am2Arr = myTrace.get_values('Am2', combine=False)
 
-        fittedModel1 = lcmodel(midT1, rad1, am11, am21, myTimes, theAirmasses, plots=False)
-        chis1 = np.sum(((myFluxes - fittedModel1) / uncertainty) ** 2.) / (len(myFluxes) - 4)
-        chiSquaredList1.append(chis1)
+    allchiSquared = []
+    for chain in myTrace.chains:
+        chiSquaredList1 = []
+        for counter in np.arange(len(midTArr[chain])):#[::25]:
+            # first chain
+            midT1 = midTArr[chain][counter]
+            rad1 = radiusArr[chain][counter]
+            am11 = am1Arr[chain][counter]
+            am21 = am2Arr[chain][counter]
 
-        if "Windows" not in platform.system():
-            # second chain
-            midT2 = midTArr2[counter]
-            rad2 = radiusArr2[counter]
-            am12 = am1Arr2[counter]
-            am22 = am2Arr2[counter]
-
-            fittedModel2 = lcmodel(midT2, rad2, am12, am22, myTimes, theAirmasses, plots=False)
-            chis2 = np.sum(((myFluxes - fittedModel2) / uncertainty) ** 2.) / (len(myFluxes) - 4)
-            chiSquaredList2.append(chis2)
-
-        # counter stuff
-        chainLength.append(counter)
-        counter = counter + 25
+            fittedModel1 = lcmodel(midT1, rad1, am11, am21, myTimes, theAirmasses, plots=False)
+            chis1 = np.sum(((myFluxes - fittedModel1) / uncertainty) ** 2.) / (len(myFluxes) - 4)
+            chiSquaredList1.append(chis1)
+        allchiSquared.append(chiSquaredList1)
 
     plt.figure()
     plt.xlabel('Chain Length')
     plt.ylabel('Chi^2')
-    plt.plot(chainLength, chiSquaredList1, '-bo')
-    if "Windows" not in platform.system():
-        plt.plot(chainLength, chiSquaredList2, '-mo')
+    for chain in np.arange(myTrace.nchains):
+        plt.plot(np.arange(len(allchiSquared[chain])), allchiSquared[chain], '-bo')
     plt.rc('grid', linestyle="-", color='black')
     plt.grid(True)
     plt.title(targetName + ' Chi^2 vs. Chain Length ' + date)
@@ -680,29 +660,21 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     plt.savefig(saveDirectory + 'ChiSquaredTrace' + date + targetName + '.png')
     plt.close()
 
-    if "Windows" in platform.system():
-        chiMedian = np.median(chiSquaredList1)
-        burn1 = next(x for x, val in enumerate(chiSquaredList1) if val < chiMedian)
+    chiMedian = np.nanmedian(allchiSquared)
+    
+    burns = []
+    for chain in np.arange(myTrace.nchains):
+        idxburn, = np.where(allchiSquared[chain] <= chiMedian)
+        if len(idxburn) == 0:
+            burnno = 0
+        else:
+            burnno = idxburn[0]
+        burns.append(burnno)
 
-        completeBurn = max(burn1)
+    completeBurn = np.max(burns)
+    print('Chi^2 Burn In Length: ' + str(completeBurn))
 
-        print('Chi^2 Burn In Length: ' + str(completeBurn))
-
-        burnedChis = chiSquaredList1[completeBurn:]
-    else:
-        # calculate and return burn in
-        mergedChi = chiSquaredList1 + chiSquaredList2  # merge the chi squared chains
-        chiMedian = np.median(mergedChi)  # take median of all of chi squared values for both chains
-        burn1 = next(x for x, val in enumerate(chiSquaredList1) if val < chiMedian)
-        burn2 = next(x for x, val in enumerate(chiSquaredList2) if val < chiMedian)
-
-        completeBurn = max(burn1, burn2)
-
-        print('Chi^2 Burn In Length: ' + str(completeBurn))
-
-        burnedChis = chiSquaredList1[completeBurn:] + chiSquaredList2[completeBurn:]
-
-    return completeBurn, burnedChis
+    return completeBurn
 
 
 # make plots of the centroid positions as a function of time
@@ -1162,6 +1134,7 @@ if __name__ == "__main__":
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
                 datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
+                # datafile = "/Users/rzellem/Downloads/fluxorama.csv"
 
             try:
                 initf = open(datafile, 'r')
@@ -2190,7 +2163,7 @@ if __name__ == "__main__":
             if "Windows" in platform.system():
                 trace = pm.sample(final_chain_length, step, chains=None, cores=1) # For some reason, Windows machines do not like using multi-cores with pymc3....
             else:
-                trace = pm.sample(final_chain_length, step)
+                trace = pm.sample(final_chain_length, step, chains=None, cores=None)
 
         # ----Plot the Results from the MCMC -------------------------------------------------------------------
         print('')
@@ -2199,7 +2172,7 @@ if __name__ == "__main__":
         print('')
 
         # ChiSquared Trace to determine burn in length
-        burn, burnChiSquared = plotChi2Trace(trace, goodFluxes, goodTimes, goodAirmasses, goodNormUnc)
+        burn = plotChi2Trace(trace, goodFluxes, goodTimes, goodAirmasses, goodNormUnc)
 
         # OUTPUTS
         fitMidTArray = trace['Tmid', burn:]
@@ -2219,9 +2192,9 @@ if __name__ == "__main__":
         except ImportError:
             pass
 
-        # Gelman Rubin
-        print("Gelman Rubin Convergence Test:")
-        print(pm.gelman_rubin(trace))
+        # # Gelman Rubin
+        # print("Gelman Rubin Convergence Test:")
+        # print(pm.gelman_rubin(trace))
         
         # TODO set the MCMC chain length low, then run a gelman_rubin(trace) to see if <=1.1
         # (RTZ will probably make this 1.01 to be safe)

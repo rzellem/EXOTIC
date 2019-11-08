@@ -628,12 +628,18 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     print("Performing Chi^2 Burn")
     counter = 0
     chiSquaredList1 = []
-    chiSquaredList2 = []
     chainLength = []
-    midTArr1, midTArr2 = myTrace.get_values('Tmid', combine=False)
-    radiusArr1, radiusArr2 = myTrace.get_values('RpRs', combine=False)
-    am1Arr1, am1Arr2 = myTrace.get_values('Am1', combine=False)
-    am2Arr1, am2Arr2 = myTrace.get_values('Am2', combine=False)
+    if "Windows" in platform.system():
+        midTArr1 = myTrace.get_values('Tmid', combine=False)
+        radiusArr1 = myTrace.get_values('RpRs', combine=False)
+        am1Arr1 = myTrace.get_values('Am1', combine=False)
+        am2Arr1 = myTrace.get_values('Am2', combine=False)
+    else:
+        chiSquaredList2 = []
+        midTArr1, midTArr2 = myTrace.get_values('Tmid', combine=False)
+        radiusArr1, radiusArr2 = myTrace.get_values('RpRs', combine=False)
+        am1Arr1, am1Arr2 = myTrace.get_values('Am1', combine=False)
+        am2Arr1, am2Arr2 = myTrace.get_values('Am2', combine=False)
 
     while counter < len(midTArr1):
         # first chain
@@ -646,15 +652,16 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
         chis1 = np.sum(((myFluxes - fittedModel1) / uncertainty) ** 2.) / (len(myFluxes) - 4)
         chiSquaredList1.append(chis1)
 
-        # second chain
-        midT2 = midTArr2[counter]
-        rad2 = radiusArr2[counter]
-        am12 = am1Arr2[counter]
-        am22 = am2Arr2[counter]
+        if "Windows" not in platform.system():
+            # second chain
+            midT2 = midTArr2[counter]
+            rad2 = radiusArr2[counter]
+            am12 = am1Arr2[counter]
+            am22 = am2Arr2[counter]
 
-        fittedModel2 = lcmodel(midT2, rad2, am12, am22, myTimes, theAirmasses, plots=False)
-        chis2 = np.sum(((myFluxes - fittedModel2) / uncertainty) ** 2.) / (len(myFluxes) - 4)
-        chiSquaredList2.append(chis2)
+            fittedModel2 = lcmodel(midT2, rad2, am12, am22, myTimes, theAirmasses, plots=False)
+            chis2 = np.sum(((myFluxes - fittedModel2) / uncertainty) ** 2.) / (len(myFluxes) - 4)
+            chiSquaredList2.append(chis2)
 
         # counter stuff
         chainLength.append(counter)
@@ -664,7 +671,8 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     plt.xlabel('Chain Length')
     plt.ylabel('Chi^2')
     plt.plot(chainLength, chiSquaredList1, '-bo')
-    plt.plot(chainLength, chiSquaredList2, '-mo')
+    if "Windows" not in platform.system():
+        plt.plot(chainLength, chiSquaredList2, '-mo')
     plt.rc('grid', linestyle="-", color='black')
     plt.grid(True)
     plt.title(targetName + ' Chi^2 vs. Chain Length ' + date)
@@ -672,17 +680,27 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     plt.savefig(saveDirectory + 'ChiSquaredTrace' + date + targetName + '.png')
     plt.close()
 
-    # calculate and return burn in
-    mergedChi = chiSquaredList1 + chiSquaredList2  # merge the chi squared chains
-    chiMedian = np.median(mergedChi)  # take median of all of chi squared values for both chains
-    burn1 = next(x for x, val in enumerate(chiSquaredList1) if val < chiMedian)
-    burn2 = next(x for x, val in enumerate(chiSquaredList2) if val < chiMedian)
+    if "Windows" in platform.system():
+        chiMedian = np.median(chiSquaredList1)
+        burn1 = next(x for x, val in enumerate(chiSquaredList1) if val < chiMedian)
 
-    completeBurn = max(burn1, burn2)
+        completeBurn = max(burn1)
 
-    print('Chi^2 Burn In Length: ' + str(completeBurn))
+        print('Chi^2 Burn In Length: ' + str(completeBurn))
 
-    burnedChis = chiSquaredList1[completeBurn:] + chiSquaredList2[completeBurn:]
+        burnedChis = chiSquaredList1[completeBurn:]
+    else:
+        # calculate and return burn in
+        mergedChi = chiSquaredList1 + chiSquaredList2  # merge the chi squared chains
+        chiMedian = np.median(mergedChi)  # take median of all of chi squared values for both chains
+        burn1 = next(x for x, val in enumerate(chiSquaredList1) if val < chiMedian)
+        burn2 = next(x for x, val in enumerate(chiSquaredList2) if val < chiMedian)
+
+        completeBurn = max(burn1, burn2)
+
+        print('Chi^2 Burn In Length: ' + str(completeBurn))
+
+        burnedChis = chiSquaredList1[completeBurn:] + chiSquaredList2[completeBurn:]
 
     return completeBurn, burnedChis
 

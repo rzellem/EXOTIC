@@ -334,16 +334,27 @@ def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
+    # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
+    exptime_offset = 0
     if 'JULIAN' in hdul[0].header:
         julianTime = float(hdul[0].header['JULIAN'])
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in hdul[0].header.comments['JULIAN']:
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
     elif "MJD-OBS" in hdul[0].header:
         julianTime = float(hdul[0].header["MJD-OBS"])+2400000.5
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in hdul[0].header.comments['MJD-OBS']:
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
     else:
         gDateTime = hdul[0].header['Date-Obs']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
         time = astropy.time.Time(dt)
         julianTime = time.jd
-    return (julianTime)
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in hdul[0].header.comments['Date-Obs']:
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
+    return (julianTime+exptime_offset)
 
 
 # Method that gets and returns the current phase of the target

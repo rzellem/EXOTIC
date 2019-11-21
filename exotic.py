@@ -23,6 +23,12 @@
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
 
+# EXOTIC version number
+# Major releases are the first digit
+# The next two digits are minor Github commits
+# (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
+versionid = "0.5.0"
+
 
 # --IMPORTS -----------------------------------------------------------
 import os
@@ -935,6 +941,7 @@ if __name__ == "__main__":
     print('')
     print('*************************************************************')
     print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
+    print("Version ",versionid)
     print('*************************************************************')
     print('')
 
@@ -1091,6 +1098,8 @@ if __name__ == "__main__":
                     binning = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Exposure Time (seconds)':
                     exposureTime = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Filter Name':
+                    filterName = line.split("\t")[-1].rstrip()
 
                 if line.split("\t")[0] == 'planet name':
                         targetName = line.split("\t")[-1].rstrip()
@@ -1452,6 +1461,7 @@ if __name__ == "__main__":
                 userCode = str(input('Please enter your AAVSO Observer Account Number: '))
                 binning = str(input('Please enter your pixel binning: '))
                 exposureTime = str(input('Please enter your exposure time (seconds): ')) 
+                filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): ')) 
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -2405,7 +2415,7 @@ if __name__ == "__main__":
             outParamsFile.write('#EXOPLANET_NAME=' + targetName + '\n')  # code yields
             outParamsFile.write('#BINNING=' + binning + '\n')  # user input
             outParamsFile.write('#EXPOSURE_TIME=' + str(exposureTime) + '\n')  # UI
-            outParamsFile.write('#FILTER=CV\n')  # possibly UI but probably not
+            outParamsFile.write('#FILTER=' + str(filterName) + '\n')  # possibly UI but probably not
             outParamsFile.write('#DETREND_PARAMETERS=AIRMASS\n')  # fixed
             outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
             # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(

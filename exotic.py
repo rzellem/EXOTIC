@@ -334,19 +334,20 @@ def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
-    # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     exptime_offset = 0
-    if 'JULIAN' in hdul[0].header:
-        julianTime = float(hdul[0].header['JULIAN'])
+    # Grab the BJD first
+    if 'BJD_TDB' in hdul[0].header:
+        julianTime = float(hdul[0].header['BJD_TDB'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['JULIAN']:
+        if "start" in hdul[0].header.comments['BJD_TDB']:
             exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
-    elif "MJD-OBS" in hdul[0].header:
-        julianTime = float(hdul[0].header["MJD-OBS"])+2400000.5
+    elif 'BJD' in hdul[0].header:
+        julianTime = float(hdul[0].header['BJD'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['MJD-OBS']:
+        if "start" in hdul[0].header.comments['BJD']:
             exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
-    else:
+    # then the DATE-OBS
+    elif "DATE-OBS" in hdul[0].header:
         gDateTime = hdul[0].header['Date-Obs']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
         time = astropy.time.Time(dt)
@@ -354,6 +355,20 @@ def getJulianTime(hdul):
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['Date-Obs']:
             exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
+    # Then Julian Date
+    elif 'JULIAN' in hdul[0].header:
+        julianTime = float(hdul[0].header['JULIAN'])
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in hdul[0].header.comments['JULIAN']:
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
+    # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
+    elif "MJD-OBS" in hdul[0].header:
+        julianTime = float(hdul[0].header["MJD-OBS"])+2400000.5
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in hdul[0].header.comments['MJD-OBS']:
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
+    
+    # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     return (julianTime+exptime_offset)
 
 
@@ -1992,15 +2007,18 @@ if __name__ == "__main__":
             print('********************************************')
             print('')
 
-            # convert all the final times into BJD - using astropy alone
-            targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
-            obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
-            timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
-            ltt_bary = timesToConvert.light_travel_time(targetloc)
-            time_barycentre = timesToConvert.tdb + ltt_bary
-            resultos = time_barycentre.value
-            #goodTimes = resultos[0]
-            goodTimes = resultos
+            # Take the BJD times from the image headers
+            if "BJD" in fitsHead:
+                goodTimes = nonBJDTimes
+            # If not in there, then convert all the final times into BJD - using astropy alone
+            else:
+                targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
+                obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
+                timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
+                ltt_bary = timesToConvert.light_travel_time(targetloc)
+                time_barycentre = timesToConvert.tdb + ltt_bary
+                resultos = time_barycentre.value
+                goodTimes = resultos
             goodPhasesList = []
 
             # Centroid position plots

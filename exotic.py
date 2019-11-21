@@ -18,7 +18,7 @@
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
 # Author: Ethan Blaser
-# Sub-authors: Rob Zellem, Kyle Pearson, John Engelke
+# Co-authors: Rob Zellem, Kyle Pearson, John Engelke
 # Mentors: Dr. Robert Zellem and Anya Biferno
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor Github commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.0"
+versionid = "0.5.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -353,13 +353,13 @@ def getJulianTime(hdul):
         if "start" in hdul[0].header.comments['BJD']:
             exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
     # then the DATE-OBS
-    elif "DATE-OBS" in hdul[0].header:
-        gDateTime = hdul[0].header['Date-Obs']  # gets the gregorian date and time from the fits file header
+    elif "UT-OBS" in hdul[0].header:
+        gDateTime = hdul[0].header['UT-OBS']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
         time = astropy.time.Time(dt)
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['Date-Obs']:
+        if "start" in hdul[0].header.comments['UT-OBS']:
             exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
     # Then Julian Date
     elif 'JULIAN' in hdul[0].header:
@@ -804,7 +804,10 @@ def realTimeReduce(i):
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
-        directToWatch = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
+        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
+        # Add / to end of directory if user does not input it
+        if directToWatch[-1] != "/":
+            directToWatch += "/"
         directoryP = directToWatch
 
     fileNumber = 1
@@ -975,7 +978,7 @@ if __name__ == "__main__":
         print('Real Time Reduction ("Control + C"  or close the plot to quit)')
         print('**************************************************************')
         print('')
-        directToWatch = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
+        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
         directoryP = directToWatch
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
@@ -995,7 +998,10 @@ if __name__ == "__main__":
             # If we don't find any files, then we need the user to check their directory and loop over again....
             if len(inputfiles) == 0:
                 print("Error: .FITS files not found in " + directToWatch + ". Please try again.")
-                directToWatch = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
+                directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
+                # Add / to end of directory if user does not input it
+                if directToWatch[-1] != "/":
+                    directToWatch += "/"
 
         targetName = str(input("Enter the Planet Name: "))
 
@@ -1177,7 +1183,10 @@ if __name__ == "__main__":
                 # If we don't find any files, then we need the user to check their directory and loop over again....
                 if len(inputfiles) == 0:
                     print("Error: .FITS files not found in " + directoryP + ". Please try again.")
-                    directoryP = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
+                    directoryP = str(input("Enter the Directory Path where FITS Image Files are located: "))
+                    # Add / to end of directory if user does not input it
+                    if directoryP[-1] != "/":
+                        directoryP += "/"
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':

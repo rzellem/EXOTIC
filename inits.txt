@@ -22,13 +22,14 @@ Secondary Observer Codes	none
 #-----------------------------------------------------------------------------------
 # Observation Time/Location
 #-----------------------------------------------------------------------------------
-observation date		December 17, 2017
+Observation date		December 17, 2017
 Obs. Latitude (+=N,-=S)		+32.2226
 Obs. Longitude (+=E,-=W)	-110.9747
 
 #-----------------------------------------------------------------------------------
 # Data Information
 #-----------------------------------------------------------------------------------
+Camera Type (CCD or DSLR)	CCD
 Pixel Binning			1x1
 Exposure Time (seconds)		60
 Filter Name (aavso.org/filters)	CV

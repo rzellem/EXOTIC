@@ -1095,18 +1095,20 @@ if __name__ == "__main__":
                 # if line.split("\t")[0] == "Observers' names/emails":
                     # userNameEmails = line.split("\t")[-1].rstrip()
 
-                if line.split("\t")[0] == 'observation date':
+                if line.split("\t")[0] == 'Observation date':
                     date = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Obs. Latitude (+=N,-=S)':
                     latiStr = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Obs. Longitude (+=E,-=W)':
                     longitStr = line.split("\t")[-1].rstrip()
 
+                if line.split("\t")[0] == 'Camera Type (CCD or DSLR)':
+                    cameraType = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Pixel Binning':
                     binning = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Exposure Time (seconds)':
                     exposureTime = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Filter Name':
+                if line.split("\t")[0] == 'Filter Name (aavso.org/filters)':
                     filterName = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Observing Notes':
                     obsNotes = line.split("\t")[-1].rstrip()
@@ -1474,6 +1476,7 @@ if __name__ == "__main__":
                 # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
                 userCode = str(input('Please enter your AAVSO Observer Account Number: '))
                 secuserCode = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
+                cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
                 binning = str(input('Please enter your pixel binning: '))
                 exposureTime = str(input('Please enter your exposure time (seconds): ')) 
                 filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): ')) 
@@ -1515,25 +1518,25 @@ if __name__ == "__main__":
             ogPeriodErr = float(input("Enter the Uncertainty for the Orbital Period in days: "))
         # Mid Transit Time
         print('')
-        print(targetName + ' Time of Mid-Transit (BJD): ' + str(pDict['midT']))
+        print(targetName + ' Published Time of Mid-Transit (BJD_UTC): ' + str(pDict['midT']))
         agreement = str(input("Do you agree? (y/n) "))
         while agreement.lower() != 'y' and agreement.lower() != 'n':
             agreement = str(input("Do you agree? (y/n) "))
         if agreement.lower() == 'y':
             timeMidTransit = pDict['midT']
         else:
-            timeMidTransit = float(input("Enter a reported Time of Mid-Transit in BJD: "))
+            timeMidTransit = float(input("Enter a reported Time of Mid-Transit in BJD_UTC: "))
 
         # Mid Transit Time Uncertainty
         print('')
-        print(targetName + ' Time of Mid-Transit Uncertainty (jd): ' + str(pDict['midTUnc']))
+        print(targetName + ' Time of Mid-Transit Uncertainty (JD): ' + str(pDict['midTUnc']))
         agreement = str(input("Do you agree? (y/n) "))
         while agreement.lower() != 'y' and agreement.lower() != 'n':
             agreement = str(input("Do you agree? (y/n) "))
         if agreement.lower() == 'y':
             ogMidTErr = pDict['midTUnc']
         else:
-            ogMidTErr = float(input("Enter the uncertainty of the Mid-Transit Time (jd): "))
+            ogMidTErr = float(input("Enter the uncertainty of the Mid-Transit Time (JD): "))
 
         # rprs
         print('')
@@ -2427,7 +2430,7 @@ if __name__ == "__main__":
             outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
             outParamsFile.write('#DELIM=,\n')  # fixed
             outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
-            outParamsFile.write('#OBSTYPE=CCD\n')  # fixed
+            outParamsFile.write('#OBSTYPE='+cameraType+'\n')
             outParamsFile.write('#STAR_NAME=' + hostName + '\n')  # code yields
             outParamsFile.write('#EXOPLANET_NAME=' + targetName + '\n')  # code yields
             outParamsFile.write('#BINNING=' + binning + '\n')  # user input

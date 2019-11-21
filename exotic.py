@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor Github commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.1"
+versionid = "0.5.2"
 
 
 # --IMPORTS -----------------------------------------------------------

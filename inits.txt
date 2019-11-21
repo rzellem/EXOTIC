@@ -17,6 +17,7 @@ directory of biases		none
 #-----------------------------------------------------------------------------------
 AAVSO output?			y
 AAVSO Observer Account Number	RTZ
+Secondary Observer Codes	none
 
 #-----------------------------------------------------------------------------------
 # Observation Time/Location
@@ -31,6 +32,7 @@ Obs. Longitude (+=E,-=W)	-110.9747
 Pixel Binning			1x1
 Exposure Time (seconds)		60
 Filter Name (aavso.org/filters)	CV
+Observing Notes			Weather, seeing was nice.
 
 #-----------------------------------------------------------------------------------
 # Target Information
@@ -41,7 +43,7 @@ Target Star Dec (+/-hh:mm:ss)	+46:41:16.210382751
 Target Star pixel coords (x,y)	424, 286
 
 #-----------------------------------------------------------------------------------
-# Comparision Star Information
+# Comparison Star Information
 #-----------------------------------------------------------------------------------
 Number of Comparison Stars	2
 CompStar1 pixel coords (x,y)	465, 183

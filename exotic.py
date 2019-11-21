@@ -1090,6 +1090,8 @@ if __name__ == "__main__":
                         AAVSOoutput = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'AAVSO Observer Account Number':
                     userCode = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Secondary Observer Code':
+                    secuserCode = line.split("\t")[-1].rstrip()
                 # if line.split("\t")[0] == "Observers' names/emails":
                     # userNameEmails = line.split("\t")[-1].rstrip()
 
@@ -1106,6 +1108,8 @@ if __name__ == "__main__":
                     exposureTime = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'Filter Name':
                     filterName = line.split("\t")[-1].rstrip()
+                if line.split("\t")[0] == 'Observing Notes':
+                    obsNotes = line.split("\t")[-1].rstrip()
 
                 if line.split("\t")[0] == 'planet name':
                         targetName = line.split("\t")[-1].rstrip()
@@ -1228,6 +1232,7 @@ if __name__ == "__main__":
                     # after they enter the correct name, it will pull the needed parameters
                     pDict = getParams(confData, compData, extData, targetName)
         print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+        import pdb; pdb.set_trace()
 
         # observation date
         if fileorcommandline == 1:
@@ -1468,9 +1473,11 @@ if __name__ == "__main__":
                 AAVSOBool = True
                 # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
                 userCode = str(input('Please enter your AAVSO Observer Account Number: '))
+                secuserCode = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
                 binning = str(input('Please enter your pixel binning: '))
                 exposureTime = str(input('Please enter your exposure time (seconds): ')) 
                 filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): ')) 
+                obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -2416,6 +2423,7 @@ if __name__ == "__main__":
             outParamsFile = open(saveDirectory + 'AAVSO' + targetName + date + '.txt', 'w+')
             outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
             outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI
+            outParamsFile.write('#SECONDARYOBSCODE=' + secuserCode + '\n')  # UI
             outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
             outParamsFile.write('#DELIM=,\n')  # fixed
             outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
@@ -2424,7 +2432,8 @@ if __name__ == "__main__":
             outParamsFile.write('#EXOPLANET_NAME=' + targetName + '\n')  # code yields
             outParamsFile.write('#BINNING=' + binning + '\n')  # user input
             outParamsFile.write('#EXPOSURE_TIME=' + str(exposureTime) + '\n')  # UI
-            outParamsFile.write('#FILTER=' + str(filterName) + '\n')  # possibly UI but probably not
+            outParamsFile.write('#FILTER=' + str(filterName) + '\n')
+            outParamsFile.write('#NOTES=' + str(obsNotes) + '\n')
             outParamsFile.write('#DETREND_PARAMETERS=AIRMASS\n')  # fixed
             outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
             # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(

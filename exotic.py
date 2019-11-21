@@ -796,6 +796,11 @@ def realTimeReduce(i):
     timesListed = []
 
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
+    while len(g.glob(directoryP)) == 0:
+        print("Error: .FITS files not found in " + directoryP)
+        directToWatch = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
+        directoryP = directToWatch
+
     fileNumber = 1
     for fileName in g.glob(directoryP):  # Loop through all the fits files and time sorts
 
@@ -811,10 +816,6 @@ def realTimeReduce(i):
 
     # sorts the times for later plotting use
     sortedTimeList = sorted(timeList)
-
-    if len(sortedTimeList) == 0:
-        print("Error: .FITS files not found in " + directoryP)
-        sys.exit()
 
     hdul = fits.open(timeSortedNames[0])  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
@@ -972,18 +973,22 @@ if __name__ == "__main__":
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
             directToWatch += "/"
-        # Check for .FITS files
-        inputfiles = g.glob(directToWatch + "*.FITS")
-        # If none exist, try other extensions
-        if len(inputfiles) == 0:
-            inputfiles = g.glob(directToWatch + "*.FIT")
-        if len(inputfiles) == 0:
-            inputfiles = g.glob(directToWatch + "*.fits")
-        if len(inputfiles) == 0:
-            inputfiles = g.glob(directToWatch + "*.fit")
-        if len(inputfiles) == 0:
-            print("Error: .FITS files not found in " + directToWatch + ". Please try again.")
-            sys.exit()
+        
+        # Find fits files
+        fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
+        looper = True
+        # Loop until we find something
+        while looper:
+            for exti in fits_extensions:
+                inputfiles = g.glob(directToWatch+exti)
+                # If we find files, then stop the for loop and while loop
+                if len(inputfiles) > 0:
+                    looper = False
+                    break
+            # If we don't find any files, then we need the user to check their directory and loop over again....
+            if len(inputfiles) == 0:
+                print("Error: .FITS files not found in " + directToWatch + ". Please try again.")
+                directToWatch = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
 
         targetName = str(input("Enter the Planet Name: "))
 
@@ -1038,11 +1043,14 @@ if __name__ == "__main__":
                 initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
 
             # Parse input file
-            try:
-                initf = open(initfilename, 'r')
-            except FileNotFoundError:
-                print("Initialization file not found. Please try again.")
-                sys.exit()
+            looper = True
+            while looper:
+                try:
+                    initf = open(initfilename, 'r')
+                    looper = False
+                except FileNotFoundError:
+                    print("Initialization file not found. Please try again.")
+                    initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
 
             # inits = []
             # for line in initf:
@@ -1145,17 +1153,22 @@ if __name__ == "__main__":
             if directoryP[-1] != "/":
                 directoryP += "/"
             # Check for .FITS files
-            inputfiles = g.glob(directoryP + "*.FITS")
-            # If none exist, try other extensions
-            if len(inputfiles) == 0:
-                inputfiles = g.glob(directoryP + "*.FIT")
-            if len(inputfiles) == 0:
-                inputfiles = g.glob(directoryP + "*.fits")
-            if len(inputfiles) == 0:
-                inputfiles = g.glob(directoryP + "*.fit")
-            if len(inputfiles) == 0:
-                print("ERROR: No fits files found in " + directoryP + ". Please try again.")
-                sys.exit()
+
+            # Find fits files
+            fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
+            looper = True
+            # Loop until we find something
+            while looper:
+                for exti in fits_extensions:
+                    inputfiles = g.glob(directoryP+exti)
+                    # If we find files, then stop the for loop and while loop
+                    if len(inputfiles) > 0:
+                        looper = False
+                        break
+                # If we don't find any files, then we need the user to check their directory and loop over again....
+                if len(inputfiles) == 0:
+                    print("Error: .FITS files not found in " + directoryP + ". Please try again.")
+                    directoryP = str(input("Enter the Directory Path where FITS Image Files will be saved: "))
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':

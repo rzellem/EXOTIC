@@ -1234,7 +1234,7 @@ if __name__ == "__main__":
                     # after they enter the correct name, it will pull the needed parameters
                     pDict = getParams(confData, compData, extData, targetName)
         print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
 
         # observation date
         if fileorcommandline == 1:

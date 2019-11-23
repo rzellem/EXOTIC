@@ -6,7 +6,7 @@
 #-----------------------------------------------------------------------------------
 # File Input/Output Information
 #-----------------------------------------------------------------------------------
-directory with fits files	./sample-data/HatP32Dec202017_
+directory with fits files	./sample-data/HatP32Dec202017
 directory to save plots		./sample-data
 directory of flats		none
 directory of darks		none

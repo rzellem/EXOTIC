@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor Github commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.2"
+versionid = "0.5.3"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -689,7 +689,7 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     plt.grid(True)
     plt.title(targetName + ' Chi^2 vs. Chain Length ' + date)
     # plt.show()
-    plt.savefig(saveDirectory + 'ChiSquaredTrace' + date + targetName + '.png')
+    plt.savefig(saveDirectory + 'temp/ChiSquaredTrace' + date + targetName + '.png')
     plt.close()
 
     chiMedian = np.nanmedian(allchiSquared)
@@ -717,7 +717,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Position')
     plt.title(targetName + ' X Centroid Position ' + date)
-    plt.savefig(saveDirectory +'XCentroidPosition'+ targetName + date + '.png')
+    plt.savefig(saveDirectory +'temp/XCentroidPosition'+ targetName + date + '.png')
     plt.close()
 
     # Y TARGET
@@ -725,7 +725,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Position')
     plt.title(targetName + ' Y Centroid Position ' + date)
-    plt.savefig(saveDirectory+ 'YCentroidPos'  + targetName + date + '.png')
+    plt.savefig(saveDirectory+ 'temp/YCentroidPos'  + targetName + date + '.png')
     plt.close()
 
     # X COMP
@@ -733,7 +733,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Position')
     plt.title('Comp Star X Centroid Position ' + date)
-    plt.savefig(saveDirectory + 'CompStarXCentroidPos' + date + '.png')
+    plt.savefig(saveDirectory + 'temp/CompStarXCentroidPos' + date + '.png')
     plt.close()
 
     # Y COMP
@@ -741,7 +741,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Position')
     plt.title('Comp Star Y Centroid Position ' + date)
-    plt.savefig(saveDirectory + 'CompStarYCentroidPos' + date + '.png')
+    plt.savefig(saveDirectory + 'temp/CompStarYCentroidPos' + date + '.png')
     plt.close()
 
     # X DISTANCE BETWEEN TARGET AND COMP
@@ -751,7 +751,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     for e in range(0, len(xTarg)):
         plt.plot(times[e]-np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
     plt.title('Distance between Target and Comparison X position')
-    plt.savefig(saveDirectory + 'XCentroidDistance' + targetName + date + '.png')
+    plt.savefig(saveDirectory + 'temp/XCentroidDistance' + targetName + date + '.png')
     plt.close()
 
     # Y DISTANCE BETWEEN TARGET AND COMP
@@ -762,7 +762,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times):
     for d in range(0, len(yTarg)):
         plt.plot(times[d]-np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
     plt.title('Difference between Target and Comparison Y position')
-    plt.savefig(saveDirectory + 'YCentroidDistance' + targetName + date + '.png')
+    plt.savefig(saveDirectory + 'temp/YCentroidDistance' + targetName + date + '.png')
     plt.close()
 
 
@@ -1090,7 +1090,7 @@ if __name__ == "__main__":
                         AAVSOoutput = line.split("\t")[-1].rstrip()
                 if line.split("\t")[0] == 'AAVSO Observer Account Number':
                     userCode = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Secondary Observer Code':
+                if line.split("\t")[0] == 'Secondary Observer Codes':
                     secuserCode = line.split("\t")[-1].rstrip()
                 # if line.split("\t")[0] == "Observers' names/emails":
                     # userNameEmails = line.split("\t")[-1].rstrip()
@@ -1213,6 +1213,13 @@ if __name__ == "__main__":
         if saveDirectory[-1] != "/":
             saveDirectory += "/"
 
+        # Make a temp directory of helpful files
+        try:
+            os.makedirs(saveDirectory+"temp/")
+        except FileExistsError:
+            # directory already exists
+            pass
+
         if fileorcommandline == 1:
             targetName = str(input("Enter the Planet Name: "))
 
@@ -1234,7 +1241,6 @@ if __name__ == "__main__":
                     # after they enter the correct name, it will pull the needed parameters
                     pDict = getParams(confData, compData, extData, targetName)
         print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        import pdb; pdb.set_trace()
 
         # observation date
         if fileorcommandline == 1:
@@ -2108,7 +2114,7 @@ if __name__ == "__main__":
             plt.rc('grid', linestyle="-", color='black')
             plt.grid(True)
             plt.title(targetName + ' Raw Flux Values ' + date)
-            plt.savefig(saveDirectory + 'TargetRawFlux' + targetName + date + '.png')
+            plt.savefig(saveDirectory + 'temp/TargetRawFlux' + targetName + date + '.png')
             plt.close()
 
             plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
@@ -2117,7 +2123,7 @@ if __name__ == "__main__":
             plt.rc('grid', linestyle="-", color='black')
             plt.grid(True)
             plt.title('Comparison Star Raw Flux Values ' + date)
-            plt.savefig(saveDirectory + 'CompRawFlux' + targetName + date + '.png')
+            plt.savefig(saveDirectory + 'temp/CompRawFlux' + targetName + date + '.png')
             plt.close()
 
             # Plots final reduced light curve (after the 3 sigma clip)
@@ -2258,7 +2264,7 @@ if __name__ == "__main__":
         # Rob updated this with a try command as ArviZ isn't working on his machine....
         try:
             pm.traceplot(trace[burn:])
-            plt.savefig(saveDirectory + 'Traces' + targetName + date + '.png')
+            plt.savefig(saveDirectory + 'temp/Traces' + targetName + date + '.png')
             plt.close()
         except ImportError:
             pass
@@ -2319,10 +2325,15 @@ if __name__ == "__main__":
         x = adjustedPhases
         ax_res.set_xlabel('Phase')
 
-        # make symmetric about 0 phase
-        maxdist = max(np.abs(adjustedPhases[0]), adjustedPhases[-1])
-        ax_res.set_xlim([-maxdist, maxdist])
-        ax_lc.set_xlim([-maxdist, maxdist])
+        # # make symmetric about 0 phase
+        # maxdist = max(np.abs(adjustedPhases[0]), adjustedPhases[-1])
+        # ax_res.set_xlim([-maxdist, maxdist])
+        # ax_lc.set_xlim([-maxdist, maxdist])
+
+        # clip plot to get rid of white space
+        ax_res.set_xlim([min(adjustedPhases), max(adjustedPhases)])
+        ax_lc.set_xlim([min(adjustedPhases), max(adjustedPhases)])
+
 
         # residual histogramfinalAirmassModel
         # bins up to 3 std of Residuals
@@ -2337,7 +2348,8 @@ if __name__ == "__main__":
         ax_res.plot(x, finalResiduals, 'ko')
         ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=0.85)
         ax_res.set_ylabel('Residuals')
-        ax_res.set_ylim([-.04, .04])
+        # ax_res.set_ylim([-.04, .04])
+        ax_res.set_ylim([-2*np.nanstd(finalResiduals), 2*np.nanstd(finalResiduals)])
 
         correctedSTD = np.std(finalResiduals)
         # ax_lc.errorbar( x, self.y/self.data[t]['airmass'], yerr=self.yerr/self.data[t]['airmass'], ls='none', marker='o', color='black')
@@ -2375,7 +2387,7 @@ if __name__ == "__main__":
         plt.plot(rollList, chiSquareList, "-o")
         plt.xlabel('Bin Number')
         plt.ylabel('Chi Squared')
-        plt.savefig(saveDirectory + 'ChiSquaredRoll' + targetName + '.png')
+        plt.savefig(saveDirectory + 'temp/ChiSquaredRoll' + targetName + '.png')
         plt.close()
 
         midTranUncert = round(np.std(trace['Tmid', burn:]), 6)

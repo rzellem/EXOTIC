@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor Github commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.3"
+versionid = "0.5.4"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1075,53 +1075,52 @@ if __name__ == "__main__":
             initf.close()
 
             for line in inits:
-                if line.split("\t")[0] == 'directory with fits files':
+                if 'directory with fits files' in line:
                     directoryP = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'directory to save plots':
+                if 'directory to save plots' in line:
                     saveDirectory = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'directory of flats':
+                if 'directory of flats' in line:
                     flatsPath = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'directory of darks':
+                if 'directory of darks' in line:
                     darksPath = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'directory of biases':
+                if 'directory of biases' in line:
                     biasesPath = line.split("\t")[-1].rstrip()
 
-                if line.split("\t")[0] == 'AAVSO output?':
+                if 'AAVSO output?' in line:
                         AAVSOoutput = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'AAVSO Observer Account Number':
+                if 'AAVSO Observer Account Number' in line:
                     userCode = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Secondary Observer Codes':
+                if 'Secondary Observer Codes' in line:
                     secuserCode = line.split("\t")[-1].rstrip()
                 # if line.split("\t")[0] == "Observers' names/emails":
                     # userNameEmails = line.split("\t")[-1].rstrip()
-
-                if line.split("\t")[0] == 'Observation date':
+                if "Observation date" in line:
                     date = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Obs. Latitude (+=N,-=S)':
+                if 'Obs. Latitude (+=N,-=S)' in line:
                     latiStr = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Obs. Longitude (+=E,-=W)':
+                if 'Obs. Longitude (+=E,-=W)' in line:
                     longitStr = line.split("\t")[-1].rstrip()
 
-                if line.split("\t")[0] == 'Camera Type (CCD or DSLR)':
+                if 'Camera Type (CCD or DSLR)' in line:
                     cameraType = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Pixel Binning':
+                if 'Pixel Binning' in line:
                     binning = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Exposure Time (seconds)':
+                if 'Exposure Time (seconds)' in line:
                     exposureTime = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Filter Name (aavso.org/filters)':
+                if 'Filter Name (aavso.org/filters)' in line:
                     filterName = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Observing Notes':
+                if 'Observing Notes' in line:
                     obsNotes = line.split("\t")[-1].rstrip()
 
-                if line.split("\t")[0] == 'planet name':
+                if 'planet name' in line:
                         targetName = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Target Star RA (hh:mm:ss)':
+                if 'Target Star RA (hh:mm:ss)' in line:
                     raStr = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Target Star Dec (+/-hh:mm:ss)':
+                if 'Target Star Dec (+/-hh:mm:ss)' in line:
                     decStr = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Target Star pixel coords (x,y)':
+                if 'Target Star pixel coords (x,y)' in line:
                     targetpixloc = line.split("\t")[-1].rstrip()
-                if line.split("\t")[0] == 'Number of Comparison Stars':
+                if 'Number of Comparison Stars' in line:
                     numCompStars = int(line.split("\t")[-1].rstrip())
 
             if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":

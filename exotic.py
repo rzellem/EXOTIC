@@ -718,7 +718,7 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
 
 
 # make plots of the centroid positions as a function of time
-def plotCentroids(xTarg, yTarg, xRef, yRef, times):
+def plotCentroids(xTarg, yTarg, xRef, yRef, times, date):
     times = np.array(times)
     # X TARGET
     plt.plot(times-np.nanmin(times), xTarg, '-bo')
@@ -2083,7 +2083,7 @@ if __name__ == "__main__":
                 goodTimes = resultos[0]
 
             # Centroid position plots
-            plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes)
+            plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes, date)
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')

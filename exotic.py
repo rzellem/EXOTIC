@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor Github commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.5"
+versionid = "0.5.6"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -372,6 +372,14 @@ def getJulianTime(hdul):
         julianTime = float(hdul[0].header["MJD-OBS"])+2400000.5
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['MJD-OBS']:
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
+    else:
+        gDateTime = hdul[0].header['DATE-OBS']  # gets the gregorian date and time from the fits file header
+        dt = dup.parse(gDateTime)
+        time = astropy.time.Time(dt)
+        julianTime = time.jd
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in hdul[0].header.comments['DATE-OBS']:
             exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
     
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time

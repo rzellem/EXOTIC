@@ -1100,6 +1100,8 @@ if __name__ == "__main__":
                     latiStr = line.split("\t")[-1].rstrip()
                 if 'Obs. Longitude (+=E,-=W)' in line:
                     longitStr = line.split("\t")[-1].rstrip()
+                if "Obs. Elevation (meters)" in line:
+                    elevation = line.split("\t")[-1].rstrip()
 
                 if 'Camera Type (CCD or DSLR)' in line:
                     cameraType = line.split("\t")[-1].rstrip()
@@ -1281,6 +1283,9 @@ if __name__ == "__main__":
                 longit = -1 * float(longitStr[1:])
             else:
                 longit = float(longitStr[1:])
+
+            if fileorcommandline == 1:
+                elevation = str(input("Enter the elevation (in meters) of where you observed: "))
 
             print(' ')
             print('Locate Your Target Star')
@@ -2053,20 +2058,21 @@ if __name__ == "__main__":
             print('Optimal Annulus: ' + str(minAnnulus))
             print('********************************************')
             print('')
-
+            
             # Take the BJD times from the image headers
             if "BJD" in fitsHead:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
-                targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
-                obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
-                timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
-                ltt_bary = timesToConvert.light_travel_time(targetloc)
-                time_barycentre = timesToConvert.tdb + ltt_bary
-                resultos = time_barycentre.value
-                goodTimes = resultos
-            goodPhasesList = []
+                # targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
+                # obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
+                # timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
+                # ltt_bary = timesToConvert.light_travel_time(targetloc)
+                # time_barycentre = timesToConvert.tdb + ltt_bary
+                # resultos = time_barycentre.value
+                # goodTimes = resultos
+                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra= raDeg, dec = decDeg, lat=lati, longi=longit, alt=elevation)
+                goodTimes = resultos[0]
 
             # Centroid position plots
             plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes)
@@ -2077,6 +2083,7 @@ if __name__ == "__main__":
             # bjdMidTOld = float(forPhaseResult[0])
             bjdMidTOld = timeMidTransit
 
+            goodPhasesList = []
             #convert all the phases based on the updated bjd times
             for convertedTime in goodTimes:
                 bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)

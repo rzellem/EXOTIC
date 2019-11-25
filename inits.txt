@@ -23,8 +23,9 @@ Secondary Observer Codes	none
 # Observation Time/Location
 #-----------------------------------------------------------------------------------
 Observation date		December 17, 2017
-Obs. Latitude (+=N,-=S)		+32.2226
-Obs. Longitude (+=E,-=W)	-110.9747
+Obs. Latitude (+=N,-=S)		+31.68
+Obs. Longitude (+=E,-=W)	-110.88
+Obs. Elevation (meters)		2616
 
 #-----------------------------------------------------------------------------------
 # Data Information
@@ -39,8 +40,8 @@ Observing Notes			Weather, seeing was nice.
 # Target Information
 #-----------------------------------------------------------------------------------
 planet name			HAT-P-32b
-Target Star RA (hh:mm:ss)	02:04:10.2775457769
-Target Star Dec (+/-hh:mm:ss)	+46:41:16.210382751
+Target Star RA (hh:mm:ss)	02:05.25
+Target Star Dec (+/-hh:mm:ss)	+46:46.15
 Target Star pixel coords (x,y)	424, 286
 
 #-----------------------------------------------------------------------------------

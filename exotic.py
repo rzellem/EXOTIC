@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor Github commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.6"
+versionid = "0.5.7"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -87,6 +87,12 @@ from occultquad import *
 
 
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
+# Function that bins an array
+def binner(arr,n=1):
+    ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
+    arr = np.nanmean(ecks, axis=1)
+    err = np.nanstd(ecks, axis=1)/np.sqrt(n)
+    return arr, err
 
 # finds the planet line in the composite dictionary
 # returns -1 if its not there
@@ -1232,7 +1238,7 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             targetName = str(input("Enter the Planet Name: "))
 
-        print("Looking up ", targetName)
+        print("\nLooking up ", targetName)
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
         scrape()
         with open('eaConf.txt') as confirmedFile:
@@ -1483,6 +1489,14 @@ if __name__ == "__main__":
                 flatsBool = False
                 darksBool = False
                 biasesBool = False
+        
+        print("\n***************************************")
+        print("Plotting Options")
+        binplot = str(input("Would you like to bin your data for plotting purposes? (y/n; select if you have a lot of data.) "))
+        if binplot == 'y' or binplot == 'yes' or binplot == 'Y' or binplot == 'Yes':
+            binplotBool = True
+        else:
+            binplotBool = False
 
         #Handle AAVSO Formatting
         if fileorcommandline == 1:
@@ -2360,7 +2374,7 @@ if __name__ == "__main__":
 
         # residual plot
         ax_res.plot(x, finalResiduals, 'ko')
-        ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=0.85)
+        ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=1, zorder=100)
         ax_res.set_ylabel('Residuals')
         # ax_res.set_ylim([-.04, .04])
         ax_res.set_ylim([-2*np.nanstd(finalResiduals), 2*np.nanstd(finalResiduals)])
@@ -2374,13 +2388,18 @@ if __name__ == "__main__":
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
 
+        if binplotBool:
+            ax_res.errorbar(binner(x,len(finalResiduals)//10)[0], binner(finalResiduals,len(finalResiduals)//10)[0], yerr=binner(finalResiduals,len(finalResiduals)//10)[1], fmt='s', mfc='white', mec='b', ecolor='b',zorder=10)
+            ax_lc.errorbar(binner(adjustedPhases,len(adjustedPhases)//10)[0], binner(finalFluxes / finalAirmassModel,len(adjustedPhases)//10)[0], yerr=binner(finalResiduals,len(finalResiduals)//10)[1], fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
+
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".pdf", bbox_inches="tight")
         except AttributeError:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".png", bbox_inches="tight")
         plt.close()
-
+        
+        exit()
         ###################
         # CHI SQUARED ROLL
         ###################

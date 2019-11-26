@@ -2403,7 +2403,6 @@ if __name__ == "__main__":
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".png", bbox_inches="tight")
         plt.close()
         
-        exit()
         ###################
         # CHI SQUARED ROLL
         ###################

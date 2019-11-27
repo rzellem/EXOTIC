@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.5.8"
+versionid = "0.5.9"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -727,6 +727,7 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, date):
     times = np.array(times)
     # X TARGET
+    plt.figure()
     plt.plot(times-np.nanmin(times), xTarg, '-bo')
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Position')
@@ -735,6 +736,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, date):
     plt.close()
 
     # Y TARGET
+    plt.figure()
     plt.plot(times-np.nanmin(times), yTarg, '-bo')
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Position')
@@ -743,6 +745,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, date):
     plt.close()
 
     # X COMP
+    plt.figure()
     plt.plot(times-np.nanmin(times), xRef, '-ro')
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('X Pixel Position')
@@ -751,6 +754,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, date):
     plt.close()
 
     # Y COMP
+    plt.figure()
     plt.plot(times-np.nanmin(times), yRef, '-ro')
     plt.xlabel('Time (JD-'+str(np.nanmin(times))+')')
     plt.ylabel('Y Pixel Position')
@@ -1496,11 +1500,12 @@ if __name__ == "__main__":
         
         print("\n***************************************")
         print("Plotting Options")
-        binplot = str(input("Would you like to bin your data for plotting purposes? (y/n; select if you have a lot of data.) "))
-        if binplot == 'y' or binplot == 'yes' or binplot == 'Y' or binplot == 'Yes':
-            binplotBool = True
-        else:
-            binplotBool = False
+        binplotBool = True
+        # binplot = str(input("Would you like to overplot a binned version of your data for plotting purposes? (y/n; select y if you have a lot of data.) "))
+        # if binplot == 'y' or binplot == 'yes' or binplot == 'Y' or binplot == 'Yes':
+        #     binplotBool = True
+        # else:
+        #     binplotBool = False
 
         #Handle AAVSO Formatting
         if fileorcommandline == 1:
@@ -1774,14 +1779,23 @@ if __name__ == "__main__":
                 print('')
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
-
-                for apertureR in range(int(2 * max(targsigX, targsigY)),
-                                    int(5 * max(targsigX, targsigY)) + 1):  # aperture loop
-                    for annulusR in range(int(2 * max(targsigX, targsigY)),
-                                        int(4 * max(targsigX, targsigY))):  # annulus loop
+                aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
+                aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
+                annulus_min = int(2 * np.nanmax([targsigX, targsigY]))
+                annulus_max = int(4 * np.nanmax([targsigX, targsigY]))
+                
+                # Run through only 5 different aperture sizes, all interger pixel values
+                aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
+                aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
+                
+                # Run through only 5 different annulus sizes, all interger pixel values
+                annulus_step = np.nanmax([1, (annulus_max - annulus_min)//5])  # forces step size to be at least 1
+                annulus_sizes = np.arange(annulus_min, annulus_max, annulus_step)
+                
+                for apertureR in aperture_sizes:  # aperture loop
+                    for annulusR in annulus_sizes:  # annulus loop
                         fileNumber = 1
-                        print('Testing Comp Star #' + str(compCounter + 1) + ' w/ Aperture ' + str(
-                            apertureR) + ' and Annulus ' + str(annulusR))
+                        print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
                         for imageFile in timeSortedNames:
 
                             hDul = fits.open(imageFile)  # opens the fits file
@@ -2138,8 +2152,8 @@ if __name__ == "__main__":
             ######################################
             # PLOTS ROUND 1
             ####################################
-
             # Make plots of raw target and reference values
+            plt.figure()
             plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
             plt.xlabel('Time (BJD)')
             plt.ylabel('Total Flux')
@@ -2148,7 +2162,8 @@ if __name__ == "__main__":
             plt.title(targetName + ' Raw Flux Values ' + date)
             plt.savefig(saveDirectory + 'temp/TargetRawFlux' + targetName + date + '.png')
             plt.close()
-
+            
+            plt.figure()
             plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
             plt.xlabel('Time (BJD)')
             plt.ylabel('Total Flux')
@@ -2157,8 +2172,9 @@ if __name__ == "__main__":
             plt.title('Comparison Star Raw Flux Values ' + date)
             plt.savefig(saveDirectory + 'temp/CompRawFlux' + targetName + date + '.png')
             plt.close()
-
+            
             # Plots final reduced light curve (after the 3 sigma clip)
+            plt.figure()
             plt.errorbar(goodPhases, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
             plt.xlabel('Phase')
             plt.ylabel('Normalized Flux')
@@ -2200,6 +2216,15 @@ if __name__ == "__main__":
         print('Fitting a Light Curve Model to Your Data')
         print('****************************************')
         print(' ')
+
+        # EXOTIC now will automatically bin your data together to limit the MCMC runtime
+        if len(goodTimes) > 200:
+            print("Whoa! You have a lot of datapoints ("+str(len(goodTimes))+")!")
+            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data to 100 datapoints.")
+            goodTimes = binner(goodTimes, len(goodTimes)//200)[0]
+            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200)
+            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)[0]
+            print("Onwards and upwards!\n")
 
         #####################
         # MCMC LIGHTCURVE FIT
@@ -2296,6 +2321,7 @@ if __name__ == "__main__":
         # Rob updated this with a try command as ArviZ isn't working on his machine....
         try:
             pm.traceplot(trace[burn:])
+            plt.figure()
             plt.savefig(saveDirectory + 'temp/Traces' + targetName + date + '.png')
             plt.close()
         except ImportError:
@@ -2420,6 +2446,7 @@ if __name__ == "__main__":
             chiSquareList.append(np.sum(((sushi - finalModel) / finalNormUnc) ** 2.) / (len(sushi) - 4))
             rollList.append(k * 10)
 
+        plt.figure()
         plt.plot(rollList, chiSquareList, "-o")
         plt.xlabel('Bin Number')
         plt.ylabel('Chi Squared')

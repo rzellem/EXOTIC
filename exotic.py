@@ -1283,10 +1283,7 @@ if __name__ == "__main__":
                     "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
                 noSpaceLati = latiStr.replace(" ", "")
                 latiSign = noSpaceLati[0]
-            if latiSign == '-':
-                lati = -1 * float(latiStr[1:])
-            else:
-                lati = float(latiStr[1:])
+            lati = float(latiStr)
 
             # handle longitude
             if fileorcommandline == 1:
@@ -1301,10 +1298,7 @@ if __name__ == "__main__":
                     "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
                 noSpaceLongit = longitStr.replace(" ", "")
                 longitSign = noSpaceLongit[0]
-            if longitSign == '-':
-                longit = -1 * float(longitStr[1:])
-            else:
-                longit = float(longitStr[1:])
+            longit = float(longitStr)
 
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
@@ -2104,6 +2098,7 @@ if __name__ == "__main__":
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
+                print("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
                 # targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
                 # obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
                 # timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
@@ -2490,7 +2485,7 @@ if __name__ == "__main__":
         outParamsFile.write('The fitted airmass1 is: ' + str(fitAm1) + ' +/- ' + str(am1Uncert) + '\n')
         outParamsFile.write('The fitted airmass2 is: ' + str(fitAm2) + ' +/- ' + str(am2Uncert) + '\n')
         outParamsFile.write(
-            'The scatter in the residuals of the lightcurve fit is: ' + str(round(100 * correctedSTD, 3)) + '\n')
+            'The scatter in the residuals of the lightcurve fit is: ' + str(round(100 * correctedSTD, 3)) + '%\n')
         outParamsFile.close()
         print('')
         print('Final Planetary Parameters have been saved in ' + saveDirectory + ' as ' + targetName + date + '.txt')

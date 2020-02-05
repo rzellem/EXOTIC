@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.0"
+versionid = "0.6.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1709,10 +1709,15 @@ if __name__ == "__main__":
             #########################################
 
             fileNumber = 1
+            allImageData = []
+            timeList = []
+            fileNameList = []
+            timesListed = []
+            airMassList = []
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
-                fitsHead = fits.open(fileName)  # opens the file
+                # fitsHead = fits.open(fileName)  # opens the file
 
                 # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
                 # if fitsHead[0].header ['FILTER']== 'Harris-B':
@@ -1721,30 +1726,74 @@ if __name__ == "__main__":
                 #     timeList.append(timeVal) #adds to time value list
                 #     fileNameList.append (fileName)
 
-                fitsHead = fits.open(fileName)  # opens the file
+                hdul = fits.open(fileName)  # opens the file
+
                 # TIME
-                timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
+                timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
                 timeList.append(timeVal)  # adds to time value list
                 fileNameList.append(fileName)
 
-            # Time sorts the file names based on the fits file header
-            timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
-            tsnCopy = timeSortedNames
+                # TIME
+                currTime = getJulianTime(hdul)
+                timesListed.append(currTime)
+
+                # AIRMASS
+                airMass = getAirMass(hdul)  # gets the airmass at the time the image was taken
+                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+
+                # IMAGES
+                allImageData.append(hdul[0].data)
+
+                hdul.close() # closes the file to avoid using up all of computer's resources
+
+            # Recast list as numpy arrays
+            allImageData = np.array(allImageData)
+            timesListed = np.array(timesListed)
+            airMassList = np.array(airMassList)
+
+            # # Time sorts the file names based on the fits file header
+            # timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
+            # tsnCopy = timeSortedNames
 
             # sorts the times for later plotting use
+            sortedallImageData = allImageData[np.argsort(timeList)]
+            timesListed = timesListed[np.argsort(timeList)]
+            airMassList = airMassList[np.argsort(timeList)]
             sortedTimeList = sorted(timeList)
 
-            if len(sortedTimeList) == 0:
-                print("Error: .FITS files not found in " + directoryP)
-                sys.exit()
+            print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
+            cosmicrayfilter = input("\nDo you want to filter the raw images for cosmic rays? (y/n) ")
+            if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
+                cosmicrayfilter_bool = True
+            else:
+                cosmicrayfilter_bool = False
+            if cosmicrayfilter_bool:
+                print("\n")
+                # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
+                # For now, this is a simple median filter...in the future, should use something more smart later
+                for xi in np.arange(np.shape(sortedallImageData)[-2]):
+                    print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
+                    for yi in np.arange(np.shape(sortedallImageData)[-1]):
+                        # Simple median filter
+                        idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
+                        sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
+                        # Filter iteratively until no more 5sigma outliers exist - not currently working, so keep commented out for now
+                        # while sum(idx) > 0:
+                        #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
+                        #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
+
+            # if len(sortedTimeList) == 0:
+            #     print("Error: .FITS files not found in " + directoryP)
+            #     sys.exit()
 
             # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 
             # Loops through all of the possible aperture and annulus radius
             # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
 
-            hdul = fits.open(timeSortedNames[0])  # opens the fits file
-            firstImageData = fits.getdata(timeSortedNames[0], ext=0)
+            # hdul = fits.open(timeSortedNames[0])  # opens the fits file
+            # firstImageData = fits.getdata(timeSortedNames[0], ext=0)
+            firstImageData = sortedallImageData[0]
 
             # fit Target in the first image and use it to determine aperture and annulus range
             targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
@@ -1753,7 +1802,7 @@ if __name__ == "__main__":
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
             maxAnnulus = 5
-
+            # exit()
             # fit centroids for first image to determine priors to be used later
             for compCounter in range(0, len(compStarList)):
                 print('')
@@ -1761,8 +1810,8 @@ if __name__ == "__main__":
                 print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
                 print('***************************************************************')
 
-                #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
-                timeSortedNames = tsnCopy
+                # #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
+                # timeSortedNames = tsnCopy
 
                 UIprevRPX, UIprevRPY = compStarList[compCounter]
 
@@ -1788,12 +1837,12 @@ if __name__ == "__main__":
                 
                 for apertureR in aperture_sizes:  # aperture loop
                     for annulusR in annulus_sizes:  # annulus loop
-                        fileNumber = 1
+                        # fileNumber = 1
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
-                        for imageFile in timeSortedNames:
+                        for fileNumber, imageData in enumerate(sortedallImageData):
 
-                            hDul = fits.open(imageFile)  # opens the fits file
-                            imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
+                            # hDul = fits.open(imageFile)  # opens the fits file
+                            # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
 
                             # apply cals correction if applicable
                             if darksBool:
@@ -1806,10 +1855,10 @@ if __name__ == "__main__":
                             if flatsBool:
                                 imageData = imageData / generalFlat
 
-                            header = fits.getheader(imageFile)
+                            # header = fits.getheader(imageFile)
 
                             # Find the target star in the image and get its pixel coordinates if it is the first file
-                            if fileNumber == 1:
+                            if fileNumber == 0:
                                 # Initializing the star location guess as the user inputted pixel coordinates
                                 prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY  # 398, 275, 419, 203
                                 prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
@@ -1934,18 +1983,18 @@ if __name__ == "__main__":
                                         rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
                                     refUncertanties.append(math.sqrt(rFluxVal))
 
-                                    # TIME
-                                    currTime = getJulianTime(hDul)
-                                    timesListed.append(currTime)
+                                    # # TIME
+                                    # currTime = getJulianTime(hDul)
+                                    # timesListed.append(currTime)
 
                                     # ORBITAL PHASE
                                     currentPhase = getPhase(currTime, planetPeriod,
                                                             timeMidTransit)  # gets the phase of the target planet in the image file
                                     phasesList.append(currentPhase)  # adds to list of phases
 
-                                    # AIRMASS
-                                    airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
-                                    airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+                                    # # AIRMASS
+                                    # airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
+                                    # airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                                     # UPDATE PIXEL COORDINATES and SIGMAS
                                     # target
@@ -1961,12 +2010,22 @@ if __name__ == "__main__":
 
                                 # UPDATE FILE COUNT
                                 prevImageData = imageData
-                                fileNumber = fileNumber + 1
-                                hDul.close()  # close the stream
+                                # fileNumber = fileNumber + 1
+                                # hDul.close()  # close the stream
 
                             #otherwise, mask off the rest of the files from time sorted names including the current one
                             else:
-                                timeSortedNames = timeSortedNames[:fileNumber-1]
+                                # timeSortedNames = timeSortedNames[:fileNumber]
+
+                                # # TIME
+                                # timesListed = timesListed[:fileNumber]
+
+                                # # AIRMASS
+                                # airMassList = airMassList[:fileNumber]
+
+                                # # ALL IMAGES
+                                # allImageData = allImageData[:fileNumber]
+
                                 break
 
                         # EXIT THE FILE LOOP
@@ -1997,7 +2056,7 @@ if __name__ == "__main__":
                             filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
                         except TypeError:
                             filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
-
+                        
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
                         midTranCur = nearestTransitTime(timesListed, planetPeriod, timeMidTransit)
@@ -2068,9 +2127,9 @@ if __name__ == "__main__":
                             goodResids = residualVals
 
                         # Reinitialize the the arrays to be empty
-                        airMassList = []
+                        # airMassList = []
                         phasesList = []
-                        timesListed = []
+                        # timesListed = []
                         targetFluxVals = []
                         referenceFluxVals = []
                         targUncertanties = []
@@ -2094,7 +2153,7 @@ if __name__ == "__main__":
             print('')
             
             # Take the BJD times from the image headers
-            if "BJD" in fitsHead:
+            if "BJD" in hdul[0].header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

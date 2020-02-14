@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.1"
+versionid = "0.6.2"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1258,12 +1258,20 @@ if __name__ == "__main__":
                     confirmLnNum = findPlanetLineConf(targetName,
                                                       confData)  # confirmLnNum of -1 means it couldn't be found
                     while confirmLnNum == -1:
-                        print("Cannot find " + targetName + " in the NASA Exoplanet Archive.")
+                        print("\nCannot find " + targetName + " in the NASA Exoplanet Archive.")
+
+                        CandidatePlanet = str(input("Is this a candidate (not yet confirmed) exoplanet? (y/n) "))
+                        if CandidatePlanet.lower() == 'y' or CandidatePlanet.lower() == 'yes':
+                            CandidatePlanetBool = True
+                            break
+                        else:
+                            CandidatePlanetBool = False
                         targetName = str(input("Please Try to Enter the Planet Name Again: "))
                         confirmLnNum = findPlanetLineConf(targetName, confData)
                     # after they enter the correct name, it will pull the needed parameters
                     pDict = getParams(confData, compData, extData, targetName)
-        print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+        if not CandidatePlanetBool:
+            print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
 
         # observation date
         if fileorcommandline == 1:
@@ -1526,134 +1534,180 @@ if __name__ == "__main__":
         print("Planetary Parameters for Lightcurve Fitting")
         print('')
 
-        print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
-        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
-        targetName = pDict['pName']  # change to correct exoplanet archive name
-        hostName = pDict['sName']
-        # Orbital Period
-        print('')
-        print(targetName + ' Orbital Period (days): ' + str(pDict['pPer']))
-        agreement = input("Do you agree? (y/n) ")
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
+        if not CandidatePlanetBool:
+            print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
+            print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
+            targetName = pDict['pName']  # change to correct exoplanet archive name
+            hostName = pDict['sName']
+            # Orbital Period
+            print('')
+            print(targetName + ' Orbital Period (days): ' + str(pDict['pPer']))
+            agreement = input("Do you agree? (y/n) ")
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                planetPeriod = pDict['pPer']
+            else:
+                planetPeriod = float(input("Enter the Orbital Period in days: "))
+            # Orbital Period Error
+            print('')
+            print(targetName + ' Orbital Period Uncertainty (days): ' + str(pDict['pPerUnc']))
+            print('Keep in mind that "1.2e-34" is the same as 1.2 x 10^-34')
             agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            planetPeriod = pDict['pPer']
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                ogPeriodErr = pDict['pPerUnc']
+            else:
+                ogPeriodErr = float(input("Enter the Uncertainty for the Orbital Period in days: "))
+            # Mid Transit Time
+            print('')
+            print(targetName + ' Published Time of Mid-Transit (BJD_UTC): ' + str(pDict['midT']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                timeMidTransit = pDict['midT']
+            else:
+                timeMidTransit = float(input("Enter a reported Time of Mid-Transit in BJD_UTC: "))
+
+            # Mid Transit Time Uncertainty
+            print('')
+            print(targetName + ' Time of Mid-Transit Uncertainty (JD): ' + str(pDict['midTUnc']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                ogMidTErr = pDict['midTUnc']
+            else:
+                ogMidTErr = float(input("Enter the uncertainty of the Mid-Transit Time (JD): "))
+
+            # rprs
+            print('')
+            print(targetName + ' Ratio of Planet to Stellar Radius (Rp/Rs): ' + str(round(pDict['rprs'], 4)))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                rprs = pDict['rprs']
+            else:
+                rprs = float(input("Enter the Ratio of Planet to Stellar Radius (Rp/Rs): "))
+
+            # aRstar
+            print('')
+            print(targetName + ' Ratio of Distance to Stellar Radius (a/Rs): ' + str(pDict['aRs']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                semi = pDict['aRs']
+            else:
+                semi = float(input("Enter the Ratio of Distance to Stellar Radius (a/Rs): "))
+
+            # inclination
+            print('')
+            print(targetName + ' Orbital Inclination (deg): ' + str(pDict['inc']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                inc = pDict['inc']
+            else:
+                inc = float(input("Enter the Orbital Inclination in degrees (90 if null): "))
+
+            # eccentricity
+            print('')
+            print(targetName + ' Orbital Eccentricity: ' + str(pDict['ecc']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                eccent = pDict['ecc']
+            else:
+                eccent = float(input("Enter the Orbital Eccentricity (0 if null): "))
+
+            #LIMB DARKENING
+            print('')
+            print('***************************')
+            print('Limb Darkening Coefficients')
+            print('***************************')
+            # stellar temperature
+            print('')
+            print(hostName + ' Star Effective Temperature (K): ' + str(pDict['teff']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                starTeff = pDict['teff']
+            else:
+                starTeff = float(input("Enter the Effective Temperature (K): "))
+
+            # metallicity
+            print('')
+            print(hostName + ' Star Metallicity ([FE/H]): ' + str(pDict['met']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                starMetall = pDict['met']
+            else:
+                starMetall = float(input("Enter the Metallicity ([Fe/H]): "))
+
+            # Log g
+            print('')
+            print(hostName + ' Star Surface Gravity log(g) : ' + str(pDict['logg']))
+            agreement = str(input("Do you agree? (y/n) "))
+            while agreement.lower() != 'y' and agreement.lower() != 'n':
+                agreement = str(input("Do you agree? (y/n) "))
+            if agreement.lower() == 'y':
+                starSurfG = pDict['logg']
+            else:
+                starSurfG = float(input("Enter the Surface Gravity (log(g)): "))
+        #  if the planet is not in the NASA Exoplanet Archive, then ask user for input
         else:
+            targetName = str(input("Enter the planet's name: "))
+            hostName = str(input("Enter the host star's name: "))
+            # Orbital Period
+            print('')
             planetPeriod = float(input("Enter the Orbital Period in days: "))
-        # Orbital Period Error
-        print('')
-        print(targetName + ' Orbital Period Uncertainty (days): ' + str(pDict['pPerUnc']))
-        print('Keep in mind that "1.2e-34" is the same as 1.2 x 10^-34')
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            ogPeriodErr = pDict['pPerUnc']
-        else:
+            # Orbital Period Error
+            print('')
             ogPeriodErr = float(input("Enter the Uncertainty for the Orbital Period in days: "))
-        # Mid Transit Time
-        print('')
-        print(targetName + ' Published Time of Mid-Transit (BJD_UTC): ' + str(pDict['midT']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            timeMidTransit = pDict['midT']
-        else:
+            # Mid Transit Time
+            print('')
             timeMidTransit = float(input("Enter a reported Time of Mid-Transit in BJD_UTC: "))
-
-        # Mid Transit Time Uncertainty
-        print('')
-        print(targetName + ' Time of Mid-Transit Uncertainty (JD): ' + str(pDict['midTUnc']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            ogMidTErr = pDict['midTUnc']
-        else:
+            # Mid Transit Time Uncertainty
+            print('')
             ogMidTErr = float(input("Enter the uncertainty of the Mid-Transit Time (JD): "))
-
-        # rprs
-        print('')
-        print(targetName + ' Ratio of Planet to Stellar Radius (Rp/Rs): ' + str(round(pDict['rprs'], 4)))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            rprs = pDict['rprs']
-        else:
+            # rprs
+            print('')
             rprs = float(input("Enter the Ratio of Planet to Stellar Radius (Rp/Rs): "))
-
-        # aRstar
-        print('')
-        print(targetName + ' Ratio of Distance to Stellar Radius (a/Rs): ' + str(pDict['aRs']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            semi = pDict['aRs']
-        else:
+            # aRstar
+            print('')
             semi = float(input("Enter the Ratio of Distance to Stellar Radius (a/Rs): "))
-
-        # inclination
-        print('')
-        print(targetName + ' Orbital Inclination (deg): ' + str(pDict['inc']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            inc = pDict['inc']
-        else:
+            # inclination
+            print('')
             inc = float(input("Enter the Orbital Inclination in degrees (90 if null): "))
-
-        # eccentricity
-        print('')
-        print(targetName + ' Orbital Eccentricity: ' + str(pDict['ecc']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            eccent = pDict['ecc']
-        else:
+            # eccentricity
             eccent = float(input("Enter the Orbital Eccentricity (0 if null): "))
 
-        #LIMB DARKENING
-        print('')
-        print('***************************')
-        print('Limb Darkening Coefficients')
-        print('***************************')
-        # stellar temperature
-        print('')
-        print(hostName + ' Star Effective Temperature (K): ' + str(pDict['teff']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            starTeff = pDict['teff']
-        else:
-            starTeff = float(input("Enter the Effective Temperature (K): "))
+            #LIMB DARKENING
+            print('')
+            print('***************************')
+            print('Limb Darkening Coefficients')
+            print('***************************')
+            # stellar temperature
+            print('')
+            starTeff = float(input("Enter the host star's effective temperature (K): "))
 
-        # metallicity
-        print('')
-        print(hostName + ' Star Metallicity ([FE/H]): ' + str(pDict['met']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            starMetall = pDict['met']
-        else:
-            starMetall = float(input("Enter the Metallicity ([Fe/H]): "))
+            # metallicity
+            print('')
+            starMetall = float(input("Enter the host star's metallicity ([Fe/H]): "))
 
-        # Log g
-        print('')
-        print(hostName + ' Star Surface Gravity log(g) : ' + str(pDict['logg']))
-        agreement = str(input("Do you agree? (y/n) "))
-        while agreement.lower() != 'y' and agreement.lower() != 'n':
-            agreement = str(input("Do you agree? (y/n) "))
-        if agreement.lower() == 'y':
-            starSurfG = pDict['logg']
-        else:
-            starSurfG = float(input("Enter the Surface Gravity (log(g)): "))
+            # Log g
+            print('')
+            starSurfG = float(input("Enter the host star's surface gravity (log(g)): "))
+
 
         # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
         URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
@@ -1793,11 +1847,28 @@ if __name__ == "__main__":
 
             # hdul = fits.open(timeSortedNames[0])  # opens the fits file
             # firstImageData = fits.getdata(timeSortedNames[0], ext=0)
-            firstImageData = sortedallImageData[0]
+            firstimagecounter = 0
+            firstImageData = sortedallImageData[firstimagecounter]
 
-            # fit Target in the first image and use it to determine aperture and annulus range
-            targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
-                                                                                    box=10)
+            # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
+            firstimagegood = True
+            while firstimagegood:
+                # fit Target in the first image and use it to determine aperture and annulus range
+                try:
+                    targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
+                                                                                            box=10)
+                    firstimagegood = False
+                # If the first image is a bad one, then move on to the next image
+                except:
+                    firstimagecounter = firstimagecounter + 1
+                    firstImageData = sortedallImageData[firstimagecounter]
+            
+            # Filter the other data as well
+            sortedallImageData = sortedallImageData[firstimagecounter:]
+            timesListed = timesListed[firstimagecounter:]
+            airMassList = airMassList[firstimagecounter:]
+            sortedTimeList = sortedTimeList[firstimagecounter:]
+
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
@@ -1839,7 +1910,7 @@ if __name__ == "__main__":
                     for annulusR in annulus_sizes:  # annulus loop
                         # fileNumber = 1
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
-                        for fileNumber, imageData in enumerate(sortedallImageData):
+                        for fileNumber, imageData in enumerate(sortedallImageData[firstimagenumber]):
 
                             # hDul = fits.open(imageFile)  # opens the fits file
                             # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
@@ -1920,6 +1991,8 @@ if __name__ == "__main__":
                                 #get minimum background value bigger than 0
                                 targImFlat = np.sort(np.array(targSearchA).ravel())
 
+                                # Initialize the variable
+                                tGuessBkg = 0
                                 for el in targImFlat:
                                     if (el > 0):
                                         tGuessBkg = el

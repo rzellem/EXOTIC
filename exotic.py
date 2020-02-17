@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.3"
+versionid = "0.6.4"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1914,7 +1914,7 @@ if __name__ == "__main__":
                     for annulusR in annulus_sizes:  # annulus loop
                         # fileNumber = 1
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
-                        for fileNumber, imageData in enumerate(sortedallImageData[firstimagecounter:]):
+                        for fileNumber, imageData in enumerate(sortedallImageData):
 
                             # hDul = fits.open(imageFile)  # opens the fits file
                             # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file

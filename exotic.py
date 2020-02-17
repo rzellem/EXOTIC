@@ -1257,6 +1257,10 @@ if __name__ == "__main__":
                     extData = json.load(extendedFile)
                     confirmLnNum = findPlanetLineConf(targetName,
                                                       confData)  # confirmLnNum of -1 means it couldn't be found
+                    if confirmLnNum == -1:
+                        CandidatePlanetBool = True
+                    else:
+                        CandidatePlanetBool = False
                     while confirmLnNum == -1:
                         print("\nCannot find " + targetName + " in the NASA Exoplanet Archive.")
 
@@ -1910,7 +1914,7 @@ if __name__ == "__main__":
                     for annulusR in annulus_sizes:  # annulus loop
                         # fileNumber = 1
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
-                        for fileNumber, imageData in enumerate(sortedallImageData[firstimagenumber]):
+                        for fileNumber, imageData in enumerate(sortedallImageData[firstimagecounter:]):
 
                             # hDul = fits.open(imageFile)  # opens the fits file
                             # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file

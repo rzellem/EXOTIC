@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.4"
+versionid = "0.6.5"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -2230,7 +2230,7 @@ if __name__ == "__main__":
             print('')
             
             # Take the BJD times from the image headers
-            if "BJD" in hdul[0].header:
+            if "BJD_TDB" in hdul[0].header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

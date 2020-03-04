@@ -18,7 +18,7 @@
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
 # Author: Ethan Blaser
-# Co-authors: Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Monae
+# Co-authors: Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Varghese 
 # Mentors: Dr. Robert Zellem and Anya Biferno
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################

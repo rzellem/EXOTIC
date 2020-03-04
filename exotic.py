@@ -18,7 +18,7 @@
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
 # Author: Ethan Blaser
-# Co-authors: Rob Zellem, Kyle Pearson, John Engelke
+# Co-authors: Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Monae
 # Mentors: Dr. Robert Zellem and Anya Biferno
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.5"
+versionid = "0.6.6"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1909,6 +1909,10 @@ if __name__ == "__main__":
                 # Run through only 5 different annulus sizes, all interger pixel values
                 annulus_step = np.nanmax([1, (annulus_max - annulus_min)//5])  # forces step size to be at least 1
                 annulus_sizes = np.arange(annulus_min, annulus_max, annulus_step)
+
+                target_fits = {}
+                ref_fits = {}
+                reg_trans = {}
                 
                 for apertureR in aperture_sizes:  # aperture loop
                     for annulusR in annulus_sizes:  # annulus loop
@@ -1942,7 +1946,13 @@ if __name__ == "__main__":
                             # ------ CENTROID FITTING ----------------------------------------
 
                             # corrects for any image shifts that result from a tracking slip
-                            shift, error, diffphase = register_translation(prevImageData, imageData)
+                            # shift, error, diffphase = register_translation(prevImageData, imageData)
+                            if fileNumber in reg_trans.keys():
+                                shift, error, diffphase = reg_trans[fileNumber]
+                            else:
+                                shift, error, diffphase = register_translation(prevImageData, imageData)
+                                reg_trans[fileNumber] = [shift, error, diffphase]
+
                             xShift = shift[1]
                             yShift = shift[0]
 
@@ -2016,8 +2026,16 @@ if __name__ == "__main__":
                                     print('Error: the Darks have a higher pixel counts than the image itself')
                                 myPriors = [tGuessAmp, prevTSigX, prevTSigY, tGuessBkg] #########ERROR HERE
 
-                                tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
-                                                                                    init=myPriors, box=distFC)
+                                # tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
+                                #                                                     init=myPriors, box=distFC)
+                                
+                                if fileNumber in target_fits.keys():
+                                    tx, ty, tamplitude, tsigX, tsigY, toff = target_fits[fileNumber]
+                                else:
+                                    tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
+                                                                                     init=myPriors, box=distFC)
+                                    target_fits[fileNumber] = [tx, ty, tamplitude, tsigX, tsigY, toff]
+
                                 currTPX = tx
                                 currTPY = ty
 
@@ -2027,8 +2045,14 @@ if __name__ == "__main__":
 
                                 rGuessAmp = refSearchA.max() - rGuessBkg
                                 myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, rGuessBkg]
-                                rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
+                                # rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
+                                                                                    # init=myRefPriors, box=distFC)
+                                if fileNumber in ref_fits.keys():
+                                    rx, ry, ramplitude, rsigX, rsigY, roff = ref_fits[fileNumber]
+                                else:
+                                    rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
                                                                                     init=myRefPriors, box=distFC)
+                                    ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff ]
                                 currRPX = rx
                                 currRPY = ry
 
@@ -2449,14 +2473,12 @@ if __name__ == "__main__":
         fitAm2 = float(np.median(trace['Am2', burn:]))
 
         # Plot Traces
-        # Rob updated this with a try command as ArviZ isn't working on his machine....
-        try:
-            pm.traceplot(trace[burn:])
-            plt.figure()
-            plt.savefig(saveDirectory + 'temp/Traces' + targetName + date + '.png')
-            plt.close()
-        except ImportError:
-            pass
+        for keyi in trace.varnames:
+            if "interval" not in keyi:
+                plt.plot(trace[keyi, burn:])
+                plt.title(keyi)
+                plt.savefig(saveDirectory + 'temp/Traces' + targetName + date +"_"+keyi+'.png')
+                plt.close()
 
         # # Gelman Rubin
         # print("Gelman Rubin Convergence Test:")

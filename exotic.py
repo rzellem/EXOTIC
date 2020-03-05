@@ -2116,16 +2116,17 @@ if __name__ == "__main__":
 
                             #otherwise, mask off the rest of the files from time sorted names including the current one
                             else:
+                                print("Filtering data to account for drifting target.")
                                 # timeSortedNames = timeSortedNames[:fileNumber]
 
-                                # # TIME
-                                # timesListed = timesListed[:fileNumber]
+                                # TIME
+                                timesListed = timesListed[:fileNumber]
 
-                                # # AIRMASS
-                                # airMassList = airMassList[:fileNumber]
+                                # AIRMASS
+                                airMassList = airMassList[:fileNumber]
 
-                                # # ALL IMAGES
-                                # allImageData = allImageData[:fileNumber]
+                                # ALL IMAGES
+                                sortedallImageData = sortedallImageData[:fileNumber]
 
                                 break
 

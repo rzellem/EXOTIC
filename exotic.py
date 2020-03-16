@@ -27,10 +27,33 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.7"
+versionid = "0.6.8"
 
 
 # --IMPORTS -----------------------------------------------------------
+print("Importing Python Packages - please wait.")
+
+import itertools
+import threading
+import time
+import sys
+
+
+#here is the animation
+def animate():
+    for c in itertools.cycle(['|', '/', '-', '\\']):
+        if done:
+            break
+        sys.stdout.write('\rThinking ' + c)
+        sys.stdout.flush()
+        time.sleep(0.1)
+    # sys.stdout.write('\nDone!     \n')
+    # print('\nDone!     \n')
+
+done = False
+t = threading.Thread(target=animate, daemon=True)
+t.start()
+
 import os
 import logging
 import sys
@@ -84,6 +107,10 @@ import requests
 # Lightcurve imports
 from gaelLCFuncs import *
 from occultquad import *
+
+#long process here
+# time.sleep(10)
+done = True
 
 
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
@@ -673,6 +700,10 @@ def chisquared(observed_values, expected_values, uncertainty):
 # make and plot the chi squared traces
 def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     print("Performing Chi^2 Burn")
+    print("Please be patient- this step can take a few minutes.")
+    done = False
+    t = threading.Thread(target=animate, daemon=True)
+    t.start()
 
     midTArr = myTrace.get_values('Tmid', combine=False)
     radiusArr = myTrace.get_values('RpRs', combine=False)
@@ -718,6 +749,7 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
         burns.append(burnno)
 
     completeBurn = np.max(burns)
+    done = True
     print('Chi^2 Burn In Length: ' + str(completeBurn))
 
     return completeBurn
@@ -959,7 +991,7 @@ def realTimeReduce(i):
 
 
 if __name__ == "__main__":
-    print('')
+    print('\n')
     print('*************************************************************')
     print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
     print("Version ",versionid)
@@ -1191,7 +1223,7 @@ if __name__ == "__main__":
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                directoryP = str(input("Enter the Directory of the FITS Image Files: "))
+                directoryP = str(input("\nEnter the Directory of the FITS Image Files: "))
 
             # Add / to end of directory if user does not input it
             if directoryP[-1] != "/":
@@ -1244,9 +1276,12 @@ if __name__ == "__main__":
             pass
 
         if fileorcommandline == 1:
-            targetName = str(input("Enter the Planet Name: "))
+            targetName = str(input("\nEnter the Planet Name: "))
 
         print("\nLooking up ", targetName)
+        done = False
+        t = threading.Thread(target=animate, daemon=True)
+        t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
         scrape()
         with open('eaConf.txt') as confirmedFile:
@@ -1276,10 +1311,11 @@ if __name__ == "__main__":
                     pDict = getParams(confData, compData, extData, targetName)
         if not CandidatePlanetBool:
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+        done = True
 
         # observation date
         if fileorcommandline == 1:
-            date = str(input("Enter the Observation Date: "))
+            date = str(input("\nEnter the Observation Date: "))
 
         if fitsortext == 1:
             # latitude and longitude
@@ -1380,7 +1416,7 @@ if __name__ == "__main__":
 
             # ---HANDLE CALIBRATION IMAGES------------------------------------------------
             if fileorcommandline == 1:
-                cals = str(input('Do you have any calibration images (flats, darks or biases)? (y/n) '))
+                cals = str(input('\nDo you have any calibration images (flats, darks or biases)? (y/n) '))
 
             # if they have cals, handle them by calculating the median flat, dark or bias
             if cals == 'y' or cals == 'yes' or cals == 'Y' or cals == 'Yes':
@@ -1388,7 +1424,7 @@ if __name__ == "__main__":
                 # flats
                 # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
-                    flats = str(input('Do you have flats? (y/n) '))
+                    flats = str(input('\nDo you have flats? (y/n) '))
 
                     if flats == 'y' or flats == 'yes' or flats == 'Y' or flats == 'Yes':
                         flatsBool = True
@@ -1430,7 +1466,7 @@ if __name__ == "__main__":
 
                 # darks
                 if fileorcommandline == 1:
-                    darks = str(input('Do you have darks? (y/n) '))
+                    darks = str(input('\nDo you have darks? (y/n) '))
 
                     if (darks == 'y' or darks == 'yes' or darks == 'Y' or darks == 'Yes'):
                         darksBool = True
@@ -1466,7 +1502,7 @@ if __name__ == "__main__":
 
                 # biases
                 if fileorcommandline == 1:
-                    biases = str(input('Do you have biases? (y/n) '))
+                    biases = str(input('\nDo you have biases? (y/n) '))
 
                     if biases == 'y' or biases == 'yes' or biases == 'Y' or biases == 'Yes':
                         biasesBool = True
@@ -1515,7 +1551,7 @@ if __name__ == "__main__":
 
         #Handle AAVSO Formatting
         if fileorcommandline == 1:
-            AAVSOoutput = str(input('Do you want to use the AAVSO format output? (y/n)'))
+            AAVSOoutput = str(input('Do you want to use the AAVSO format output? (y/n) '))
             if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
                 AAVSOBool = False
             else:
@@ -1826,11 +1862,14 @@ if __name__ == "__main__":
             else:
                 cosmicrayfilter_bool = False
             if cosmicrayfilter_bool:
-                print("\n")
+                print("\nFiltering your data for cosmic rays.")
+                done = False
+                t = threading.Thread(target=animate, daemon=True)
+                t.start()
                 # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
                 # For now, this is a simple median filter...in the future, should use something more smart later
                 for xi in np.arange(np.shape(sortedallImageData)[-2]):
-                    print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
+                    # print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
                     for yi in np.arange(np.shape(sortedallImageData)[-1]):
                         # Simple median filter
                         idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
@@ -1839,6 +1878,7 @@ if __name__ == "__main__":
                         # while sum(idx) > 0:
                         #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
                         #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
+                done = True
 
             # if len(sortedTimeList) == 0:
             #     print("Error: .FITS files not found in " + directoryP)
@@ -1872,6 +1912,20 @@ if __name__ == "__main__":
             timesListed = timesListed[firstimagecounter:]
             airMassList = airMassList[firstimagecounter:]
             sortedTimeList = sortedTimeList[firstimagecounter:]
+
+            # apply cals correction if applicable
+            if darksBool:
+                print("Dark subtracting images.")
+                sortedallImageData = sortedallImageData - generalDark
+            elif biasesBool:
+                print("Bias-correcting images.")
+                sortedallImageData = sortedallImageData - generalBias
+            else:
+                pass
+
+            if flatsBool:
+                print("Flattening images.")
+                sortedallImageData = sortedallImageData / generalFlat
 
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
@@ -1922,17 +1976,6 @@ if __name__ == "__main__":
 
                             # hDul = fits.open(imageFile)  # opens the fits file
                             # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
-
-                            # apply cals correction if applicable
-                            if darksBool:
-                                imageData = imageData - generalDark
-                            elif biasesBool:
-                                imageData = imageData - generalBias
-                            else:
-                                pass
-
-                            if flatsBool:
-                                imageData = imageData / generalFlat
 
                             # header = fits.getheader(imageFile)
 
@@ -2194,7 +2237,7 @@ if __name__ == "__main__":
 
                         # chi2 = np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.)/(len(arrayFinalFlux[~filtered_data.mask])-len(res.x)-1)
 
-                        print('The Residual Standard Devation is: ' + str(round(standardDev2, 6)))
+                        print('The Residual Standard Deviation is: ' + str(round(standardDev2, 6)))
                         print('The Reduced Chi-Squared is: ' + str(round(chi2_init, 6)))
                         print(' ')
                         if minSTD > standardDev2:  # If the standard deviation is less than the previous min
@@ -2260,6 +2303,7 @@ if __name__ == "__main__":
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
                 print("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
+                print("Please be patient- this step can take a few minutes.")
                 # targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
                 # obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
                 # timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
@@ -2267,8 +2311,12 @@ if __name__ == "__main__":
                 # time_barycentre = timesToConvert.tdb + ltt_bary
                 # resultos = time_barycentre.value
                 # goodTimes = resultos
+                done = False
+                t = threading.Thread(target=animate, daemon=True)
+                t.start()
                 resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra= raDeg, dec = decDeg, lat=lati, longi=longit, alt=elevation)
                 goodTimes = resultos[0]
+                done = True
 
             # Centroid position plots
             plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes, date)
@@ -2691,6 +2739,15 @@ if __name__ == "__main__":
             print('AAVSO File Saved')
         else:
             pass
+
+            outParamsFile = open(saveDirectory + 'Residuals' + targetName + date + '.txt', 'w+')
+            outParamsFile.write('#DATE,RESIDUALS\n')
+            for aavsoC in range(0, len(finalTimes)):
+                outParamsFile.write(
+                    str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalResiduals[aavsoC], 8)) + '\n')
+            # CODE YIELDED DATA IN PREV LINE FORMAT
+            outParamsFile.close()
+            print('Residuals File Saved')
 
         print(' ')
         print('************************')

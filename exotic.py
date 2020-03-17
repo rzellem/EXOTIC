@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.8"
+versionid = "0.6.9"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -98,6 +98,9 @@ from astropy.io import fits
 from astropy.stats import sigma_clip
 from photutils import CircularAperture
 from photutils import aperture_photometry
+import astropy.units as u
+from astropy.time import Time
+from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 
 # cross corrolation imports
 from skimage.feature import register_translation
@@ -429,17 +432,26 @@ def getPhase(curTime, pPeriod, tMid):
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(hdul):
-    # try this and if not fit for normalized time?
-    if 'TELALT' in hdul[0].header:
+def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
+    # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
+    if 'AIRMASS' in hdul[0].header:
+        am = float(hdul[0].header['AIRMASS'])
+    elif 'TELALT' in hdul[0].header:
         alt = float(hdul[0].header[
                         'TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
         cosam = math.cos((math.pi / 180) * (90.0 - alt))
         am = 1 / (cosam)
-    elif 'AIRMASS' in hdul[0].header:
-        am = float(hdul[0].header['AIRMASS'])
     else:
-        am = 1
+        pointing = SkyCoord(raStr+" "+decStr, unit=(u.deg, u.deg), frame='icrs')
+        location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
+        
+        date, time = hdul[0].header["DATE-OBS"].split("T")
+        time = time.split("-")[0]
+        time = Time(getJulianTime(hdul),format='jd',scale='utc',location=location)
+
+        pointingAltAz= pointing.transform_to(AltAz(obstime=time,location=location))
+
+        am = float(pointingAltAz.secz)
     return (am)
 
 
@@ -1832,7 +1844,7 @@ if __name__ == "__main__":
                 timesListed.append(currTime)
 
                 # AIRMASS
-                airMass = getAirMass(hdul)  # gets the airmass at the time the image was taken
+                airMass = getAirMass(hdul, raStr, decStr, lati, longit, elevation)  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                 # IMAGES
@@ -1845,6 +1857,11 @@ if __name__ == "__main__":
             timesListed = np.array(timesListed)
             airMassList = np.array(airMassList)
 
+            # If all of the airmasses == 1, then you need to calculate the airmass for the user
+            if set(airMassList) == 1:
+                pointingAltAz= pointing.transform_to(AltAz(obstime=t,location=location))
+               
+
             # # Time sorts the file names based on the fits file header
             # timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
             # tsnCopy = timeSortedNames
@@ -1855,12 +1872,15 @@ if __name__ == "__main__":
             airMassList = airMassList[np.argsort(timeList)]
             sortedTimeList = sorted(timeList)
 
-            print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
-            cosmicrayfilter = input("\nDo you want to filter the raw images for cosmic rays? (y/n) ")
-            if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
-                cosmicrayfilter_bool = True
-            else:
-                cosmicrayfilter_bool = False
+            # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
+            # cosmicrayfilter = input("\nDo you want to filter the raw images for cosmic rays? (y/n) ")
+            # if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
+            #     cosmicrayfilter_bool = True
+            # else:
+            #     cosmicrayfilter_bool = False
+            
+            # The cosmic ray filter isn't really working for now...so let's just turn it off
+            cosmicrayfilter_bool = False
             if cosmicrayfilter_bool:
                 print("\nFiltering your data for cosmic rays.")
                 done = False

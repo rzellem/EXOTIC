@@ -17,7 +17,7 @@ To demonstrate how to use the data reduction pipeline, the linked document above
 
 The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
 
-![Sample Data](Sample-Data)
+![Sample Data](sample-data)
 
 ## How it Works
 
@@ -41,4 +41,4 @@ Documentation co-written by Alexandra Iturralde.
 
 
 ## Citation
-If you use any of these algorithms in your work, please include Ethan H. Blaser as a coauthor. Current Institution: University of Virginia, Charlottesville, Virginia 22904, USA
+If you use any of these algorithms in your work, please cite our 2020 paper: [Zellem, Pearson, Blaser, et al. 2020](https://ui.adsabs.harvard.edu/abs/2020arXiv200309046Z/abstract)

@@ -18,7 +18,7 @@
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
 # Author: Ethan Blaser
-# Co-authors: Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Varghese 
+# Co-authors: Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
 # Mentors: Dr. Robert Zellem and Anya Biferno
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.6.9"
+versionid = "0.7.0"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -445,8 +445,6 @@ def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
         pointing = SkyCoord(raStr+" "+decStr, unit=(u.deg, u.deg), frame='icrs')
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
         
-        date, time = hdul[0].header["DATE-OBS"].split("T")
-        time = time.split("-")[0]
         time = Time(getJulianTime(hdul),format='jd',scale='utc',location=location)
 
         pointingAltAz= pointing.transform_to(AltAz(obstime=time,location=location))
@@ -2316,6 +2314,64 @@ if __name__ == "__main__":
             print('Optimal Annulus: ' + str(minAnnulus))
             print('********************************************')
             print('')
+
+            # # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            # # Save a text file of the RA and DEC of the target and comp
+            # # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            # outParamsFile = open(saveDirectory + targetName + date + '.radec', 'w+')
+            # outParamsFile.write('#RA, Dec, Target = 0 / Ref Star = 1, Centroid [pix]\n')
+            # outParamsFile.write(raStr+","+decStr+",0,"+str(minAperture)+"\n")
+            # outParamsFile.close()
+
+            # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            # Save an image of the FOV
+            # (for now, take the first image; later will sum all of the images up)
+            # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            if "IM_SCALE" in hdul[0].header:
+                imscalen = hdul[0].header['IM_SCALE']
+                imscaleunits = hdul[0].header.comments['IM_SCALE']
+                imscale  = imscaleunits +": "+str(imscalen)
+            elif "PIXSCALE" in hdul[0].header:
+                imscalen = hdul[0].header['PIXSCALE']
+                imscaleunits = hdul[0].header.comments['PIXSCALE']
+                imscale  = imscaleunits +": "+str(imscalen)
+            else:
+                print("Cannot find the pixel scale in the image header.")
+                pixscale = input("Do you know the size of your pixels? (y/n) ")
+                if pixscale == 'y' or pixscale == 'Y' or pixscale == 'yes':
+                    imscalen = input("Please enter the size of your pixel (e.g., 5 arcsec/pixel). ")
+                    imscale = "Image scale: "+imscalen
+            imwidth = np.shape(sortedallImageData[0])[1]
+            imheight = np.shape(sortedallImageData[0])[0]
+            picframe = 10*(minAperture+minAnnulus)
+            pltx = [min([finXTargCent[0],finXRefCent[0]])-picframe, max([finXTargCent[0],finXRefCent[0]])+picframe]
+            FORwidth = pltx[1]-pltx[0]
+            plty = [min([finYTargCent[0],finYRefCent[0]])-picframe, max([finYTargCent[0],finYRefCent[0]])+picframe]
+            FORheight = plty[1]-plty[0]
+            fig, ax = plt.subplots()  
+            target_circle = plt.Circle((finXTargCent[0],finYTargCent[0]), minAperture, color='lime',fill=False,ls='-',label='Target')
+            target_circle_sky = plt.Circle((finXTargCent[0],finYTargCent[0]), minAperture+minAnnulus, color='lime',fill=False,ls='--',lw=.5)
+            ref_circle = plt.Circle((finXRefCent[0],finYRefCent[0]), minAperture, color='r',fill=False,ls='-.',label='Comp')
+            ref_circle_sky = plt.Circle((finXRefCent[0],finYRefCent[0]), minAperture+minAnnulus, color='r',fill=False,ls='--',lw=.5)
+            plt.imshow(np.log10(sortedallImageData[0]),origin='lower',cmap='Greys_r',interpolation=None)#,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
+            plt.plot(finXTargCent[0],finYTargCent[0],marker='+',color='lime')
+            ax.add_artist(target_circle)
+            ax.add_artist(target_circle_sky)
+            ax.add_artist(ref_circle)
+            ax.add_artist(ref_circle_sky)
+            plt.plot(finXRefCent[0],finYRefCent[0],'+r')
+            plt.xlabel("x-axis [pixel]")
+            plt.ylabel("y-axis [pixel]")
+            plt.title("FOV for "+targetName+"\n("+imscale+")")
+            plt.xlim(pltx[0],pltx[1])
+            plt.ylim(plty[0],plty[1])
+            ax.grid(False)
+            plt.plot(0,0,color='lime',ls='-',label='Target')
+            plt.plot(0,0,color='r',ls='-.',label='Comp')
+            l = plt.legend(frameon=None, framealpha=0)
+            for text in l.get_texts():
+                text.set_color("white")
+            plt.savefig(saveDirectory+"FOV"+targetName+date+".pdf",bbox_inches='tight')
             
             # Take the BJD times from the image headers
             if "BJD_TDB" in hdul[0].header:
@@ -2650,6 +2706,16 @@ if __name__ == "__main__":
         except AttributeError:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".png", bbox_inches="tight")
         plt.close()
+ 
+        # write output to text file
+        outParamsFile = open(saveDirectory + 'FinalLightCurve' + targetName + date + '.csv', 'w+')
+        outParamsFile.write('FINAL TIMESERIES OF '+targetName+'\n')
+        outParamsFile.write('BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
+
+        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes,adjustedPhases, finalFluxes/finalAirmassModel, finalNormUnc/finalAirmassModel, finalModel/finalAirmassModel, finalAirmassModel):
+            outParamsFile.write(str(bjdi)+","+str(phasei)+","+str(modeli)+","+str(fluxi)+","+str(fluxerri)+"\n")
+
+        outParamsFile.close()
         
         ###################
         # CHI SQUARED ROLL

@@ -2800,7 +2800,7 @@ if __name__ == "__main__":
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
         outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI
         outParamsFile.write('#SECONDARYOBSCODE=' + secuserCode + '\n')  # UI
-        outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
+        outParamsFile.write('#SOFTWARE=EXOTIC v'+versionid+'\n')  # fixed
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
         outParamsFile.write('#OBSTYPE='+cameraType+'\n')

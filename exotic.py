@@ -442,7 +442,7 @@ def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
         cosam = math.cos((math.pi / 180) * (90.0 - alt))
         am = 1 / (cosam)
     else:
-        pointing = SkyCoord(raStr+" "+decStr, unit=(u.deg, u.deg), frame='icrs')
+        pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
         
         time = Time(getJulianTime(hdul),format='jd',scale='utc',location=location)
@@ -1327,6 +1327,11 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             date = str(input("\nEnter the Observation Date: "))
 
+        # Using a / in your date can screw up the file paths- this will check user's date
+        while "/" in date:
+            print("Do not use / in your date. Please try again.")
+            date = str(input("\nEnter the Observation Date: "))
+
         if fitsortext == 1:
             # latitude and longitude
             if fileorcommandline == 1:
@@ -1378,17 +1383,18 @@ if __name__ == "__main__":
 
             # convert UI RA and DEC into degrees
 
-            # parse their ra string
-            # remove the spaces in their answer and split by the colons
-            # take first character to be the sign and write a check if they forget
-            noSpaceRa = raStr.replace(" ", "")
-            noSpaceColonRa = noSpaceRa.replace(":", "")
-            # noCapsSpaceRa = noSpaceColonRa.lower()
+            # # parse their ra string
+            # # remove the spaces in their answer and split by the colons
+            # # take first character to be the sign and write a check if they forget
+            # noSpaceRa = raStr.replace(" ", "")
+            # noSpaceColonRa = noSpaceRa.replace(":", "")
+            # # noCapsSpaceRa = noSpaceColonRa.lower()
 
-            raHr = noSpaceColonRa[:2]
-            raMin = noSpaceColonRa[2:4]
-            raSec = noSpaceColonRa[4:]
-            raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
+            # raHr = noSpaceColonRa[:2]
+            # raMin = noSpaceColonRa[2:4]
+            # raSec = noSpaceColonRa[4:]
+            # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
+            raDeg = astropy.coordinates.Angle(raStr+" hours").deg
 
             noSpaceDec = decStr.replace(" ", "")
             noSpaceColonDec = noSpaceDec.replace(":", "")
@@ -1399,17 +1405,18 @@ if __name__ == "__main__":
                 print('You forgot the sign for the dec! Please try again.')
                 decStr = str(input(
                     "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-                noSpaceDec = decStr.replace(" ", "")
-                noSpaceColonDec = noSpaceDec.replace(":", "")
-                decSign = noSpaceColonDec[0]
-            decD = noSpaceColonDec[1:3]
-            decMin = noSpaceColonDec[3:5]
-            decSec = noSpaceColonDec[5:]
-            if decSign == '-':
-                decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
-                            4) * -1  # account for the negative
-            else:
-                decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
+            #     noSpaceDec = decStr.replace(" ", "")
+            #     noSpaceColonDec = noSpaceDec.replace(":", "")
+            #     decSign = noSpaceColonDec[0]
+            # decD = noSpaceColonDec[1:3]
+            # decMin = noSpaceColonDec[3:5]
+            # decSec = noSpaceColonDec[5:]
+            # if decSign == '-':
+            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
+            #                 4) * -1  # account for the negative
+            # else:
+            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
+            decDeg = astropy.coordinates.Angle(decStr+" degrees").deg
 
                 # TARGET STAR
             if fileorcommandline == 1:
@@ -1561,7 +1568,7 @@ if __name__ == "__main__":
 
         #Handle AAVSO Formatting
         if fileorcommandline == 1:
-            AAVSOoutput = str(input('Do you want to use the AAVSO format output? (y/n) '))
+            AAVSOoutput = str(input('Do you have an AAVSO Observer Account? (y/n) '))
             if AAVSOoutput == "none" or AAVSOoutput == "no" or AAVSOoutput == "n/a" or AAVSOoutput == "n":
                 AAVSOBool = False
             else:
@@ -1569,11 +1576,11 @@ if __name__ == "__main__":
                 # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
                 userCode = str(input('Please enter your AAVSO Observer Account Number: '))
                 secuserCode = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
-                cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
-                binning = str(input('Please enter your pixel binning: '))
-                exposureTime = str(input('Please enter your exposure time (seconds): ')) 
-                filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): ')) 
-                obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
+            cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
+            binning = str(input('Please enter your pixel binning: '))
+            exposureTime = str(input('Please enter your exposure time (seconds): ')) 
+            filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): ')) 
+            obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -2785,55 +2792,57 @@ if __name__ == "__main__":
         print('')
 
         # AAVSO Format
-        if AAVSOBool:
-            outParamsFile = open(saveDirectory + 'AAVSO' + targetName + date + '.txt', 'w+')
-            outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
-            outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI
-            outParamsFile.write('#SECONDARYOBSCODE=' + secuserCode + '\n')  # UI
-            outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
-            outParamsFile.write('#DELIM=,\n')  # fixed
-            outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
-            outParamsFile.write('#OBSTYPE='+cameraType+'\n')
-            outParamsFile.write('#STAR_NAME=' + hostName + '\n')  # code yields
-            outParamsFile.write('#EXOPLANET_NAME=' + targetName + '\n')  # code yields
-            outParamsFile.write('#BINNING=' + binning + '\n')  # user input
-            outParamsFile.write('#EXPOSURE_TIME=' + str(exposureTime) + '\n')  # UI
-            outParamsFile.write('#FILTER=' + str(filterName) + '\n')
-            outParamsFile.write('#NOTES=' + str(obsNotes) + '\n')
-            outParamsFile.write('#DETREND_PARAMETERS=AIRMASS\n')  # fixed
-            outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
-            # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
-            #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
-            #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
-            #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
-            outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
-                semi) + ',inc=' + str(inc) + ',ecc=' + str(eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
-            # code yields
+        if not AAVSOBool:
+            userCode = "N/A"
+            secuserCode = "N/A"
+        # else:
+        outParamsFile = open(saveDirectory + 'AAVSO' + targetName + date + '.txt', 'w+')
+        outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
+        outParamsFile.write('#OBSCODE=' + userCode + '\n')  # UI
+        outParamsFile.write('#SECONDARYOBSCODE=' + secuserCode + '\n')  # UI
+        outParamsFile.write('#SOFTWARE=EXOTIC\n')  # fixed
+        outParamsFile.write('#DELIM=,\n')  # fixed
+        outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
+        outParamsFile.write('#OBSTYPE='+cameraType+'\n')
+        outParamsFile.write('#STAR_NAME=' + hostName + '\n')  # code yields
+        outParamsFile.write('#EXOPLANET_NAME=' + targetName + '\n')  # code yields
+        outParamsFile.write('#BINNING=' + binning + '\n')  # user input
+        outParamsFile.write('#EXPOSURE_TIME=' + str(exposureTime) + '\n')  # UI
+        outParamsFile.write('#FILTER=' + str(filterName) + '\n')
+        outParamsFile.write('#NOTES=' + str(obsNotes) + '\n')
+        outParamsFile.write('#DETREND_PARAMETERS=AIRMASS\n')  # fixed
+        outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
+        # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
+        #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
+        #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
+        #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
+        outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
+            semi) + ',inc=' + str(inc) + ',ecc=' + str(eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
+        # code yields
+        outParamsFile.write(
+            '#RESULTS=Tc=' + str(round(fitMidT, 8)) + ' +/- ' + str(round(midTranUncert, 8)) + ',Rp/R*=' + str(
+                round(fitRadius, 6)) + ' +/- ' + str(round(radUncert, 6)) + ',Am1=' + str(
+                round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
+                round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
+        # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
+        outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1\n')
+        for aavsoC in range(0, len(finalTimes)):
             outParamsFile.write(
-                '#RESULTS=Tc=' + str(round(fitMidT, 8)) + ' +/- ' + str(round(midTranUncert, 8)) + ',Rp/R*=' + str(
-                    round(fitRadius, 6)) + ' +/- ' + str(round(radUncert, 6)) + ',Am1=' + str(
-                    round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
-                    round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
-            # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
-            outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1\n')
-            for aavsoC in range(0, len(finalTimes)):
-                outParamsFile.write(
-                    str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalFluxes[aavsoC], 7)) + ',' + str(
-                        round(finalNormUnc[aavsoC], 6)) + ',' + str(round(finalAirmasses[aavsoC], 6)) + '\n')
-            # CODE YIELDED DATA IN PREV LINE FORMAT
-            outParamsFile.close()
-            print('AAVSO File Saved')
-        else:
-            pass
+                str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalFluxes[aavsoC], 7)) + ',' + str(
+                    round(finalNormUnc[aavsoC], 6)) + ',' + str(round(finalAirmasses[aavsoC], 6)) + '\n')
+        # CODE YIELDED DATA IN PREV LINE FORMAT
+        outParamsFile.close()
+        print('Output File Saved')
+        # pass
 
-            outParamsFile = open(saveDirectory + 'Residuals' + targetName + date + '.txt', 'w+')
-            outParamsFile.write('#DATE,RESIDUALS\n')
-            for aavsoC in range(0, len(finalTimes)):
-                outParamsFile.write(
-                    str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalResiduals[aavsoC], 8)) + '\n')
-            # CODE YIELDED DATA IN PREV LINE FORMAT
-            outParamsFile.close()
-            print('Residuals File Saved')
+            # outParamsFile = open(saveDirectory + 'Residuals' + targetName + date + '.txt', 'w+')
+            # outParamsFile.write('#DATE,RESIDUALS\n')
+            # for aavsoC in range(0, len(finalTimes)):
+            #     outParamsFile.write(
+            #         str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalResiduals[aavsoC], 8)) + '\n')
+            # # CODE YIELDED DATA IN PREV LINE FORMAT
+            # outParamsFile.close()
+            # print('Residuals File Saved')
 
         print(' ')
         print('************************')

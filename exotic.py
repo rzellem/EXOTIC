@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.7.1"
+versionid = "0.7.2"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1288,10 +1288,10 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             targetName = str(input("\nEnter the Planet Name: "))
 
-        print("\nLooking up ", targetName)
-        done = False
-        t = threading.Thread(target=animate, daemon=True)
-        t.start()
+        print("\nLooking up ", targetName, "- please wait.")
+        # done = False
+        # t = threading.Thread(target=animate, daemon=True)
+        # t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
         scrape()
         with open('eaConf.txt') as confirmedFile:
@@ -1321,7 +1321,7 @@ if __name__ == "__main__":
                     pDict = getParams(confData, compData, extData, targetName)
         if not CandidatePlanetBool:
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        done = True
+        # done = True
 
         # observation date
         if fileorcommandline == 1:
@@ -2604,6 +2604,11 @@ if __name__ == "__main__":
         fitAm1 = float(np.median(trace['Am1', burn:]))
         fitAm2 = float(np.median(trace['Am2', burn:]))
 
+        midTranUncert = round(np.std(trace['Tmid', burn:]), 6)
+        radUncert = round(np.std(trace['RpRs', burn:]), 6)
+        am1Uncert = round(np.std(trace['Am1', burn:]), 6)
+        am2Uncert = round(np.std(trace['Am2', burn:]), 6)
+
         # Plot Traces
         for keyi in trace.varnames:
             if "interval" not in keyi:
@@ -2748,10 +2753,6 @@ if __name__ == "__main__":
         plt.savefig(saveDirectory + 'temp/ChiSquaredRoll' + targetName + '.png')
         plt.close()
 
-        midTranUncert = round(np.std(trace['Tmid', burn:]), 6)
-        radUncert = round(np.std(trace['RpRs', burn:]), 6)
-        am1Uncert = round(np.std(trace['Am1', burn:]), 6)
-        am2Uncert = round(np.std(trace['Am2', burn:]), 6)
         # print final extracted planetary parameters
 
         print('*********************************************************')
@@ -2810,7 +2811,7 @@ if __name__ == "__main__":
         outParamsFile.write('#EXPOSURE_TIME=' + str(exposureTime) + '\n')  # UI
         outParamsFile.write('#FILTER=' + str(filterName) + '\n')
         outParamsFile.write('#NOTES=' + str(obsNotes) + '\n')
-        outParamsFile.write('#DETREND_PARAMETERS=AIRMASS\n')  # fixed
+        outParamsFile.write('#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n')  # fixed
         outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
         # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
         #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
@@ -2825,11 +2826,12 @@ if __name__ == "__main__":
                 round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
                 round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
         # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
-        outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1\n')
+        outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1,DETREND_2\n')
         for aavsoC in range(0, len(finalTimes)):
             outParamsFile.write(
                 str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalFluxes[aavsoC], 7)) + ',' + str(
-                    round(finalNormUnc[aavsoC], 6)) + ',' + str(round(finalAirmasses[aavsoC], 6)) + '\n')
+                    round(finalNormUnc[aavsoC], 7)) + ',' + str(round(finalAirmasses[aavsoC], 7)) + ',' + str(
+                        round(finalAirmassModel[aavsoC],7)) + '\n')
         # CODE YIELDED DATA IN PREV LINE FORMAT
         outParamsFile.close()
         print('Output File Saved')

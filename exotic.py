@@ -27,7 +27,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.7.2"
+versionid = "0.7.3"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -2344,10 +2344,10 @@ if __name__ == "__main__":
                 imscale  = imscaleunits +": "+str(imscalen)
             else:
                 print("Cannot find the pixel scale in the image header.")
-                pixscale = input("Do you know the size of your pixels? (y/n) ")
-                if pixscale == 'y' or pixscale == 'Y' or pixscale == 'yes':
-                    imscalen = input("Please enter the size of your pixel (e.g., 5 arcsec/pixel). ")
-                    imscale = "Image scale: "+imscalen
+                # pixscale = input("Do you know the size of your pixels? (y/n) ")
+                # if pixscale == 'y' or pixscale == 'Y' or pixscale == 'yes':
+                imscalen = input("Please enter the size of your pixel (e.g., 5 arcsec/pixel). ")
+                imscale = "Image scale: "+imscalen
             imwidth = np.shape(sortedallImageData[0])[1]
             imheight = np.shape(sortedallImageData[0])[0]
             picframe = 10*(minAperture+minAnnulus)

@@ -17,9 +17,7 @@
 ####################################################################
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
-# Author: Ethan Blaser
-# Co-authors: Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
-# Mentors: Dr. Robert Zellem and Anya Biferno
+# Authors: Ethan Blaser, Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
 
@@ -27,7 +25,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.7.3"
+versionid = "0.7.4"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -2268,8 +2266,8 @@ if __name__ == "__main__":
                         if minSTD > standardDev2:  # If the standard deviation is less than the previous min
                             bestCompStar = compCounter + 1
                             minSTD = standardDev2  # set the minimum standard deviation to that
-
-                            arrayNormUnc = arrayNormUnc * np.sqrt(chi2_init)  # scale errorbars by chi2
+                            
+                            arrayNormUnc = arrayNormUnc * np.sqrt(chi2_init)  # scale errorbars by sqrt(chi2) so that chi2 == 1
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
@@ -2379,6 +2377,7 @@ if __name__ == "__main__":
             for text in l.get_texts():
                 text.set_color("white")
             plt.savefig(saveDirectory+"FOV"+targetName+date+".pdf",bbox_inches='tight')
+            plt.close()
             
             # Take the BJD times from the image headers
             if "BJD_TDB" in hdul[0].header:
@@ -2573,8 +2572,7 @@ if __name__ == "__main__":
             nodes.append(airmassCoeff2)
 
             # OBSERVATION MODEL
-
-            obs = pm.Normal('obs', mu=gaelModel(*nodes), tau=1. / (standardDev1 ** 2), observed=goodFluxes)
+            obs = pm.Normal('obs', mu=gaelModel(*nodes), tau=1. / (goodNormUnc ** 2.), observed=goodFluxes)
 
         # Sample from the model
         final_chain_length = int(100000)

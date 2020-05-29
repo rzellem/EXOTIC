@@ -118,3 +118,7 @@ venv.bak/
 **/eaComp.txt
 **/eaConf.txt
 **/eaExt.txt
+
+# IDE
+.idea
+**/Pipfile*

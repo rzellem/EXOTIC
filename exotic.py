@@ -116,11 +116,15 @@ done = True
 
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
 # Function that bins an array
-def binner(arr,n=1):
+def binner(arr,n,err=''):
     ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
     arr = np.nanmean(ecks, axis=1)
-    err = np.nanstd(ecks, axis=1)/np.sqrt(n)
-    return arr, err
+    if len(err) == 0:
+        return arr
+    else:
+        why = np.pad(err.astype(float), ( 0, ((n - err.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        err = np.array([np.sqrt(1./np.nansum(1./(np.array(i)**2.))) for i in why])
+        return arr, err
 
 # finds the planet line in the composite dictionary
 # returns -1 if its not there
@@ -2506,10 +2510,10 @@ if __name__ == "__main__":
         # EXOTIC now will automatically bin your data together to limit the MCMC runtime
         if len(goodTimes) > 200:
             print("Whoa! You have a lot of datapoints ("+str(len(goodTimes))+")!")
-            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data to 100 datapoints.")
-            goodTimes = binner(goodTimes, len(goodTimes)//200)[0]
-            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200)
-            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)[0]
+            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data.")
+            goodTimes = binner(goodTimes, len(goodTimes)//200)
+            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200, goodNormUnc)
+            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)
             print("Onwards and upwards!\n")
 
         #####################
@@ -2707,8 +2711,8 @@ if __name__ == "__main__":
         ax_lc.get_xaxis().set_visible(False)
 
         if binplotBool:
-            ax_res.errorbar(binner(x,len(finalResiduals)//10)[0], binner(finalResiduals,len(finalResiduals)//10)[0], yerr=binner(finalResiduals,len(finalResiduals)//10)[1], fmt='s', mfc='white', mec='b', ecolor='b',zorder=10)
-            ax_lc.errorbar(binner(adjustedPhases,len(adjustedPhases)//10)[0], binner(finalFluxes / finalAirmassModel,len(adjustedPhases)//10)[0], yerr=binner(finalResiduals,len(finalResiduals)//10)[1], fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
+            ax_res.errorbar(binner(x,len(finalResiduals)//10), binner(finalResiduals,len(finalResiduals)//10), yerr=binner(finalResiduals,len(finalResiduals)//10,finalNormUnc / finalAirmassModel)[1], fmt='s', mfc='white', mec='b', ecolor='b',zorder=10)
+            ax_lc.errorbar(binner(adjustedPhases,len(adjustedPhases)//10), binner(finalFluxes / finalAirmassModel,len(adjustedPhases)//10), yerr=binner(finalResiduals,len(finalResiduals)//10,finalNormUnc / finalAirmassModel)[1], fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:

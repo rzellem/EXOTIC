@@ -99,6 +99,7 @@ from photutils import aperture_photometry
 import astropy.units as u
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
+import astroalign as aa
 
 # cross corrolation imports
 from skimage.feature import register_translation
@@ -1954,6 +1955,36 @@ if __name__ == "__main__":
                 print("Flattening images.")
                 sortedallImageData = sortedallImageData / generalFlat
 
+            print("\nAligning your images from .FITS. Please wait.")
+            done = False
+            t = threading.Thread(target=animate, daemon=True)
+            t.start()
+            newlist = []
+            boollist = []
+            notAligned = 0
+
+            # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
+            # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
+            for num in sortedallImageData:
+                try:
+                    newData, footprint = aa.register(num, sortedallImageData[0])
+                    newlist.append(newData)
+                    boollist.append(True)
+                except:
+                    notAligned += 1
+                    boollist.append(False)
+            sortedallImageData = np.array(newlist)
+
+            if boollist:
+                unalignedBoolList = np.array(boollist)
+
+            done = True
+            print('\n\nImages Aligned.')
+
+            if notAligned > 0:
+                print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(len(sortedallImageData) + notAligned) + ' were not aligned.')
+                time.sleep(5)
+
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
@@ -2218,6 +2249,11 @@ if __name__ == "__main__":
                         arrayAirmass = np.array(airMassList)
                         arrayTUnc = np.array(targUncertanties)
                         arrayRUnc = np.array(refUncertanties)
+
+                        # If unaligned images existed, delete .fits data w/ boollist from airmass and times.
+                        if unalignedBoolList.size > 0:
+                            arrayTimes = arrayTimes[boollist]
+                            arrayAirmass = arrayAirmass[boollist]
 
                         normUncertainties = (arrayTargets / arrayReferences) * np.sqrt(
                             ((arrayTUnc / arrayTargets) ** 2.) + ((arrayRUnc / arrayReferences) ** 2.))

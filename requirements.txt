@@ -1,14 +1,12 @@
-astropy==3.2.1
-barycorrpy==0.2.2.1
-Cython==0.29.13
-matplotlib==3.1.1
-numpy==1.17.0
-photutils==0.6
-# conda necessary if pygpu needed
-# pygpu (pip install git+https://github.com/Theano/libgpuarray.git#egg=pygpu)
-pymc3==3.7
-python-dateutil==2.8.0
-requests==2.21.0
-scikit-image==0.15.0
-scipy==1.3.0
-Theano==1.0.4
+requests==2.23.0
+astroalign==2.0.2
+astropy==4.0.1.post1
+barycorrpy==0.3.2
+matplotlib==3.2.1
+numpy==1.18.5
+photutils==0.7.2
+pymc3==3.8
+python_dateutil==2.8.1
+scipy==1.4.1
+skimage==0.0
+theano==1.0.4

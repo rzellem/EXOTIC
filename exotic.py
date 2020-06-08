@@ -25,7 +25,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.7.4"
+versionid = "0.7.5"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -99,6 +99,7 @@ from photutils import aperture_photometry
 import astropy.units as u
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
+import astroalign as aa
 
 # cross corrolation imports
 from skimage.feature import register_translation
@@ -116,11 +117,19 @@ done = True
 
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
 # Function that bins an array
-def binner(arr,n=1):
-    ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
-    arr = np.nanmean(ecks, axis=1)
-    err = np.nanstd(ecks, axis=1)/np.sqrt(n)
-    return arr, err
+def binner(arr,n,err=''):
+    if len(err) == 0:
+        ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        arr = np.nanmean(ecks, axis=1)
+        return arr
+    else:
+        ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        why = np.pad(err.astype(float), ( 0, ((n - err.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        weights = 1./(why**2.)
+        # Calculate the weighted average
+        arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
+        err = np.array([np.sqrt(1./np.nansum(1./(np.array(i)**2.))) for i in why])       
+        return arr, err
 
 # finds the planet line in the composite dictionary
 # returns -1 if its not there
@@ -1950,6 +1959,36 @@ if __name__ == "__main__":
                 print("Flattening images.")
                 sortedallImageData = sortedallImageData / generalFlat
 
+            print("\nAligning your images from .FITS. Please wait.")
+            done = False
+            t = threading.Thread(target=animate, daemon=True)
+            t.start()
+            newlist = []
+            boollist = []
+            notAligned = 0
+
+            # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
+            # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
+            for num in sortedallImageData:
+                try:
+                    newData, footprint = aa.register(num, sortedallImageData[0])
+                    newlist.append(newData)
+                    boollist.append(True)
+                except:
+                    notAligned += 1
+                    boollist.append(False)
+            sortedallImageData = np.array(newlist)
+
+            if boollist:
+                unalignedBoolList = np.array(boollist)
+
+            done = True
+            print('\n\nImages Aligned.')
+
+            if notAligned > 0:
+                print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(len(sortedallImageData) + notAligned) + ' were not aligned.')
+                time.sleep(5)
+
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
@@ -2214,6 +2253,11 @@ if __name__ == "__main__":
                         arrayAirmass = np.array(airMassList)
                         arrayTUnc = np.array(targUncertanties)
                         arrayRUnc = np.array(refUncertanties)
+
+                        # If unaligned images existed, delete .fits data w/ boollist from airmass and times.
+                        if unalignedBoolList.size > 0:
+                            arrayTimes = arrayTimes[boollist]
+                            arrayAirmass = arrayAirmass[boollist]
 
                         normUncertainties = (arrayTargets / arrayReferences) * np.sqrt(
                             ((arrayTUnc / arrayTargets) ** 2.) + ((arrayRUnc / arrayReferences) ** 2.))
@@ -2506,10 +2550,10 @@ if __name__ == "__main__":
         # EXOTIC now will automatically bin your data together to limit the MCMC runtime
         if len(goodTimes) > 200:
             print("Whoa! You have a lot of datapoints ("+str(len(goodTimes))+")!")
-            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data to 100 datapoints.")
-            goodTimes = binner(goodTimes, len(goodTimes)//200)[0]
-            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200)
-            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)[0]
+            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data.")
+            goodTimes = binner(goodTimes, len(goodTimes)//200)
+            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200, goodNormUnc)
+            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)
             print("Onwards and upwards!\n")
 
         #####################
@@ -2707,8 +2751,8 @@ if __name__ == "__main__":
         ax_lc.get_xaxis().set_visible(False)
 
         if binplotBool:
-            ax_res.errorbar(binner(x,len(finalResiduals)//10)[0], binner(finalResiduals,len(finalResiduals)//10)[0], yerr=binner(finalResiduals,len(finalResiduals)//10)[1], fmt='s', mfc='white', mec='b', ecolor='b',zorder=10)
-            ax_lc.errorbar(binner(adjustedPhases,len(adjustedPhases)//10)[0], binner(finalFluxes / finalAirmassModel,len(adjustedPhases)//10)[0], yerr=binner(finalResiduals,len(finalResiduals)//10)[1], fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
+            ax_res.errorbar(binner(x,len(finalResiduals)//10), binner(finalResiduals,len(finalResiduals)//10), yerr=binner(finalResiduals,len(finalResiduals)//10,finalNormUnc / finalAirmassModel)[1], fmt='s', mfc='white', mec='b', ecolor='b',zorder=10)
+            ax_lc.errorbar(binner(adjustedPhases,len(adjustedPhases)//10), binner(finalFluxes / finalAirmassModel,len(adjustedPhases)//10), yerr=binner(finalResiduals,len(finalResiduals)//10,finalNormUnc / finalAirmassModel)[1], fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:

@@ -25,7 +25,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.7.4"
+versionid = "0.7.5"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -118,13 +118,17 @@ done = True
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
 # Function that bins an array
 def binner(arr,n,err=''):
-    ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
-    arr = np.nanmean(ecks, axis=1)
     if len(err) == 0:
+        ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        arr = np.nanmean(ecks, axis=1)
         return arr
     else:
+        ecks = np.pad(arr.astype(float), ( 0, ((n - arr.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
         why = np.pad(err.astype(float), ( 0, ((n - err.size%n) % n) ), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        err = np.array([np.sqrt(1./np.nansum(1./(np.array(i)**2.))) for i in why])
+        weights = 1./(why**2.)
+        # Calculate the weighted average
+        arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
+        err = np.array([np.sqrt(1./np.nansum(1./(np.array(i)**2.))) for i in why])       
         return arr, err
 
 # finds the planet line in the composite dictionary

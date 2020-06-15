@@ -201,9 +201,8 @@ def scrape():
     confirmedText = response.text
 
     # print(response.text)
-    f = open("eaConf.txt", "w+")
-    f.write(confirmedText)
-    f.close()
+    with open("eaConf.txt", "w+") as f:
+        f.write(confirmedText)
 
     # Query the Composite Planets Table
     compositestring = {"table": "compositepars", "select": "fpl_name, fpl_rads, fpl_eccen, fst_mass,\
@@ -214,9 +213,8 @@ def scrape():
     compositeText = response.text
 
     # print(response.text)
-    f = open("eaComp.txt", "w+")
-    f.write(compositeText)
-    f.close()
+    with open("eaComp.txt", "w+") as f:
+        f.write(compositeText)
 
     # Query the Extended Table
     extendedstring = {"table": "exomultpars", "select": "mpl_hostname,mpl_name,mst_mass,mst_rad,mst_teff,mpl_bmassj,mpl_rads,\
@@ -227,9 +225,8 @@ def scrape():
     extendedText = response.text
 
     # print(response.text)
-    f = open("eaExt.txt", "w+")
-    f.write(extendedText)
-    f.close()
+    with open("eaExt.txt", "w+") as f:
+        f.write(extendedText)
 
 
 # get params method that either reads in all the parameters from the dictionary, or estimates them if not
@@ -458,6 +455,88 @@ def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
 
         am = float(pointingAltAz.secz)
     return (am)
+
+
+# Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
+def plate_solution(fits_file, saveDirectory):
+    default_url = 'http://nova.astrometry.net/api/'
+
+    # Login to Exoplanet Watch's profile w/ API key
+    r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
+
+    # Saves session number to upload .fits file
+    sess = r.json()['session']
+    files = {'file': open(fits_file, 'rb')}
+    headers = {'request-json': json.dumps({"session": sess})}
+
+    # Uploads the .fits file to nova.astrometry.net
+    r = requests.post(default_url + 'upload', files=files, data=headers)
+
+    # Saves submission id for checking on the status of .fits uploaded
+    sub_id = r.json()['subid']
+    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+
+    # Once the image has successfully been plate solved, the following loop will break
+    while True:
+        r = requests.get(submissions_url)
+        if r.json()['job_calibrations']:
+            break
+        time.sleep(5)
+
+    # Checks the job id's status for parameters
+    job_id = r.json()['jobs']
+    job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
+    WCS_fits_file = saveDirectory + 'newfits.fits'
+
+    # Checks the job id's status
+    while True:
+        r = requests.get(job_url)
+
+        # If the new-fits-file is successful and downloadable, the following will execute
+        if r.json()['status'] == 'success':
+            fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
+
+            # Gets the new-fits-file and downloads it
+            r = requests.get(fits_download_url)
+            with open(WCS_fits_file, 'wb') as f:
+                f.write(r.content)
+            print('\n\nSuccess. Check the directory in which you chose to your save plots.')
+            break
+
+        # If the new-fits-file failed, inform user and exit
+        elif r.json()['status'] == 'failure':
+            print('\n\n.FITS file has failed to be given WCS.')
+            break
+        time.sleep(5)
+
+
+
+# Aligns imaging data from .fits file to easily track the host and comparison star's positions
+def image_alignment(sortedallImageData):
+    newlist = []
+    boollist = []
+    notAligned = 0
+
+    # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
+    # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
+    for num in sortedallImageData:
+        try:
+            newData, footprint = aa.register(num, sortedallImageData[0])
+            newlist.append(newData)
+            boollist.append(True)
+        except:
+            notAligned += 1
+            boollist.append(False)
+
+    sortedallImageData = np.array(newlist)
+    unalignedBoolList = np.array(boollist)
+
+    if notAligned > 0:
+        print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(
+            len(sortedallImageData) + notAligned) + ' were not aligned.')
+        time.sleep(5)
+
+    return sortedallImageData, unalignedBoolList, boollist
 
 
 # Method that defines a 2D Gaussian
@@ -1832,6 +1911,22 @@ if __name__ == "__main__":
             fileNameList = []
             timesListed = []
             airMassList = []
+
+            print("\nGetting the plate solution for your first .FITS file. Please wait.")
+            done = False
+            t = threading.Thread(target=animate, daemon=True)
+            t.start()
+
+            # Gets the first .fits file from the directory
+            first_fits = inputfiles[0]
+
+            # Plate solves the .fits file and returns status
+            WCS_fits_file = plate_solution(first_fits, saveDirectory)
+
+            # Get WCS for the first .fits file to track x,y coordinates
+            # WCS_fits_data = WCS_fits_file.getdata(WCS_fits_file)
+            done = True
+
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
@@ -1963,31 +2058,9 @@ if __name__ == "__main__":
             done = False
             t = threading.Thread(target=animate, daemon=True)
             t.start()
-            newlist = []
-            boollist = []
-            notAligned = 0
-
-            # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
-            # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-            for num in sortedallImageData:
-                try:
-                    newData, footprint = aa.register(num, sortedallImageData[0])
-                    newlist.append(newData)
-                    boollist.append(True)
-                except:
-                    notAligned += 1
-                    boollist.append(False)
-            sortedallImageData = np.array(newlist)
-
-            if boollist:
-                unalignedBoolList = np.array(boollist)
-
+            sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
             done = True
             print('\n\nImages Aligned.')
-
-            if notAligned > 0:
-                print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(len(sortedallImageData) + notAligned) + ' were not aligned.')
-                time.sleep(5)
 
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)

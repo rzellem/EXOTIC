@@ -1912,20 +1912,26 @@ if __name__ == "__main__":
             timesListed = []
             airMassList = []
 
-            print("\nGetting the plate solution for your first .FITS file. Please wait.")
-            done = False
-            t = threading.Thread(target=animate, daemon=True)
-            t.start()
+            plate_opt = str(input("\nDisclaimer: Your .FITS file will be publicly viewable on nova.astrometry.net. "
+                                  "Would you like to upload it for a plate solution? (y/n) "))
 
-            # Gets the first .fits file from the directory
-            first_fits = inputfiles[0]
+            while plate_opt.lower() != 'y' and plate_opt.lower() != 'n':
+                plate_opt = str(input("Not a valid command. Would you like to upload your .FITS file? (y/n) "))
+            if plate_opt.lower() == 'y':
+                print("\nGetting the plate solution for your first .FITS file. Please wait.")
+                done = False
+                t = threading.Thread(target=animate, daemon=True)
+                t.start()
 
-            # Plate solves the .fits file and returns status
-            WCS_fits_file = plate_solution(first_fits, saveDirectory)
+                # Gets the first .fits file from the directory
+                first_fits = inputfiles[0]
 
-            # Get WCS for the first .fits file to track x,y coordinates
-            # WCS_fits_data = WCS_fits_file.getdata(WCS_fits_file)
-            done = True
+                # Plate solves the .fits file and returns status
+                WCS_fits_file = plate_solution(first_fits, saveDirectory)
+
+                # Get WCS for the first .fits file to track x,y coordinates
+                # WCS_fits_data = WCS_fits_file.getdata(WCS_fits_file)
+                done = True
 
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -2622,12 +2628,16 @@ if __name__ == "__main__":
 
         # EXOTIC now will automatically bin your data together to limit the MCMC runtime
         if len(goodTimes) > 200:
-            print("Whoa! You have a lot of datapoints ("+str(len(goodTimes))+")!")
-            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data.")
-            goodTimes = binner(goodTimes, len(goodTimes)//200)
-            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200, goodNormUnc)
-            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)
-            print("Onwards and upwards!\n")
+            print("Whoa! You have a lot of datapoints (" + str(len(goodTimes)) + ")!")
+            bin_opt = str(input("In order to limit EXOTIC's run time, EXOTIC can automatically bin down your data."
+                                "Would you to perform this action? (y/n)"))
+            while bin_opt.lower() != 'y' and bin_opt.lower() != 'n':
+                bin_opt = str(input("Not a valid command. Would you like to bin down your data? (y/n) "))
+            if bin_opt.lower() == 'y':
+                goodTimes = binner(goodTimes, len(goodTimes) // 200)
+                goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes) // 200, goodNormUnc)
+                goodAirmasses = binner(goodAirmasses, len(goodAirmasses) // 200)
+                print("Onwards and upwards!\n")
 
         #####################
         # MCMC LIGHTCURVE FIT

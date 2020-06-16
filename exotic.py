@@ -209,7 +209,7 @@ def tap_query(base_url, query, dataframe=True):
     else:
         return response.text
 
-def new_scrape():
+def new_scrape(filename="eaConf.json"):
 
     # scrape_new()
     uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
@@ -218,7 +218,7 @@ def new_scrape():
         "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_ratdor,"
                      "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
                      "pl_orbincl,pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
-                     "st_teff,st_met,st_logg,st_mass,st_rad",
+                     "st_teff,st_met,st_logg,st_mass,st_rad,ra,dec",
         "from"     : "ps", # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
         "order by" : "pl_name",
@@ -262,7 +262,7 @@ def new_scrape():
                     elif k == "st_met": # [Fe/H]
                         default.loc[default.pl_name==i,k] = 0
 
-    dataframe_to_jsonfile(default, "eaConf.json")
+    dataframe_to_jsonfile(default, filename)
 
 def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
@@ -281,7 +281,9 @@ def new_getParams(data):
         'ecc': data.get("pl_orbeccen",0), 
         'teff': data["st_teff"], 
         'met': data["st_met"], 
-        'logg': data["st_logg"]
+        'logg': data["st_logg"],
+        'ra': data["ra"],
+        'dec': data["dec"]
     }
 
     return planetDictionary
@@ -1147,7 +1149,9 @@ if __name__ == "__main__":
         # t = threading.Thread(target=animate, daemon=True)
         # t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
-        new_scrape()
+        
+        if not os.path.exists("eaConf.json"):
+            new_scrape(filename="eaConf.json")
 
         with open("eaConf.json","r") as confirmedFile:
             data = json.load(confirmedFile)
@@ -1159,10 +1163,8 @@ if __name__ == "__main__":
                     targetName = str(input("Please Try to Enter the Planet Name Again: "))
             idx = planets.index(targetName)
             pDict = new_getParams(data[idx])
-
-        if not CandidatePlanetBool:
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        # done = True
+        
 
         # observation date
         if fileorcommandline == 1:
@@ -1207,59 +1209,65 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
 
-            print(' ')
-            print('Locate Your Target Star')
-            print('***************************************')
-            if fileorcommandline == 1:
-                raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-                decStr = str(input(
-                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+            # print(' ')
+            # print('Locate Your Target Star')
+            # print('***************************************')
+            # if fileorcommandline == 1:
+            #     raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
+            #     decStr = str(input(
+            #         "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
             
-            if fileorcommandline == 2:
-                print("Reading star positions from init file.")
+            # if fileorcommandline == 2:
+            #     print("Reading star positions from init file.")
 
-            # **************************************************************************************************************
-            # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
-            # **************************************************************************************************************
+            # # **************************************************************************************************************
+            # # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
+            # # **************************************************************************************************************
 
-            # convert UI RA and DEC into degrees
+            # # convert UI RA and DEC into degrees
 
-            # # parse their ra string
-            # # remove the spaces in their answer and split by the colons
-            # # take first character to be the sign and write a check if they forget
-            # noSpaceRa = raStr.replace(" ", "")
-            # noSpaceColonRa = noSpaceRa.replace(":", "")
-            # # noCapsSpaceRa = noSpaceColonRa.lower()
+            # # # parse their ra string
+            # # # remove the spaces in their answer and split by the colons
+            # # # take first character to be the sign and write a check if they forget
+            # # noSpaceRa = raStr.replace(" ", "")
+            # # noSpaceColonRa = noSpaceRa.replace(":", "")
+            # # # noCapsSpaceRa = noSpaceColonRa.lower()
 
-            # raHr = noSpaceColonRa[:2]
-            # raMin = noSpaceColonRa[2:4]
-            # raSec = noSpaceColonRa[4:]
-            # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
-            raDeg = astropy.coordinates.Angle(raStr+" hours").deg
+            # # raHr = noSpaceColonRa[:2]
+            # # raMin = noSpaceColonRa[2:4]
+            # # raSec = noSpaceColonRa[4:]
+            # # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
+            # raDeg = astropy.coordinates.Angle(raStr+" hours").deg
+            
+            # print(raDeg)
+            # dude()
+            # noSpaceDec = decStr.replace(" ", "")
+            # noSpaceColonDec = noSpaceDec.replace(":", "")
+            # # noCapsSpaceDec = noSpaceColonDec.lower()
 
-            noSpaceDec = decStr.replace(" ", "")
-            noSpaceColonDec = noSpaceDec.replace(":", "")
-            # noCapsSpaceDec = noSpaceColonDec.lower()
+            # decSign = noSpaceColonDec[0]
+            # while decSign != '+' and decSign != '-':
+            #     print('You forgot the sign for the dec! Please try again.')
+            #     decStr = str(input(
+            #         "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+            # #     noSpaceDec = decStr.replace(" ", "")
+            # #     noSpaceColonDec = noSpaceDec.replace(":", "")
+            # #     decSign = noSpaceColonDec[0]
+            # # decD = noSpaceColonDec[1:3]
+            # # decMin = noSpaceColonDec[3:5]
+            # # decSec = noSpaceColonDec[5:]
+            # # if decSign == '-':
+            # #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
+            # #                 4) * -1  # account for the negative
+            # # else:
+            # #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
+            # decDeg = astropy.coordinates.Angle(decStr+" degrees").deg
 
-            decSign = noSpaceColonDec[0]
-            while decSign != '+' and decSign != '-':
-                print('You forgot the sign for the dec! Please try again.')
-                decStr = str(input(
-                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            #     noSpaceDec = decStr.replace(" ", "")
-            #     noSpaceColonDec = noSpaceDec.replace(":", "")
-            #     decSign = noSpaceColonDec[0]
-            # decD = noSpaceColonDec[1:3]
-            # decMin = noSpaceColonDec[3:5]
-            # decSec = noSpaceColonDec[5:]
-            # if decSign == '-':
-            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
-            #                 4) * -1  # account for the negative
-            # else:
-            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
-            decDeg = astropy.coordinates.Angle(decStr+" degrees").deg
+            # get coordinates from NASA exoplanet archive
+            raDeg = pDict['ra']
+            decDeg = pDict['dec']
 
-                # TARGET STAR
+            # TARGET STAR
             if fileorcommandline == 1:
                 UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
                 UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))

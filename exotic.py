@@ -99,6 +99,7 @@ from photutils import aperture_photometry
 import astropy.units as u
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
+from astropy.wcs import WCS
 import astroalign as aa
 
 # cross corrolation imports
@@ -457,6 +458,61 @@ def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
     return (am)
 
 
+# Check for WCS in the user's imaging data and possibly plate solve.
+def check_wcs(fits_files, saveDirectory):
+
+    # Opens the first input file and checks to see if it has WCS in the header
+    hdulist = fits.open(fits_files[0])
+    header = hdulist[0].header
+
+    # MJD seems to be throwing off an error. I deleted it since not important for plate solving
+    del header['MJD-OBS']
+
+    # Gets the WCS of the header
+    wcs = WCS(header)
+
+    # Checks to see if the header has a WCS
+    hasWcs = wcs.is_celestial
+
+    # If the fits file has WCS info, ask the user if they trust it
+    if hasWcs:
+        trust_wcs = str(input('The imaging data from your file has WCS information. Do you trust this? (y/n) '))
+        while trust_wcs.lower() != 'y' and trust_wcs.lower() != 'n':
+            trust_wcs = str(input("Not a valid command. Do you trust the imaging data for WCS information? (y/n) "))
+    else:
+        trust_wcs = 'n'
+
+    if trust_wcs == 'n':
+        plate_sol = str(input("\nWould you like to upload the your image for a plate solution? "
+                              "Disclaimer: Your imaging file will be publicly viewable on nova.astrometry.net. (y/n) "))
+        while plate_sol.lower() != 'y' and plate_sol.lower() != 'n':
+            plate_sol = str(input("Not a valid command. Would you like to upload your .FITS file? (y/n) "))
+
+        # Plate solve the fits file
+        if plate_sol.lower() == 'y':
+            print("\nGetting the plate solution for your first .FITS file. Please wait.")
+            global done
+            done = False
+            t = threading.Thread(target=animate, daemon=True)
+            t.start()
+
+            # Gets the first .fits file from the directory
+            first_fits = fits_files[0]
+
+            # Plate solves the .fits file and returns status
+            WCS_fits_file = plate_solution(first_fits, saveDirectory)
+            done = True
+
+            # Return plate solution from nova.astrometry.net
+            return WCS_fits_file
+        else:
+            # User both did not want a plate solution or had one in fits file header, therefore return nothing
+            return False
+    else:
+        # User trusted their fits file header's WCS
+        return fits_files[0]
+
+
 # Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
 def plate_solution(fits_file, saveDirectory):
     default_url = 'http://nova.astrometry.net/api/'
@@ -501,14 +557,13 @@ def plate_solution(fits_file, saveDirectory):
             with open(WCS_fits_file, 'wb') as f:
                 f.write(r.content)
             print('\n\nSuccess. Check the directory in which you chose to your save plots.')
-            break
+            return WCS_fits_file
 
         # If the new-fits-file failed, inform user and exit
         elif r.json()['status'] == 'failure':
             print('\n\n.FITS file has failed to be given WCS.')
-            break
+            return False
         time.sleep(5)
-
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -797,6 +852,7 @@ def chisquared(observed_values, expected_values, uncertainty):
 def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty):
     print("Performing Chi^2 Burn")
     print("Please be patient- this step can take a few minutes.")
+    global done
     done = False
     t = threading.Thread(target=animate, daemon=True)
     t.start()
@@ -1504,6 +1560,9 @@ if __name__ == "__main__":
             #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
             decDeg = astropy.coordinates.Angle(decStr+" degrees").deg
 
+            # Check to see if the input files have WCS info in header and return it or nothing
+            WCS_fits = check_wcs(inputfiles, saveDirectory)
+
                 # TARGET STAR
             if fileorcommandline == 1:
                 UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
@@ -1911,27 +1970,6 @@ if __name__ == "__main__":
             fileNameList = []
             timesListed = []
             airMassList = []
-
-            plate_opt = str(input("\nDisclaimer: Your .FITS file will be publicly viewable on nova.astrometry.net. "
-                                  "Would you like to upload it for a plate solution? (y/n) "))
-
-            while plate_opt.lower() != 'y' and plate_opt.lower() != 'n':
-                plate_opt = str(input("Not a valid command. Would you like to upload your .FITS file? (y/n) "))
-            if plate_opt.lower() == 'y':
-                print("\nGetting the plate solution for your first .FITS file. Please wait.")
-                done = False
-                t = threading.Thread(target=animate, daemon=True)
-                t.start()
-
-                # Gets the first .fits file from the directory
-                first_fits = inputfiles[0]
-
-                # Plate solves the .fits file and returns status
-                WCS_fits_file = plate_solution(first_fits, saveDirectory)
-
-                # Get WCS for the first .fits file to track x,y coordinates
-                # WCS_fits_data = WCS_fits_file.getdata(WCS_fits_file)
-                done = True
 
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction

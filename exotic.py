@@ -289,13 +289,6 @@ def new_getParams(data):
     return planetDictionary
 #################### END ARCHIVE SCRAPER ########################################
 
-# Method that computes and returns the total flux of the given star
-# calls the phot function for flux calculation which includes the background subtraction
-def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
-    bgSub, totalFlux = phot(xPix, yPix, photoData, r=apertureRad, dr=annulusRad)
-    return bgSub, totalFlux  # return the total flux for the given star in the one image
-
-
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
     exptime_offset = 0
@@ -574,7 +567,7 @@ def mesh_box(pos,box):
     return xv.astype(int),yv.astype(int)
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
-def phot(xc,yc, data, r=5,dr=5):
+def getFlux(data,xc,yc, r=5,dr=5):
 
     if dr>0:
         bgflux = skybg_phot(data,xc,yc,r,dr)
@@ -586,9 +579,10 @@ def phot(xc,yc, data, r=5,dr=5):
 
     apertures = CircularAperture(positions, r=r)
     phot_table = aperture_photometry(data, apertures, method='exact')
+    
     return float(phot_table['aperture_sum']), bgflux
 
-def skybg_phot(xc,yc, data, r=10,dr=5):    
+def skybg_phot(data, xc,yc, r=10,dr=5):
     # create a crude annulus to mask out bright background pixels 
     xv,yv = mesh_box([xc,yc], np.round(r+dr) )
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
@@ -825,7 +819,7 @@ def realTimeReduce(i):
 
     # just use one aperture and annulus
     apertureR = 3 * max(targsigX, targsigY)
-    annulusR = 4
+    annulusR = 10
 
     for imageFile in timeSortedNames:
 
@@ -1239,10 +1233,10 @@ if __name__ == "__main__":
 
         with open("eaConf.json","r") as confirmedFile:
             data = json.load(confirmedFile)
-            planets = [data[i]['pl_name'] for i in range(len(data))]
+            planets = [data[i]['pl_name'].lower() for i in range(len(data))]
             #stars = [data[i]['hostname'] for i in range(len(data))]
-            if targetName not in planets:
-                while targetName not in planets:
+            if targetName.lower() not in planets:
+                while targetName.lower() not in planets:
                     print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check file: eaConf.json")
                     targetName = str(input("Please Try to Enter the Planet Name Again: "))
             idx = planets.index(targetName)
@@ -1458,7 +1452,7 @@ if __name__ == "__main__":
             cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
             binning = str(input('Please enter your pixel binning: '))
             exposureTime = str(input('Please enter your exposure time (seconds): ')) 
-            filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): ')) 
+            filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): ')) # TODO modify for exofast input
             obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
@@ -1470,7 +1464,7 @@ if __name__ == "__main__":
         print("Planetary Parameters for Lightcurve Fitting")
         print('')
         """
-        # based on logic above this will never be false...
+        # based on the logic above this will never be false...
         if not CandidatePlanetBool: 
 
             print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
@@ -1656,7 +1650,7 @@ if __name__ == "__main__":
                             "teff": str(pDict['teff']),
                             "feh": str(pDict['met']),
                             "logg": str(pDict['logg']),
-                            "bname": "V",
+                            "bname": "V", # TODO filterName - check name
                             "pname": "Select Planet"
                             }
 
@@ -1898,14 +1892,14 @@ if __name__ == "__main__":
                 
                 # Run through only 5 different annulus sizes, all interger pixel values
                 annulus_step = np.nanmax([1, (annulus_max - annulus_min)//5])  # forces step size to be at least 1
-                annulus_sizes = np.arange(annulus_min, annulus_max, annulus_step)
+                annulus_sizes = [5] # np.arange(annulus_min, annulus_max, annulus_step) # TODO clean up for issue #40
 
                 target_fits = {}
                 ref_fits = {}
                 reg_trans = {}
                 
                 for apertureR in aperture_sizes:  # aperture loop
-                    for annulusR in annulus_sizes:  # annulus loop
+                    for annulusR in annulus_sizes:  # annulus loop # no need
                         # fileNumber = 1
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
                         for fileNumber, imageData in enumerate(sortedallImageData):
@@ -2050,6 +2044,7 @@ if __name__ == "__main__":
 
                                     # gets the flux value of the target star and subtracts the background light
                                     tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
+                                    # FIXME centroid position is way off from user input for star
 
                                     targetFluxVals.append(
                                         tFluxVal)  # adds tFluxVal to the total list of flux values of target star
@@ -2068,8 +2063,7 @@ if __name__ == "__main__":
                                     # timesListed.append(currTime)
 
                                     # ORBITAL PHASE
-                                    currentPhase = getPhase(currTime, planetPeriod,
-                                                            timeMidTransit)  # gets the phase of the target planet in the image file
+                                    currentPhase = getPhase(currTime, pDict['pPer'], pDict['midT'])
                                     phasesList.append(currentPhase)  # adds to list of phases
 
                                     # # AIRMASS
@@ -2139,13 +2133,13 @@ if __name__ == "__main__":
 
                         # Execute sigma_clip
                         try:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=np.mean, copy=False)
                         except TypeError:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=np.mean, copy=False)
                         
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
-                        midTranCur = nearestTransitTime(timesListed, planetPeriod, timeMidTransit)
+                        midTranCur = nearestTransitTime(timesListed,  pDict['pPer'], pDict['midT'])
                         #midTranCur was in the initval first
                         initvals = [np.median(arrayTimes), rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
                         up = [arrayTimes[-1], 1, np.inf, 1.0]
@@ -2325,12 +2319,13 @@ if __name__ == "__main__":
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
-            bjdMidTOld = timeMidTransit
+            bjdMidTOld = pDict['midT']
+            
 
             goodPhasesList = []
             #convert all the phases based on the updated bjd times
             for convertedTime in goodTimes:
-                bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
+                bjdPhase = getPhase(float(convertedTime), pDict['pPer'], bjdMidTOld)
                 goodPhasesList.append(bjdPhase)
             goodPhases = np.array(goodPhasesList)
 
@@ -2445,7 +2440,7 @@ if __name__ == "__main__":
 
         # OBSERVATIONS
 
-        bjdMidTranCur = float(nearestTransitTime(goodTimes, planetPeriod, bjdMidTOld))
+        bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
 
         extractRad = rprs
         extractTime = bjdMidTranCur  # expected mid transit time of the transit the user observed (based on previous calculation)
@@ -2463,7 +2458,7 @@ if __name__ == "__main__":
             tranTime, pRad, amc1, amc2 = specparams
 
             # lightcurve model
-            sep, ophase = time2z(context['times'], inc, float(tranTime), semi, planetPeriod, eccent)
+            sep, ophase = time2z(context['times'], inc, float(tranTime), semi, pDict['pPer'], eccent)
             gmodel, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
 
             # exponential airmass model
@@ -2559,7 +2554,7 @@ if __name__ == "__main__":
         finalFluxes = goodFluxes[~finalFilter.mask]
         finalTimes = goodTimes[~finalFilter.mask]
         # finalPhases = goodPhases[~finalFilter.mask]
-        finalPhases = (finalTimes - fitMidT)/planetPeriod + 1.
+        finalPhases = (finalTimes - fitMidT)/pDict['pPer'] + 1.
         finalAirmasses = goodAirmasses[~finalFilter.mask]
         # finalTargets = goodTargets[~finalFilter.mask]
         # finalReferences = goodReferences[~finalFilter.mask]
@@ -2576,7 +2571,7 @@ if __name__ == "__main__":
         #recaclculate phases based on fitted mid transit time
         adjPhases= []
         for bTime in finalTimes:
-            newPhase = ((bTime - fitMidT) / planetPeriod)
+            newPhase = ((bTime - fitMidT) / pDict['pPer'])
             adjPhases.append(newPhase)
         adjustedPhases = np.array(adjPhases)
         
@@ -2737,7 +2732,7 @@ if __name__ == "__main__":
         #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
         #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
         #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
-        outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
+        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
             semi) + ',inc=' + str(inc) + ',ecc=' + str(eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
         # code yields
         outParamsFile.write(

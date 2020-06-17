@@ -292,7 +292,7 @@ def new_getParams(data):
 # Method that computes and returns the total flux of the given star
 # calls the phot function for flux calculation which includes the background subtraction
 def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
-    bgSub, totalFlux = phot(xPix, yPix, photoData, r=apertureRad, dr=annulusRad, debug=False, bgsub=True)
+    bgSub, totalFlux = phot(xPix, yPix, photoData, r=apertureRad, dr=annulusRad)
     return bgSub, totalFlux  # return the total flux for the given star in the one image
 
 
@@ -354,7 +354,7 @@ def getPhase(curTime, pPeriod, tMid):
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
+def getAirMass(hdul, ra, dec, lati, longit, elevation):
     # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
     if 'AIRMASS' in hdul[0].header:
         am = float(hdul[0].header['AIRMASS'])
@@ -364,7 +364,9 @@ def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
         cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / (cosam)
     else:
-        pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
+        # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
+        pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
+        
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
         
         time = Time(getJulianTime(hdul),format='jd',scale='utc',location=location)
@@ -1037,9 +1039,9 @@ if __name__ == "__main__":
                 if 'planet name'.lower() in line.lower():
                         targetName = line.split("\t")[-1].rstrip()
                 if 'Target Star RA (hh:mm:ss)'.lower() in line.lower():
-                    raStr = line.split("\t")[-1].rstrip()
+                    ra = line.split("\t")[-1].rstrip()
                 if 'Target Star Dec (+/-hh:mm:ss)'.lower() in line.lower():
-                    decStr = line.split("\t")[-1].rstrip()
+                    dec = line.split("\t")[-1].rstrip()
                 if 'Target Star pixel coords (x,y)'.lower() in line.lower():
                     targetpixloc = line.split("\t")[-1].rstrip()
                 if 'Number of Comparison Stars'.lower() in line.lower():
@@ -1208,60 +1210,6 @@ if __name__ == "__main__":
 
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
-
-            # print(' ')
-            # print('Locate Your Target Star')
-            # print('***************************************')
-            # if fileorcommandline == 1:
-            #     raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-            #     decStr = str(input(
-            #         "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            
-            # if fileorcommandline == 2:
-            #     print("Reading star positions from init file.")
-
-            # # **************************************************************************************************************
-            # # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
-            # # **************************************************************************************************************
-
-            # # convert UI RA and DEC into degrees
-
-            # # # parse their ra string
-            # # # remove the spaces in their answer and split by the colons
-            # # # take first character to be the sign and write a check if they forget
-            # # noSpaceRa = raStr.replace(" ", "")
-            # # noSpaceColonRa = noSpaceRa.replace(":", "")
-            # # # noCapsSpaceRa = noSpaceColonRa.lower()
-
-            # # raHr = noSpaceColonRa[:2]
-            # # raMin = noSpaceColonRa[2:4]
-            # # raSec = noSpaceColonRa[4:]
-            # # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
-            # raDeg = astropy.coordinates.Angle(raStr+" hours").deg
-            
-            # print(raDeg)
-            # dude()
-            # noSpaceDec = decStr.replace(" ", "")
-            # noSpaceColonDec = noSpaceDec.replace(":", "")
-            # # noCapsSpaceDec = noSpaceColonDec.lower()
-
-            # decSign = noSpaceColonDec[0]
-            # while decSign != '+' and decSign != '-':
-            #     print('You forgot the sign for the dec! Please try again.')
-            #     decStr = str(input(
-            #         "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            # #     noSpaceDec = decStr.replace(" ", "")
-            # #     noSpaceColonDec = noSpaceDec.replace(":", "")
-            # #     decSign = noSpaceColonDec[0]
-            # # decD = noSpaceColonDec[1:3]
-            # # decMin = noSpaceColonDec[3:5]
-            # # decSec = noSpaceColonDec[5:]
-            # # if decSign == '-':
-            # #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
-            # #                 4) * -1  # account for the negative
-            # # else:
-            # #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
-            # decDeg = astropy.coordinates.Angle(decStr+" degrees").deg
 
             # get coordinates from NASA exoplanet archive
             raDeg = pDict['ra']
@@ -1439,8 +1387,10 @@ if __name__ == "__main__":
         print('*******************************************')
         print("Planetary Parameters for Lightcurve Fitting")
         print('')
+        """
+        # based on logic above this will never be false...
+        if not CandidatePlanetBool: 
 
-        if not CandidatePlanetBool:
             print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
             print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
             targetName = pDict['pName']  # change to correct exoplanet archive name
@@ -1613,7 +1563,7 @@ if __name__ == "__main__":
             # Log g
             print('')
             starSurfG = float(input("Enter the host star's surface gravity (log(g)): "))
-
+        """
 
         # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
         URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
@@ -1621,9 +1571,9 @@ if __name__ == "__main__":
 
         with requests.Session() as sesh:
             form_newData = {"action": URLphp,
-                            "teff": str(starTeff),
-                            "feh": str(starMetall),
-                            "logg": str(starSurfG),
+                            "teff": str(pDict['teff']),
+                            "feh": str(pDict['met']),
+                            "logg": str(pDict['logg']),
                             "bname": "V",
                             "pname": "Select Planet"
                             }
@@ -1698,7 +1648,7 @@ if __name__ == "__main__":
                 timesListed.append(currTime)
 
                 # AIRMASS
-                airMass = getAirMass(hdul, raStr, decStr, lati, longit, elevation)  # gets the airmass at the time the image was taken
+                airMass = getAirMass(hdul, raDeg, decDeg, lati, longit, elevation)  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                 # IMAGES

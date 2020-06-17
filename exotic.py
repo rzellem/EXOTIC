@@ -377,6 +377,88 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
     return (am)
 
 
+# Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
+def plate_solution(fits_file, saveDirectory):
+    default_url = 'http://nova.astrometry.net/api/'
+
+    # Login to Exoplanet Watch's profile w/ API key
+    r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
+
+    # Saves session number to upload .fits file
+    sess = r.json()['session']
+    files = {'file': open(fits_file, 'rb')}
+    headers = {'request-json': json.dumps({"session": sess})}
+
+    # Uploads the .fits file to nova.astrometry.net
+    r = requests.post(default_url + 'upload', files=files, data=headers)
+
+    # Saves submission id for checking on the status of .fits uploaded
+    sub_id = r.json()['subid']
+    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+
+    # Once the image has successfully been plate solved, the following loop will break
+    while True:
+        r = requests.get(submissions_url)
+        if r.json()['job_calibrations']:
+            break
+        time.sleep(5)
+
+    # Checks the job id's status for parameters
+    job_id = r.json()['jobs']
+    job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
+    WCS_fits_file = saveDirectory + 'newfits.fits'
+
+    # Checks the job id's status
+    while True:
+        r = requests.get(job_url)
+
+        # If the new-fits-file is successful and downloadable, the following will execute
+        if r.json()['status'] == 'success':
+            fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
+
+            # Gets the new-fits-file and downloads it
+            r = requests.get(fits_download_url)
+            with open(WCS_fits_file, 'wb') as f:
+                f.write(r.content)
+            print('\n\nSuccess. Check the directory in which you chose to your save plots.')
+            break
+
+        # If the new-fits-file failed, inform user and exit
+        elif r.json()['status'] == 'failure':
+            print('\n\n.FITS file has failed to be given WCS.')
+            break
+        time.sleep(5)
+
+
+
+# Aligns imaging data from .fits file to easily track the host and comparison star's positions
+def image_alignment(sortedallImageData):
+    newlist = []
+    boollist = []
+    notAligned = 0
+
+    # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
+    # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
+    for num in sortedallImageData:
+        try:
+            newData, footprint = aa.register(num, sortedallImageData[0])
+            newlist.append(newData)
+            boollist.append(True)
+        except:
+            notAligned += 1
+            boollist.append(False)
+
+    sortedallImageData = np.array(newlist)
+    unalignedBoolList = np.array(boollist)
+
+    if notAligned > 0:
+        print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(
+            len(sortedallImageData) + notAligned) + ' were not aligned.')
+        time.sleep(5)
+
+    return sortedallImageData, unalignedBoolList, boollist
+
+
 # Method that defines a 2D Gaussian
 def twoD_Gaussian(xdata_tuple, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
     (x, y) = xdata_tuple
@@ -1624,6 +1706,28 @@ if __name__ == "__main__":
             fileNameList = []
             timesListed = []
             airMassList = []
+
+            plate_opt = str(input("\nDisclaimer: Your .FITS file will be publicly viewable on nova.astrometry.net. "
+                                  "Would you like to upload it for a plate solution? (y/n) "))
+
+            while plate_opt.lower() != 'y' and plate_opt.lower() != 'n':
+                plate_opt = str(input("Not a valid command. Would you like to upload your .FITS file? (y/n) "))
+            if plate_opt.lower() == 'y':
+                print("\nGetting the plate solution for your first .FITS file. Please wait.")
+                done = False
+                t = threading.Thread(target=animate, daemon=True)
+                t.start()
+
+                # Gets the first .fits file from the directory
+                first_fits = inputfiles[0]
+
+                # Plate solves the .fits file and returns status
+                WCS_fits_file = plate_solution(first_fits, saveDirectory)
+
+                # Get WCS for the first .fits file to track x,y coordinates
+                # WCS_fits_data = WCS_fits_file.getdata(WCS_fits_file)
+                done = True
+
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
@@ -1755,31 +1859,9 @@ if __name__ == "__main__":
             done = False
             t = threading.Thread(target=animate, daemon=True)
             t.start()
-            newlist = []
-            boollist = []
-            notAligned = 0
-
-            # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
-            # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-            for num in sortedallImageData:
-                try:
-                    newData, footprint = aa.register(num, sortedallImageData[0])
-                    newlist.append(newData)
-                    boollist.append(True)
-                except:
-                    notAligned += 1
-                    boollist.append(False)
-            sortedallImageData = np.array(newlist)
-
-            if boollist:
-                unalignedBoolList = np.array(boollist)
-
+            sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
             done = True
             print('\n\nImages Aligned.')
-
-            if notAligned > 0:
-                print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(len(sortedallImageData) + notAligned) + ' were not aligned.')
-                time.sleep(5)
 
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
@@ -2341,12 +2423,16 @@ if __name__ == "__main__":
 
         # EXOTIC now will automatically bin your data together to limit the MCMC runtime
         if len(goodTimes) > 200:
-            print("Whoa! You have a lot of datapoints ("+str(len(goodTimes))+")!")
-            print("In order to limit EXOTIC's run time, EXOTIC is automatically going to bin down your data.")
-            goodTimes = binner(goodTimes, len(goodTimes)//200)
-            goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes)//200, goodNormUnc)
-            goodAirmasses = binner(goodAirmasses, len(goodAirmasses)//200)
-            print("Onwards and upwards!\n")
+            print("Whoa! You have a lot of datapoints (" + str(len(goodTimes)) + ")!")
+            bin_opt = str(input("In order to limit EXOTIC's run time, EXOTIC can automatically bin down your data."
+                                "Would you to perform this action? (y/n)"))
+            while bin_opt.lower() != 'y' and bin_opt.lower() != 'n':
+                bin_opt = str(input("Not a valid command. Would you like to bin down your data? (y/n) "))
+            if bin_opt.lower() == 'y':
+                goodTimes = binner(goodTimes, len(goodTimes) // 200)
+                goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes) // 200, goodNormUnc)
+                goodAirmasses = binner(goodAirmasses, len(goodAirmasses) // 200)
+                print("Onwards and upwards!\n")
 
         #####################
         # MCMC LIGHTCURVE FIT

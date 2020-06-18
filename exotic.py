@@ -100,6 +100,8 @@ import astropy.units as u
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
+
+# Image alignment import
 import astroalign as aa
 
 # cross corrolation imports
@@ -458,59 +460,58 @@ def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
     return (am)
 
 
-# Check for WCS in the user's imaging data and possibly plate solve.
-def check_wcs(fits_files, saveDirectory):
-
+# Check for WCS in the user's imaging data and possibly plate solves.
+def check_wcs(files, saveDirectory):
     # Opens the first input file and checks to see if it has WCS in the header
-    hdulist = fits.open(fits_files[0])
+    hdulist = fits.open(files[0])
     header = hdulist[0].header
 
-    # MJD seems to be throwing off an error. I deleted it since not important for plate solving
-    del header['MJD-OBS']
+    # MJD seems sometimes throw off an error. I deleted it's since not important for plate solving
+    try:
+        del header['MJD-OBS']
+    except:
+        pass
 
-    # Gets the WCS of the header
+    # Gets the WCS of the header and checks to see if it exists
     wcs = WCS(header)
-
-    # Checks to see if the header has a WCS
-    hasWcs = wcs.is_celestial
+    wcsExists = wcs.is_celestial
 
     # If the fits file has WCS info, ask the user if they trust it
-    if hasWcs:
-        trust_wcs = str(input('The imaging data from your file has WCS information. Do you trust this? (y/n) '))
-        while trust_wcs.lower() != 'y' and trust_wcs.lower() != 'n':
-            trust_wcs = str(input("Not a valid command. Do you trust the imaging data for WCS information? (y/n) "))
+    if wcsExists:
+        trustWCS = str(input('The imaging data from your file has WCS information. Do you trust this? (y/n) '))
+        while trustWCS.lower() != 'y' and trustWCS.lower() != 'n':
+            trustWCS = str(input("Not a valid command. Do you trust the imaging data for WCS information? (y/n) "))
     else:
-        trust_wcs = 'n'
+        trustWCS = 'n'
 
-    if trust_wcs == 'n':
-        plate_sol = str(input("\nWould you like to upload the your image for a plate solution? "
-                              "Disclaimer: Your imaging file will be publicly viewable on nova.astrometry.net. (y/n) "))
-        while plate_sol.lower() != 'y' and plate_sol.lower() != 'n':
-            plate_sol = str(input("Not a valid command. Would you like to upload your .FITS file? (y/n) "))
+    if trustWCS == 'n':
+        plateSol = str(input("\nWould you like to upload the your image for a plate solution?"
+                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net. (y/n) "))
+        while plateSol.lower() != 'y' and plateSol.lower() != 'n':
+            plateSol = str(input("Not a valid command. Would you like to upload one of your imaging files? (y/n) "))
 
         # Plate solve the fits file
-        if plate_sol.lower() == 'y':
-            print("\nGetting the plate solution for your first .FITS file. Please wait.")
+        if plateSol.lower() == 'y':
+            print("\nGetting the plate solution for your imaging file. Please wait.")
             global done
             done = False
             t = threading.Thread(target=animate, daemon=True)
             t.start()
 
-            # Gets the first .fits file from the directory
-            first_fits = fits_files[0]
-
-            # Plate solves the .fits file and returns status
-            WCS_fits_file = plate_solution(first_fits, saveDirectory)
+            # Plate solves the first imaging file
+            imagingFile = files[0]
+            wcsFile = plate_solution(imagingFile, saveDirectory)
             done = True
 
             # Return plate solution from nova.astrometry.net
-            return WCS_fits_file
+            return wcsFile
         else:
-            # User both did not want a plate solution or had one in fits file header, therefore return nothing
+            # User either did not want a plate solution or had one in file header and decided not to use it,
+            # therefore return nothing
             return False
     else:
-        # User trusted their fits file header's WCS
-        return fits_files[0]
+        # User trusted their imaging file header's WCS
+        return files[0]
 
 
 # Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
@@ -520,15 +521,16 @@ def plate_solution(fits_file, saveDirectory):
     # Login to Exoplanet Watch's profile w/ API key
     r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
 
-    # Saves session number to upload .fits file
+    # Saves session number to upload imaging file
     sess = r.json()['session']
     files = {'file': open(fits_file, 'rb')}
-    headers = {'request-json': json.dumps({"session": sess})}
+    headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
+               'allow_modifications': 'n', 'publicly_visible': 'n'}
 
     # Uploads the .fits file to nova.astrometry.net
     r = requests.post(default_url + 'upload', files=files, data=headers)
 
-    # Saves submission id for checking on the status of .fits uploaded
+    # Saves submission id for checking on the status of image uploaded
     sub_id = r.json()['subid']
     submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
 
@@ -542,7 +544,7 @@ def plate_solution(fits_file, saveDirectory):
     # Checks the job id's status for parameters
     job_id = r.json()['jobs']
     job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
-    WCS_fits_file = saveDirectory + 'newfits.fits'
+    wcs_file = saveDirectory + 'newfits.fits'
 
     # Checks the job id's status
     while True:
@@ -554,10 +556,10 @@ def plate_solution(fits_file, saveDirectory):
 
             # Gets the new-fits-file and downloads it
             r = requests.get(fits_download_url)
-            with open(WCS_fits_file, 'wb') as f:
+            with open(wcs_file, 'wb') as f:
                 f.write(r.content)
             print('\n\nSuccess. Check the directory in which you chose to your save plots.')
-            return WCS_fits_file
+            return wcs_file
 
         # If the new-fits-file failed, inform user and exit
         elif r.json()['status'] == 'failure':
@@ -587,8 +589,10 @@ def image_alignment(sortedallImageData):
     unalignedBoolList = np.array(boollist)
 
     if notAligned > 0:
-        print('From the given .FITS files: ' + str(notAligned) + ' of ' + str(
+        print('\n\n*********************************************************************')
+        print('WARNING: From the given imaging files: ' + str(notAligned) + ' of ' + str(
             len(sortedallImageData) + notAligned) + ' were not aligned.')
+        print('*********************************************************************')
         time.sleep(5)
 
     return sortedallImageData, unalignedBoolList, boollist
@@ -1561,7 +1565,7 @@ if __name__ == "__main__":
             decDeg = astropy.coordinates.Angle(decStr+" degrees").deg
 
             # Check to see if the input files have WCS info in header and return it or nothing
-            WCS_fits = check_wcs(inputfiles, saveDirectory)
+            wcsFile = check_wcs(inputfiles, saveDirectory)
 
                 # TARGET STAR
             if fileorcommandline == 1:

@@ -18,4 +18,6 @@ pip3 install pymc3
 pip3 install theano
 pip3 install photutils
 sudo apt-get -y install g++
+pip3 install astroalign
+
 python3 ./EXOTIC/exotic.py

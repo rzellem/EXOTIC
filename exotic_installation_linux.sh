@@ -2,9 +2,9 @@
 
 git clone https://github.com/rzellem/EXOTIC.git
 
+sudo apt install software-properties-common
 sudo add-apt-repository ppa:deadsnakes/ppa
 sudo apt-get -y update && sudo apt-get -y upgrade
-sudo apt install software-properties-common
 sudo apt install python3
 sudo apt-get -y install python3-pip
 

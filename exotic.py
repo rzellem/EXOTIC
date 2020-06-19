@@ -1231,6 +1231,7 @@ if __name__ == "__main__":
         if not os.path.exists("eaConf.json"):
             new_scrape(filename="eaConf.json")
 
+        CandidatePlanetBool = False
         with open("eaConf.json","r") as confirmedFile:
             data = json.load(confirmedFile)
             planets = [data[i]['pl_name'].lower() for i in range(len(data))]
@@ -1238,8 +1239,11 @@ if __name__ == "__main__":
             if targetName.lower() not in planets:
                 while targetName.lower() not in planets:
                     print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check file: eaConf.json")
-                    targetName = str(input("Please Try to Enter the Planet Name Again: "))
-            idx = planets.index(targetName)
+                    targetName = str(input("Enter the Planet Name Again or type 'manual': "))
+                    if targetName == 'manual':
+                        CandidatePlanetBool = True
+                        break
+            idx = planets.index(targetName.lower())
             pDict = new_getParams(data[idx])
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
         
@@ -1463,7 +1467,7 @@ if __name__ == "__main__":
         print('*******************************************')
         print("Planetary Parameters for Lightcurve Fitting")
         print('')
-        """
+        
         # based on the logic above this will never be false...
         if not CandidatePlanetBool: 
 
@@ -1639,7 +1643,7 @@ if __name__ == "__main__":
             # Log g
             print('')
             starSurfG = float(input("Enter the host star's surface gravity (log(g)): "))
-        """
+        
 
         # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
         URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
@@ -1647,9 +1651,9 @@ if __name__ == "__main__":
 
         with requests.Session() as sesh:
             form_newData = {"action": URLphp,
-                            "teff": str(pDict['teff']),
-                            "feh": str(pDict['met']),
-                            "logg": str(pDict['logg']),
+                            "teff": str(starTeff),
+                            "feh": str(starMetall),
+                            "logg": str(starSurfG),
                             "bname": "V", # TODO filterName - check name
                             "pname": "Select Planet"
                             }
@@ -2063,7 +2067,7 @@ if __name__ == "__main__":
                                     # timesListed.append(currTime)
 
                                     # ORBITAL PHASE
-                                    currentPhase = getPhase(currTime, pDict['pPer'], pDict['midT'])
+                                    currentPhase = getPhase(currTime, planetPeriod, timeMidTransit)
                                     phasesList.append(currentPhase)  # adds to list of phases
 
                                     # # AIRMASS
@@ -2139,7 +2143,7 @@ if __name__ == "__main__":
                         
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
-                        midTranCur = nearestTransitTime(timesListed,  pDict['pPer'], pDict['midT'])
+                        midTranCur = nearestTransitTime(timesListed,  planetPeriod, timeMidTransit)
                         #midTranCur was in the initval first
                         initvals = [np.median(arrayTimes), rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
                         up = [arrayTimes[-1], 1, np.inf, 1.0]
@@ -2319,21 +2323,21 @@ if __name__ == "__main__":
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
-            bjdMidTOld = pDict['midT']
+            bjdMidTOld = timeMidTransit
             
 
             goodPhasesList = []
             #convert all the phases based on the updated bjd times
             for convertedTime in goodTimes:
-                bjdPhase = getPhase(float(convertedTime), pDict['pPer'], bjdMidTOld)
+                bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
                 goodPhasesList.append(bjdPhase)
             goodPhases = np.array(goodPhasesList)
 
             # another 3 sigma clip based on residuals of the best LM fit
             try:
-                interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=median, copy=False)
+                interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
             except TypeError:
-                interFilter = sigma_clip(goodResids, sigma=3, cenfunc=median, copy=False)
+                interFilter = sigma_clip(goodResids, sigma=3, cenfunc=np.median, copy=False)
 
             goodFluxes = goodFluxes[~interFilter.mask]
             goodTimes = goodTimes[~interFilter.mask]
@@ -2440,7 +2444,7 @@ if __name__ == "__main__":
 
         # OBSERVATIONS
 
-        bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
+        bjdMidTranCur = float(nearestTransitTime(goodTimes, planetPeriod, bjdMidTOld))
 
         extractRad = rprs
         extractTime = bjdMidTranCur  # expected mid transit time of the transit the user observed (based on previous calculation)
@@ -2458,7 +2462,7 @@ if __name__ == "__main__":
             tranTime, pRad, amc1, amc2 = specparams
 
             # lightcurve model
-            sep, ophase = time2z(context['times'], inc, float(tranTime), semi, pDict['pPer'], eccent)
+            sep, ophase = time2z(context['times'], inc, float(tranTime), semi, planetPeriod, eccent)
             gmodel, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
 
             # exponential airmass model
@@ -2547,14 +2551,14 @@ if __name__ == "__main__":
         # Final 3-sigma Clip
         residuals = (goodFluxes / fittedModel) - 1.0
         try:
-            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=median, copy=False)
+            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
         except TypeError:
-            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=median, copy=False)
+            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
 
         finalFluxes = goodFluxes[~finalFilter.mask]
         finalTimes = goodTimes[~finalFilter.mask]
         # finalPhases = goodPhases[~finalFilter.mask]
-        finalPhases = (finalTimes - fitMidT)/pDict['pPer'] + 1.
+        finalPhases = (finalTimes - fitMidT)/planetPeriod + 1.
         finalAirmasses = goodAirmasses[~finalFilter.mask]
         # finalTargets = goodTargets[~finalFilter.mask]
         # finalReferences = goodReferences[~finalFilter.mask]
@@ -2571,7 +2575,7 @@ if __name__ == "__main__":
         #recaclculate phases based on fitted mid transit time
         adjPhases= []
         for bTime in finalTimes:
-            newPhase = ((bTime - fitMidT) / pDict['pPer'])
+            newPhase = ((bTime - fitMidT) / planetPeriod)
             adjPhases.append(newPhase)
         adjustedPhases = np.array(adjPhases)
         
@@ -2732,7 +2736,7 @@ if __name__ == "__main__":
         #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
         #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
         #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
-        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
+        outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
             semi) + ',inc=' + str(inc) + ',ecc=' + str(eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
         # code yields
         outParamsFile.write(

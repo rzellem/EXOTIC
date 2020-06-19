@@ -25,7 +25,7 @@
 # Major releases are the first digit
 # The next two digits are minor commits
 # (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.8.0"
+versionid = "0.7.5"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -1303,7 +1303,6 @@ if __name__ == "__main__":
             pDict = new_getParams(data[idx])
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
         
-
         # observation date
         if fileorcommandline == 1:
             date = str(input("\nEnter the Observation Date: "))
@@ -1527,7 +1526,6 @@ if __name__ == "__main__":
         print("Planetary Parameters for Lightcurve Fitting")
         print('')
         
-        # based on the logic above this will never be false...
         if not CandidatePlanetBool: 
 
             print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])

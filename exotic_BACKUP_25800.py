@@ -97,21 +97,24 @@ from astropy.wcs import WCS
 # Image alignment import
 import astroalign as aa
 
+<<<<<<< HEAD
+#astroquery/SIMBAD imports
 import astropy.wcs as WCS
 from astroquery.simbad import Simbad
 import astropy.coordinates as coord
 import astropy.units as u
 from astropy.table import Table
-
+=======
 # photometry
 from photutils import CircularAperture
 from photutils import aperture_photometry
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
 # cross corrolation imports
 from skimage.feature import register_translation
 
 # Lightcurve imports
-# TODO fix conflicts
+# TODO fix conflicts 
 from gaelLCFuncs import *
 from occultquad import *
 
@@ -133,7 +136,11 @@ def binner(arr, n, err=''):
         weights = 1./(why**2.)
         # Calculate the weighted average
         arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
+<<<<<<< HEAD
+        err = np.array([np.sqrt(1./np.nansum(1./(np.array(i)**2.))) for i in why])
+=======
         err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
         return arr, err
 
 
@@ -185,13 +192,13 @@ def findPlanetLinesExt(planName, dataDictionary):
 
 ## ARCHIVE PRIOR SCRAPER ################################################################
 pi = 3.14159
-au=1.496e11 # m
+au=1.496e11 # m 
 rsun = 6.955e8 # m
 rjup = 7.1492e7 # m
 G = 0.00029591220828559104 # day, AU, Msun
 
 # keplerian semi-major axis (au)
-sa = lambda m,P : (G*m*P**2/(4*pi**2) )**(1./3)
+sa = lambda m,P : (G*m*P**2/(4*pi**2) )**(1./3) 
 
 def dataframe_to_jsonfile(dataframe, filename):
     jsondata = json.loads( dataframe.to_json(orient='table',index=False))
@@ -206,13 +213,13 @@ def tap_query(base_url, query, dataframe=True):
     for k in query:
         if k != "format":
             uri_full+= "{} {} ".format(k, query[k])
-
+    
     uri_full = uri_full[:-1] + "&format={}".format(query.get("format","csv"))
     uri_full = uri_full.replace(' ','+')
     print(uri_full)
 
     response = requests.get(uri_full, timeout=90)
-    # TODO check status_code?
+    # TODO check status_code? 
 
     if dataframe:
         return pandas.read_csv(StringIO(response.text))
@@ -236,7 +243,7 @@ def new_scrape(filename="eaConf.json"):
     }
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
-
+    
     # fill in missing columns
     uri_ipac_query['where'] = 'tran_flag=1'
     extra = tap_query(uri_ipac_base, uri_ipac_query)
@@ -253,7 +260,7 @@ def new_scrape(filename="eaConf.json"):
         for k in ddata.keys():
             if nans[k].bool(): # if col value is nan
                 if not edata[k].isna().all(): # if replacement data exists
-                    # replace with first index
+                    # replace with first index 
                     default.loc[default.pl_name==i,k] = edata[k][edata[k].notna()].values[0]
                     # TODO could use mean for some variables (not mid-transit)
                     # print(i,k,edata[k][edata[k].notna()].values[0])
@@ -276,21 +283,21 @@ def new_scrape(filename="eaConf.json"):
 
 def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
-
+    
     planetDictionary = {
-        'pName': data['pl_name'],
-        'sName': data['hostname'],
-        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun),
+        'pName': data['pl_name'], 
+        'sName': data['hostname'], 
+        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun), 
         'aRs': data['pl_ratdor'],
         'midT': data['pl_tranmid'],
-        'midTUnc': data['pl_tranmiderr1'],
-        'pPer': data['pl_orbper'],
-        'pPerUnc': data['pl_orbpererr1'],
+        'midTUnc': data['pl_tranmiderr1'], 
+        'pPer': data['pl_orbper'], 
+        'pPerUnc': data['pl_orbpererr1'], 
         'flag': data['tran_flag'],
         'inc': data["pl_orbincl"],
-        'ecc': data.get("pl_orbeccen",0),
-        'teff': data["st_teff"],
-        'met': data["st_met"],
+        'ecc': data.get("pl_orbeccen",0), 
+        'teff': data["st_teff"], 
+        'met': data["st_met"], 
         'logg': data["st_logg"],
         'ra': data["ra"],
         'dec': data["dec"]
@@ -341,7 +348,11 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['DATE-OBS']:
+<<<<<<< HEAD
+            exptime_offset = hdul[0].header['EXPTIME']/2./60./60./24. # assume exptime is in seconds for now
+=======
             exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     return (julianTime + exptime_offset)
@@ -367,12 +378,22 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / (cosam)
     else:
+<<<<<<< HEAD
+        pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
+        location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
+
+        time = Time(getJulianTime(hdul),format='jd',scale='utc',location=location)
+
+        pointingAltAz= pointing.transform_to(AltAz(obstime=time,location=location))
+
+=======
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
         pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
-
+        
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
         time = Time(getJulianTime(hdul), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=time, location=location))
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
         am = float(pointingAltAz.secz)
     return (am)
 
@@ -508,8 +529,11 @@ def variableStarCheck(comparisonStarFile):
     if "*" or "V*" in starName:
         return False
 
+<<<<<<< HEAD
     return True
 
+=======
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
     newlist = []
@@ -663,21 +687,21 @@ def getFlux(data,xc,yc, r=5,dr=5):
         bgflux = 0
     positions = [(xc, yc)]
     data = data-bgflux
-    data[data<0] = 0
+    data[data<0] = 0 
 
     apertures = CircularAperture(positions, r=r)
     phot_table = aperture_photometry(data, apertures, method='exact')
-
+    
     return float(phot_table['aperture_sum']), bgflux
 
 def skybg_phot(data, xc,yc, r=10,dr=5):
-    # create a crude annulus to mask out bright background pixels
+    # create a crude annulus to mask out bright background pixels 
     xv,yv = mesh_box([xc,yc], np.round(r+dr) )
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
     mask = (rv>r) & (rv<(r+dr))
     cutoff = np.percentile(data[yv,xv][mask], 50)
     dat = np.copy(data)
-    dat[dat>cutoff] = cutoff # ignore bright pixels like stars
+    dat[dat>cutoff] = cutoff # ignore bright pixels like stars 
     return min( np.mean(dat[yv,xv][mask]), np.median(dat[yv,xv][mask]) )
 
 # Mid-Transit Time Prior Helper Functions
@@ -1011,7 +1035,7 @@ def realTimeReduce(i):
 
 
 def parse_args():
-    # TODO
+    # TODO 
     parser = argparse.ArgumentParser()
 
     help_ = "Choose a target to process"
@@ -1310,7 +1334,7 @@ if __name__ == "__main__":
         # t = threading.Thread(target=animate, daemon=True)
         # t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
-
+        
         if not os.path.exists("eaConf.json"):
             new_scrape(filename="eaConf.json")
 
@@ -1329,7 +1353,7 @@ if __name__ == "__main__":
             idx = planets.index(targetName.lower())
             pDict = new_getParams(data[idx])
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-
+        
         # observation date
         if fileorcommandline == 1:
             date = str(input("\nEnter the Observation Date: "))
@@ -1373,8 +1397,40 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
 
+<<<<<<< HEAD
+            print(' ')
+            print('Locate Your Target Star')
+            print('***************************************')
+            if fileorcommandline == 1:
+                raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
+                decStr = str(input(
+                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+
+            if fileorcommandline == 2:
+                print("Reading star positions from init file.")
+
+            # **************************************************************************************************************
+            # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
+            # **************************************************************************************************************
+
+            # convert UI RA and DEC into degrees
+
+            # # parse their ra string
+            # # remove the spaces in their answer and split by the colons
+            # # take first character to be the sign and write a check if they forget
+            # noSpaceRa = raStr.replace(" ", "")
+            # noSpaceColonRa = noSpaceRa.replace(":", "")
+            # # noCapsSpaceRa = noSpaceColonRa.lower()
+
+            # raHr = noSpaceColonRa[:2]
+            # raMin = noSpaceColonRa[2:4]
+            # raSec = noSpaceColonRa[4:]
+            # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
+            raDeg = astropy.coordinates.Angle(raStr+" hours").deg
+=======
             # Check to see if the input files have WCS info in header and return it or nothing
             wcsFile = check_wcs(inputfiles, saveDirectory)
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
             # TARGET STAR
             if fileorcommandline == 1:
@@ -1473,6 +1529,10 @@ if __name__ == "__main__":
                             darkData = fits.getdata(darkFile, ext=0)
                             darksImgList.append(darkData)
                         generalDark = np.median(darksImgList, axis=0)
+<<<<<<< HEAD
+
+=======
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
                 # biases
                 if fileorcommandline == 1:
@@ -1535,9 +1595,15 @@ if __name__ == "__main__":
                 secuserCode = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
             cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
             binning = str(input('Please enter your pixel binning: '))
+<<<<<<< HEAD
             exposureTime = str(input('Please enter your exposure time (seconds): '))
-            filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): ')) # TODO modify for exofast input
+            filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): '))
             obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
+=======
+            exposureTime = str(input('Please enter your exposure time (seconds): ')) 
+            filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): ')) # TODO modify for exofast input
+            obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -1545,15 +1611,15 @@ if __name__ == "__main__":
 
         print('\n*******************************************')
         print("Planetary Parameters for Lightcurve Fitting\n")
-
-        if not CandidatePlanetBool:
+        
+        if not CandidatePlanetBool: 
 
             print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
             print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
 
             # get data from NASA exoplanet archive
-            targetName = pDict['pName']
-            hostName = pDict['sName']
+            targetName = pDict['pName'] 
+            hostName = pDict['sName']            
             raDeg = pDict['ra']
             decDeg = pDict['dec']
 
@@ -1654,11 +1720,11 @@ if __name__ == "__main__":
         else:
             targetName = str(input("Enter the planet's name: "))
             hostName = str(input("Enter the host star's name: "))
-
+            
             raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
             decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
                                    "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-
+        
             raDeg = astropy.coordinates.Angle(raStr + " hours").deg
 
             noSpaceDec = decStr.replace(" ", "")
@@ -1670,7 +1736,7 @@ if __name__ == "__main__":
                 decStr = str(input(
                     "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
                 decDeg = astropy.coordinates.Angle(decStr + " degrees").deg
-
+            
 
             # Orbital Period
             planetPeriod = float(input("\nEnter the Orbital Period in days: "))
@@ -1759,6 +1825,7 @@ if __name__ == "__main__":
             timesListed = []
             airMassList = []
 
+<<<<<<< HEAD
             plate_opt = str(input("\nDisclaimer: Your .FITS file will be publicly viewable on nova.astrometry.net. "
                                   "Would you like to upload it for a plate solution? (y/n) "))
 
@@ -1787,7 +1854,9 @@ if __name__ == "__main__":
                 print("Selected star is variable and not valid for measurements. Now selecting new comparison star.")
             else:
                 continue
-
+            
+=======
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
@@ -1827,7 +1896,12 @@ if __name__ == "__main__":
 
             # If all of the airmasses == 1, then you need to calculate the airmass for the user
             if set(airMassList) == 1:
+<<<<<<< HEAD
+                pointingAltAz= pointing.transform_to(AltAz(obstime=t,location=location))
+
+=======
                 pointingAltAz = pointing.transform_to(AltAz(obstime=t, location=location))
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
             # # Time sorts the file names based on the fits file header
             # timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
@@ -2003,11 +2077,19 @@ if __name__ == "__main__":
                             tymin = int(prevTPY) - distFC  # top
                             tymax = int(prevTPY) + distFC  # bottom
 
+<<<<<<< HEAD
+                            #boolean that represents if either the target or comp star gets too close to the detector
+                            driftBool = False
+
+                            #check if your target star is too close to the edge of the detector
+                            if (txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0])):
+=======
                             # boolean that represents if either the target or comp star gets too close to the detector
                             driftBool = False
 
                             #check if your target star is too close to the edge of the detector
                             if txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0]):
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
                                 print('*************************************************************************************')
                                 print ('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
@@ -2038,7 +2120,11 @@ if __name__ == "__main__":
 
                                 targPos = [prevTPX, prevTPY]
 
+<<<<<<< HEAD
+                                #get minimum background value bigger than 0
+=======
                                 # get minimum background value bigger than 0
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
                                 targImFlat = np.sort(np.array(targSearchA).ravel())
 
                                 # Initialize the variable
@@ -2053,6 +2139,10 @@ if __name__ == "__main__":
                                     if (rel > 0):
                                         rGuessBkg = rel
                                         break
+<<<<<<< HEAD
+
+=======
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
 
                                 # Guess at Gaussian Parameters and feed them in to help gaussian fitter
 
@@ -2063,6 +2153,10 @@ if __name__ == "__main__":
 
                                 # tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
                                 #                                                     init=myPriors, box=distFC)
+<<<<<<< HEAD
+
+=======
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
                                 if fileNumber in target_fits.keys():
                                     tx, ty, tamplitude, tsigX, tsigY, toff = target_fits[fileNumber]
                                 else:
@@ -2196,8 +2290,13 @@ if __name__ == "__main__":
                         try:
                             filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=np.mean, copy=False)
                         except TypeError:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=np.mean, copy=False)
+<<<<<<< HEAD
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
 
+=======
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=np.mean, copy=False)
+                        
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
                         midTranCur = nearestTransitTime(timesListed,  planetPeriod, timeMidTransit)
@@ -2249,8 +2348,13 @@ if __name__ == "__main__":
                             finXRefCentArray = np.array(xRefCent)
                             finYRefCentArray = np.array(yRefCent)
 
+<<<<<<< HEAD
+                            #APPLY DATA FILTER
+                            #apply data filter sets the lists we want to print to correspond to the optimal aperature
+=======
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
                             finXTargCent = finXTargCentArray[~filtered_data.mask]
                             finYTargCent = finYTargCentArray[~filtered_data.mask]
                             finXRefCent = finXRefCentArray[~filtered_data.mask]
@@ -2324,13 +2428,23 @@ if __name__ == "__main__":
             FORwidth = pltx[1]-pltx[0]
             plty = [min([finYTargCent[0],finYRefCent[0]])-picframe, max([finYTargCent[0],finYRefCent[0]])+picframe]
             FORheight = plty[1]-plty[0]
+<<<<<<< HEAD
             fig, ax = plt.subplots()
+            target_circle = plt.Circle((finXTargCent[0],finYTargCent[0]), minAperture, color='lime',fill=False,ls='-',label='Target')
+            target_circle_sky = plt.Circle((finXTargCent[0],finYTargCent[0]), minAperture+minAnnulus, color='lime',fill=False,ls='--',lw=.5)
+            ref_circle = plt.Circle((finXRefCent[0],finYRefCent[0]), minAperture, color='r',fill=False,ls='-.',label='Comp')
+            ref_circle_sky = plt.Circle((finXRefCent[0],finYRefCent[0]), minAperture+minAnnulus, color='r',fill=False,ls='--',lw=.5)
+            plt.imshow(np.log10(sortedallImageData[0]),origin='lower',cmap='Greys_r',interpolation=None)#,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
+            plt.plot(finXTargCent[0],finYTargCent[0],marker='+',color='lime')
+=======
+            fig, ax = plt.subplots()  
             target_circle = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
             target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture+minAnnulus, color='lime', fill=False, ls='--', lw=.5)
             ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
             ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
             plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None)  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
             plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
             ax.add_artist(ref_circle)
@@ -2379,7 +2493,7 @@ if __name__ == "__main__":
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
             bjdMidTOld = timeMidTransit
-
+            
 
             goodPhasesList = []
             # convert all the phases based on the updated bjd times
@@ -2531,8 +2645,13 @@ if __name__ == "__main__":
 
             # PRIORS
             ### Double check these priors
+<<<<<<< HEAD
+            #BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
+            midT=  pm.Uniform('Tmid', upper= goodTimes[len(goodTimes)-1], lower= goodTimes[0])
+=======
             # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
             midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
+>>>>>>> f109be81d8d36820d47b874dd264f09cf418d20c
             BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
             radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
             airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))

@@ -1211,31 +1211,31 @@ if __name__ == "__main__":
             else:
                 AAVSOBool = True
 
-            if flatsPath == "none" or flatsPath == "no" or flatsPath == "n/a":
-                flats = "no"
+            if flatsPath == "none" or flatsPath == "no" or flatsPath == "n/a" or flatsPath == "n":
+                flats = 'n'
                 flatsBool = False
             else:
-                flats = "yes"
+                flats = 'y'
                 flatsBool = True
 
-            if darksPath == "none" or darksPath == "no" or darksPath == "n/a":
-                darks = "no"
+            if darksPath == "none" or darksPath == "no" or darksPath == "n/a" or darksPath == "n":
+                darks = 'n'
                 darksBool = False
             else:
-                darks = "yes"
+                darks = 'y'
                 darksBool = True
 
-            if biasesPath == "none" or biasesPath == "no" or biasesPath == "n/a":
-                biases = "no"
+            if biasesPath == "none" or biasesPath == "no" or biasesPath == "n/a" or biasesPath == "n":
+                biases = 'n'
                 biasesBool = False
             else:
-                biases = "yes"
+                biases = 'y'
                 biasesBool = True
 
             if flatsBool + darksBool + biasesBool:
-                cals = "yes"
+                cals = 'y'
             else:
-                cals = "no"
+                cals = 'n'
 
             # Initial position of target star
             UIprevTPX = int(targetpixloc.split(",")[0])
@@ -1342,8 +1342,7 @@ if __name__ == "__main__":
         if fitsortext == 1:
             # latitude and longitude
             if fileorcommandline == 1:
-                latiStr = str(input(
-                    "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
+                latiStr = str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
             noSpaceLati = latiStr.replace(" ", "")
             latiSign = noSpaceLati[0]
             # check to make sure they have a sign
@@ -1373,12 +1372,9 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
 
-            # Check to see if the input files have WCS info in header and return it or nothing
-            wcsFile = check_wcs(inputfiles, saveDirectory)
-
             # TARGET STAR
             if fileorcommandline == 1:
-                UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
+                UIprevTPX = int(input('\n' + targetName + " X Pixel Coordinate: "))
                 UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))
                 numCompStars = int(input("How many comparison stars would you like to use? (1-10) "))
 
@@ -1400,11 +1396,9 @@ if __name__ == "__main__":
                 # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
                     flats = user_input('\nDo you have flats? (y/n): ')
-
                     if flats == 'y':
                         flatsBool = True
-                        flatsPath = str(input(
-                            'Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+                        flatsPath = str(input('Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
                     else:
                         flatsBool = False
 
@@ -1435,18 +1429,15 @@ if __name__ == "__main__":
                             # NORMALIZE
                             medi = np.median(notNormFlat)
                             generalFlat = notNormFlat / medi
-
                 else:
                     flatsBool = False
 
                 # darks
                 if fileorcommandline == 1:
                     darks = user_input('\nDo you have darks? (y/n): ')
-
                     if darks == 'y':
                         darksBool = True
-                        darksPath = str(input(
-                            'Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
+                        darksPath = str(input('Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
                     else:
                         darksBool = False
 
@@ -1526,7 +1517,7 @@ if __name__ == "__main__":
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
             AAVSOoutput = user_input('Do you have an AAVSO Observer Account? (y/n): ')
-            if AAVSOoutput == "n":
+            if AAVSOoutput == 'n':
                 AAVSOBool = False
             else:
                 AAVSOBool = True
@@ -1644,7 +1635,7 @@ if __name__ == "__main__":
                 starMetall = float(input("Enter the Metallicity ([Fe/H]): "))
 
             # Log g
-            print('\n' + hostName + ' Star Surface Gravity log(g) : ' + str(pDict['logg']))
+            print('\n' + hostName + ' Star Surface Gravity log(g): ' + str(pDict['logg']))
             agreement = user_input("Do you agree? (y/n): ")
             if agreement.lower() == 'y':
                 starSurfG = pDict['logg']
@@ -1914,6 +1905,10 @@ if __name__ == "__main__":
                 print("Flattening images.")
                 sortedallImageData = sortedallImageData / generalFlat
 
+            # Check to see if the input files have WCS info in header and return it or nothing
+            # solvethis = fits.PrimaryHDU(data=sortedallImageData[0])
+            # solvethis.writeto('platesolveme.fits')
+            # wcsFile = check_wcs(saveDirectory + 'platesolveme.fits', saveDirectory)
             print("\nAligning your images from .FITS. Please wait.")
             done = False
             t = threading.Thread(target=animate, daemon=True)
@@ -2009,7 +2004,7 @@ if __name__ == "__main__":
                             #check if your target star is too close to the edge of the detector
                             if txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0]):
                                 print('*************************************************************************************')
-                                print ('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
+                                print('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored')
                                 driftBool = True
@@ -2024,8 +2019,13 @@ if __name__ == "__main__":
 
                             # check if the reference is too close to the edge of the detector
                             if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
+<<<<<<< HEAD
                                 print('*************************************************************************************')
                                 print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
+=======
+                                print('*************************************************************************************') 
+                                print('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
+>>>>>>> 5c482b5695718c12539b2167b58d3c7fc0b3c27b
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
                                 print('*************************************************************************************')
@@ -2150,7 +2150,7 @@ if __name__ == "__main__":
 
                             # otherwise, mask off the rest of the files from time sorted names including the current one
                             else:
-                                print("Filtering data to account for drifting target.")
+                                print("\nFiltering data to account for drifting target.")
                                 # timeSortedNames = timeSortedNames[:fileNumber]
 
                                 # TIME
@@ -2161,6 +2161,8 @@ if __name__ == "__main__":
 
                                 # ALL IMAGES
                                 sortedallImageData = sortedallImageData[:fileNumber]
+
+                                boollist = boollist[:fileNumber]
 
                                 break
 
@@ -2748,8 +2750,7 @@ if __name__ == "__main__":
         outParamsFile = open(saveDirectory + 'FinalParams' + targetName + date + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
-        outParamsFile.write(
-            'The fitted Mid-Transit Time is: ' + str(fitMidT) + ' +/- ' + str(midTranUncert) + ' (BJD)\n')
+        outParamsFile.write('The fitted Mid-Transit Time is: ' + str(fitMidT) + ' +/- ' + str(midTranUncert) + ' (BJD)\n')
         outParamsFile.write('The fitted Ratio of Planet to Stellar Radius is: ' + str(fitRadius) + ' +/- ' + str(
             radUncert) + ' (Rp/Rs)\n')
         outParamsFile.write('The transit depth uncertainty is: ' + str(

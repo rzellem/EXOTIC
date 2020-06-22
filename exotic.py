@@ -36,8 +36,7 @@ import threading
 import time
 import sys
 
-
-# here is the animation
+#here is the animation
 def animate():
     for c in itertools.cycle(['|', '/', '-', '\\']):
         if done:
@@ -53,27 +52,25 @@ t = threading.Thread(target=animate, daemon=True)
 t.start()
 
 import os
+import json
 import logging
-import sys
-from numpy import mean, median
 import platform
-
-# glob import
+import argparse
 import glob as g
+from io import StringIO
+
+# data processing
+import pandas
+import requests
+import numpy as np
 
 # julian conversion imports
-import astropy.time
-import astropy.coordinates
 import dateutil.parser as dup
 
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 
 # Curve fitting imports
-import math
-from math import asin
-from scipy.interpolate import RectBivariateSpline
-from scipy.ndimage.interpolation import rotate
 from scipy.optimize import least_squares
 
 # Pyplot imports
@@ -83,33 +80,32 @@ from matplotlib.animation import FuncAnimation
 
 plt.style.use(astropy_mpl_style)
 
-# Centroiding imports
-import pylab as plt
-
 # MCMC imports
 import pymc3 as pm
 import theano.compile.ops as tco
 import theano.tensor as tt
 
 # astropy imports
+import astropy.time
+import astropy.coordinates
 from astropy.io import fits
 from astropy.stats import sigma_clip
-from photutils import CircularAperture
-from photutils import aperture_photometry
 import astropy.units as u
-from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 
 # Image alignment import
 import astroalign as aa
 
+# photometry
+from photutils import CircularAperture
+from photutils import aperture_photometry
+
 # cross corrolation imports
 from skimage.feature import register_translation
-import json
-import requests
 
 # Lightcurve imports
+# TODO fix conflicts 
 from gaelLCFuncs import *
 from occultquad import *
 
@@ -181,206 +177,121 @@ def findPlanetLinesExt(planName, dataDictionary):
     return indexList
 
 
-def scrape():
-    url = "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/nph-nstedAPI"
+## ARCHIVE PRIOR SCRAPER ################################################################
+pi = 3.14159
+au=1.496e11 # m 
+rsun = 6.955e8 # m
+rjup = 7.1492e7 # m
+G = 0.00029591220828559104 # day, AU, Msun
 
-    # Query the Confirmed Planets Table
-    confirmedstring = {"table": "exoplanets", "select": "pl_name,pl_hostname, st_mass, st_rad, pl_massj, pl_rads, pl_ratdor, pl_orbper \
-        pl_orbpererr1, pl_orbpererr2, pl_tranflag, pl_orbeccen, pl_orbincl, pl_orblper, st_teff,st_metfe, st_logg ",
-                       "order": "pl_name", "format": "json"}
+# keplerian semi-major axis (au)
+sa = lambda m,P : (G*m*P**2/(4*pi**2) )**(1./3) 
 
-    headers = {
-        'User-Agent': "PostmanRuntime/7.15.0",
-        'Accept': "*/*",
-        'Cache-Control': "no-cache",
-        'Postman-Token': "88fa4adf-b280-408e-989c-d5148d1292d5,ca3608a9-09a2-49d0-8d23-6c2527921127",
-        'Host': "exoplanetarchive.ipac.caltech.edu",
-        'accept-encoding': "gzip, deflate",
-        'Connection': "keep-alive",
-        'cache-control': "no-cache"
+def dataframe_to_jsonfile(dataframe, filename):
+    jsondata = json.loads( dataframe.to_json(orient='table',index=False))
+    with open(filename, "w") as f:
+        f.write(json.dumps(jsondata['data'], indent=4))
+
+def tap_query(base_url, query, dataframe=True):
+    # table access protocol query
+
+    # build url
+    uri_full = base_url
+    for k in query:
+        if k != "format":
+            uri_full+= "{} {} ".format(k, query[k])
+    
+    uri_full = uri_full[:-1] + "&format={}".format(query.get("format","csv"))
+    uri_full = uri_full.replace(' ','+')
+    print(uri_full)
+
+    response = requests.get(uri_full, timeout=90)
+    # TODO check status_code? 
+
+    if dataframe:
+        return pandas.read_csv(StringIO(response.text))
+    else:
+        return response.text
+
+def new_scrape(filename="eaConf.json"):
+
+    # scrape_new()
+    uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+    uri_ipac_query = {
+        # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+        "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_ratdor,"
+                     "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
+                     "pl_orbincl,pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
+                     "st_teff,st_met,st_logg,st_mass,st_rad,ra,dec",
+        "from"     : "ps", # Table name
+        "where"    : "tran_flag = 1 and default_flag = 1",
+        "order by" : "pl_name",
+        "format"   : "csv"
     }
 
-    response = requests.request("GET", url, headers=headers, params=confirmedstring)
+    default = tap_query(uri_ipac_base, uri_ipac_query)
+    
+    # fill in missing columns
+    uri_ipac_query['where'] = 'tran_flag=1'
+    extra = tap_query(uri_ipac_base, uri_ipac_query)
 
-    confirmedText = response.text
+    # for each planet
+    for i in default.pl_name:
 
-    # print(response.text)
-    with open("eaConf.txt", "w+") as f:
-        f.write(confirmedText)
+        # extract rows for each planet
+        ddata = default.loc[default.pl_name==i]
+        edata = extra.loc[extra.pl_name==i]
 
-    # Query the Composite Planets Table
-    compositestring = {"table": "compositepars", "select": "fpl_name, fpl_rads, fpl_eccen, fst_mass,\
-        fpl_orbper, fpl_orbpererr1, fpl_orbpererr2, fst_rad, fpl_smax, fpl_tranflag, fst_met, fst_teff, fst_logg ",
-                       "order": "fpl_name", "format": "json"}
+        # for each nan column in default
+        nans = ddata.isna()
+        for k in ddata.keys():
+            if nans[k].bool(): # if col value is nan
+                if not edata[k].isna().all(): # if replacement data exists
+                    # replace with first index 
+                    default.loc[default.pl_name==i,k] = edata[k][edata[k].notna()].values[0]
+                    # TODO could use mean for some variables (not mid-transit)
+                    # print(i,k,edata[k][edata[k].notna()].values[0])
+                else:
+                    # permanent nans - require manual entry
+                    if k == 'pl_orblper': # omega
+                        default.loc[default.pl_name==i,k] = 0
+                    elif k == 'pl_ratdor': # a/R*
+                        # Kepler's 3rd law
+                        semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                        default.loc[default.pl_name==i,k] = semi*au / (ddata.st_rad.values[0]*rsun)
+                    elif k == 'pl_orbincl': # inclination
+                        default.loc[default.pl_name==i,k] = 90
+                    elif k == "pl_orbeccen": # eccentricity
+                        default.loc[default.pl_name==i,k] = 0
+                    elif k == "st_met": # [Fe/H]
+                        default.loc[default.pl_name==i,k] = 0
 
-    response = requests.request("GET", url, headers=headers, params=compositestring)
-    compositeText = response.text
+    dataframe_to_jsonfile(default, filename)
 
-    # print(response.text)
-    with open("eaComp.txt", "w+") as f:
-        f.write(compositeText)
+def new_getParams(data):
+    # translate data from Archive keys to Ethan Keys
+    
+    planetDictionary = {
+        'pName': data['pl_name'], 
+        'sName': data['hostname'], 
+        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun), 
+        'aRs': data['pl_ratdor'],
+        'midT': data['pl_tranmid'],
+        'midTUnc': data['pl_tranmiderr1'], 
+        'pPer': data['pl_orbper'], 
+        'pPerUnc': data['pl_orbpererr1'], 
+        'flag': data['tran_flag'],
+        'inc': data["pl_orbincl"],
+        'ecc': data.get("pl_orbeccen",0), 
+        'teff': data["st_teff"], 
+        'met': data["st_met"], 
+        'logg': data["st_logg"],
+        'ra': data["ra"],
+        'dec': data["dec"]
+    }
 
-    # Query the Extended Table
-    extendedstring = {"table": "exomultpars", "select": "mpl_hostname,mpl_name,mst_mass,mst_rad,mst_teff,mpl_bmassj,mpl_rads,\
-     mpl_tranflag,mpl_ratdor,mpl_tranmid, mpl_orbper, mpl_tranmiderr1, mpl_tranmiderr2, mpl_orbpererr1,mpl_orbpererr2",
-                      "order": "mpl_name", "format": "json"}
-
-    response = requests.request("GET", url, headers=headers, params=extendedstring)
-    extendedText = response.text
-
-    # print(response.text)
-    with open("eaExt.txt", "w+") as f:
-        f.write(extendedText)
-
-
-# get params method that either reads in all the parameters from the dictionary, or estimates them if not
-def getParams(confirmedData, compositeData, extendedData, plaName):
-    newtonG = 6.67 * 10 ** (-11)  # m^3/(kg*s^2)
-    rSun = 6.957 * 10 ** 8  # m
-    mSun = 1.989 * 10 ** 30  # kg
-
-    # find the planet line in the confirmed table based on UI plName
-    confirmedLine = findPlanetLineConf(plaName, confirmedData)
-
-    # star parameters
-    starRadius = confirmedData[confirmedLine]['st_rad']  # in terms of rsun
-    starSemi = confirmedData[confirmedLine]['pl_ratdor']  # in terms of star radius
-    starMass = confirmedData[confirmedLine]['st_mass']  # interms of msun
-    starName = confirmedData[confirmedLine]['pl_hostname']
-    starTemp = confirmedData[confirmedLine]['st_teff']
-    starMet = confirmedData[confirmedLine]['st_metfe']
-    starLogg = confirmedData[confirmedLine]['st_logg']
-
-    # planetParameters
-    planetName = confirmedData[confirmedLine]['pl_name']
-    planetRadS = confirmedData[confirmedLine]['pl_rads']  # *solarRadius
-    planetPeriod = confirmedData[confirmedLine]['pl_orbper']  # in jd
-    planetPerUnc1 = confirmedData[confirmedLine]['pl_orbpererr1']  # in jd
-    planetPerUnc2 = confirmedData[confirmedLine]['pl_orbpererr2']  # in jd
-    planetTranFlag = confirmedData[confirmedLine]['pl_tranflag']  # 1 or 0
-    planetEcc = confirmedData[confirmedLine]['pl_orbeccen']
-    planetInc = confirmedData[confirmedLine]['pl_orbincl']  # deg
-
-    plLineComp = findPlanetLineComp(planetName,
-                                    compositeData)  # finds the planet line number in the composite data table
-    plLinesExt = findPlanetLinesExt(planetName, extendedData)  # find the planet line numbers in the extended data table
-
-    if starTemp is None:
-        if compositeData[plLineComp]['fst_teff'] is not None:
-            starTemp = compositeData[plLineComp]['fst_teff']
-        else:
-            starTemp = -1
-
-    if starMet is None:
-        if compositeData[plLineComp]['fst_met'] is not None:
-            starMet = compositeData[plLineComp]['fst_met']
-        else:
-            starMet = -1
-
-    if starLogg is None:
-        if compositeData[plLineComp]['fst_logg'] is not None:
-            starLogg = compositeData[plLineComp]['fst_logg']
-        else:
-            starLogg = -1
-
-    # null planet radius case (gives the radius in terms of the radius of the sun)
-    if planetRadS is None:
-        if compositeData[plLineComp]['fpl_rads'] is not None:
-            planetRadS = compositeData[plLineComp]['fpl_rads']
-        else:
-            planetRadS = -1
-
-    # null eccentricity
-    if planetEcc is None:
-        if compositeData[plLineComp]['fpl_eccen'] is not None:
-            planetEcc = compositeData[plLineComp]['fpl_eccen']
-        else:
-            planetEcc = 0.0  # assume its 0 if they don't have it
-
-    # null inclination
-    if planetInc is None:
-        planetInc = 90.0  # assume default if none
-
-    # null stellar mass case
-    if starMass is None:
-        if compositeData[plLineComp]['fst_mass'] is not None:
-            starMass = compositeData[plLineComp]['fst_mass']
-        else:
-            starMass = -1
-
-    # mid transit time and uncertanties cases
-
-    planetMidT = -1
-    planetMidTUnc = -1
-    for extIndex in plLinesExt:
-        if extendedData[extIndex]['mpl_tranmid'] is not None and extendedData[extIndex][
-            'mpl_tranmiderr1'] is not None and extendedData[extIndex]['mpl_tranmiderr2'] is not None:
-            if extendedData[extIndex]['mpl_tranmid'] > planetMidT:
-                planetMidT = extendedData[extIndex]['mpl_tranmid']
-                planetMidTUnc1 = extendedData[extIndex]['mpl_tranmiderr1']
-                planetMidTUnc2 = extendedData[extIndex]['mpl_tranmiderr2']
-                midProd = math.fabs(planetMidTUnc1 * planetMidTUnc2)
-                planetMidTUnc = math.sqrt(midProd)
-
-    if planetPeriod is None or planetPerUnc1 is None or planetPerUnc2 is None:
-        if compositeData[plLineComp]['fpl_orbper'] is not None and compositeData[plLineComp][
-            'fpl_orbpererr1'] is not None and compositeData[plLineComp]['fpl_orbpererr2'] is not None:
-            planetPeriod = compositeData[plLineComp]['fpl_orbper']
-            planetPerUnc1 = compositeData[plLineComp]['fpl_orbpererr1']
-            planetPerUnc2 = compositeData[plLineComp]['fpl_orbpererr2']
-            perProd = math.fabs(planetPerUnc1 * planetPerUnc2)
-            planetPerUnc = math.sqrt(perProd)
-        else:
-            planetPeriod = -1
-            planetPerUnc = -1
-    else:
-        perProd = math.fabs(planetPerUnc1 * planetPerUnc2)
-        planetPerUnc = math.sqrt(perProd)
-
-    # null stellar radius case
-    if starRadius is None:
-        if compositeData[plLineComp]['fst_rad'] is not None:
-            starRadius = compositeData[plLineComp]['fst_rad']
-        else:
-            starRadius = -1
-
-    # compute rprs
-    if starRadius is not None and planetRadS is not None:
-        radPradS = planetRadS / starRadius
-
-    # semi major axis calc from interpolated mass
-    if starSemi is None:
-        if compositeData[plLineComp]['fpl_smax'] is not None:
-            starSemi = (compositeData[plLineComp]['fpl_smax'] * (1.5 * 10.0 ** 11.0)) / (starRadius * rSun)
-
-        elif planetPeriod != -1 and starMass != -1:
-            planetPeriodSecs = planetPeriod * 86400.0  # days to seconds
-            starSemiMeters = (((planetPeriodSecs * planetPeriodSecs) * newtonG * (starMass * mSun)) / (
-                    4 * math.pi * math.pi)) ** (1. / 3)
-            starSemi = starSemiMeters / (starRadius * rSun)
-        else:
-            starSemi = -1
-
-    if planetTranFlag == 0:
-        if compositeData[plLineComp]['fpl_tranflag'] != 0:
-            planetTranFlag = compositeData[plLineComp]['tranflag']
-            print('Mislabeled Transit')
-        else:
-            planetTranFlag == -1
-
-    # return planetName, radPradS, starSemi, planetMidT, planetPeriod,planetMidTUnc, planetPerUnc, planetTranFlag, planetInc, planetEcc,
-    planetDictionary = {'pName': planetName, 'sName': starName, 'rprs': radPradS, 'aRs': starSemi, 'midT': planetMidT,
-                        'midTUnc': planetMidTUnc, 'pPer': planetPeriod, 'pPerUnc': planetPerUnc, 'flag': planetTranFlag,
-                        'inc': planetInc, 'ecc': planetEcc, 'teff': starTemp, 'met': starMet, 'logg': starLogg}
     return planetDictionary
-
-
-# Method that computes and returns the total flux of the given star
-# calls the phot function for flux calculation which includes the background subtraction
-def getFlux(photoData, xPix, yPix, apertureRad, annulusRad):
-    bgSub, totalFlux = phot(xPix, yPix, photoData, r=apertureRad, dr=annulusRad, debug=False, bgsub=True)
-    return bgSub, totalFlux  # return the total flux for the given star in the one image
-
+#################### END ARCHIVE SCRAPER ########################################
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
@@ -440,17 +351,19 @@ def getPhase(curTime, pPeriod, tMid):
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(hdul, raStr, decStr, lati, longit, elevation):
+def getAirMass(hdul, ra, dec, lati, longit, elevation):
     # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
     if 'AIRMASS' in hdul[0].header:
         am = float(hdul[0].header['AIRMASS'])
     elif 'TELALT' in hdul[0].header:
         alt = float(hdul[0].header[
                         'TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = math.cos((math.pi / 180) * (90.0 - alt))
+        cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / (cosam)
     else:
-        pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg), unit=(u.deg, u.deg), frame='icrs')
+        # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
+        pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
+        
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
         time = Time(getJulianTime(hdul), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=time, location=location))
@@ -651,40 +564,6 @@ class psf(object):
     def area(self):
         return self.gaussian_area + self.cylinder_area
 
-
-class ccd(object):
-    def __init__(self, size):
-
-        if isinstance(size, np.ndarray):  # load data from array
-            self.data = np.copy(size)
-        else:
-            self.data = np.zeros(size)
-
-    def draw(self, star):
-        b = max(star.sigx, star.sigy) * 5
-        x = np.arange(int(star.x0 - b), int(star.x0 + b + 1))
-        y = np.arange(int(star.y0 - b), int(star.y0 + b + 1))
-        xv, yv = np.meshgrid(x, y)  # make the mesh grid using gaussian dimensions
-        self.data[yv, xv] += star.eval(xv, yv)
-
-
-# Function defines the mesh grid that is used to super sample the image
-def mesh_box(pos, box, mesh=True, npts=-1):
-    pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
-    if npts == -1:
-        x = np.arange(pos[0] - box, pos[0] + box + 1)
-        y = np.arange(pos[1] - box, pos[1] + box + 1)
-    else:
-        x = np.linspace(pos[0] - box, pos[0] + box + 1, npts)
-        y = np.linspace(pos[1] - box, pos[1] + box + 1, npts)
-
-    if mesh:
-        xv, yv = np.meshgrid(x, y)
-        return xv, yv
-    else:
-        return x, y
-
-
 # Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
 def estimate_sigma(x, maxidx=-1):
     if maxidx == -1:
@@ -693,7 +572,6 @@ def estimate_sigma(x, maxidx=-1):
     upper = np.abs(x - 0.5 * np.max(x))[maxidx:].argmin() + maxidx
     FWHM = upper - lower
     return FWHM / (2 * np.sqrt(2 * np.log(2)))
-
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
 def fit_centroid(data, pos, init=None, psf_output=False, lossfn='linear', box=25):
@@ -742,80 +620,38 @@ def fit_centroid(data, pos, init=None, psf_output=False, lossfn='linear', box=25
     else:
         return res.x
 
-
-# Method defines the mask that when applied to the image, only leaves the background annulus remaining
-def circle_mask(x0, y0, r=25, samp=10):
-    xv, yv = mesh_box([x0, y0], r + 1, npts=samp)
-    rv = ((xv - x0) ** 2 + (yv - y0) ** 2) ** 0.5
-    mask = rv < r
-    return xv, yv, mask
-
-
-# Method defines the annulus used to do a background subtraction
-def sky_annulus(x0, y0, r=25, dr=5, samp=10):
-    xv, yv = mesh_box([x0, y0], r + dr + 1, npts=samp)
-    rv = ((xv - x0) ** 2 + (yv - y0) ** 2) ** 0.5
-    mask = (rv > r) & (rv < (r + dr))  # sky annulus mask
-    return xv, yv, mask
-
+def mesh_box(pos,box):
+    pos = [int(np.round(pos[0])),int(np.round(pos[1]))]
+    x = np.arange(pos[0]-box, pos[0]+box+1)
+    y = np.arange(pos[1]-box, pos[1]+box+1)
+    xv, yv = np.meshgrid(x, y)
+    return xv.astype(int),yv.astype(int)
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
-def phot(x0, y0, data, r=25, dr=5, samp=5, debug=False, bgsub=True):
-    if bgsub:
-        # get the bg flux per pixel
-        bgflux = skybg_phot(x0, y0, data, r, dr, samp)
+def getFlux(data,xc,yc, r=5,dr=5):
+
+    if dr>0:
+        bgflux = skybg_phot(data,xc,yc,r,dr)
     else:
         bgflux = 0
+    positions = [(xc, yc)]
+    data = data-bgflux
+    data[data<0] = 0 
 
-    positions = [(x0, y0)]
     apertures = CircularAperture(positions, r=r)
-    phot_table = aperture_photometry(data - bgflux, apertures)
-    # print(phot_table[0][3])
-    bgSubbed = phot_table[0][3]
+    phot_table = aperture_photometry(data, apertures, method='exact')
+    
+    return float(phot_table['aperture_sum']), bgflux
 
-    rawPhot_Table = aperture_photometry(data, apertures)
-    raw = rawPhot_Table[0][3]
-    return bgSubbed, raw
-
-
-# Method calculates the average flux of the background
-def skybg_phot(x0, y0, data, r=25, dr=5, samp=3, debug=False):
-    # determine img indexes for aperture region
-    xv, yv = mesh_box([x0, y0], int(np.round(r + dr)))
-
-    # derive indexs on a higher resolution grid and create aperture mask
-    px, py, mask = sky_annulus(x0, y0, r=r, samp=xv.shape[0] * samp)
-
-    # interpolate original data onto higher resolution grid
-    subdata = data[yv, xv]
-    model = RectBivariateSpline(np.unique(xv), np.unique(yv), subdata)
-
-    # evaluate data on highres grid
-    pz = model.ev(px, py)
-
-    # zero out pixels larger than radius
-    pz[~mask] = 0
-    pz[pz < 0] = 0
-
-    quarterMask = pz < np.percentile(pz[mask], 50)
-    pz[~quarterMask] = 0
-
-    # scale area back to original grid, total flux in sky annulus
-    parea = pz.sum() * np.diff(px).mean() * np.diff(py[:, 0]).mean()
-
-    if debug:
-        print('mask area=', mask.sum() * np.diff(px).mean() * np.diff(py[:, 0]).mean())
-        print('true area=', 2 * np.pi * r * dr)
-        print('subdata flux=', subdata.sum())
-        print('bg phot flux=', parea)
-        import pdb
-        pdb.set_trace()
-
-    # return bg value per pixel
-    bgmask = mask & quarterMask
-    avgBackground = pz.sum() / bgmask.sum()
-    return (avgBackground)
-
+def skybg_phot(data, xc,yc, r=10,dr=5):
+    # create a crude annulus to mask out bright background pixels 
+    xv,yv = mesh_box([xc,yc], np.round(r+dr) )
+    rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
+    mask = (rv>r) & (rv<(r+dr))
+    cutoff = np.percentile(data[yv,xv][mask], 50)
+    dat = np.copy(data)
+    dat[dat>cutoff] = cutoff # ignore bright pixels like stars 
+    return min( np.mean(dat[yv,xv][mask]), np.median(dat[yv,xv][mask]) )
 
 # Mid-Transit Time Prior Helper Functions
 def numberOfTransitsAway(timeData, period, originalT):
@@ -836,13 +672,13 @@ def propMidTVariance(uncertainP, uncertainT, timeData, period, originalT):
 
 def uncTMid(uncertainP, uncertainT, timeData, period, originalT):
     n = numberOfTransitsAway(timeData, period, originalT)
-    midErr = math.sqrt((n * n * uncertainP * uncertainP) + 2 * n * uncertainP * uncertainT + (uncertainT * uncertainT))
+    midErr = np.sqrt((n * n * uncertainP * uncertainP) + 2 * n * uncertainP * uncertainT + (uncertainT * uncertainT))
     return midErr
 
 
 def transitDuration(rStar, rPlan, period, semi):
     rSun = 6.957 * 10 ** 8  # m
-    tDur = (period / math.pi) * asin((math.sqrt((rStar * rSun + rPlan * rSun) ** 2)) / (semi * rStar * rSun))
+    tDur = (period / np.pi) * np.arcsin((np.sqrt((rStar * rSun + rPlan * rSun) ** 2)) / (semi * rStar * rSun))
     return tDur
 
 
@@ -1044,7 +880,7 @@ def realTimeReduce(i):
 
     # just use one aperture and annulus
     apertureR = 3 * max(targsigX, targsigY)
-    annulusR = 4
+    annulusR = 10
 
     for imageFile in timeSortedNames:
 
@@ -1147,8 +983,21 @@ def realTimeReduce(i):
     ax1.plot(timesListed, normalizedFluxVals, 'bo')
 
 
+def parse_args():
+    # TODO 
+    parser = argparse.ArgumentParser()
+
+    help_ = "Choose a target to process"
+    parser.add_argument("-t", "--target", help=help_, type=str, default="all")
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    print('\n*************************************************************')
+    # TODO use text based interface if no command line arguments
+
+    print('\n')
+    print('*************************************************************')
     print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
     print("Version ", versionid)
     print('*************************************************************\n')
@@ -1322,9 +1171,9 @@ if __name__ == "__main__":
                 if 'planet name'.lower() in line.lower():
                     targetName = line.split("\t")[-1].rstrip()
                 if 'Target Star RA (hh:mm:ss)'.lower() in line.lower():
-                    raStr = line.split("\t")[-1].rstrip()
+                    ra = line.split("\t")[-1].rstrip()
                 if 'Target Star Dec (+/-hh:mm:ss)'.lower() in line.lower():
-                    decStr = line.split("\t")[-1].rstrip()
+                    dec = line.split("\t")[-1].rstrip()
                 if 'Target Star pixel coords (x,y)'.lower() in line.lower():
                     targetpixloc = line.split("\t")[-1].rstrip()
                 if 'Number of Comparison Stars'.lower() in line.lower():
@@ -1434,36 +1283,26 @@ if __name__ == "__main__":
         # t = threading.Thread(target=animate, daemon=True)
         # t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
-        scrape()
-        with open('eaConf.txt') as confirmedFile:
-            with open('eaComp.txt') as compositeFile:
-                with open('eaExt.txt') as extendedFile:
-                    confData = json.load(confirmedFile)
-                    compData = json.load(compositeFile)
-                    extData = json.load(extendedFile)
-                    confirmLnNum = findPlanetLineConf(targetName,
-                                                      confData)  # confirmLnNum of -1 means it couldn't be found
-                    if confirmLnNum == -1:
+        
+        if not os.path.exists("eaConf.json"):
+            new_scrape(filename="eaConf.json")
+
+        CandidatePlanetBool = False
+        with open("eaConf.json","r") as confirmedFile:
+            data = json.load(confirmedFile)
+            planets = [data[i]['pl_name'].lower() for i in range(len(data))]
+            #stars = [data[i]['hostname'] for i in range(len(data))]
+            if targetName.lower() not in planets:
+                while targetName.lower() not in planets:
+                    print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check file: eaConf.json")
+                    targetName = str(input("Enter the Planet Name Again or type 'manual': "))
+                    if targetName == 'manual':
                         CandidatePlanetBool = True
-                    else:
-                        CandidatePlanetBool = False
-                    while confirmLnNum == -1:
-                        print("\nCannot find " + targetName + " in the NASA Exoplanet Archive.")
-
-                        CandidatePlanet = user_input("Is this a candidate (not yet confirmed) exoplanet? (y/n): ")
-                        if CandidatePlanet.lower() == 'y':
-                            CandidatePlanetBool = True
-                            break
-                        else:
-                            CandidatePlanetBool = False
-                        targetName = str(input("Please Try to Enter the Planet Name Again: "))
-                        confirmLnNum = findPlanetLineConf(targetName, confData)
-                    # after they enter the correct name, it will pull the needed parameters
-                    pDict = getParams(confData, compData, extData, targetName)
-        if not CandidatePlanetBool:
+                        break
+            idx = planets.index(targetName.lower())
+            pDict = new_getParams(data[idx])
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        # done = True
-
+        
         # observation date
         if fileorcommandline == 1:
             date = str(input("\nEnter the Observation Date: "))
@@ -1506,56 +1345,6 @@ if __name__ == "__main__":
 
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
-
-            print('\nLocate Your Target Star')
-            print('***************************************')
-            if fileorcommandline == 1:
-                raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-                decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
-                                   "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            elif fileorcommandline == 2:
-                print("Reading star positions from init file.")
-
-            # **************************************************************************************************************
-            # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
-            # **************************************************************************************************************
-
-            # convert UI RA and DEC into degrees
-
-            # # parse their ra string
-            # # remove the spaces in their answer and split by the colons
-            # # take first character to be the sign and write a check if they forget
-            # noSpaceRa = raStr.replace(" ", "")
-            # noSpaceColonRa = noSpaceRa.replace(":", "")
-            # # noCapsSpaceRa = noSpaceColonRa.lower()
-
-            # raHr = noSpaceColonRa[:2]
-            # raMin = noSpaceColonRa[2:4]
-            # raSec = noSpaceColonRa[4:]
-            # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
-            raDeg = astropy.coordinates.Angle(raStr + " hours").deg
-
-            noSpaceDec = decStr.replace(" ", "")
-            noSpaceColonDec = noSpaceDec.replace(":", "")
-            # noCapsSpaceDec = noSpaceColonDec.lower()
-
-            decSign = noSpaceColonDec[0]
-            while decSign != '+' and decSign != '-':
-                print('You forgot the sign for the dec! Please try again.')
-                decStr = str(input(
-                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            #     noSpaceDec = decStr.replace(" ", "")
-            #     noSpaceColonDec = noSpaceDec.replace(":", "")
-            #     decSign = noSpaceColonDec[0]
-            # decD = noSpaceColonDec[1:3]
-            # decMin = noSpaceColonDec[3:5]
-            # decSec = noSpaceColonDec[5:]
-            # if decSign == '-':
-            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
-            #                 4) * -1  # account for the negative
-            # else:
-            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
-            decDeg = astropy.coordinates.Angle(decStr + " degrees").deg
 
             # Check to see if the input files have WCS info in header and return it or nothing
             wcsFile = check_wcs(inputfiles, saveDirectory)
@@ -1719,9 +1508,9 @@ if __name__ == "__main__":
                 secuserCode = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
             cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
             binning = str(input('Please enter your pixel binning: '))
-            exposureTime = str(input('Please enter your exposure time (seconds): '))
-            filterName = str(input('Please enter your filter name (typical filters can be found at https://www.aavso.org/filters): '))
-            obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
+            exposureTime = str(input('Please enter your exposure time (seconds): ')) 
+            filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): ')) # TODO modify for exofast input
+            obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -1729,12 +1518,17 @@ if __name__ == "__main__":
 
         print('\n*******************************************')
         print("Planetary Parameters for Lightcurve Fitting\n")
+        
+        if not CandidatePlanetBool: 
 
-        if not CandidatePlanetBool:
             print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
             print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
-            targetName = pDict['pName']  # change to correct exoplanet archive name
-            hostName = pDict['sName']
+
+            # get data from NASA exoplanet archive
+            targetName = pDict['pName'] 
+            hostName = pDict['sName']            
+            raDeg = pDict['ra']
+            decDeg = pDict['dec']
 
             # Orbital Period
             print('\n' + targetName + ' Orbital Period (days): ' + str(pDict['pPer']))
@@ -1833,6 +1627,24 @@ if __name__ == "__main__":
         else:
             targetName = str(input("Enter the planet's name: "))
             hostName = str(input("Enter the host star's name: "))
+            
+            raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
+            decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
+                                   "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+        
+            raDeg = astropy.coordinates.Angle(raStr + " hours").deg
+
+            noSpaceDec = decStr.replace(" ", "")
+            noSpaceColonDec = noSpaceDec.replace(":", "")
+
+            decSign = noSpaceColonDec[0]
+            while decSign != '+' and decSign != '-':
+                print('You forgot the sign for the dec! Please try again.')
+                decStr = str(input(
+                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
+                decDeg = astropy.coordinates.Angle(decStr + " degrees").deg
+            
+
             # Orbital Period
             planetPeriod = float(input("\nEnter the Orbital Period in days: "))
             # Orbital Period Error
@@ -1872,7 +1684,7 @@ if __name__ == "__main__":
                             "teff": str(starTeff),
                             "feh": str(starMetall),
                             "logg": str(starSurfG),
-                            "bname": "V",
+                            "bname": "V", # TODO filterName - check name
                             "pname": "Select Planet"
                             }
 
@@ -1944,7 +1756,7 @@ if __name__ == "__main__":
                 timesListed.append(currTime)
 
                 # AIRMASS
-                airMass = getAirMass(hdul, raStr, decStr, lati, longit, elevation)  # gets the airmass at the time the image was taken
+                airMass = getAirMass(hdul, raDeg, decDeg, lati, longit, elevation)  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                 # IMAGES
@@ -2086,15 +1898,15 @@ if __name__ == "__main__":
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
 
                 # Run through only 5 different annulus sizes, all interger pixel values
-                annulus_step = np.nanmax([1, (annulus_max - annulus_min) // 5])  # forces step size to be at least 1
-                annulus_sizes = np.arange(annulus_min, annulus_max, annulus_step)
+                annulus_step = np.nanmax([1, (annulus_max - annulus_min)//5])  # forces step size to be at least 1
+                annulus_sizes = [5] # np.arange(annulus_min, annulus_max, annulus_step) # TODO clean up for issue #40
 
                 target_fits = {}
                 ref_fits = {}
                 reg_trans = {}
 
                 for apertureR in aperture_sizes:  # aperture loop
-                    for annulusR in annulus_sizes:  # annulus loop
+                    for annulusR in annulus_sizes:  # annulus loop # no need
                         # fileNumber = 1
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
                         for fileNumber, imageData in enumerate(sortedallImageData):
@@ -2237,26 +2049,26 @@ if __name__ == "__main__":
 
                                     # gets the flux value of the target star and subtracts the background light
                                     tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
+                                    # FIXME centroid position is way off from user input for star
 
                                     targetFluxVals.append(
                                         tFluxVal)  # adds tFluxVal to the total list of flux values of target star
                                     targUncertanties.append(
-                                        math.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
+                                        np.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
 
                                     # gets the flux value of the reference star and subracts the background light
                                     rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
 
                                     referenceFluxVals.append(
                                         rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
-                                    refUncertanties.append(math.sqrt(rFluxVal))
+                                    refUncertanties.append(np.sqrt(rFluxVal))
 
                                     # # TIME
                                     # currTime = getJulianTime(hDul)
                                     # timesListed.append(currTime)
 
                                     # ORBITAL PHASE
-                                    currentPhase = getPhase(currTime, planetPeriod,
-                                                            timeMidTransit)  # gets the phase of the target planet in the image file
+                                    currentPhase = getPhase(currTime, planetPeriod, timeMidTransit)
                                     phasesList.append(currentPhase)  # adds to list of phases
 
                                     # # AIRMASS
@@ -2326,14 +2138,14 @@ if __name__ == "__main__":
 
                         # Execute sigma_clip
                         try:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=mean, copy=False)
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=np.mean, copy=False)
                         except TypeError:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=mean, copy=False)
-
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=np.mean, copy=False)
+                        
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
-                        midTranCur = nearestTransitTime(timesListed, planetPeriod, timeMidTransit)
-                        # midTranCur was in the initval first
+                        midTranCur = nearestTransitTime(timesListed,  planetPeriod, timeMidTransit)
+                        #midTranCur was in the initval first
                         initvals = [np.median(arrayTimes), rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
                         up = [arrayTimes[-1], 1, np.inf, 1.0]
                         low = [arrayTimes[0], 0, -np.inf, -1.0]
@@ -2511,6 +2323,7 @@ if __name__ == "__main__":
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
             bjdMidTOld = timeMidTransit
+            
 
             goodPhasesList = []
             # convert all the phases based on the updated bjd times
@@ -2521,9 +2334,9 @@ if __name__ == "__main__":
 
             # another 3 sigma clip based on residuals of the best LM fit
             try:
-                interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=median, copy=False)
+                interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
             except TypeError:
-                interFilter = sigma_clip(goodResids, sigma=3, cenfunc=median, copy=False)
+                interFilter = sigma_clip(goodResids, sigma=3, cenfunc=np.median, copy=False)
 
             goodFluxes = goodFluxes[~interFilter.mask]
             goodTimes = goodTimes[~interFilter.mask]
@@ -2732,9 +2545,9 @@ if __name__ == "__main__":
         # Final 3-sigma Clip
         residuals = (goodFluxes / fittedModel) - 1.0
         try:
-            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=median, copy=False)
+            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
         except TypeError:
-            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=median, copy=False)
+            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
 
         finalFluxes = goodFluxes[~finalFilter.mask]
         finalTimes = goodTimes[~finalFilter.mask]

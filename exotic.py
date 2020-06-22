@@ -105,7 +105,7 @@ from photutils import aperture_photometry
 from skimage.feature import register_translation
 
 # Lightcurve imports
-# TODO fix conflicts 
+# TODO fix conflicts
 from gaelLCFuncs import *
 from occultquad import *
 
@@ -179,13 +179,13 @@ def findPlanetLinesExt(planName, dataDictionary):
 
 ## ARCHIVE PRIOR SCRAPER ################################################################
 pi = 3.14159
-au=1.496e11 # m 
+au=1.496e11 # m
 rsun = 6.955e8 # m
 rjup = 7.1492e7 # m
 G = 0.00029591220828559104 # day, AU, Msun
 
 # keplerian semi-major axis (au)
-sa = lambda m,P : (G*m*P**2/(4*pi**2) )**(1./3) 
+sa = lambda m,P : (G*m*P**2/(4*pi**2) )**(1./3)
 
 def dataframe_to_jsonfile(dataframe, filename):
     jsondata = json.loads( dataframe.to_json(orient='table',index=False))
@@ -200,13 +200,13 @@ def tap_query(base_url, query, dataframe=True):
     for k in query:
         if k != "format":
             uri_full+= "{} {} ".format(k, query[k])
-    
+
     uri_full = uri_full[:-1] + "&format={}".format(query.get("format","csv"))
     uri_full = uri_full.replace(' ','+')
     print(uri_full)
 
     response = requests.get(uri_full, timeout=90)
-    # TODO check status_code? 
+    # TODO check status_code?
 
     if dataframe:
         return pandas.read_csv(StringIO(response.text))
@@ -230,7 +230,7 @@ def new_scrape(filename="eaConf.json"):
     }
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
-    
+
     # fill in missing columns
     uri_ipac_query['where'] = 'tran_flag=1'
     extra = tap_query(uri_ipac_base, uri_ipac_query)
@@ -247,7 +247,7 @@ def new_scrape(filename="eaConf.json"):
         for k in ddata.keys():
             if nans[k].bool(): # if col value is nan
                 if not edata[k].isna().all(): # if replacement data exists
-                    # replace with first index 
+                    # replace with first index
                     default.loc[default.pl_name==i,k] = edata[k][edata[k].notna()].values[0]
                     # TODO could use mean for some variables (not mid-transit)
                     # print(i,k,edata[k][edata[k].notna()].values[0])
@@ -270,21 +270,21 @@ def new_scrape(filename="eaConf.json"):
 
 def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
-    
+
     planetDictionary = {
-        'pName': data['pl_name'], 
-        'sName': data['hostname'], 
-        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun), 
+        'pName': data['pl_name'],
+        'sName': data['hostname'],
+        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun),
         'aRs': data['pl_ratdor'],
         'midT': data['pl_tranmid'],
-        'midTUnc': data['pl_tranmiderr1'], 
-        'pPer': data['pl_orbper'], 
-        'pPerUnc': data['pl_orbpererr1'], 
+        'midTUnc': data['pl_tranmiderr1'],
+        'pPer': data['pl_orbper'],
+        'pPerUnc': data['pl_orbpererr1'],
         'flag': data['tran_flag'],
         'inc': data["pl_orbincl"],
-        'ecc': data.get("pl_orbeccen",0), 
-        'teff': data["st_teff"], 
-        'met': data["st_met"], 
+        'ecc': data.get("pl_orbeccen",0),
+        'teff': data["st_teff"],
+        'met': data["st_met"],
         'logg': data["st_logg"],
         'ra': data["ra"],
         'dec': data["dec"]
@@ -363,7 +363,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
     else:
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
         pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
-        
+
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
         time = Time(getJulianTime(hdul), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=time, location=location))
@@ -636,21 +636,21 @@ def getFlux(data,xc,yc, r=5,dr=5):
         bgflux = 0
     positions = [(xc, yc)]
     data = data-bgflux
-    data[data<0] = 0 
+    data[data<0] = 0
 
     apertures = CircularAperture(positions, r=r)
     phot_table = aperture_photometry(data, apertures, method='exact')
-    
+
     return float(phot_table['aperture_sum']), bgflux
 
 def skybg_phot(data, xc,yc, r=10,dr=5):
-    # create a crude annulus to mask out bright background pixels 
+    # create a crude annulus to mask out bright background pixels
     xv,yv = mesh_box([xc,yc], np.round(r+dr) )
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
     mask = (rv>r) & (rv<(r+dr))
     cutoff = np.percentile(data[yv,xv][mask], 50)
     dat = np.copy(data)
-    dat[dat>cutoff] = cutoff # ignore bright pixels like stars 
+    dat[dat>cutoff] = cutoff # ignore bright pixels like stars
     return min( np.mean(dat[yv,xv][mask]), np.median(dat[yv,xv][mask]) )
 
 # Mid-Transit Time Prior Helper Functions
@@ -984,7 +984,7 @@ def realTimeReduce(i):
 
 
 def parse_args():
-    # TODO 
+    # TODO
     parser = argparse.ArgumentParser()
 
     help_ = "Choose a target to process"
@@ -1184,31 +1184,31 @@ if __name__ == "__main__":
             else:
                 AAVSOBool = True
 
-            if flatsPath == "none" or flatsPath == "no" or flatsPath == "n/a":
-                flats = "no"
+            if flatsPath == "none" or flatsPath == "no" or flatsPath == "n/a" or flatsPath == "n":
+                flats = 'n'
                 flatsBool = False
             else:
-                flats = "yes"
+                flats = 'y'
                 flatsBool = True
 
-            if darksPath == "none" or darksPath == "no" or darksPath == "n/a":
-                darks = "no"
+            if darksPath == "none" or darksPath == "no" or darksPath == "n/a" or darksPath == "n":
+                darks = 'n'
                 darksBool = False
             else:
-                darks = "yes"
+                darks = 'y'
                 darksBool = True
 
-            if biasesPath == "none" or biasesPath == "no" or biasesPath == "n/a":
-                biases = "no"
+            if biasesPath == "none" or biasesPath == "no" or biasesPath == "n/a" or biasesPath == "n":
+                biases = 'n'
                 biasesBool = False
             else:
-                biases = "yes"
+                biases = 'y'
                 biasesBool = True
 
             if flatsBool + darksBool + biasesBool:
-                cals = "yes"
+                cals = 'y'
             else:
-                cals = "no"
+                cals = 'n'
 
             # Initial position of target star
             UIprevTPX = int(targetpixloc.split(",")[0])
@@ -1283,7 +1283,7 @@ if __name__ == "__main__":
         # t = threading.Thread(target=animate, daemon=True)
         # t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
-        
+
         if not os.path.exists("eaConf.json"):
             new_scrape(filename="eaConf.json")
 
@@ -1302,7 +1302,7 @@ if __name__ == "__main__":
             idx = planets.index(targetName.lower())
             pDict = new_getParams(data[idx])
             print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        
+
         # observation date
         if fileorcommandline == 1:
             date = str(input("\nEnter the Observation Date: "))
@@ -1315,8 +1315,7 @@ if __name__ == "__main__":
         if fitsortext == 1:
             # latitude and longitude
             if fileorcommandline == 1:
-                latiStr = str(input(
-                    "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
+                latiStr = str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
             noSpaceLati = latiStr.replace(" ", "")
             latiSign = noSpaceLati[0]
             # check to make sure they have a sign
@@ -1346,12 +1345,9 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
 
-            # Check to see if the input files have WCS info in header and return it or nothing
-            wcsFile = check_wcs(inputfiles, saveDirectory)
-
             # TARGET STAR
             if fileorcommandline == 1:
-                UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
+                UIprevTPX = int(input('\n' + targetName + " X Pixel Coordinate: "))
                 UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))
                 numCompStars = int(input("How many comparison stars would you like to use? (1-10) "))
 
@@ -1373,11 +1369,9 @@ if __name__ == "__main__":
                 # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
                     flats = user_input('\nDo you have flats? (y/n): ')
-
                     if flats == 'y':
                         flatsBool = True
-                        flatsPath = str(input(
-                            'Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+                        flatsPath = str(input('Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
                     else:
                         flatsBool = False
 
@@ -1408,18 +1402,15 @@ if __name__ == "__main__":
                             # NORMALIZE
                             medi = np.median(notNormFlat)
                             generalFlat = notNormFlat / medi
-
                 else:
                     flatsBool = False
 
                 # darks
                 if fileorcommandline == 1:
                     darks = user_input('\nDo you have darks? (y/n): ')
-
                     if darks == 'y':
                         darksBool = True
-                        darksPath = str(input(
-                            'Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
+                        darksPath = str(input('Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
                     else:
                         darksBool = False
 
@@ -1499,7 +1490,7 @@ if __name__ == "__main__":
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
             AAVSOoutput = user_input('Do you have an AAVSO Observer Account? (y/n): ')
-            if AAVSOoutput == "n":
+            if AAVSOoutput == 'n':
                 AAVSOBool = False
             else:
                 AAVSOBool = True
@@ -1508,9 +1499,9 @@ if __name__ == "__main__":
                 secuserCode = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
             cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
             binning = str(input('Please enter your pixel binning: '))
-            exposureTime = str(input('Please enter your exposure time (seconds): ')) 
+            exposureTime = str(input('Please enter your exposure time (seconds): '))
             filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): ')) # TODO modify for exofast input
-            obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): ')) 
+            obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
         # Scrape the exoplanet archive for all of the planets of their planet
@@ -1518,15 +1509,15 @@ if __name__ == "__main__":
 
         print('\n*******************************************')
         print("Planetary Parameters for Lightcurve Fitting\n")
-        
-        if not CandidatePlanetBool: 
+
+        if not CandidatePlanetBool:
 
             print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
             print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
 
             # get data from NASA exoplanet archive
-            targetName = pDict['pName'] 
-            hostName = pDict['sName']            
+            targetName = pDict['pName']
+            hostName = pDict['sName']
             raDeg = pDict['ra']
             decDeg = pDict['dec']
 
@@ -1617,7 +1608,7 @@ if __name__ == "__main__":
                 starMetall = float(input("Enter the Metallicity ([Fe/H]): "))
 
             # Log g
-            print('\n' + hostName + ' Star Surface Gravity log(g) : ' + str(pDict['logg']))
+            print('\n' + hostName + ' Star Surface Gravity log(g): ' + str(pDict['logg']))
             agreement = user_input("Do you agree? (y/n): ")
             if agreement.lower() == 'y':
                 starSurfG = pDict['logg']
@@ -1627,11 +1618,11 @@ if __name__ == "__main__":
         else:
             targetName = str(input("Enter the planet's name: "))
             hostName = str(input("Enter the host star's name: "))
-            
+
             raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
             decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
                                    "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-        
+
             raDeg = astropy.coordinates.Angle(raStr + " hours").deg
 
             noSpaceDec = decStr.replace(" ", "")
@@ -1643,7 +1634,7 @@ if __name__ == "__main__":
                 decStr = str(input(
                     "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
                 decDeg = astropy.coordinates.Angle(decStr + " degrees").deg
-            
+
 
             # Orbital Period
             planetPeriod = float(input("\nEnter the Orbital Period in days: "))
@@ -1858,6 +1849,10 @@ if __name__ == "__main__":
                 print("Flattening images.")
                 sortedallImageData = sortedallImageData / generalFlat
 
+            # Check to see if the input files have WCS info in header and return it or nothing
+            # solvethis = fits.PrimaryHDU(data=sortedallImageData[0])
+            # solvethis.writeto('platesolveme.fits')
+            # wcsFile = check_wcs(saveDirectory + 'platesolveme.fits', saveDirectory)
             print("\nAligning your images from .FITS. Please wait.")
             done = False
             t = threading.Thread(target=animate, daemon=True)
@@ -1953,7 +1948,7 @@ if __name__ == "__main__":
                             #check if your target star is too close to the edge of the detector
                             if txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0]):
                                 print('*************************************************************************************')
-                                print ('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
+                                print('WARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.')
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored')
                                 driftBool = True
@@ -1969,7 +1964,7 @@ if __name__ == "__main__":
                             # check if the reference is too close to the edge of the detector
                             if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
                                 print('*************************************************************************************') 
-                                print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
+                                print('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
                                 print('*************************************************************************************')
@@ -2094,7 +2089,7 @@ if __name__ == "__main__":
 
                             # otherwise, mask off the rest of the files from time sorted names including the current one
                             else:
-                                print("Filtering data to account for drifting target.")
+                                print("\nFiltering data to account for drifting target.")
                                 # timeSortedNames = timeSortedNames[:fileNumber]
 
                                 # TIME
@@ -2105,6 +2100,8 @@ if __name__ == "__main__":
 
                                 # ALL IMAGES
                                 sortedallImageData = sortedallImageData[:fileNumber]
+
+                                boollist = boollist[:fileNumber]
 
                                 break
 
@@ -2141,7 +2138,7 @@ if __name__ == "__main__":
                             filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=np.mean, copy=False)
                         except TypeError:
                             filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=np.mean, copy=False)
-                        
+
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
                         midTranCur = nearestTransitTime(timesListed,  planetPeriod, timeMidTransit)
@@ -2323,7 +2320,7 @@ if __name__ == "__main__":
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
             bjdMidTOld = timeMidTransit
-            
+
 
             goodPhasesList = []
             # convert all the phases based on the updated bjd times
@@ -2692,8 +2689,7 @@ if __name__ == "__main__":
         outParamsFile = open(saveDirectory + 'FinalParams' + targetName + date + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
-        outParamsFile.write(
-            'The fitted Mid-Transit Time is: ' + str(fitMidT) + ' +/- ' + str(midTranUncert) + ' (BJD)\n')
+        outParamsFile.write('The fitted Mid-Transit Time is: ' + str(fitMidT) + ' +/- ' + str(midTranUncert) + ' (BJD)\n')
         outParamsFile.write('The fitted Ratio of Planet to Stellar Radius is: ' + str(fitRadius) + ' +/- ' + str(
             radUncert) + ' (Rp/Rs)\n')
         outParamsFile.write('The transit depth uncertainty is: ' + str(

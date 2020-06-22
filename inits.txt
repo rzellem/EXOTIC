@@ -39,7 +39,7 @@ Observing Notes			Weather, seeing was nice.
 #-----------------------------------------------------------------------------------
 # Target Information
 #-----------------------------------------------------------------------------------
-planet name			HAT-P-32b
+planet name			HAT-P-32 b
 Target Star RA (hh:mm:ss)	02:05.25
 Target Star Dec (+/-hh:mm:ss)	+46:46.15
 Target Star pixel coords (x,y)	424, 286

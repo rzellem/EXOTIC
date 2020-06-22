@@ -1345,59 +1345,6 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
 
-            print('\nLocate Your Target Star')
-            print('***************************************')
-            if fileorcommandline == 1:
-                raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-                decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
-                                   "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            elif fileorcommandline == 2:
-                print("Reading star positions from init file.")
-
-            # **************************************************************************************************************
-            # FUTURE: clean up this code a little bit so that you split by :, if no : in the string, then split by the spaces
-            # **************************************************************************************************************
-
-            # convert UI RA and DEC into degrees
-
-            # # parse their ra string
-            # # remove the spaces in their answer and split by the colons
-            # # take first character to be the sign and write a check if they forget
-            # noSpaceRa = raStr.replace(" ", "")
-            # noSpaceColonRa = noSpaceRa.replace(":", "")
-            # # noCapsSpaceRa = noSpaceColonRa.lower()
-
-            # raHr = noSpaceColonRa[:2]
-            # raMin = noSpaceColonRa[2:4]
-            # raSec = noSpaceColonRa[4:]
-            # raDeg = round((float(raHr) + float(raMin) / 60.0 + float(raSec) / 3600.0) * 15.0, 4)
-            raDeg = astropy.coordinates.Angle(raStr + " hours").deg
-
-            noSpaceDec = decStr.replace(" ", "")
-            noSpaceColonDec = noSpaceDec.replace(":", "")
-            # noCapsSpaceDec = noSpaceColonDec.lower()
-
-            decSign = noSpaceColonDec[0]
-            while decSign != '+' and decSign != '-':
-                print('You forgot the sign for the dec! Please try again.')
-                decStr = str(input(
-                    "Enter the Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-            #     noSpaceDec = decStr.replace(" ", "")
-            #     noSpaceColonDec = noSpaceDec.replace(":", "")
-            #     decSign = noSpaceColonDec[0]
-            # decD = noSpaceColonDec[1:3]
-            # decMin = noSpaceColonDec[3:5]
-            # decSec = noSpaceColonDec[5:]
-            # if decSign == '-':
-            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0),
-            #                 4) * -1  # account for the negative
-            # else:
-            #     decDeg = round((float(decD) + float(decMin) / 60.0 + float(decSec) / 3600.0), 4)
-            decDeg = astropy.coordinates.Angle(decStr + " degrees").deg
-
-            # Check to see if the input files have WCS info in header and return it or nothing
-            wcsFile = check_wcs(inputfiles, saveDirectory)
-
             # TARGET STAR
             if fileorcommandline == 1:
                 UIprevTPX = int(input('\n' + targetName + " X Pixel Coordinate: "))

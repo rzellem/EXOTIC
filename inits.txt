@@ -8,9 +8,9 @@
 #-----------------------------------------------------------------------------------
 directory with fits files	./sample-data/HatP32Dec202017
 directory to save plots		./sample-data
-directory of flats		none
-directory of darks		none
-directory of biases		none
+directory of flats		n
+directory of darks		n
+directory of biases		n
 
 #-----------------------------------------------------------------------------------
 # File Output Format

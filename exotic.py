@@ -376,12 +376,24 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
 
 
 # Validate user input
-def user_input(prompt):
+def user_input(prompt, type_, val1=None, val2=None):
     while True:
-        option = input(prompt)
-        if option.lower() not in ('y', 'n'):
-            print("Sorry, your response was not valid.")
-        else:
+        try:
+            option = type_(input(prompt))
+        except ValueError:
+            print('Sorry, not a valid data type.')
+            continue
+        if type_ == str and val1 and val2:
+            if option.lower() not in (val1, val2):
+                print("Sorry, your response was not valid.")
+            else:
+                return option
+        elif type_ == int and val1 and val2:
+            if option not in (val1, val2):
+                print("Sorry, your response was not valid.")
+            else:
+                return option
+        elif type_ == int or type_ == float:
             return option
 
 
@@ -402,13 +414,13 @@ def check_wcs(files, saveDirectory):
 
     # If the fits file has WCS info, ask the user if they trust it
     if wcsExists:
-        trustWCS = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ')
+        trustWCS = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ', type_=str, val1='y', val2='n')
     else:
         trustWCS = 'n'
 
     if trustWCS == 'n':
         plateSol = user_input("\nWould you like to upload the your image for a plate solution?"
-                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net. (y/n): ")
+                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
         # Plate solve the fits file
         if plateSol.lower() == 'y':
             print("\nGetting the plate solution for your imaging file. Please wait.")
@@ -1022,10 +1034,8 @@ if __name__ == "__main__":
 
     # ---USER INPUTS--------------------------------------------------------------------------
 
-    realTimeAns = int(input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: '))
-    while realTimeAns != 1 and realTimeAns != 2:
-        print('Sorry, did not recognize that input')
-        realTimeAns = int(input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: '))
+    realTimeAns = user_input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: ', type_=int, val1=1, val2=2)
+
     #############################
     # Real Time Reduction Routine
     #############################
@@ -1067,10 +1077,10 @@ if __name__ == "__main__":
         while carryOn != 'continue':
             carryOn = input('Type continue after the first image has been taken and saved: ')
 
-        UIprevTPX = int(input(targetName + " X Pixel Coordinate: "))
-        UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))
-        UIprevRPX = int(input("Comp Star X Pixel Coordinate: "))
-        UIprevRPY = int(input("Comp Star Y Pixel Coordinate: "))
+        UIprevTPX = user_input(targetName + " X Pixel Coordinate: ", type_=int)
+        UIprevTPY = user_input(targetName + " Y Pixel Coordinate: ", type_=int)
+        UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
+        UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
         print('Real Time Plotting ("Control + C" or close the plot to quit)')
         print('\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.')
@@ -1094,11 +1104,9 @@ if __name__ == "__main__":
         print('Complete Reduction Routine')
         print('**************************\n')
 
-        fitsortext = int(input(
-            'Enter "1" to perform aperture photometry on fits files or "2" to start with pre-reduced data in a .txt format: '))
+        fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 
-        fileorcommandline = int(input(
-            'How would you like to input your initial parameters? Enter "1" to use the Command Line or "2" to use an input file: '))
+        fileorcommandline = user_input('How would you like to input your initial parameters? Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
@@ -1110,11 +1118,11 @@ if __name__ == "__main__":
                 initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
 
             # Parse input file
-            looper = True
-            while looper:
+            while True:
                 try:
-                    initf = open(initfilename, 'r')
-                    looper = False
+                    with open(initfilename, 'r') as f:
+                        inits = f.readlines()
+                        break
                 except FileNotFoundError:
                     print("Initialization file not found. Please try again.")
                     initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
@@ -1124,9 +1132,6 @@ if __name__ == "__main__":
             #     if line[0] == "#": continue
             #     inits.append(line)
             # initf.close()
-
-            inits = initf.readlines()
-            initf.close()
 
             for line in inits:
                 # Directory Info
@@ -1351,20 +1356,20 @@ if __name__ == "__main__":
 
             # TARGET STAR
             if fileorcommandline == 1:
-                UIprevTPX = int(input('\n' + targetName + " X Pixel Coordinate: "))
-                UIprevTPY = int(input(targetName + " Y Pixel Coordinate: "))
-                numCompStars = int(input("How many comparison stars would you like to use? (1-10) "))
+                UIprevTPX = user_input('\n' + targetName + " X Pixel Coordinate: ", type_=int)
+                UIprevTPY = user_input(targetName + " Y Pixel Coordinate: ", type_=int)
+                numCompStars = user_input("How many comparison stars would you like to use? (1-10) ", type_=int)
 
                 # MULTIPLE COMPARISON STARS
                 compStarList = []
                 for num in range(1, numCompStars + 1):
-                    rxp = int(input("Comparison Star " + str(num) + " X Pixel Coordinate: "))
-                    ryp = int(input("Comparison Star " + str(num) + " Y Pixel Coordinate: "))
+                    rxp = user_input("Comparison Star " + str(num) + " X Pixel Coordinate: ", type_=int)
+                    ryp = user_input("Comparison Star " + str(num) + " Y Pixel Coordinate: ", type_=int)
                     compStarList.append((rxp, ryp))
 
             # ---HANDLE CALIBRATION IMAGES------------------------------------------------
             if fileorcommandline == 1:
-                cals = user_input('\nDo you have any calibration images (flats, darks or biases)? (y/n): ')
+                cals = user_input('\nDo you have any calibration images (flats, darks or biases)? (y/n): ', type_=str, val1='y', val2='n')
 
             # if they have cals, handle them by calculating the median flat, dark or bias
             if cals == 'y':
@@ -1372,7 +1377,7 @@ if __name__ == "__main__":
                 # flats
                 # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
-                    flats = user_input('\nDo you have flats? (y/n): ')
+                    flats = user_input('\nDo you have flats? (y/n): ', type_=str, val1='y', val2='n')
                     if flats == 'y':
                         flatsBool = True
                         flatsPath = str(input('Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
@@ -1411,7 +1416,7 @@ if __name__ == "__main__":
 
                 # darks
                 if fileorcommandline == 1:
-                    darks = user_input('\nDo you have darks? (y/n): ')
+                    darks = user_input('\nDo you have darks? (y/n): ', type_=str, val1='y', val2='n')
                     if darks == 'y':
                         darksBool = True
                         darksPath = str(input('Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
@@ -1444,7 +1449,7 @@ if __name__ == "__main__":
 
                 # biases
                 if fileorcommandline == 1:
-                    biases = user_input('\nDo you have biases? (y/n): ')
+                    biases = user_input('\nDo you have biases? (y/n): ', type_=str, val1='y', val2='n')
 
                     if biases == 'y':
                         biasesBool = True
@@ -1493,7 +1498,7 @@ if __name__ == "__main__":
 
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
-            AAVSOoutput = user_input('Do you have an AAVSO Observer Account? (y/n): ')
+            AAVSOoutput = user_input('Do you have an AAVSO Observer Account? (y/n): ', type_=str, val1='y', val2='n')
             if AAVSOoutput == 'n':
                 AAVSOBool = False
             else:
@@ -1527,68 +1532,68 @@ if __name__ == "__main__":
 
             # Orbital Period
             print('\n' + targetName + ' Orbital Period (days): ' + str(pDict['pPer']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 planetPeriod = pDict['pPer']
             else:
-                planetPeriod = float(input("Enter the Orbital Period in days: "))
+                planetPeriod = user_input("Enter the Orbital Period in days: ", type_=float)
 
             # Orbital Period Error
             print('\n' + targetName + ' Orbital Period Uncertainty (days): ' + str(pDict['pPerUnc']))
             print('Keep in mind that "1.2e-34" is the same as 1.2 x 10^-34')
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 ogPeriodErr = pDict['pPerUnc']
             else:
-                ogPeriodErr = float(input("Enter the Uncertainty for the Orbital Period in days: "))
+                ogPeriodErr = user_input("Enter the Uncertainty for the Orbital Period in days: ", type_=float)
 
             # Mid Transit Time
             print('\n' + targetName + ' Published Time of Mid-Transit (BJD_UTC): ' + str(pDict['midT']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 timeMidTransit = pDict['midT']
             else:
-                timeMidTransit = float(input("Enter a reported Time of Mid-Transit in BJD_UTC: "))
+                timeMidTransit = user_input("Enter a reported Time of Mid-Transit in BJD_UTC: ", type_=float)
 
             # Mid Transit Time Uncertainty
             print('\n' + targetName + ' Time of Mid-Transit Uncertainty (JD): ' + str(pDict['midTUnc']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 ogMidTErr = pDict['midTUnc']
             else:
-                ogMidTErr = float(input("Enter the uncertainty of the Mid-Transit Time (JD): "))
+                ogMidTErr = user_input("Enter the uncertainty of the Mid-Transit Time (JD): ", type_=float)
 
             # rprs
             print('\n' + targetName + ' Ratio of Planet to Stellar Radius (Rp/Rs): ' + str(round(pDict['rprs'], 4)))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 rprs = pDict['rprs']
             else:
-                rprs = float(input("Enter the Ratio of Planet to Stellar Radius (Rp/Rs): "))
+                rprs = user_input("Enter the Ratio of Planet to Stellar Radius (Rp/Rs): ", type_=float)
 
             # aRstar
             print('\n' + targetName + ' Ratio of Distance to Stellar Radius (a/Rs): ' + str(pDict['aRs']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 semi = pDict['aRs']
             else:
-                semi = float(input("Enter the Ratio of Distance to Stellar Radius (a/Rs): "))
+                semi = user_input("Enter the Ratio of Distance to Stellar Radius (a/Rs): ", type_=float)
 
             # inclination
             print('\n' + targetName + ' Orbital Inclination (deg): ' + str(pDict['inc']))
-            agreement = user_input("Do you agree? (y/n) ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 inc = pDict['inc']
             else:
-                inc = float(input("Enter the Orbital Inclination in degrees (90 if null): "))
+                inc = user_input("Enter the Orbital Inclination in degrees (90 if null): ", type_=float)
 
             # eccentricity
             print('\n' + targetName + ' Orbital Eccentricity: ' + str(pDict['ecc']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 eccent = pDict['ecc']
             else:
-                eccent = float(input("Enter the Orbital Eccentricity (0 if null): "))
+                eccent = user_input("Enter the Orbital Eccentricity (0 if null): ", type_=float)
 
             # LIMB DARKENING
             print('\n***************************')
@@ -1597,27 +1602,27 @@ if __name__ == "__main__":
 
             # stellar temperature
             print('\n' + hostName + ' Star Effective Temperature (K): ' + str(pDict['teff']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 starTeff = pDict['teff']
             else:
-                starTeff = float(input("Enter the Effective Temperature (K): "))
+                starTeff = user_input("Enter the Effective Temperature (K): ", type_=float)
 
             # metallicity
             print('\n' + hostName + ' Star Metallicity ([FE/H]): ' + str(pDict['met']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 starMetall = pDict['met']
             else:
-                starMetall = float(input("Enter the Metallicity ([Fe/H]): "))
+                starMetall = user_input("Enter the Metallicity ([Fe/H]): ", type_=float)
 
             # Log g
             print('\n' + hostName + ' Star Surface Gravity log(g): ' + str(pDict['logg']))
-            agreement = user_input("Do you agree? (y/n): ")
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
             if agreement.lower() == 'y':
                 starSurfG = pDict['logg']
             else:
-                starSurfG = float(input("Enter the Surface Gravity (log(g)): "))
+                starSurfG = user_input("Enter the Surface Gravity (log(g)): ", type_=float)
         #  if the planet is not in the NASA Exoplanet Archive, then ask user for input
         else:
             targetName = str(input("Enter the planet's name: "))
@@ -1641,34 +1646,34 @@ if __name__ == "__main__":
 
 
             # Orbital Period
-            planetPeriod = float(input("\nEnter the Orbital Period in days: "))
+            planetPeriod = user_input("\nEnter the Orbital Period in days: ", type_=float)
             # Orbital Period Error
-            ogPeriodErr = float(input("\nEnter the Uncertainty for the Orbital Period in days: "))
+            ogPeriodErr = user_input("\nEnter the Uncertainty for the Orbital Period in days: ", type_=float)
             # Mid Transit Time
-            timeMidTransit = float(input("\nEnter a reported Time of Mid-Transit in BJD_UTC: "))
+            timeMidTransit = user_input("\nEnter a reported Time of Mid-Transit in BJD_UTC: ", type_=float)
             # Mid Transit Time Uncertainty
-            ogMidTErr = float(input("\nEnter the uncertainty of the Mid-Transit Time (JD): "))
+            ogMidTErr = user_input("\nEnter the uncertainty of the Mid-Transit Time (JD): ", type_=float)
             # rprs
-            rprs = float(input("\nEnter the Ratio of Planet to Stellar Radius (Rp/Rs): "))
+            rprs = user_input("\nEnter the Ratio of Planet to Stellar Radius (Rp/Rs): ", type_=float)
             # aRstar
-            semi = float(input("\nEnter the Ratio of Distance to Stellar Radius (a/Rs): "))
+            semi = user_input("\nEnter the Ratio of Distance to Stellar Radius (a/Rs): ", type_=float)
             # inclination
-            inc = float(input("\nEnter the Orbital Inclination in degrees (90 if null): "))
+            inc = user_input("\nEnter the Orbital Inclination in degrees (90 if null): ", type_=float)
             # eccentricity
-            eccent = float(input("\nEnter the Orbital Eccentricity (0 if null): "))
+            eccent = user_input("\nEnter the Orbital Eccentricity (0 if null): ", type_=float)
 
             # LIMB DARKENING
             print('\n***************************')
             print('Limb Darkening Coefficients')
             print('***************************')
             # stellar temperature
-            starTeff = float(input("\nEnter the host star's effective temperature (K): "))
+            starTeff = user_input("\nEnter the host star's effective temperature (K): ", type_=float)
 
             # metallicity
-            starMetall = float(input("\nEnter the host star's metallicity ([Fe/H]): "))
+            starMetall = user_input("\nEnter the host star's metallicity ([Fe/H]): ", type_=float)
 
             # Log g
-            starSurfG = float(input("\nEnter the host star's surface gravity (log(g)): "))
+            starSurfG = user_input("\nEnter the host star's surface gravity (log(g)): ", type_=float)
 
         # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
         URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
@@ -2422,7 +2427,7 @@ if __name__ == "__main__":
         if len(goodTimes) > 200:
             print("Whoa! You have a lot of datapoints (" + str(len(goodTimes)) + ")!")
             bin_option = user_input("In order to limit EXOTIC's run time, EXOTIC can automatically bin down your data."
-                                 "Would you to perform this action? (y/n): ")
+                                 "Would you to perform this action? (y/n): ", type_=str, val1='y', val2='n')
             if bin_option.lower() == 'y':
                 goodTimes = binner(goodTimes, len(goodTimes) // 200)
                 goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes) // 200, goodNormUnc)
@@ -2706,7 +2711,7 @@ if __name__ == "__main__":
         print('\nFinal Planetary Parameters have been saved in ' + saveDirectory + ' as ' + targetName + date + '.txt' + '\n')
 
         # AAVSO Format
-        if not AAVSOBool:
+        if AAVSOoutput == 'n':
             userCode = "N/A"
             secuserCode = "N/A"
         # else:

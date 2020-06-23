@@ -17,15 +17,19 @@
 ####################################################################
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
-# Authors: Ethan Blaser, Rob Zellem, Kyle Pearson, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
+# Authors: Ethan Blaser, Rob Zellem, Kyle Pearson, Tamim Fatahi, Marlee Smith, Aaron Tran, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
 
 # EXOTIC version number
-# Major releases are the first digit
-# The next two digits are minor commits
-# (If your commit will be #50, then you would type in 0.5.0; next commit would be 0.5.1)
-versionid = "0.7.5"
+# Now adhering to the Semantic Versioning 2.0.0
+# Given a version number MAJOR.MINOR.PATCH, increment the:
+# MAJOR version when you make incompatible API changes,
+# MINOR version when you add functionality in a backwards compatible manner, and
+# PATCH version when you make backwards compatible bug fixes.
+# Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
+# https://semver.org
+versionid = "0.8.0"
 
 
 # --IMPORTS -----------------------------------------------------------

@@ -2711,7 +2711,7 @@ if __name__ == "__main__":
         print('\nFinal Planetary Parameters have been saved in ' + saveDirectory + ' as ' + targetName + date + '.txt' + '\n')
 
         # AAVSO Format
-        if AAVSOoutput == 'n':
+        if not AAVSOBool:
             userCode = "N/A"
             secuserCode = "N/A"
         # else:

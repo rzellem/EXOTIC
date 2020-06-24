@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.8.2"
+versionid = "0.8.3"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -2696,7 +2696,7 @@ if __name__ == "__main__":
         print('\nFinal Planetary Parameters have been saved in ' + saveDirectory + ' as ' + targetName + date + '.txt' + '\n')
 
         # AAVSO Format
-        if AAVSOoutput == 'n':
+        if not AAVSOBool:
             userCode = "N/A"
             secuserCode = "N/A"
         # else:

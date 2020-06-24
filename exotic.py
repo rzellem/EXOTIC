@@ -396,7 +396,7 @@ def user_input(prompt, type_, val1=None, val2=None):
         elif type_ == int or type_ == float:
             return option
 
-def check_file_extensions(directory):
+def check_file_extensions(directory, fileName):
     # Add / to end of directory if user does not input it
     if directory[-1] != "/":
         directory += "/"
@@ -414,7 +414,7 @@ def check_file_extensions(directory):
                 break
         # If we don't find any files, then we need the user to check their directory and loop over again....
         if len(inputfiles) == 0:
-            print("Error: .FITS files not found in " + directory + ". Please try again.")
+            print("Error: " + fileName + " .FITS files not found in " + directory + ". Please try again.")
             directory = str(input("Enter the Directory Path where FITS Image Files are located: "))
             # Add / to end of directory if user does not input it
             if directory[-1] != "/":
@@ -423,8 +423,8 @@ def check_file_extensions(directory):
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
-def check_wcs(files, saveDirectory):
-    hdulist = fits.open(files[0])
+def check_wcs(fits_file, saveDirectory):
+    hdulist = fits.open(fits_file)
     header = hdulist[0].header
 
     # MJD seems sometimes throw off an error. Deleted since not important for plate solving
@@ -455,7 +455,7 @@ def check_wcs(files, saveDirectory):
             t.start()
 
             # Plate solves the first imaging file
-            imagingFile = files[0]
+            imagingFile = fits_file
             wcsFile = plate_solution(imagingFile, saveDirectory)
             done = True
 
@@ -467,7 +467,7 @@ def check_wcs(files, saveDirectory):
             return False
     else:
         # User trusted their imaging file header's WCS
-        return files[0]
+        return fits_file
 
 
 # Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
@@ -1072,7 +1072,7 @@ if __name__ == "__main__":
 
         directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
         directoryP = directToWatch
-        directToWatch, inputfiles = check_file_extensions(directToWatch)
+        directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
 
         targetName = str(input("Enter the Planet Name: "))
 
@@ -1238,7 +1238,7 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 directoryP = str(input("\nEnter the Directory of the FITS Image Files: "))
 
-            directoryP, inputfiles = check_file_extensions(directoryP)
+            directoryP, inputfiles = check_file_extensions(directoryP, 'imaging')
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
@@ -1312,23 +1312,20 @@ if __name__ == "__main__":
             # check to make sure they have a sign
             while latiSign != '+' and latiSign != '-':
                 print("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-                latiStr = str(input(
-                    "Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
+                latiStr = str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
                 noSpaceLati = latiStr.replace(" ", "")
                 latiSign = noSpaceLati[0]
             lati = float(latiStr)
 
             # handle longitude
             if fileorcommandline == 1:
-                longitStr = str(input(
-                    "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
+                longitStr = str(input("Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
             noSpaceLongit = longitStr.replace(" ", "")
             longitSign = noSpaceLongit[0]
             # check to make sure they have the sign
             while longitSign != '+' and longitSign != '-':
                 print("You forgot the sign for the latitude! East is '+' and West is '-'. Please try again.")
-                longitStr = str(input(
-                    "Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
+                longitStr = str(input("Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
                 noSpaceLongit = longitStr.replace(" ", "")
                 longitSign = noSpaceLongit[0]
             longit = float(longitStr)
@@ -1367,32 +1364,16 @@ if __name__ == "__main__":
                         flatsBool = False
 
                     if flatsBool:
-                        # Add / to end of directory if user does not input it
-                        if flatsPath[-1] != "/":
-                            flatsPath += "/"
-                        # Check for .FITS files
-                        inputflats = g.glob(flatsPath + "*.FITS")
-                        # If none exist, try other extensions
-                        if len(inputflats) == 0:
-                            inputflats = g.glob(flatsPath + "*.FIT")
-                        if len(inputflats) == 0:
-                            inputflats = g.glob(flatsPath + "*.fits")
-                        if len(inputflats) == 0:
-                            inputflats = g.glob(flatsPath + "*.fit")
+                        flatsPath, inputflats = check_file_extensions(flatsPath, 'flats')
+                        flatsImgList = []
+                        for flatFile in inputflats:
+                            flatData = fits.getdata(flatFile, ext=0)
+                            flatsImgList.append(flatData)
+                        notNormFlat = np.median(flatsImgList, axis=0)
 
-                        if len(inputflats) == 0:
-                            print("Error: no flats found in" + flatsPath + ". Proceeding with reduction WITHOUT flatfields.")
-                            flatsBool = False
-                        else:
-                            flatsImgList = []
-                            for flatFile in inputflats:
-                                flatData = fits.getdata(flatFile, ext=0)
-                                flatsImgList.append(flatData)
-                            notNormFlat = np.median(flatsImgList, axis=0)
-
-                            # NORMALIZE
-                            medi = np.median(notNormFlat)
-                            generalFlat = notNormFlat / medi
+                        # NORMALIZE
+                        medi = np.median(notNormFlat)
+                        generalFlat = notNormFlat / medi
                 else:
                     flatsBool = False
 
@@ -1407,27 +1388,12 @@ if __name__ == "__main__":
 
                 # Only do the dark correction if user selects this option
                 if darksBool:
-                    # Add / to end of directory if user does not input it
-                    if darksPath[-1] != "/":
-                        darksPath += "/"
-                    # Check for .FITS files
-                    inputdarks = g.glob(darksPath + "*.FITS")
-                    # If none exist, try other extensions
-                    if len(inputdarks) == 0:
-                        inputdarks = g.glob(darksPath + "*.FIT")
-                    if len(inputdarks) == 0:
-                        inputdarks = g.glob(darksPath + "*.fits")
-                    if len(inputdarks) == 0:
-                        inputdarks = g.glob(darksPath + "*.fit")
-                    if len(inputdarks) == 0:
-                        print("Error: no darks found in" + darksPath + ". Proceeding with reduction WITHOUT darks.")
-                        darksBool = False
-                    else:
-                        darksImgList = []
-                        for darkFile in inputdarks:
-                            darkData = fits.getdata(darkFile, ext=0)
-                            darksImgList.append(darkData)
-                        generalDark = np.median(darksImgList, axis=0)
+                    darksPath, inputdarks = check_file_extensions(darksPath, 'darks')
+                    darksImgList = []
+                    for darkFile in inputdarks:
+                        darkData = fits.getdata(darkFile, ext=0)
+                        darksImgList.append(darkData)
+                    generalDark = np.median(darksImgList, axis=0)
 
                 # biases
                 if fileorcommandline == 1:
@@ -1435,35 +1401,18 @@ if __name__ == "__main__":
 
                     if biases == 'y':
                         biasesBool = True
-                        biasesPath = str(input(
-                            'Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
+                        biasesPath = str(input('Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
                     else:
                         biasesBool = False
 
                 if biasesBool:
                     # Add / to end of directory if user does not input it
-                    if biasesPath[-1] != "/":
-                        biasesPath += "/"
-                    # Check for .FITS files
-                    inputbiases = g.glob(biasesPath + "*.FITS")
-                    # If none exist, try other extensions
-                    if len(inputbiases) == 0:
-                        inputbiases = g.glob(biasesPath + "*.FIT")
-                    if len(inputbiases) == 0:
-                        inputbiases = g.glob(biasesPath + "*.fits")
-                    if len(inputbiases) == 0:
-                        inputbiases = g.glob(biasesPath + "*.fit")
-                    if len(inputbiases) == 0:
-                        print("Error: no darks found in" + biasesPath + ". Proceeding with reduction WITHOUT biases.")
-                        darksBool = False
-                    else:
-                        biasesImgList = []
-                        for biasFile in inputbiases:
-                            biasData = fits.getdata(biasFile, ext=0)
-                            biasesImgList.append(biasData)
-                        generalBias = np.median(biasesImgList, axis=0)
-                else:
-                    biasesBool = False
+                    biasesPath, inputbiases = check_file_extensions(biasesPath, 'biases')
+                    biasesImgList = []
+                    for biasFile in inputbiases:
+                        biasData = fits.getdata(biasFile, ext=0)
+                        biasesImgList.append(biasData)
+                    generalBias = np.median(biasesImgList, axis=0)
             else:
                 flatsBool = False
                 darksBool = False
@@ -1843,10 +1792,15 @@ if __name__ == "__main__":
                 print("Flattening images.")
                 sortedallImageData = sortedallImageData / generalFlat
 
-            # Check to see if the input files have WCS info in header and return it or nothing
-            # solvethis = fits.PrimaryHDU(data=sortedallImageData[0])
-            # solvethis.writeto('platesolveme.fits')
-            # wcsFile = check_wcs(saveDirectory + 'platesolveme.fits', saveDirectory)
+            pathSolve = saveDirectory + 'first_file.fits'
+            try:
+                os.remove(pathSolve)
+            except OSError:
+                pass
+            convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
+            convertToFITS.writeto(pathSolve)
+            wcsFile = check_wcs(pathSolve, saveDirectory)
+
             print("\nAligning your images from .FITS. Please wait.")
             done = False
             t = threading.Thread(target=animate, daemon=True)

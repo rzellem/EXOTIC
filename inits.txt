@@ -6,7 +6,7 @@
 #-----------------------------------------------------------------------------------
 # File Input/Output Information
 #-----------------------------------------------------------------------------------
-directory with fits files	./sample-data/HatP32Dec202017
+directory with fits files	./sample-data/HatP32Dec20201
 directory to save plots		./sample-data
 directory of flats		none
 directory of darks		none
@@ -33,7 +33,7 @@ Obs. Elevation (meters)		2616
 Camera Type (CCD or DSLR)	CCD
 Pixel Binning			1x1
 Exposure Time (seconds)		60
-Filter Name (aavso.org/filters)	CV
+Filter Name (aavso.org/filters)	FJFJ
 Observing Notes			Weather, seeing was nice.
 
 #-----------------------------------------------------------------------------------

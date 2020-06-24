@@ -369,7 +369,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
 
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
-        time = Time(getJulianTime(hdul), format='jd', scale='utc', location=location)
+        time = astropy.time.Time(getJulianTime(hdul), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=time, location=location))
         am = float(pointingAltAz.secz)
     return (am)
@@ -395,6 +395,31 @@ def user_input(prompt, type_, val1=None, val2=None):
                 return option
         elif type_ == int or type_ == float:
             return option
+
+def check_file_extensions(directory):
+    # Add / to end of directory if user does not input it
+    if directory[-1] != "/":
+        directory += "/"
+
+    # Find fits files
+    fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
+    # Loop until we find something
+    looper = True
+    while looper:
+        for exti in fits_extensions:
+            inputfiles = g.glob(directory + exti)
+            # If we find files, then stop the for loop and while loop
+            if len(inputfiles) > 0:
+                looper = False
+                break
+        # If we don't find any files, then we need the user to check their directory and loop over again....
+        if len(inputfiles) == 0:
+            print("Error: .FITS files not found in " + directory + ". Please try again.")
+            directory = str(input("Enter the Directory Path where FITS Image Files are located: "))
+            # Add / to end of directory if user does not input it
+            if directory[-1] != "/":
+                directory += "/"
+    return directory, inputfiles
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -1047,28 +1072,7 @@ if __name__ == "__main__":
 
         directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
         directoryP = directToWatch
-        # Add / to end of directory if user does not input it
-        if directToWatch[-1] != "/":
-            directToWatch += "/"
-
-        # Find fits files
-        fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
-        looper = True
-        # Loop until we find something
-        while looper:
-            for exti in fits_extensions:
-                inputfiles = g.glob(directToWatch + exti)
-                # If we find files, then stop the for loop and while loop
-                if len(inputfiles) > 0:
-                    looper = False
-                    break
-            # If we don't find any files, then we need the user to check their directory and loop over again....
-            if len(inputfiles) == 0:
-                print("Error: .FITS files not found in " + directToWatch + ". Please try again.")
-                directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
-                # Add / to end of directory if user does not input it
-                if directToWatch[-1] != "/":
-                    directToWatch += "/"
+        directToWatch, inputfiles = check_file_extensions(directToWatch)
 
         targetName = str(input("Enter the Planet Name: "))
 
@@ -1234,29 +1238,7 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 directoryP = str(input("\nEnter the Directory of the FITS Image Files: "))
 
-            # Add / to end of directory if user does not input it
-            if directoryP[-1] != "/":
-                directoryP += "/"
-            # Check for .FITS files
-
-            # Find fits files
-            fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
-            looper = True
-            # Loop until we find something
-            while looper:
-                for exti in fits_extensions:
-                    inputfiles = g.glob(directoryP + exti)
-                    # If we find files, then stop the for loop and while loop
-                    if len(inputfiles) > 0:
-                        looper = False
-                        break
-                # If we don't find any files, then we need the user to check their directory and loop over again....
-                if len(inputfiles) == 0:
-                    print("Error: .FITS files not found in " + directoryP + ". Please try again.")
-                    directoryP = str(input("Enter the Directory Path where FITS Image Files are located: "))
-                    # Add / to end of directory if user does not input it
-                    if directoryP[-1] != "/":
-                        directoryP += "/"
+            directoryP, inputfiles = check_file_extensions(directoryP)
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
@@ -1509,7 +1491,7 @@ if __name__ == "__main__":
             cameraType = str(input("Please enter your camera type (CCD or DSLR): "))
             binning = str(input('Please enter your pixel binning: '))
             exposureTime = str(input('Please enter your exposure time (seconds): '))
-            filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): ')) # TODO modify for exofast input
+            filterName = str(input('Please enter your filter name (U,B,V,R,I,J,H,K): '))
             obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
         # --------PLANETARY PARAMETERS UI------------------------------------------
@@ -1680,37 +1662,40 @@ if __name__ == "__main__":
         URLphp = 'http://astroutils.astronomy.ohio-state.edu/exofast/quadld.php'
 
         with requests.Session() as sesh:
-            form_newData = {"action": URLphp,
-                            "teff": str(starTeff),
-                            "feh": str(starMetall),
-                            "logg": str(starSurfG),
-                            "bname": "V", # TODO filterName - check name
-                            "pname": "Select Planet"
-                            }
+            while True:
+                try:
+                    form_newData = {"action": URLphp,
+                                    "teff": str(starTeff),
+                                    "feh": str(starMetall),
+                                    "logg": str(starSurfG),
+                                    "bname": filterName,
+                                    "pname": "Select Planet"
+                                    }
+                    r = sesh.post(URLphp, data=form_newData)
+                    fullcontents = r.text
 
-            r = sesh.post(URLphp, data=form_newData)
+                    # linear term
+                    linearString = ''
+                    for indexLinear in range(len(fullcontents)):
+                        if fullcontents[indexLinear].isdigit():
+                            while fullcontents[indexLinear + 1] != ' ':
+                                linearString = linearString + fullcontents[indexLinear]
+                                indexLinear = indexLinear + 1
+                            # print (linearString)
+                            linearLimb = float(linearString)
+                            break
 
-        fullcontents = r.text
-
-        # linear term
-        linearString = ''
-        for indexLinear in range(len(fullcontents)):
-            if fullcontents[indexLinear].isdigit():
-                while fullcontents[indexLinear + 1] != ' ':
-                    linearString = linearString + fullcontents[indexLinear]
-                    indexLinear = indexLinear + 1
-                # print (linearString)
-                linearLimb = float(linearString)
-                break
-
-        # quadratic term
-        quadString = ''
-        for indexQuad in range(indexLinear + 1, len(fullcontents)):
-            if fullcontents[indexQuad].isdigit() or fullcontents[indexQuad] == '.':
-                quadString = quadString + fullcontents[indexQuad]
-                indexQuad = indexQuad + 1
-        # print (quadString)
-        quadLimb = float(quadString)
+                    # quadratic term
+                    quadString = ''
+                    for indexQuad in range(indexLinear + 1, len(fullcontents)):
+                        if fullcontents[indexQuad].isdigit() or fullcontents[indexQuad] == '.':
+                            quadString = quadString + fullcontents[indexQuad]
+                            indexQuad = indexQuad + 1
+                    # print (quadString)
+                    quadLimb = float(quadString)
+                    break
+                except:
+                    filterName = input('\nNot valid filter name. Please enter a valid filter name using aavso.org/filters: ')
 
         print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
         print('Linear Term: ' + linearString)
@@ -2317,7 +2302,7 @@ if __name__ == "__main__":
                 done = False
                 t = threading.Thread(target=animate, daemon=True)
                 t.start()
-                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra= raDeg, dec = decDeg, lat=lati, longi=longit, alt=elevation)
+                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=elevation)
                 goodTimes = resultos[0]
                 done = True
 

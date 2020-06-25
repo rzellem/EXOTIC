@@ -40,7 +40,8 @@ import threading
 import time
 import sys
 
-#here is the animation
+
+# here is the animation
 def animate():
     for c in itertools.cycle(['|', '/', '-', '\\']):
         if done:
@@ -122,12 +123,12 @@ done = True
 # Function that bins an array
 def binner(arr, n, err=''):
     if len(err) == 0:
-        ecks = np.pad(arr.astype(float), (0, ((n - arr.size%n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
         arr = np.nanmean(ecks, axis=1)
         return arr
     else:
-        ecks = np.pad(arr.astype(float), (0, ((n - arr.size%n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        why = np.pad(err.astype(float), (0, ((n - err.size%n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
+        why = np.pad(err.astype(float), (0, ((n - err.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
         weights = 1./(why**2.)
         # Calculate the weighted average
         arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
@@ -183,16 +184,17 @@ def findPlanetLinesExt(planName, dataDictionary):
 
 ## ARCHIVE PRIOR SCRAPER ################################################################
 pi = 3.14159
-au=1.496e11 # m
+au = 1.496e11 # m
 rsun = 6.955e8 # m
 rjup = 7.1492e7 # m
 G = 0.00029591220828559104 # day, AU, Msun
 
 # keplerian semi-major axis (au)
-sa = lambda m,P : (G*m*P**2/(4*pi**2) )**(1./3)
+sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
+
 
 def dataframe_to_jsonfile(dataframe, filename):
-    jsondata = json.loads( dataframe.to_json(orient='table',index=False))
+    jsondata = json.loads(dataframe.to_json(orient='table', index=False))
     with open(filename, "w") as f:
         f.write(json.dumps(jsondata['data'], indent=4))
 
@@ -1279,7 +1281,7 @@ if __name__ == "__main__":
             new_scrape(filename="eaConf.json")
 
         CandidatePlanetBool = False
-        with open("eaConf.json","r") as confirmedFile:
+        with open("eaConf.json", "r") as confirmedFile:
             data = json.load(confirmedFile)
             planets = [data[i]['pl_name'].lower() for i in range(len(data))]
             #stars = [data[i]['hostname'] for i in range(len(data))]
@@ -1800,6 +1802,8 @@ if __name__ == "__main__":
             convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
             convertToFITS.writeto(pathSolve)
             wcsFile = check_wcs(pathSolve, saveDirectory)
+            if wcsFile:
+                hdulWCS = fits.open(wcsFile)
 
             print("\nAligning your images from .FITS. Please wait.")
             done = False
@@ -2192,7 +2196,11 @@ if __name__ == "__main__":
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            if "IM_SCALE" in hdul[0].header:
+            if wcsFile and 'COMMENT' in hdulWCS[0].header:
+                imscalen = float(hdulWCS[0].header['COMMENT'][135].split(' ')[1])
+                imscaleunits = 'Image scale in arc-secs/pixel'
+                imscale = imscaleunits + ": " + str(round(imscalen, 2))
+            elif "IM_SCALE" in hdul[0].header:
                 imscalen = hdul[0].header['IM_SCALE']
                 imscaleunits = hdul[0].header.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)

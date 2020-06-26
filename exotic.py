@@ -2601,7 +2601,7 @@ if __name__ == "__main__":
         bins = np.linspace(-maxbs, maxbs, 7)
 
         # residual plot
-        ax_res.plot(x, finalResiduals, color = 'gray', marker ='o', linestyle = 'None')
+        ax_res.plot(x, finalResiduals, color = 'gray', marker ='o', markersize=5, linestyle = 'None')
         ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=1, zorder=100)
         ax_res.set_ylabel('Residuals')
         # ax_res.set_ylim([-.04, .04])
@@ -2610,7 +2610,7 @@ if __name__ == "__main__":
         correctedSTD = np.std(finalResiduals)
         # ax_lc.errorbar( x, self.y/self.data[t]['airmass'], yerr=self.yerr/self.data[t]['airmass'], ls='none', marker='o', color='black')
         ax_lc.errorbar(adjustedPhases, finalFluxes / finalAirmassModel, yerr=finalNormUnc / finalAirmassModel, ls='none',
-                       marker='o', color='gray')
+                       marker='o', color='gray', markersize=4)
         ax_lc.plot(adjustedPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')
@@ -2619,11 +2619,11 @@ if __name__ == "__main__":
         if binplotBool:
             ax_res.errorbar(binner(x, len(finalResiduals) // 10), binner(finalResiduals, len(finalResiduals) // 10),
                             yerr=binner(finalResiduals, len(finalResiduals) // 10, finalNormUnc / finalAirmassModel)[1],
-                            fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
+                            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_lc.errorbar(binner(adjustedPhases, len(adjustedPhases) // 10),
                            binner(finalFluxes / finalAirmassModel, len(adjustedPhases) // 10),
                            yerr=binner(finalResiduals, len(finalResiduals) // 10, finalNormUnc / finalAirmassModel)[1],
-                           fmt='s', mfc='white', mec='b', ecolor='b', zorder=10)
+                           fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:

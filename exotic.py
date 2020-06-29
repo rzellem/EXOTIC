@@ -185,10 +185,10 @@ def findPlanetLinesExt(planName, dataDictionary):
 
 ## ARCHIVE PRIOR SCRAPER ################################################################
 pi = 3.14159
-au = 1.496e11 # m
-rsun = 6.955e8 # m
-rjup = 7.1492e7 # m
-G = 0.00029591220828559104 # day, AU, Msun
+au = 1.496e11  # m
+rsun = 6.955e8  # m
+rjup = 7.1492e7  # m
+G = 0.00029591220828559104  # day, AU, Msun
 
 # keplerian semi-major axis (au)
 sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
@@ -254,25 +254,25 @@ def new_scrape(filename="eaConf.json"):
         # for each nan column in default
         nans = ddata.isna()
         for k in ddata.keys():
-            if nans[k].bool(): # if col value is nan
-                if not edata[k].isna().all(): # if replacement data exists
+            if nans[k].bool():  # if col value is nan
+                if not edata[k].isna().all():  # if replacement data exists
                     # replace with first index
                     default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
                     # TODO could use mean for some variables (not mid-transit)
                     # print(i,k,edata[k][edata[k].notna()].values[0])
                 else:
                     # permanent nans - require manual entry
-                    if k == 'pl_orblper': # omega
+                    if k == 'pl_orblper':  # omega
                         default.loc[default.pl_name == i, k] = 0
-                    elif k == 'pl_ratdor': # a/R*
+                    elif k == 'pl_ratdor':  # a/R*
                         # Kepler's 3rd law
                         semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
                         default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
-                    elif k == 'pl_orbincl': # inclination
+                    elif k == 'pl_orbincl':  # inclination
                         default.loc[default.pl_name == i, k] = 90
-                    elif k == "pl_orbeccen": # eccentricity
+                    elif k == "pl_orbeccen":  # eccentricity
                         default.loc[default.pl_name == i, k] = 0
-                    elif k == "st_met": # [Fe/H]
+                    elif k == "st_met":  # [Fe/H]
                         default.loc[default.pl_name == i, k] = 0
 
     dataframe_to_jsonfile(default, filename)
@@ -401,6 +401,7 @@ def user_input(prompt, type_, val1=None, val2=None):
                 return option
         elif type_ == int or type_ == float:
             return option
+
 
 def check_file_extensions(directory, fileName):
     # Add / to end of directory if user does not input it
@@ -671,11 +672,11 @@ def fit_centroid(data, pos, init=None, psf_output=False, lossfn='linear', box=25
 
 
 def mesh_box(pos,box):
-    pos = [int(np.round(pos[0])),int(np.round(pos[1]))]
+    pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
     x = np.arange(pos[0]-box, pos[0]+box+1)
     y = np.arange(pos[1]-box, pos[1]+box+1)
     xv, yv = np.meshgrid(x, y)
-    return xv.astype(int),yv.astype(int)
+    return xv.astype(int), yv.astype(int)
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
@@ -687,7 +688,7 @@ def getFlux(data, xc, yc, r=5, dr=5):
         bgflux = 0
     positions = [(xc, yc)]
     data = data-bgflux
-    data[data<0] = 0
+    data[data < 0] = 0
 
     apertures = CircularAperture(positions, r=r)
     phot_table = aperture_photometry(data, apertures, method='exact')
@@ -1655,7 +1656,7 @@ if __name__ == "__main__":
                     # print (quadString)
                     quadLimb = float(quadString)
                     break
-                except:
+                except ValueError:
                     filterName = input('\nNot valid filter name. Please enter a valid filter name using '
                                        'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ')
 
@@ -1925,7 +1926,7 @@ if __name__ == "__main__":
                             rymax = int(prevRPY) + distFC  # bottom
 
                             # check if the reference is too close to the edge of the detector
-                            if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
+                            if rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData):
                                 print('*************************************************************************************')
                                 print('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
@@ -1934,7 +1935,7 @@ if __name__ == "__main__":
                                 driftBool = True
 
                             # if the star isn't too close, then proceed as normal
-                            if (driftBool == False):
+                            if not driftBool:
                                 targSearchA = imageData[tymin:tymax, txmin:txmax]
                                 refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
@@ -1988,7 +1989,7 @@ if __name__ == "__main__":
                                 else:
                                     rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
                                                                                           init=myRefPriors, box=distFC)
-                                    ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff ]
+                                    ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff]
                                 currRPX = rx
                                 currRPY = ry
 
@@ -2009,10 +2010,8 @@ if __name__ == "__main__":
                                     tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
                                     # FIXME centroid position is way off from user input for star
 
-                                    targetFluxVals.append(
-                                        tFluxVal)  # adds tFluxVal to the total list of flux values of target star
-                                    targUncertanties.append(
-                                        np.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
+                                    targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
+                                    targUncertanties.append(np.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
 
                                     # gets the flux value of the reference star and subracts the background light
                                     rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
@@ -2111,14 +2110,13 @@ if __name__ == "__main__":
                         low = [arrayTimes[0], 0, -np.inf, -1.0]
                         bound = [low, up]
 
-
                         # define residual function to be minimized
                         def lc2min(x):
                             gaelMod = lcmodel(x[0], x[1], x[2], x[3], arrayTimes[~filtered_data.mask],
                                             arrayAirmass[~filtered_data.mask], plots=False)
                             # airMod= ( x[2]*(np.exp(x[3]*arrayAirmass[~filtered_data.mask])))
                             # return arrayFinalFlux[~filtered_data.mask]/airMod - gaelMod/airMod
-                            return ((arrayFinalFlux[~filtered_data.mask] / gaelMod) - 1.)
+                            return (arrayFinalFlux[~filtered_data.mask] / gaelMod) - 1.
 
 
                         res = least_squares(lc2min, x0=initvals, bounds=bound, method='trf')  # results of least squares fit
@@ -2463,7 +2461,7 @@ if __name__ == "__main__":
             obs = pm.Normal('obs', mu=gaelModel(*nodes), tau=1. / (goodNormUnc ** 2.), observed=goodFluxes)
 
         # Sample from the model
-        final_chain_length = int(10)
+        final_chain_length = int(100000)
 
         with lcMod:
             step = pm.Metropolis()  # Metropolis-Hastings Sampling Technique
@@ -2612,7 +2610,7 @@ if __name__ == "__main__":
         outParamsFile.write('BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 
         for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes,adjustedPhases, finalFluxes/finalAirmassModel,
-            finalNormUnc/finalAirmassModel, finalModel/finalAirmassModel, finalAirmassModel):
+                                                              finalNormUnc/finalAirmassModel, finalModel/finalAirmassModel, finalAirmassModel):
             outParamsFile.write(str(bjdi)+","+str(phasei)+","+str(modeli)+","+str(fluxi)+","+str(fluxerri)+"\n")
 
         outParamsFile.close()

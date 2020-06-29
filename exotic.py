@@ -40,6 +40,10 @@ import threading
 import time
 import sys
 
+# To increase memory allocation for EXOTIC; allows for more fits files 
+import resource
+resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+
 
 # here is the animation
 def animate():

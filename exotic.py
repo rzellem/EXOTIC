@@ -101,7 +101,7 @@ import astropy.wcs as WCS
 from astroquery.simbad import Simbad
 import astropy.coordinates as coord
 import astropy.units as u
-from astropy.table import Table
+from astropy.table import Table, QTable, Column
 
 # photometry
 from photutils import CircularAperture
@@ -496,16 +496,14 @@ def variableStarCheck(comparisonStarFile):
     starCoords = wcsCoords.all_pix2world()
 
     #Use normalized Coordinates to search on SIMBAD to check if that star is variable
-    #for currStar in starCoords:
-    resultTable = Simbad.query_region(coord.SkyCoord(currStar[0], currStar[1], unit = (u.hourangle, u.deg))
-    if resultTable is None:
-        print("Error: Star not found at provided coordinates. Please try again.")
-        return False
+    try:
+        resultTable = Simbad.query_region(coord.SkyCoord(starCoords[0], starCoords[1], unit = (u.deg, u.deg))
+    except TypeError:
+        print("Error: Invalid star coordinates. Aborting process")
 
     #Check if star ID/name explicitly has V* in it
-    #starName = row['MAIN_ID'].decode()
-    starName = resultTable['MAIN_ID'].data[0]
-    if "*" or "V*" in starName:
+    starName = resultTable['MAIN_ID'][0].decode("utf-8")
+    if "V*" in starName:
         return False
 
     return True
@@ -2023,7 +2021,7 @@ if __name__ == "__main__":
                                 print('*************************************************************************************')
                                 print ('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
 =======
-                                print('*************************************************************************************') 
+                                print('*************************************************************************************')
                                 print('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
 >>>>>>> 5c482b5695718c12539b2167b58d3c7fc0b3c27b
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))

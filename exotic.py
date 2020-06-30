@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.9.0" 
+versionid = "0.9.1" 
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -40,9 +40,9 @@ import threading
 import time
 import sys
 
-# To increase memory allocation for EXOTIC; allows for more fits files 
-import resource
-resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+## To increase memory allocation for EXOTIC; allows for more fits files 
+# import resource
+# resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
 
 # here is the animation

@@ -40,7 +40,7 @@ import threading
 import time
 import sys
 
-## To increase memory allocation for EXOTIC; allows for more fits files 
+# To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
@@ -235,7 +235,7 @@ def new_scrape(filename="eaConf.json"):
         "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_ratdor,"
                      "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
                      "pl_orbincl,pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
-                     "st_teff,st_met,st_logg,st_mass,st_rad,ra,dec",
+                     "st_teff,st_tefferr1,st_met,st_meterr1,st_logg,st_loggerr1,st_mass,st_rad,ra,dec",
         "from"     : "ps",  # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
         "order by" : "pl_name",
@@ -295,13 +295,16 @@ def new_getParams(data):
         'pPer': data['pl_orbper'],
         'pPerUnc': data['pl_orbpererr1'],
         'flag': data['tran_flag'],
-        'inc': data["pl_orbincl"],
-        'ecc': data.get("pl_orbeccen",0),
-        'teff': data["st_teff"],
-        'met': data["st_met"],
-        'logg': data["st_logg"],
-        'ra': data["ra"],
-        'dec': data["dec"]
+        'inc': data['pl_orbincl'],
+        'ecc': data.get('pl_orbeccen', 0),
+        'teff': data['st_teff'],
+        'teffUnc': data['st_tefferr1'],
+        'met': data['st_met'],
+        'metUnc': data['st_meterr1'],
+        'logg': data['st_logg'],
+        'loggUnc': data['st_loggerr1'],
+        'ra': data['ra'],
+        'dec': data['dec']
     }
 
     return planetDictionary
@@ -407,30 +410,32 @@ def user_input(prompt, type_, val1=None, val2=None):
             return option
 
 
+# Check if user's directory contains imaging files that are able to be reduced
 def check_file_extensions(directory, fileName):
-    # Add / to end of directory if user does not input it
-    if directory[-1] != "/":
-        directory += "/"
-
     # Find fits files
-    fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
-    # Loop until we find something
-    looper = True
-    while looper:
-        for exti in fits_extensions:
-            inputfiles = g.glob(directory + exti)
-            # If we find files, then stop the for loop and while loop
-            if len(inputfiles) > 0:
-                looper = False
-                break
-        # If we don't find any files, then we need the user to check their directory and loop over again....
-        if len(inputfiles) == 0:
-            print("Error: " + fileName + " .FITS files not found in " + directory + ". Please try again.")
-            directory = str(input("Enter the Directory Path where FITS Image Files are located: "))
+    fits_extensions = ['.FITS', '.FIT', '.FTS', '.fits', '.fit', '.fts']
+    inputfiles = []
+
+    while True:
+        try:
             # Add / to end of directory if user does not input it
             if directory[-1] != "/":
                 directory += "/"
-    return directory, inputfiles
+
+            # Loop until we find something
+            for exti in fits_extensions:
+                for file in os.listdir(directory):
+                    if file.endswith(exti):
+                        inputfiles.append(os.path.join(directory, file))
+                # If we find files, then stop the for loop and while loop
+                if inputfiles:
+                    return directory, inputfiles
+
+            # If we don't find any files, then we need the user to check their directory and loop over again....
+            raise FileNotFoundError
+        except FileNotFoundError:
+            print("Error: " + fileName + " .FITS or .FTS files not found in " + directory + ". Please try again.")
+            directory = str(input("Enter the Directory Path where FITS or .FTS Image Files are located: "))
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -537,15 +542,14 @@ def plate_solution(fits_file, saveDirectory):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
-    newlist = []
-    boollist = []
+    newlist, boollist = [], []
     notAligned = 0
 
     # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
     # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-    for num in sortedallImageData:
+    for image_file in sortedallImageData:
         try:
-            newData, footprint = aa.register(num, sortedallImageData[0])
+            newData, footprint = aa.register(image_file, sortedallImageData[0])
             newlist.append(newData)
             boollist.append(True)
         except:
@@ -557,8 +561,8 @@ def image_alignment(sortedallImageData):
 
     if notAligned > 0:
         print('\n\n*********************************************************************')
-        print('WARNING: From the given imaging files: ' + str(notAligned) + ' of ' + str(
-            len(sortedallImageData) + notAligned) + ' were not aligned.')
+        print('WARNING: From the given imaging files: ' + str(notAligned) + ' of ' +
+              str(len(sortedallImageData) + notAligned) + ' were not aligned.')
         print('*********************************************************************')
         time.sleep(5)
 
@@ -906,7 +910,7 @@ def realTimeReduce(i):
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
-        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
             directToWatch += "/"
@@ -1087,7 +1091,7 @@ if __name__ == "__main__":
         print('Real Time Reduction ("Control + C"  or close the plot to quit)')
         print('**************************************************************\n')
 
-        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
         directoryP = directToWatch
         directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
 
@@ -1253,7 +1257,7 @@ if __name__ == "__main__":
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                directoryP = str(input("\nEnter the Directory of the FITS Image Files: "))
+                directoryP = str(input("\nEnter the Directory of the .FITS or .FTS Image Files: "))
 
             directoryP, inputfiles = check_file_extensions(directoryP, 'imaging')
         else:
@@ -2613,7 +2617,7 @@ if __name__ == "__main__":
         outParamsFile.write('FINAL TIMESERIES OF ' + targetName + '\n')
         outParamsFile.write('BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 
-        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes,adjustedPhases, finalFluxes/finalAirmassModel,
+        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes, adjustedPhases, finalFluxes/finalAirmassModel,
                                                               finalNormUnc/finalAirmassModel, finalModel/finalAirmassModel, finalAirmassModel):
             outParamsFile.write(str(bjdi)+","+str(phasei)+","+str(modeli)+","+str(fluxi)+","+str(fluxerri)+"\n")
 

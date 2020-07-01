@@ -415,6 +415,9 @@ if __name__ == "__main__":
     data = transit(time, prior) + np.random.normal(0, 2e-4, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
 
+    print(type(time))
+    print(type(dataerr))
+
     #plt.plot(time,data,'ko')
     #plt.show()
     #dude()

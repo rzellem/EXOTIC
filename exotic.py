@@ -81,7 +81,7 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca.py import lc_fitter
+from elca import lc_fitter
 import dynesty
 
 # MCMC imports
@@ -2425,21 +2425,29 @@ if __name__ == "__main__":
         # PRIORS
         ### Double check these priors
         # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
-        midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
-        BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
-        radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
-        airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
-        airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
+    #    midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
+    #    BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
+    #    radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
+    #    airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
+    #    airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
 
         prior = {
-            'rprs':radius,        # Rp/Rs
+            'rprs':rprs,        # Rp/Rs
             'ars':semi,        # a/Rs
             'per':planetPeriod,     # Period [day]
             'inc':inc,        # Inclination [deg]
             'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
             'ecc': eccent,            # Eccentricity
             'omega':0,          # Arg of periastron
-            'tmid':midT         # time of mid transit [day]
+            'tmid':timeMidTransit         # time of mid transit [day]
+        }
+
+        mybounds = {
+            'rprs':[0,2*rprs],
+            'tmid':[min(goodTimes),max(goodTimes)],
+            'ars':[semi/2,2*semi]
+            #'a1':[0, max(Flux)],
+            #'a2':[-10,10]
         }
 
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, prior, mybounds)
@@ -2468,7 +2476,7 @@ if __name__ == "__main__":
         # MCMC LIGHTCURVE FIT
         #####################
         # The transit function is based on the analytic expressions of Mandel and Agol et al 2002. and Gael Roudier's transit model
-
+        pass
         log = logging.getLogger(__name__)
         pymc3log = logging.getLogger('pymc3')
         pymc3log.setLevel(logging.ERROR)

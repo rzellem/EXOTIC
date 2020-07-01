@@ -2418,17 +2418,6 @@ if __name__ == "__main__":
         print('Fitting a Light Curve Model to Your Data')
         print('****************************************\n')
 
-        # EXOTIC now will automatically bin your data together to limit the MCMC runtime
-        if len(goodTimes) > 200:
-            print("Whoa! You have a lot of datapoints (" + str(len(goodTimes)) + ")!")
-            bin_option = user_input("In order to limit EXOTIC's run time, EXOTIC can automatically bin down your data."
-                                 "Would you to perform this action? (y/n): ")
-            if bin_option.lower() == 'y':
-                goodTimes = binner(goodTimes, len(goodTimes) // 200)
-                goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes) // 200, goodNormUnc)
-                goodAirmasses = binner(goodAirmasses, len(goodAirmasses) // 200)
-                print("Onwards and upwards!\n")
-
         ##########################
         # NESTED SAMPLING FITTING
         ##########################

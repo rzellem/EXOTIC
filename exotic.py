@@ -1138,19 +1138,20 @@ if __name__ == "__main__":
             print("\nYour current working directory is: ", os.getcwd())
             print("\nPotential initialization files I've found in " + os.getcwd() + " are: ")
             [print(i) for i in g.glob(os.getcwd() + "/*.txt")]
-            initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
-            if initfilename == 'ok':
-                initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
 
             # Parse input file
             while True:
                 try:
+                    initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
+                    if initfilename == 'ok':
+                        initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
                     with open(initfilename, 'r') as f:
                         inits = f.readlines()
-                        break
+                    break
                 except FileNotFoundError:
                     print("Initialization file not found. Please try again.")
-                    initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
+                except IsADirectoryError:
+                    print('Entered a directory. Please try again.')
 
             # inits = []
             # for line in initf:

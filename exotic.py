@@ -541,23 +541,36 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 #Checks if comparison star coordinates don't point to variable stars
-def variableStarCheck(comparisonStarFile):
+def variableStarCheck(comparisonStarFile, compStarList):
     #Open WCS file and convert comparison star's coordinates into normal coordinates
     starList = fits.open(comparisonStarFile)
     wcsCoords = WCS.WCS(starList[0].header)
     starCoords = wcsCoords.all_pix2world()
+    raList = starCoords[0]
+    decList = starCoords[1]
+    validCoordList = []
+
+    #For every comparison star, convert into WCS coordinates and check if it's in WCS file before querying
+    for compStar in compStarList:
+        compStarCoords = compStar.all_pix2world()
+        if compStarCoords[0] in raList and compStarCoords[1] in decList:
+            validCoordList.append((compStarCoords[0], compStarCoords[1]))
 
     #Use normalized Coordinates to search on SIMBAD to check if that star is variable
-    try:
-        resultTable = Simbad.query_region(coord.SkyCoord(starCoords[0], starCoords[1], unit = (u.deg, u.deg))
-    except TypeError:
-        print("Error: Invalid star coordinates. Aborting process")
+    #Throws an error if invalid coordinates are inputted
+    for counter in range(0, len(validCoordList)):
+        try:
+            resultTable = Simbad.query_region(coord.SkyCoord(validCoordList[counter][0], validCoordList[counter][1], unit = (u.deg, u.deg)))
+        except TypeError:
+            print("Error: Invalid star coordinates. Checking next star... ")
 
-    #Check if star ID/name explicitly has V* in it
-    starName = resultTable['MAIN_ID'][0].decode("utf-8")
-    if "V*" in starName:
-        return False
-
+        #Check if star ID/name explicitly has V* in it
+        starName = resultTable['MAIN_ID'][0].decode("utf-8")
+        if "V*" in starName:
+            print("Comparison star " + starName + " is variable; selecting alternative star...")
+            compPixelCoords = validCoordList[counter].all_world2pix()
+            #validCoordList.pop(validCoordList[counter])
+            compStarList.remove(compPixelCoords)
     return True
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1730,13 +1743,6 @@ if __name__ == "__main__":
                 # WCS_fits_data = WCS_fits_file.getdata(WCS_fits_file)
                 done = True
 
-            #Doublechecking to see if comparison star != variable star
-            print("Verifying selected comparison star is not variable. Please wait.")
-            isVariable = variableStarCheck(WCS_fits_file)
-            if isVariable:
-                print("Selected star is variable and not valid for measurements. Now selecting new comparison star.")
-            else:
-                continue
 
             # ----TIME SORT THE FILES-------------------------------------------------------------
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -2246,6 +2252,14 @@ if __name__ == "__main__":
                     # Exit aperture loop
                 # Exit annulus loop
             # Exit the Comp Stars Loop
+            #Doublechecking to see if comparison star != variable star
+            print("Verifying selected comparison star is not variable. Please wait.")
+            isVariable = variableStarCheck(wcsFile)
+            if isVariable:
+                print("Selected star is variable and not valid for measurements. Now selecting new comparison star.")
+            else:
+                continue
+
             print('\n*********************************************')
             print('Best Comparison Star: #' + str(bestCompStar))
             print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')

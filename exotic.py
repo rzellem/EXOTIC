@@ -2429,6 +2429,52 @@ if __name__ == "__main__":
                 goodAirmasses = binner(goodAirmasses, len(goodAirmasses) // 200)
                 print("Onwards and upwards!\n")
 
+        ##########################
+        # NESTED SAMPLING FITTING
+        ##########################
+
+        # PRIORS
+        ### Double check these priors
+        # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
+        midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
+        BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
+        radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
+        airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
+        airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
+
+        prior = {
+            'rprs':radius,        # Rp/Rs
+            'ars':semi,        # a/Rs
+            'per':planetPeriod,     # Period [day]
+            'inc':inc,        # Inclination [deg]
+            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+            'ecc': eccent,            # Eccentricity
+            'omega':0,          # Arg of periastron
+            'tmid':midT         # time of mid transit [day]
+        }
+
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, prior, mybounds)
+
+        for k in myfit.bounds.keys():
+            print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
+
+        fig,axs = myfit.plot_bestfit()
+
+        # triangle plot
+        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
+        dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
+        plt.tight_layout()
+        plt.savefig("temp.png")
+
+
+
+
+
+
+
+
+
+
         #####################
         # MCMC LIGHTCURVE FIT
         #####################

@@ -21,7 +21,7 @@ def ellke(k):
     ee1=1.+m1*(a1+m1*(a2+m1*(a3+m1*a4)))
     ee2=m1*(b1+m1*(b2+m1*(b3+m1*b4)))*(-np.logm1)
     ek = ee1+ee2
-        
+
     a0=1.38629436112
     a1=0.09666344259
     a2=0.03590092383
@@ -35,7 +35,7 @@ def ellke(k):
     ek1=a0+m1*(a1+m1*(a2+m1*(a3+m1*a4)))
     ek2=(b0+m1*(b1+m1*(b2+m1*(b3+m1*b4))))*np.logm1
     kk = ek1-ek2
-    
+
     return [ek,kk]
 
 # Computes the complete elliptical integral of the third kind using
@@ -72,19 +72,19 @@ def occultquad(z,u1,u2,p0):
     tol = 1e-14
 
     p = abs(p0)
-    
+
     z = np.where(abs(p-z) < tol,p,z)
     z = np.where(abs((p-1)-z) < tol,p-1.,z)
     z = np.where(abs((1-p)-z) < tol,1.-p,z)
     z = np.where(z < tol,0.,z)
-               
+
     x1=(p-z)**2.
     x2=(p+z)**2.
     x3=p**2.-z**2.
-    
+
     ## trivial case of no planet
     if p <= 0.:
-        muo1 = np.zeros(nz) + 1. 
+        muo1 = np.zeros(nz) + 1.
         mu0  = np.zeros(nz) + 1.
         return [muo1,mu0]
 
@@ -113,7 +113,7 @@ def occultquad(z,u1,u2,p0):
                 mu0=1.-lambdae
                 return [muo1,mu0]
             notusedyet = notusedyet[notused2]
-                
+
     # Case 2, 7, 8 - ingress/egress (uniform disk only)
     inegressuni = np.where((z[notusedyet] >= abs(1.-p)) & (z[notusedyet] < 1.+p))
     if np.size(inegressuni) != 0:
@@ -132,12 +132,12 @@ def occultquad(z,u1,u2,p0):
         # eta_1
         etad[ndxuse] = 1./2./np.pi*(kap1+p**2*(p**2+2.*z[ndxuse]**2)*kap0- \
            (1.+5.*p**2+z[ndxuse]**2)/4.*np.sqrt((1.-x1[ndxuse])*(x2[ndxuse]-1.)))
-    
+
     # Case 5, 6, 7 - the edge of planet lies at origin of star
     ocltor = np.where(z[notusedyet] == p)#, complement=notused3)
     t = np.where(z[notusedyet] == p)
     if np.size(ocltor) != 0:
-        ndxuse = notusedyet[ocltor] 
+        ndxuse = notusedyet[ocltor]
         if p < 0.5:
             # Case 5
             q=2.*p  # corrected typo in paper (2k -> 2p)
@@ -146,7 +146,7 @@ def occultquad(z,u1,u2,p0):
             lambdad[ndxuse] = 1./3.+2./9./np.pi*(4.*(2.*p**2-1.)*Ek+\
                                               (1.-4.*p**2)*Kk)
             # eta_2
-            etad[ndxuse] = p**2/2.*(p**2+2.*z[ndxuse]**2)        
+            etad[ndxuse] = p**2/2.*(p**2+2.*z[ndxuse]**2)
             lambdae[ndxuse] = p**2 # uniform disk
         elif p > 0.5:
             # Case 7
@@ -238,10 +238,10 @@ def occultquad(z,u1,u2,p0):
                     mu0=1.-lambdae
                     return [muo1,mu0]
                 ndxuse = ndxuse[notused7[0]]
-   
+
             q=np.sqrt((x2[ndxuse]-x1[ndxuse])/(1.-x1[ndxuse]))
             n=x2[ndxuse]/x1[ndxuse]-1.
-            Ek,Kk = ellke(q)    
+            Ek,Kk = ellke(q)
 
             ## Case 3, Case 9 - anynp.where in between
             ## lambda_2
@@ -345,15 +345,15 @@ class lc_fitter(object):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
             return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
-        
+
         def prior_transform(upars):
             # transform unit cube to prior volume
             return (boundarray[:,0] + bounddiff*upars)
-        
-        # TODO try 
+
+        # TODO try
         dsampler = dynesty.DynamicNestedSampler(
             loglike, prior_transform,
-            ndim=len(freekeys), bound='multi', sample='unif', 
+            ndim=len(freekeys), bound='multi', sample='unif',
             maxiter_init=5000, dlogz_init=1, dlogz=0.05,
             maxiter_batch=100, maxbatch=10, nlive_batch=100
         )
@@ -365,14 +365,14 @@ class lc_fitter(object):
         self.parameters = {}
         for k in self.prior:
             self.parameters[k] = self.prior[k]
-            
+
         # errors + final values
         self.weights = np.exp(self.results['logwt'] - self.results['logz'][-1])
         for i in range(len(freekeys)):
             lo,me,up = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=self.weights)
             self.errors[freekeys[i]] = [lo-me,up-me]
             self.parameters[freekeys[i]] = me
-        
+
         # final model
         self.model = transit(self.time, self.parameters)
         self.residuals = self.data - self.model
@@ -399,7 +399,7 @@ class lc_fitter(object):
 
 if __name__ == "__main__":
 
-    prior = { 
+    prior = {
         'rprs':0.03,        # Rp/Rs
         'ars':14.25,        # a/Rs
         'per':3.336817,     # Period [day]
@@ -408,7 +408,7 @@ if __name__ == "__main__":
         'ecc':0,            # Eccentricity
         'omega':0,          # Arg of periastron
         'tmid':0.75         # time of mid transit [day]
-    } 
+    }
 
     # GENERATE NOISY DATA
     time = np.linspace(0.65,0.85,500) # [day]
@@ -426,7 +426,7 @@ if __name__ == "__main__":
     }
 
     myfit = lc_fitter(time, data, dataerr, prior, mybounds)
-    
+
     for k in myfit.bounds.keys():
         print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 

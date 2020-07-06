@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.8.5"
+versionid = "0.9.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -40,9 +40,9 @@ import threading
 import time
 import sys
 
-# To increase memory allocation for EXOTIC; allows for more fits files
-import resource
-resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+## To increase memory allocation for EXOTIC; allows for more fits files
+# import resource
+# resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
 
 # here is the animation
@@ -572,6 +572,15 @@ def variableStarCheck(comparisonStarFile, compStarList):
             #validCoordList.pop(validCoordList[counter])
             compStarList.remove(compPixelCoords)
     return True
+
+# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
+def get_radec(hdulWCS):
+    wcsheader = WCS(hdulWCS[0].header)
+    xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
+    yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
+    x, y = np.meshgrid(xaxis, yaxis)
+    return wcsheader.all_pix2world(x, y, 0)
+
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
@@ -1880,6 +1889,7 @@ if __name__ == "__main__":
             wcsFile = check_wcs(pathSolve, saveDirectory)
             if wcsFile:
                 hdulWCS = fits.open(wcsFile)
+                rafile, decfile = get_radec(hdulWCS)
 
             print("\nAligning your images from .FITS. Please wait.")
             done = False

@@ -2418,60 +2418,6 @@ if __name__ == "__main__":
         print('Fitting a Light Curve Model to Your Data')
         print('****************************************\n')
 
-        ##########################
-        # NESTED SAMPLING FITTING
-        ##########################
-
-        # PRIORS
-        ### Double check these priors
-        # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
-    #    midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
-    #    BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
-    #    radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
-    #    airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
-    #    airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
-
-        prior = {
-            'rprs':rprs,        # Rp/Rs
-            'ars':semi,        # a/Rs
-            'per':planetPeriod,     # Period [day]
-            'inc':inc,        # Inclination [deg]
-            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
-            'ecc': eccent,            # Eccentricity
-            'omega':0,          # Arg of periastron
-            'tmid':timeMidTransit         # time of mid transit [day]
-        }
-
-        mybounds = {
-            'rprs':[0,2*rprs],
-            'tmid':[min(goodTimes),max(goodTimes)],
-            'ars':[semi/2,2*semi]
-            #'a1':[0, max(Flux)],
-            #'a2':[-10,10]
-        }
-
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, prior, mybounds)
-
-        for k in myfit.bounds.keys():
-            print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
-
-        fig,axs = myfit.plot_bestfit()
-
-        # triangle plot
-        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        plt.tight_layout()
-        plt.savefig("temp.png")
-
-
-
-
-
-
-
-
-
-
         #####################
         # MCMC LIGHTCURVE FIT
         #####################
@@ -2637,6 +2583,21 @@ if __name__ == "__main__":
         # clip plot to get rid of white space
         ax_res.set_xlim([min(adjustedPhases), max(adjustedPhases)])
         ax_lc.set_xlim([min(adjustedPhases), max(adjustedPhases)])
+
+        #setting subplots' borders and axes labels to black
+        ax_lc.spines['bottom'].set_color('black')
+        ax_lc.spines['top'].set_color('black')
+        ax_lc.spines['right'].set_color('black')
+        ax_lc.spines['left'].set_color('black')
+        ax_lc.tick_params(axis='x', colors='black')
+        ax_lc.tick_params(axis='y', colors='black')
+
+        ax_res.spines['bottom'].set_color('black')
+        ax_res.spines['top'].set_color('black')
+        ax_res.spines['right'].set_color('black')
+        ax_res.spines['left'].set_color('black')
+        ax_res.tick_params(axis='x', colors='black')
+        ax_res.tick_params(axis='y', colors='black')
 
         # residual histogramfinalAirmassModel
         # bins up to 3 std of Residuals

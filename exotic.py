@@ -1944,11 +1944,7 @@ if __name__ == "__main__":
                             rymax = int(prevRPY) + distFC  # bottom
 
                             # check if the reference is too close to the edge of the detector
-<<<<<<< HEAD
                             if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
-=======
-                            if rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData):
->>>>>>> 6925950d51dd2644371cb54fe4574fa83f0e6573
                                 print('*************************************************************************************')
                                 print('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
@@ -2409,8 +2405,6 @@ if __name__ == "__main__":
         print('Fitting a Light Curve Model to Your Data')
         print('****************************************\n')
 
-<<<<<<< HEAD
-=======
         # EXOTIC now will automatically bin your data together to limit the MCMC runtime
         if len(goodTimes) > 200:
             print("Whoa! You have a lot of datapoints (" + str(len(goodTimes)) + ")!")
@@ -2422,7 +2416,6 @@ if __name__ == "__main__":
                 goodAirmasses = binner(goodAirmasses, len(goodAirmasses) // 200)
                 print("Onwards and upwards!\n")
 
->>>>>>> 6925950d51dd2644371cb54fe4574fa83f0e6573
         #####################
         # MCMC LIGHTCURVE FIT
         #####################

@@ -541,18 +541,18 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 #Checks if comparison star coordinates don't point to variable stars
-def variableStarCheck(comparisonStarFile, compStarList):
-    #Open WCS file and convert comparison star's coordinates into normal coordinates
-    starList = fits.open(comparisonStarFile)
-    wcsCoords = WCS.WCS(starList[0].header)
-    starCoords = wcsCoords.all_pix2world()
-    raList = starCoords[0]
-    decList = starCoords[1]
+def variableStarCheck(rafile, decfile, compStarList):
     validCoordList = []
+    errorMargin = 0.005556
 
     #For every comparison star, convert into WCS coordinates and check if it's in WCS file before querying
+    #Also accounts for error margin of 20 arcseconds 
     for compStar in compStarList:
         compStarCoords = compStar.all_pix2world()
+        raLowerBound = compStarCoords[0] - errorMargin
+        raUpperBound = compStarCoords[0] + errorMargin
+        decLowerBound = compStarCoords[1] - errorMargin
+        decLowerBound = compStarCoords[1] + errorMargin
         if compStarCoords[0] in raList and compStarCoords[1] in decList:
             validCoordList.append((compStarCoords[0], compStarCoords[1]))
 
@@ -2264,7 +2264,7 @@ if __name__ == "__main__":
             # Exit the Comp Stars Loop
             #Doublechecking to see if comparison star != variable star
             print("Verifying selected comparison star is not variable. Please wait.")
-            isVariable = variableStarCheck(wcsFile)
+            isVariable = variableStarCheck(rafile, decfile, compStarList)
             if isVariable:
                 print("Selected star is variable and not valid for measurements. Now selecting new comparison star.")
             else:

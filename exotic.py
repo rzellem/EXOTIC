@@ -616,6 +616,7 @@ def variableStarCheck(rafile, decfile, compStarList):
             resultTable = Simbad.query_region(coord.SkyCoord(validCoordList[counter][0], validCoordList[counter][1], unit = (u.deg, u.deg)))
         except TypeError:
             print("Error: Invalid star coordinates. Checking next star... ")
+            continue
 
         #Check if star ID/name explicitly has V* in it
         starName = resultTable['MAIN_ID'][0].decode("utf-8")

@@ -2438,7 +2438,7 @@ if __name__ == "__main__":
             'rprs':[0,2*rprs],
             'tmid':[min(goodTimes),max(goodTimes)],
             'ars':[semi/2,2*semi],
-            'a1':[0, max(Flux)],
+            'a1':[0, max(goodFluxes)],
             'a2':[-10,10]
         }
 
@@ -2454,13 +2454,14 @@ if __name__ == "__main__":
         dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         plt.tight_layout()
         plt.savefig("temp.png")
+        print("figure saved")
 
 
         #####################
         # MCMC LIGHTCURVE FIT
         #####################
         # The transit function is based on the analytic expressions of Mandel and Agol et al 2002. and Gael Roudier's transit model
-        pass
+        break
         log = logging.getLogger(__name__)
         pymc3log = logging.getLogger('pymc3')
         pymc3log.setLevel(logging.ERROR)

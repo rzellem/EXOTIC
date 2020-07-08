@@ -376,7 +376,11 @@ class lc_fitter(object):
             self.parameters[freekeys[i]] = me
 
         # final model
-        self.model = transit(self.time, self.parameters)
+        self.transit = transit(self.time, self.parameters)
+        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
+        self.model = self.transit * self.airmass_model
+        self.detrended = self.data / self.airmass_model
+
         self.residuals = self.data - self.model
 
     def plot_bestfit(self):
@@ -413,12 +417,9 @@ if __name__ == "__main__":
     }
 
     # GENERATE NOISY DATA
-    time = np.linspace(0.65,0.85,500) # [day]
+    time = np.linspace(0.65,0.85,100) # [day]
     data = transit(time, prior) + np.random.normal(0, 2e-4, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
-
-    print(type(time))
-    print(type(dataerr))
 
     #plt.plot(time,data,'ko')
     #plt.show()

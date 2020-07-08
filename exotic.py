@@ -397,7 +397,7 @@ def planetary_parameters(CandidatePlanetBool, pDict=None):
                      "Star Surface Gravity Negative Uncertainty (log(g))"]
 
     # Exoplanet confirmed in NEA
-    if CandidatePlanetBool:
+    if not CandidatePlanetBool:
         print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
         print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
 
@@ -1336,6 +1336,16 @@ if __name__ == "__main__":
                 raise OSError
             except OSError:
                 print('Error: the directory entered does not exist. Please try again.')
+                newDirectory = user_input('Would you like to create a new directory? (y/n): ', type_=str, val1='y', val2='n')
+
+                # Create a save directory within the current working directory
+                if newDirectory == 'y':
+                    directoryName = input('Enter the name of your new directory: ')
+                    newDirectoryPath = os.getcwd()
+                    saveDirectory = newDirectoryPath + '/' + directoryName + '/'
+                    os.mkdir(saveDirectory)
+                    print('Your save directory path is: ' + saveDirectory)
+
                 saveDirectory = input("Enter the Directory to Save Plots into: ")
 
         # Make a temp directory of helpful files
@@ -1358,19 +1368,19 @@ if __name__ == "__main__":
         if not os.path.exists("eaConf.json") or time.time() - os.path.getmtime('eaConf.json') > 604800:
             new_scrape(filename="eaConf.json")
 
-        CandidatePlanetBool = True
+        CandidatePlanetBool = False
         with open("eaConf.json", "r") as confirmedFile:
             data = json.load(confirmedFile)
             planets = [data[i]['pl_name'].lower().replace(' ', '').replace('-', '') for i in range(len(data))]
             #stars = [data[i]['hostname'] for i in range(len(data))]
             if targetName.lower().replace(' ', '').replace('-', '') not in planets:
                 while targetName.lower().replace(' ', '').replace('-', '') not in planets:
-                    print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check file: eaConf.json")
-                    targetName = str(input("Enter the Planet Name Again or type 'manual': "))
-                    if targetName == 'manual':
-                        CandidatePlanetBool = False
+                    print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check spelling or file: eaConf.json.")
+                    targetName = str(input("If this is a planet candidate, type candidate: "))
+                    if targetName == 'candidate':
+                        CandidatePlanetBool = True
                         break
-            if CandidatePlanetBool:
+            if not CandidatePlanetBool:
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
                 print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
@@ -1538,7 +1548,7 @@ if __name__ == "__main__":
             obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
         # Get the planetary parameters for calculations
-        if CandidatePlanetBool:
+        if not CandidatePlanetBool:
             pDict = planetary_parameters(CandidatePlanetBool, pDict=pDict)
         else:
             pDict = planetary_parameters(CandidatePlanetBool)

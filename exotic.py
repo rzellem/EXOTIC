@@ -390,11 +390,11 @@ def planetary_parameters(CandidatePlanetBool, pDict=None):
                      "Star Effective Temperature Positive Uncertainty (K)",
                      "Star Effective Temperature Negative Uncertainty (K)",
                      "Star Metallicity ([FE/H])",
-                     "Star Metallicity Uncertainty Positive ([FE/H])",
-                     "Star Metallicity Uncertainty Negative ([FE/H])",
+                     "Star Metallicity Positive Uncertainty ([FE/H])",
+                     "Star Metallicity Negative Uncertainty ([FE/H])",
                      "Star Surface Gravity (log(g))",
-                     "Star Surface Gravity Uncertainty Positive (log(g))"
-                     "Star Surface Gravity Uncertainty Negative (log(g))"]
+                     "Star Surface Gravity Positive Uncertainty (log(g))",
+                     "Star Surface Gravity Negative Uncertainty (log(g))"]
 
     # Exoplanet confirmed in NEA
     if CandidatePlanetBool:
@@ -414,8 +414,9 @@ def planetary_parameters(CandidatePlanetBool, pDict=None):
     # Exoplanet not confirmed in NEA
     else:
         pDict = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None, 'midT': None,
-                 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None, 'teffUnc': None,
-                 'met': None, 'metUnc': None, 'logg': None, 'loggUnc': None}
+                 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None, 'teffUncPos': None,
+                 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None, 'logg': None, 'loggUncPos': None,
+                 'loggUncNeg': None}
 
         for i, key in enumerate(pDict):
             if key in ('pName', 'sName'):
@@ -445,7 +446,7 @@ def check_file_extensions(directory, fileName):
             if directory[-1] != "/":
                 directory += "/"
 
-            if os.path.isdir(inputfiles):
+            if os.path.isdir(directory):
                 # Loop until we find something
                 for exti in file_extensions:
                     for file in os.listdir(directory):
@@ -459,7 +460,7 @@ def check_file_extensions(directory, fileName):
                 if not inputfiles:
                     raise FileNotFoundError
 
-            # If the file or directory does not exist
+            # If the directory does not exist
             else:
                 raise OSError
 
@@ -1335,7 +1336,7 @@ if __name__ == "__main__":
                 raise OSError
             except OSError:
                 print('Error: the directory entered does not exist. Please try again.')
-                aveDirectory = input("Enter the Directory to Save Plots into: ")
+                saveDirectory = input("Enter the Directory to Save Plots into: ")
 
         # Make a temp directory of helpful files
         try:

@@ -237,16 +237,6 @@ def new_scrape(filename="eaConf.json"):
 
 
 def new_getParams(data):
-
-    # Find the larger uncertainty parameter between the + (1) and - (2)
-    parameter_unc_dict = {'st_tefferr': None, 'st_meterr': None, 'st_loggerr': None}
-
-    for key in parameter_unc_dict:
-        if abs(data[key + '1']) >= abs(data[key + '2']):
-            parameter_unc_dict[key] = abs(data[key + '1'])
-        else:
-            parameter_unc_dict[key] = abs(data[key + '2'])
-
     # translate data from Archive keys to Ethan Keys
 
     planetDictionary = {
@@ -263,11 +253,14 @@ def new_getParams(data):
         'inc': data['pl_orbincl'],
         'ecc': data.get('pl_orbeccen', 0),
         'teff': data['st_teff'],
-        'teffUnc': parameter_unc_dict['st_tefferr'],
+        'teffUncPos': data['st_tefferr1'],
+        'teffUncNeg': data['st_tefferr2'],
         'met': data['st_met'],
-        'metUnc': parameter_unc_dict['st_meterr'],
+        'metUncPos': data['st_meterr1'],
+        'metUncNeg': data['st_meterr2'],
         'logg': data['st_logg'],
-        'loggUnc': parameter_unc_dict['st_loggerr'],
+        'loggUncPos': data['st_loggerr1'],
+        'loggUncNeg': data['st_loggerr2'],
         'flag': data['tran_flag']
     }
 
@@ -394,11 +387,14 @@ def planetary_parameters(CandidatePlanetBool, pDict=None):
                      "Orbital Inclination (deg)",
                      "Orbital Eccentricity (0 if null)",
                      "Star Effective Temperature (K)",
-                     "Star Effective Temperature Uncertainty (K)",
+                     "Star Effective Temperature Positive Uncertainty (K)",
+                     "Star Effective Temperature Negative Uncertainty (K)",
                      "Star Metallicity ([FE/H])",
-                     "Star Metallicity Uncertainty ([FE/H])",
+                     "Star Metallicity Uncertainty Positive ([FE/H])",
+                     "Star Metallicity Uncertainty Negative ([FE/H])",
                      "Star Surface Gravity (log(g))",
-                     "Star Surface Gravity Uncertainty (log(g))"]
+                     "Star Surface Gravity Uncertainty Positive (log(g))"
+                     "Star Surface Gravity Uncertainty Negative (log(g))"]
 
     # Exoplanet confirmed in NEA
     if CandidatePlanetBool:
@@ -449,26 +445,29 @@ def check_file_extensions(directory, fileName):
             if directory[-1] != "/":
                 directory += "/"
 
-            # Loop until we find something
-            for exti in file_extensions:
-                for file in os.listdir(directory):
-                    if file.lower().endswith(exti.lower()):
-                        inputfiles.append(os.path.join(directory, file))
-                # If we find files, then stop the for loop and while loop
-                if inputfiles:
-                    return directory, inputfiles
+            if os.path.isdir(inputfiles):
+                # Loop until we find something
+                for exti in file_extensions:
+                    for file in os.listdir(directory):
+                        if file.lower().endswith(exti.lower()):
+                            inputfiles.append(os.path.join(directory, file))
+                    # If we find files, then stop the for loop and while loop
+                    if inputfiles:
+                        return directory, inputfiles
 
-            # If we don't find any files, then we need the user to check their directory and loop over again
-            if not inputfiles:
-                raise FileNotFoundError
+                # If we don't find any files, then we need the user to check their directory and loop over again
+                if not inputfiles:
+                    raise FileNotFoundError
+
             # If the file or directory does not exist
-            raise OSError
+            else:
+                raise OSError
 
         except FileNotFoundError:
-            print("Error: " + fileName + " files not found in " + directory + ". Please try again.")
+            print("Error: " + fileName + " files not found with .fits, .fit or .fts extensions in " + directory + ". Please try again.")
             directory = input("Enter the directory path where " + fileName + " files are located: ")
         except OSError:
-            print("Error: No such file or directory exists. Please try again.")
+            print("Error: No such directory exists. Please try again.")
             directory = input("Enter the directory path where " + fileName + " files are located: ")
 
 
@@ -747,7 +746,7 @@ def getFlux(data, xc, yc, r=5, dr=5):
     return float(phot_table['aperture_sum']), bgflux
 
 
-def skybg_phot(data, xc,yc, r=10,dr=5):
+def skybg_phot(data, xc, yc, r=10, dr=5):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
@@ -1134,7 +1133,7 @@ if __name__ == "__main__":
         print('Real Time Reduction ("Control + C"  or close the plot to quit)')
         print('**************************************************************\n')
 
-        directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path of imaging files: "))
         directoryP = directToWatch
         directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
 
@@ -1145,6 +1144,7 @@ if __name__ == "__main__":
                 carryOn = input('Type continue after the first image has been taken and saved: ')
                 if carryOn != 'continue':
                     raise ValueError
+                break
             except ValueError:
                 continue
 
@@ -1304,7 +1304,7 @@ if __name__ == "__main__":
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                directoryP = str(input("\nEnter the Directory of the .FITS or .FTS Image Files: "))
+                directoryP = str(input("\nEnter the Directory of imaging files: "))
 
             directoryP, inputfiles = check_file_extensions(directoryP, 'imaging')
         else:
@@ -1323,9 +1323,19 @@ if __name__ == "__main__":
 
         if fileorcommandline == 1:
             saveDirectory = str(input("Enter the Directory to Save Plots into: "))
-        # In case the user forgets the trailing / for the folder
-        if saveDirectory[-1] != "/":
-            saveDirectory += "/"
+
+        # Check to see if the save directory exists
+        while True:
+            try:
+                # In case the user forgets the trailing / for the folder
+                if saveDirectory[-1] != "/":
+                    saveDirectory += "/"
+                if os.path.isdir(saveDirectory):
+                    break
+                raise OSError
+            except OSError:
+                print('Error: the directory entered does not exist. Please try again.')
+                aveDirectory = input("Enter the Directory to Save Plots into: ")
 
         # Make a temp directory of helpful files
         try:
@@ -1410,7 +1420,7 @@ if __name__ == "__main__":
                 except ValueError as err:
                     print(err.args)
                     longitStr = input("Enter the longitude of where you observed (deg) "
-                                    "(Don't forget the sign where East is '+' and West is '-'): ")
+                                      "(Don't forget the sign where East is '+' and West is '-'): ")
 
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
@@ -2487,7 +2497,7 @@ if __name__ == "__main__":
         bins = np.linspace(-maxbs, maxbs, 7)
 
         # residual plot
-        ax_res.plot(x, finalResiduals, color = 'gray', marker ='o', markersize=5, linestyle = 'None')
+        ax_res.plot(x, finalResiduals, color='gray', marker='o', markersize=5, linestyle='None')
         ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=1, zorder=100)
         ax_res.set_ylabel('Residuals')
         # ax_res.set_ylim([-.04, .04])

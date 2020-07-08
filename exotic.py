@@ -2419,6 +2419,8 @@ if __name__ == "__main__":
     #    airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
     #    airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
 
+        aone = np.median(goodFluxes)
+
         prior = {
             'rprs':rprs,        # Rp/Rs
             'ars':semi,        # a/Rs
@@ -2427,7 +2429,9 @@ if __name__ == "__main__":
             'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
             'ecc': eccent,            # Eccentricity
             'omega':0,          # Arg of periastron
-            'tmid':timeMidTransit         # time of mid transit [day]
+            'tmid':timeMidTransit,         # time of mid transit [day]
+            'a1': aone,
+            'a2': 0
         }
 
         mybounds = {
@@ -2438,7 +2442,7 @@ if __name__ == "__main__":
             #'a2':[-10,10]
         }
 
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, prior, mybounds)
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)
 
         for k in myfit.bounds.keys():
             print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))

@@ -326,12 +326,13 @@ def transit(time, values):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, prior, bounds):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds):
         self.time = time
         self.data = data
         self.dataerr = dataerr
         self.prior = prior
         self.bounds = bounds
+        self.airmass = airmass
         self.fit_nested()
 
     def fit_nested(self):
@@ -344,6 +345,7 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
+            model = model*(self.prior['a1']*np.exp(self.prior['a2']*self.airmass))
             return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
 
         def prior_transform(upars):

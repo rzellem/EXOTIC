@@ -479,8 +479,12 @@ def check_file_extensions(directory, fileName):
                 raise OSError
 
         except FileNotFoundError:
-            print("Error: " + fileName + " files not found with .fits, .fit or .fts extensions in " + directory + ". Please try again.")
-            directory = input("Enter the directory path where " + fileName + " files are located: ")
+            extaddoption = user_input("\nError: " + fileName + " files not found with .fits, .fit or .fts extensions in " + directory +
+                                      ".\nWould you like to enter in an extension related to .FITS? (y/n): ", type_=str, val1='y', val2='n')
+            if extaddoption == 'y':
+                file_extensions.append(input('Please enter the extension you want to add (EX: .FITS): '))
+            else:
+                directory = input("Enter the directory path where " + fileName + " files are located: ")
         except OSError:
             print("Error: No such directory exists. Please try again.")
             directory = input("Enter the directory path where " + fileName + " files are located: ")
@@ -1339,21 +1343,21 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             saveDirectory = str(input("Enter the Directory to Save Plots into or type new to create one: "))
 
-        if saveDirectory == 'new':
-            saveDirectory = create_directory()
-        else:
-            # Check to see if the save directory exists
-            while True:
-                try:
-                    # In case the user forgets the trailing / for the folder
-                    if saveDirectory[-1] != "/":
-                        saveDirectory += "/"
-                    if os.path.isdir(saveDirectory):
-                        break
-                    raise OSError
-                except OSError:
-                    print('Error: the directory entered does not exist. Please try again.')
-                    saveDirectory = input("Enter the Directory to Save Plots into: ")
+        # Check to see if the save directory exists
+        while True:
+            try:
+                if saveDirectory == 'new':
+                    saveDirectory = create_directory()
+                    break
+                # In case the user forgets the trailing / for the folder
+                if saveDirectory[-1] != "/":
+                    saveDirectory += "/"
+                if os.path.isdir(saveDirectory):
+                    break
+                raise OSError
+            except OSError:
+                print('Error: the directory entered does not exist. Please try again.')
+                saveDirectory = input("Enter the Directory to Save Plots into or type new to create one: ")
 
         # Make a temp directory of helpful files
         try:

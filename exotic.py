@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.9.1" 
+versionid = "0.9.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -2504,6 +2504,21 @@ if __name__ == "__main__":
         # clip plot to get rid of white space
         ax_res.set_xlim([min(adjustedPhases), max(adjustedPhases)])
         ax_lc.set_xlim([min(adjustedPhases), max(adjustedPhases)])
+
+        # making borders and tick labels black
+        ax_lc.spines['bottom'].set_color('black')
+        ax_lc.spines['top'].set_color('black')
+        ax_lc.spines['right'].set_color('black')
+        ax_lc.spines['left'].set_color('black')
+        ax_lc.tick_params(axis='x', colors='black')
+        ax_lc.tick_params(axis='y', colors='black')
+
+        ax_res.spines['bottom'].set_color('black')
+        ax_res.spines['top'].set_color('black')
+        ax_res.spines['right'].set_color('black')
+        ax_res.spines['left'].set_color('black')
+        ax_res.tick_params(axis='x', colors='black')
+        ax_res.tick_params(axis='y', colors='black')
 
         # residual histogramfinalAirmassModel
         # bins up to 3 std of Residuals

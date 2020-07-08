@@ -574,6 +574,15 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 
+# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
+def get_radec(hdulWCS):
+    wcsheader = WCS(hdulWCS[0].header)
+    xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
+    yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
+    x, y = np.meshgrid(xaxis, yaxis)
+    return wcsheader.all_pix2world(x, y, 0)
+
+
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
     newlist, boollist = [], []
@@ -1720,6 +1729,7 @@ if __name__ == "__main__":
             wcsFile = check_wcs(pathSolve, saveDirectory)
             if wcsFile:
                 hdulWCS = fits.open(wcsFile)
+                rafile, decfile = get_radec(hdulWCS)
 
             print("\nAligning your images from .FITS. Please wait.")
             done = False

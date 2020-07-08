@@ -40,7 +40,7 @@ import threading
 import time
 import sys
 
-## To increase memory allocation for EXOTIC; allows for more fits files
+# To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
@@ -146,53 +146,6 @@ def binner(arr, n, err=''):
         err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
         return arr, err
 
-
-# finds the planet line in the composite dictionary
-# returns -1 if its not there
-def findPlanetLineComp(planName, dataDictionary):
-    coun = 0
-    for line in dataDictionary:
-        if line['fpl_name'] == planName:
-            index = coun
-        coun = coun + 1
-    return index
-
-
-# finds the line number of the planetName in the confirmed dictionary
-# returns -1 if its not there
-def findPlanetLineConf(planName, dataDictionary):
-    coun = 0
-    index = -1
-    # account for mistakes in capitalization, spaces, and dashes
-    noSpaceP = planName.replace(" ", "")
-    noSpaceDashP = noSpaceP.replace("-", "")
-    noCapsSpaceP = noSpaceDashP.lower()
-    for line in dataDictionary:
-        exoPname = line['pl_name']
-        exoPnoSpace = exoPname.replace(" ", "")
-        exoPnoSpaceDash = exoPnoSpace.replace("-", "")
-        exoPnoSpaceLower = exoPnoSpaceDash.lower()
-        if noCapsSpaceP == exoPnoSpaceLower:
-            index = coun
-        coun = coun + 1
-    if index != -1:
-        return index
-    else:
-        # print('Error! Could Not Find Planet with the name: '+planName)
-        # sys.exit()
-        return -1
-
-
-def findPlanetLinesExt(planName, dataDictionary):
-    coun = 0
-    indexList = []  # this has multiple lines per planet so list needed
-    for line in dataDictionary:
-        if line['mpl_name'] == planName:
-            indexList.append(coun)
-        coun = coun + 1
-    return indexList
-
-
 ## ARCHIVE PRIOR SCRAPER ################################################################
 pi = 3.14159
 au = 1.496e11  # m
@@ -241,7 +194,8 @@ def new_scrape(filename="eaConf.json"):
         "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_ratdor,"
                      "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
                      "pl_orbincl,pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
-                     "st_teff,st_met,st_logg,st_mass,st_rad,ra,dec",
+                     "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
+                     "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,ra,dec",
         "from"     : "ps",  # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
         "order by" : "pl_name",
@@ -294,20 +248,26 @@ def new_getParams(data):
     planetDictionary = {
         'pName': data['pl_name'],
         'sName': data['hostname'],
-        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun),
-        'aRs': data['pl_ratdor'],
-        'midT': data['pl_tranmid'],
-        'midTUnc': data['pl_tranmiderr1'],
+        'ra': data['ra'],
+        'dec': data['dec'],
         'pPer': data['pl_orbper'],
         'pPerUnc': data['pl_orbpererr1'],
-        'flag': data['tran_flag'],
-        'inc': data["pl_orbincl"],
-        'ecc': data.get("pl_orbeccen",0),
-        'teff': data["st_teff"],
-        'met': data["st_met"],
-        'logg': data["st_logg"],
-        'ra': data["ra"],
-        'dec': data["dec"]
+        'midT': data['pl_tranmid'],
+        'midTUnc': data['pl_tranmiderr1'],
+        'rprs': data['pl_radj']*rjup/(data['st_rad']*rsun),
+        'aRs': data['pl_ratdor'],
+        'inc': data['pl_orbincl'],
+        'ecc': data.get('pl_orbeccen', 0),
+        'teff': data['st_teff'],
+        'teffUncPos': data['st_tefferr1'],
+        'teffUncNeg': data['st_tefferr2'],
+        'met': data['st_met'],
+        'metUncPos': data['st_meterr1'],
+        'metUncNeg': data['st_meterr2'],
+        'logg': data['st_logg'],
+        'loggUncPos': data['st_loggerr1'],
+        'loggUncNeg': data['st_loggerr2'],
+        'flag': data['tran_flag']
     }
 
     return planetDictionary
@@ -413,30 +373,123 @@ def user_input(prompt, type_, val1=None, val2=None):
             return option
 
 
-def check_file_extensions(directory, fileName):
-    # Add / to end of directory if user does not input it
-    if directory[-1] != "/":
-        directory += "/"
+# Create a save directory within the current working directory
+def create_directory():
+    try:
+        directoryName = input('Enter the name for your new directory: ')
+        newDirectoryPath = os.getcwd()
+        saveDirectory = newDirectoryPath + '/' + directoryName + '/'
+        os.mkdir(saveDirectory)
+    except OSError:
+        print("Creation of the directory %s failed" % saveDirectory)
+    else:
+        print("Successfully created the directory %s " % saveDirectory)
+        return saveDirectory
 
+
+# --------PLANETARY PARAMETERS UI------------------------------------------
+# Get the user's confirmation of values that will later be used in lightcurve fit
+def planetary_parameters(CandidatePlanetBool, pDict=None):
+    print('\n*******************************************')
+    print("Planetary Parameters for Lightcurve Fitting\n")
+
+    # The order of planet_params list must match the pDict that is declared when scraping the NEA
+    planet_params = ["Planet's Name",
+                     "Host Star's Name",
+                     "Ra of your target star in the form: HH:MM:SS (ignore the decimal values)",
+                     "Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)",
+                     "Orbital Period (days)",
+                     "Orbital Period Uncertainty (days) \nKeep in mind that 1.2e-34 is the same as 1.2 x 10^-34",
+                     "Published Time of Mid-Transit (BJD_UTC)",
+                     "Time of Mid-Transit Uncertainty (JD)",
+                     "Ratio of Planet to Stellar Radius (Rp/Rs)",
+                     "Ratio of Distance to Stellar Radius (a/Rs)",
+                     "Orbital Inclination (deg)",
+                     "Orbital Eccentricity (0 if null)",
+                     "Star Effective Temperature (K)",
+                     "Star Effective Temperature Positive Uncertainty (K)",
+                     "Star Effective Temperature Negative Uncertainty (K)",
+                     "Star Metallicity ([FE/H])",
+                     "Star Metallicity Positive Uncertainty ([FE/H])",
+                     "Star Metallicity Negative Uncertainty ([FE/H])",
+                     "Star Surface Gravity (log(g))",
+                     "Star Surface Gravity Positive Uncertainty (log(g))",
+                     "Star Surface Gravity Negative Uncertainty (log(g))"]
+
+    # Exoplanet confirmed in NEA
+    if not CandidatePlanetBool:
+        print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
+        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
+
+        for i, key in enumerate(pDict):
+            if key in ('pName', 'sName', 'ra', 'dec', 'flag'):
+                continue
+            print('\n' + targetName + ' ' + planet_params[i] + ': ' + str(pDict[key]))
+            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
+            if agreement.lower() == 'y':
+                continue
+            elif agreement.lower() == 'n':
+                pDict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
+
+    # Exoplanet not confirmed in NEA
+    else:
+        pDict = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None, 'midT': None,
+                 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None, 'teffUncPos': None,
+                 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None, 'logg': None, 'loggUncPos': None,
+                 'loggUncNeg': None}
+
+        for i, key in enumerate(pDict):
+            if key in ('pName', 'sName'):
+                pDict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=str)
+            elif key == 'ra':
+                    raStr = input('Enter the ' + planet_params[i] + ': ')
+                    pDict['ra'] = astropy.coordinates.Angle(raStr + " hours").deg
+            elif key == 'dec':
+                    decStr = input('Enter the ' + planet_params[i] + ': ')
+                    decStr = decStr.replace(' ', '').replace(':', '')
+                    pDict['dec'] = astropy.coordinates.Angle(decStr + " degrees").deg
+            else:
+                pDict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
+
+    return pDict
+
+
+# Check if user's directory contains imaging files that are able to be reduced
+def check_file_extensions(directory, fileName):
     # Find fits files
-    fits_extensions = ["*.FITS", "*.FIT", "*.fits", "*.fit"]
-    # Loop until we find something
-    looper = True
-    while looper:
-        for exti in fits_extensions:
-            inputfiles = g.glob(directory + exti)
-            # If we find files, then stop the for loop and while loop
-            if len(inputfiles) > 0:
-                looper = False
-                break
-        # If we don't find any files, then we need the user to check their directory and loop over again....
-        if len(inputfiles) == 0:
-            print("Error: " + fileName + " .FITS files not found in " + directory + ". Please try again.")
-            directory = str(input("Enter the Directory Path where FITS Image Files are located: "))
+    file_extensions = ['.fits', '.fit', '.fts']
+    inputfiles = []
+
+    while True:
+        try:
             # Add / to end of directory if user does not input it
             if directory[-1] != "/":
                 directory += "/"
-    return directory, inputfiles
+
+            if os.path.isdir(directory):
+                # Loop until we find something
+                for exti in file_extensions:
+                    for file in os.listdir(directory):
+                        if file.lower().endswith(exti.lower()):
+                            inputfiles.append(os.path.join(directory, file))
+                    # If we find files, then stop the for loop and while loop
+                    if inputfiles:
+                        return directory, inputfiles
+
+                # If we don't find any files, then we need the user to check their directory and loop over again
+                if not inputfiles:
+                    raise FileNotFoundError
+
+            # If the directory does not exist
+            else:
+                raise OSError
+
+        except FileNotFoundError:
+            print("Error: " + fileName + " files not found with .fits, .fit or .fts extensions in " + directory + ". Please try again.")
+            directory = input("Enter the directory path where " + fileName + " files are located: ")
+        except OSError:
+            print("Error: No such directory exists. Please try again.")
+            directory = input("Enter the directory path where " + fileName + " files are located: ")
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -546,7 +599,7 @@ def variableStarCheck(rafile, decfile, compStarList):
     errorMargin = 0.005556
 
     #For every comparison star, convert into WCS coordinates and check if it's in WCS file before querying
-    #Also accounts for error margin of 20 arcseconds 
+    #Also accounts for error margin of 20 arcseconds
     for compStar in compStarList:
         compStarCoords = compStar.all_pix2world()
         raLowerBound = compStarCoords[0] - errorMargin
@@ -584,15 +637,14 @@ def get_radec(hdulWCS):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
-    newlist = []
-    boollist = []
+    newlist, boollist = [], []
     notAligned = 0
 
     # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
     # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-    for num in sortedallImageData:
+    for image_file in sortedallImageData:
         try:
-            newData, footprint = aa.register(num, sortedallImageData[0])
+            newData, footprint = aa.register(image_file, sortedallImageData[0])
             newlist.append(newData)
             boollist.append(True)
         except:
@@ -604,8 +656,8 @@ def image_alignment(sortedallImageData):
 
     if notAligned > 0:
         print('\n\n*********************************************************************')
-        print('WARNING: From the given imaging files: ' + str(notAligned) + ' of ' + str(
-            len(sortedallImageData) + notAligned) + ' were not aligned.')
+        print('WARNING: From the given imaging files: ' + str(notAligned) + ' of ' +
+              str(len(sortedallImageData) + notAligned) + ' were not aligned.')
         print('*********************************************************************')
         time.sleep(5)
 
@@ -747,7 +799,7 @@ def getFlux(data, xc, yc, r=5, dr=5):
     return float(phot_table['aperture_sum']), bgflux
 
 
-def skybg_phot(data, xc,yc, r=10,dr=5):
+def skybg_phot(data, xc, yc, r=10, dr=5):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
@@ -927,7 +979,7 @@ def contextupdt(times=None, airm=None):
 
 # -- LIGHT CURVE MODEL -- ----------------------------------------------------------------
 def lcmodel(midTran, radi, am1, am2, theTimes, theAirmasses, plots=False):
-    sep, ophase = time2z(theTimes, inc, midTran, semi, planetPeriod, eccent)
+    sep, ophase = time2z(theTimes, pDict['inc'], midTran, pDict['aRs'], pDict['pPer'], pDict['ecc'])
     model, junk = occultquad(abs(sep), linearLimb, quadLimb, radi)
 
     airmassModel = (am1 * (np.exp(am2 * theAirmasses)))
@@ -953,7 +1005,7 @@ def realTimeReduce(i):
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
-        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
             directToWatch += "/"
@@ -1134,16 +1186,20 @@ if __name__ == "__main__":
         print('Real Time Reduction ("Control + C"  or close the plot to quit)')
         print('**************************************************************\n')
 
-        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path of imaging files: "))
         directoryP = directToWatch
         directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
 
         targetName = str(input("Enter the Planet Name: "))
 
-        carryOn = input('Type continue after the first image has been taken and saved: ')
-
-        while carryOn != 'continue':
-            carryOn = input('Type continue after the first image has been taken and saved: ')
+        while True:
+            try:
+                carryOn = input('Type continue after the first image has been taken and saved: ')
+                if carryOn != 'continue':
+                    raise ValueError
+                break
+            except ValueError:
+                continue
 
         UIprevTPX = user_input(targetName + " X Pixel Coordinate: ", type_=int)
         UIprevTPY = user_input(targetName + " Y Pixel Coordinate: ", type_=int)
@@ -1181,19 +1237,20 @@ if __name__ == "__main__":
             print("\nYour current working directory is: ", os.getcwd())
             print("\nPotential initialization files I've found in " + os.getcwd() + " are: ")
             [print(i) for i in g.glob(os.getcwd() + "/*.txt")]
-            initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
-            if initfilename == 'ok':
-                initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
 
             # Parse input file
             while True:
                 try:
+                    initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
+                    if initfilename == 'ok':
+                        initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
                     with open(initfilename, 'r') as f:
                         inits = f.readlines()
-                        break
+                    break
                 except FileNotFoundError:
-                    print("Initialization file not found. Please try again.")
-                    initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
+                    print("Error: Initialization file not found. Please try again.")
+                except IsADirectoryError:
+                    print('Error: Entered a directory. Please try again.')
 
             # inits = []
             # for line in initf:
@@ -1300,7 +1357,7 @@ if __name__ == "__main__":
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                directoryP = str(input("\nEnter the Directory of the FITS Image Files: "))
+                directoryP = str(input("\nEnter the Directory of imaging files: "))
 
             directoryP, inputfiles = check_file_extensions(directoryP, 'imaging')
         else:
@@ -1318,10 +1375,23 @@ if __name__ == "__main__":
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            saveDirectory = str(input("Enter the Directory to Save Plots into: "))
-        # In case the user forgets the trailing / for the folder
-        if saveDirectory[-1] != "/":
-            saveDirectory += "/"
+            saveDirectory = str(input("Enter the Directory to Save Plots into or type new to create one: "))
+
+        if saveDirectory == 'new':
+            saveDirectory = create_directory()
+        else:
+            # Check to see if the save directory exists
+            while True:
+                try:
+                    # In case the user forgets the trailing / for the folder
+                    if saveDirectory[-1] != "/":
+                        saveDirectory += "/"
+                    if os.path.isdir(saveDirectory):
+                        break
+                    raise OSError
+                except OSError:
+                    print('Error: the directory entered does not exist. Please try again.')
+                    saveDirectory = input("Enter the Directory to Save Plots into: ")
 
         # Make a temp directory of helpful files
         try:
@@ -1339,7 +1409,8 @@ if __name__ == "__main__":
         # t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
 
-        if not os.path.exists("eaConf.json"):
+        # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
+        if not os.path.exists("eaConf.json") or time.time() - os.path.getmtime('eaConf.json') > 604800:
             new_scrape(filename="eaConf.json")
 
         CandidatePlanetBool = False
@@ -1349,14 +1420,15 @@ if __name__ == "__main__":
             #stars = [data[i]['hostname'] for i in range(len(data))]
             if targetName.lower().replace(' ', '').replace('-', '') not in planets:
                 while targetName.lower().replace(' ', '').replace('-', '') not in planets:
-                    print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check file: eaConf.json")
-                    targetName = str(input("Enter the Planet Name Again or type 'manual': "))
-                    if targetName == 'manual':
+                    print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check spelling or file: eaConf.json.")
+                    targetName = str(input("If this is a planet candidate, type candidate: "))
+                    if targetName == 'candidate':
                         CandidatePlanetBool = True
                         break
-            idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
-            pDict = new_getParams(data[idx])
-            print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+            if not CandidatePlanetBool:
+                idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
+                pDict = new_getParams(data[idx])
+                print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
 
         # observation date
         if fileorcommandline == 1:
@@ -1368,31 +1440,43 @@ if __name__ == "__main__":
             date = str(input("\nEnter the Observation Date: "))
 
         if fitsortext == 1:
-            # latitude and longitude
             if fileorcommandline == 1:
-                latiStr = str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
-            noSpaceLati = latiStr.replace(" ", "")
-            latiSign = noSpaceLati[0]
-            # check to make sure they have a sign
-            while latiSign != '+' and latiSign != '-':
-                print("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-                latiStr = str(input("Enter the latitude of where you observed (deg) (Don't forget the sign where North is '+' and South is '-'): "))
-                noSpaceLati = latiStr.replace(" ", "")
-                latiSign = noSpaceLati[0]
-            lati = float(latiStr)
+                latiStr = input("Enter the latitude of where you observed (deg) "
+                                "(Don't forget the sign where North is '+' and South is '-'): ")
+            # Latitude
+            while True:
+                try:
+                    latiStr = latiStr.replace(' ', '')
+                    if latiStr[0] != '+' and latiStr[0] != '-':
+                        raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
+                    lati = float(latiStr)
+                    if lati <= -90.00 or lati >= 90.00:
+                        raise ValueError('Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
+                    break
+                # check to make sure they have a sign
+                except ValueError as err:
+                    print(err.args)
+                    latiStr = input("Enter the latitude of where you observed (deg) "
+                                    "(Don't forget the sign where North is '+' and South is '-'): ")
 
-            # handle longitude
             if fileorcommandline == 1:
-                longitStr = str(input("Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
-            noSpaceLongit = longitStr.replace(" ", "")
-            longitSign = noSpaceLongit[0]
-            # check to make sure they have the sign
-            while longitSign != '+' and longitSign != '-':
-                print("You forgot the sign for the latitude! East is '+' and West is '-'. Please try again.")
-                longitStr = str(input("Enter the longitude of where you observed (deg) (Don't forget the sign where East is '+' and West is '-'): "))
-                noSpaceLongit = longitStr.replace(" ", "")
-                longitSign = noSpaceLongit[0]
-            longit = float(longitStr)
+                longitStr = input("Enter the longitude of where you observed (deg) "
+                                  "(Don't forget the sign where East is '+' and West is '-'): ")
+            # Longitude
+            while True:
+                try:
+                    longitStr = longitStr.replace(' ', '')
+                    if longitStr[0] != '+' and longitStr[0] != '-':
+                        raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
+                    longit = float(longitStr)
+                    if longit <= -180.00 or longit >= 180.00:
+                        raise ValueError('Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
+                    break
+                # check to make sure they have a sign
+                except ValueError as err:
+                    print(err.args)
+                    longitStr = input("Enter the longitude of where you observed (deg) "
+                                      "(Don't forget the sign where East is '+' and West is '-'): ")
 
             if fileorcommandline == 1:
                 elevation = str(input("Enter the elevation (in meters) of where you observed: "))
@@ -1508,167 +1592,11 @@ if __name__ == "__main__":
                                    'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-        # --------PLANETARY PARAMETERS UI------------------------------------------
-        # Scrape the exoplanet archive for all of the planets of their planet
-        # ask user to confirm the values that will later be used in lightcurve fit
-
-        print('\n*******************************************')
-        print("Planetary Parameters for Lightcurve Fitting\n")
-
+        # Get the planetary parameters for calculations
         if not CandidatePlanetBool:
-
-            print('Here are the values scraped from the NASA Exoplanet Archive for ' + pDict['pName'])
-            print('For each planetary parameter, enter "y" if you agree and "n" if you disagree')
-
-            # get data from NASA exoplanet archive
-            targetName = pDict['pName']
-            hostName = pDict['sName']
-            raDeg = pDict['ra']
-            decDeg = pDict['dec']
-
-            # Orbital Period
-            print('\n' + targetName + ' Orbital Period (days): ' + str(pDict['pPer']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                planetPeriod = pDict['pPer']
-            else:
-                planetPeriod = user_input("Enter the Orbital Period in days: ", type_=float)
-
-            # Orbital Period Error
-            print('\n' + targetName + ' Orbital Period Uncertainty (days): ' + str(pDict['pPerUnc']))
-            print('Keep in mind that "1.2e-34" is the same as 1.2 x 10^-34')
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                ogPeriodErr = pDict['pPerUnc']
-            else:
-                ogPeriodErr = user_input("Enter the Uncertainty for the Orbital Period in days: ", type_=float)
-
-            # Mid Transit Time
-            print('\n' + targetName + ' Published Time of Mid-Transit (BJD_UTC): ' + str(pDict['midT']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                timeMidTransit = pDict['midT']
-            else:
-                timeMidTransit = user_input("Enter a reported Time of Mid-Transit in BJD_UTC: ", type_=float)
-
-            # Mid Transit Time Uncertainty
-            print('\n' + targetName + ' Time of Mid-Transit Uncertainty (JD): ' + str(pDict['midTUnc']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                ogMidTErr = pDict['midTUnc']
-            else:
-                ogMidTErr = user_input("Enter the uncertainty of the Mid-Transit Time (JD): ", type_=float)
-
-            # rprs
-            print('\n' + targetName + ' Ratio of Planet to Stellar Radius (Rp/Rs): ' + str(round(pDict['rprs'], 4)))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                rprs = pDict['rprs']
-            else:
-                rprs = user_input("Enter the Ratio of Planet to Stellar Radius (Rp/Rs): ", type_=float)
-
-            # aRstar
-            print('\n' + targetName + ' Ratio of Distance to Stellar Radius (a/Rs): ' + str(pDict['aRs']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                semi = pDict['aRs']
-            else:
-                semi = user_input("Enter the Ratio of Distance to Stellar Radius (a/Rs): ", type_=float)
-
-            # inclination
-            print('\n' + targetName + ' Orbital Inclination (deg): ' + str(pDict['inc']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                inc = pDict['inc']
-            else:
-                inc = user_input("Enter the Orbital Inclination in degrees (90 if null): ", type_=float)
-
-            # eccentricity
-            print('\n' + targetName + ' Orbital Eccentricity: ' + str(pDict['ecc']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                eccent = pDict['ecc']
-            else:
-                eccent = user_input("Enter the Orbital Eccentricity (0 if null): ", type_=float)
-
-            # LIMB DARKENING
-            print('\n***************************')
-            print('Limb Darkening Coefficients')
-            print('***************************')
-
-            # stellar temperature
-            print('\n' + hostName + ' Star Effective Temperature (K): ' + str(pDict['teff']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                starTeff = pDict['teff']
-            else:
-                starTeff = user_input("Enter the Effective Temperature (K): ", type_=float)
-
-            # metallicity
-            print('\n' + hostName + ' Star Metallicity ([FE/H]): ' + str(pDict['met']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                starMetall = pDict['met']
-            else:
-                starMetall = user_input("Enter the Metallicity ([Fe/H]): ", type_=float)
-
-            # Log g
-            print('\n' + hostName + ' Star Surface Gravity log(g): ' + str(pDict['logg']))
-            agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-            if agreement.lower() == 'y':
-                starSurfG = pDict['logg']
-            else:
-                starSurfG = user_input("Enter the Surface Gravity (log(g)): ", type_=float)
-        #  if the planet is not in the NASA Exoplanet Archive, then ask user for input
+            pDict = planetary_parameters(CandidatePlanetBool, pDict=pDict)
         else:
-            targetName = str(input("Enter the planet's name: "))
-            hostName = str(input("Enter the host star's name: "))
-
-            raStr = str(input("Enter the Ra of your target star in the form: HH:MM:SS (ignore the decimal values) : "))
-            decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
-                               "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-
-            raDeg = astropy.coordinates.Angle(raStr + " hours").deg
-
-            noSpaceDec = decStr.replace(" ", "")
-            noSpaceColonDec = noSpaceDec.replace(":", "")
-
-            decSign = noSpaceColonDec[0]
-            while decSign != '+' and decSign != '-':
-                print('You forgot the sign for the dec! Please try again.')
-                decStr = str(input("Enter the Dec of your target star in form: <sign>DD:MM:SS "
-                                   "(ignore the decimal values and don't forget the '+' or '-' sign!)' : "))
-                decDeg = astropy.coordinates.Angle(decStr + " degrees").deg
-
-            # Orbital Period
-            planetPeriod = user_input("\nEnter the Orbital Period in days: ", type_=float)
-            # Orbital Period Error
-            ogPeriodErr = user_input("\nEnter the Uncertainty for the Orbital Period in days: ", type_=float)
-            # Mid Transit Time
-            timeMidTransit = user_input("\nEnter a reported Time of Mid-Transit in BJD_UTC: ", type_=float)
-            # Mid Transit Time Uncertainty
-            ogMidTErr = user_input("\nEnter the uncertainty of the Mid-Transit Time (JD): ", type_=float)
-            # rprs
-            rprs = user_input("\nEnter the Ratio of Planet to Stellar Radius (Rp/Rs): ", type_=float)
-            # aRstar
-            semi = user_input("\nEnter the Ratio of Distance to Stellar Radius (a/Rs): ", type_=float)
-            # inclination
-            inc = user_input("\nEnter the Orbital Inclination in degrees (90 if null): ", type_=float)
-            # eccentricity
-            eccent = user_input("\nEnter the Orbital Eccentricity (0 if null): ", type_=float)
-
-            # LIMB DARKENING
-            print('\n***************************')
-            print('Limb Darkening Coefficients')
-            print('***************************')
-            # stellar temperature
-            starTeff = user_input("\nEnter the host star's effective temperature (K): ", type_=float)
-
-            # metallicity
-            starMetall = user_input("\nEnter the host star's metallicity ([Fe/H]): ", type_=float)
-
-            # Log g
-            starSurfG = user_input("\nEnter the host star's surface gravity (log(g)): ", type_=float)
+            pDict = planetary_parameters(CandidatePlanetBool)
 
         # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
         URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
@@ -1678,9 +1606,9 @@ if __name__ == "__main__":
             while True:
                 try:
                     form_newData = {"action": URLphp,
-                                    "teff": str(starTeff),
-                                    "feh": str(starMetall),
-                                    "logg": str(starSurfG),
+                                    "teff": str(pDict['teff']),
+                                    "feh": str(pDict['met']),
+                                    "logg": str(pDict['logg']),
                                     "bname": filterName,
                                     "pname": "Select Planet"
                                     }
@@ -1777,7 +1705,7 @@ if __name__ == "__main__":
                 timesListed.append(currTime)
 
                 # AIRMASS
-                airMass = getAirMass(hdul, raDeg, decDeg, lati, longit, elevation)  # gets the airmass at the time the image was taken
+                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, elevation)  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                 # IMAGES
@@ -2036,7 +1964,7 @@ if __name__ == "__main__":
                                 # Guess at Gaussian Parameters and feed them in to help gaussian fitter
 
                                 tGuessAmp = targSearchA.max() - tGuessBkg
-                                if (tGuessAmp < 0):
+                                if tGuessAmp < 0:
                                     print('Error: the Darks have a higher pixel counts than the image itself')
                                 myPriors = [tGuessAmp, prevTSigX, prevTSigY, tGuessBkg]  #########ERROR HERE
 
@@ -2101,7 +2029,7 @@ if __name__ == "__main__":
                                     # timesListed.append(currTime)
 
                                     # ORBITAL PHASE
-                                    currentPhase = getPhase(currTime, planetPeriod, timeMidTransit)
+                                    currentPhase = getPhase(currTime, pDict['pPer'], pDict['midT'])
                                     phasesList.append(currentPhase)  # adds to list of phases
 
                                     # # AIRMASS
@@ -2179,9 +2107,9 @@ if __name__ == "__main__":
 
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
-                        midTranCur = nearestTransitTime(timesListed,  planetPeriod, timeMidTransit)
+                        midTranCur = nearestTransitTime(timesListed, pDict['pPer'], pDict['midT'])
                         #midTranCur was in the initval first
-                        initvals = [np.median(arrayTimes), rprs, np.median(arrayFinalFlux[~filtered_data.mask]), 0]
+                        initvals = [np.median(arrayTimes), pDict['rprs'], np.median(arrayFinalFlux[~filtered_data.mask]), 0]
                         up = [arrayTimes[-1], 1, np.inf, 1.0]
                         low = [arrayTimes[0], 0, -np.inf, -1.0]
                         bound = [low, up]
@@ -2365,7 +2293,7 @@ if __name__ == "__main__":
                 done = False
                 t = threading.Thread(target=animate, daemon=True)
                 t.start()
-                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=elevation)
+                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=elevation)
                 goodTimes = resultos[0]
                 done = True
 
@@ -2376,13 +2304,13 @@ if __name__ == "__main__":
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
-            bjdMidTOld = timeMidTransit
+            bjdMidTOld = pDict['midT']
 
 
             goodPhasesList = []
             # convert all the phases based on the updated bjd times
             for convertedTime in goodTimes:
-                bjdPhase = getPhase(float(convertedTime), planetPeriod, bjdMidTOld)
+                bjdPhase = getPhase(float(convertedTime), pDict['pPer'], bjdMidTOld)
                 goodPhasesList.append(bjdPhase)
             goodPhases = np.array(goodPhasesList)
 
@@ -2493,14 +2421,14 @@ if __name__ == "__main__":
 
         # OBSERVATIONS
 
-        bjdMidTranCur = float(nearestTransitTime(goodTimes, planetPeriod, bjdMidTOld))
+        bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
 
-        extractRad = rprs
+        extractRad = pDict['rprs']
         extractTime = bjdMidTranCur  # expected mid transit time of the transit the user observed (based on previous calculation)
         sigOff = standardDev1
         amC2Guess = 0  # guess b airmass term is 0
         sigC2 = .1  # this is a huge guess so it's always going to be less than this
-        sigRad = (np.median(standardDev1)) / (2 * rprs)  # uncertainty is the uncertainty in the dataset w/ propogation
+        sigRad = (np.median(standardDev1)) / (2 * pDict['rprs'])  # uncertainty is the uncertainty in the dataset w/ propogation
         # propMidTUnct = uncTMid(ogPeriodErr, ogMidTErr, goodTimes, planetPeriod,bjdMidTOld)  # use method to calculate propogated midTUncertainty
 
         contextupdt(times=goodTimes, airm=goodAirmasses)  # update my global constant variable
@@ -2511,7 +2439,7 @@ if __name__ == "__main__":
             tranTime, pRad, amc1, amc2 = specparams
 
             # lightcurve model
-            sep, ophase = time2z(context['times'], inc, float(tranTime), semi, planetPeriod, eccent)
+            sep, ophase = time2z(context['times'], pDict['inc'], float(tranTime), pDict['aRs'], pDict['pPer'], pDict['ecc'])
             gmodel, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
 
             # exponential airmass model
@@ -2605,7 +2533,7 @@ if __name__ == "__main__":
         finalFluxes = goodFluxes[~finalFilter.mask]
         finalTimes = goodTimes[~finalFilter.mask]
         # finalPhases = goodPhases[~finalFilter.mask]
-        finalPhases = (finalTimes - fitMidT) / planetPeriod + 1.
+        finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
         finalAirmasses = goodAirmasses[~finalFilter.mask]
         # finalTargets = goodTargets[~finalFilter.mask]
         # finalReferences = goodReferences[~finalFilter.mask]
@@ -2621,7 +2549,7 @@ if __name__ == "__main__":
         # recaclculate phases based on fitted mid transit time
         adjPhases = []
         for bTime in finalTimes:
-            newPhase = ((bTime - fitMidT) / planetPeriod)
+            newPhase = ((bTime - fitMidT) / pDict['pPer'])
             adjPhases.append(newPhase)
         adjustedPhases = np.array(adjPhases)
 
@@ -2647,6 +2575,21 @@ if __name__ == "__main__":
         ax_res.set_xlim([min(adjustedPhases), max(adjustedPhases)])
         ax_lc.set_xlim([min(adjustedPhases), max(adjustedPhases)])
 
+        # making borders and tick labels black
+        ax_lc.spines['bottom'].set_color('black')
+        ax_lc.spines['top'].set_color('black')
+        ax_lc.spines['right'].set_color('black')
+        ax_lc.spines['left'].set_color('black')
+        ax_lc.tick_params(axis='x', colors='black')
+        ax_lc.tick_params(axis='y', colors='black')
+
+        ax_res.spines['bottom'].set_color('black')
+        ax_res.spines['top'].set_color('black')
+        ax_res.spines['right'].set_color('black')
+        ax_res.spines['left'].set_color('black')
+        ax_res.tick_params(axis='x', colors='black')
+        ax_res.tick_params(axis='y', colors='black')
+
         # residual histogramfinalAirmassModel
         # bins up to 3 std of Residuals
 
@@ -2657,7 +2600,7 @@ if __name__ == "__main__":
         bins = np.linspace(-maxbs, maxbs, 7)
 
         # residual plot
-        ax_res.plot(x, finalResiduals, color = 'gray', marker ='o', markersize=5, linestyle = 'None')
+        ax_res.plot(x, finalResiduals, color='gray', marker='o', markersize=5, linestyle='None')
         ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=1, zorder=100)
         ax_res.set_ylabel('Residuals')
         # ax_res.set_ylim([-.04, .04])
@@ -2693,7 +2636,7 @@ if __name__ == "__main__":
         outParamsFile.write('FINAL TIMESERIES OF ' + targetName + '\n')
         outParamsFile.write('BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 
-        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes,adjustedPhases, finalFluxes/finalAirmassModel,
+        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes, adjustedPhases, finalFluxes/finalAirmassModel,
                                                               finalNormUnc/finalAirmassModel, finalModel/finalAirmassModel, finalAirmassModel):
             outParamsFile.write(str(bjdi)+","+str(phasei)+","+str(modeli)+","+str(fluxi)+","+str(fluxerri)+"\n")
 
@@ -2770,7 +2713,7 @@ if __name__ == "__main__":
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
         outParamsFile.write('#OBSTYPE=' + cameraType + '\n')
-        outParamsFile.write('#STAR_NAME=' + hostName + '\n')  # code yields
+        outParamsFile.write('#STAR_NAME=' + pDict['sName'] + '\n')  # code yields
         outParamsFile.write('#EXOPLANET_NAME=' + targetName + '\n')  # code yields
         outParamsFile.write('#BINNING=' + binning + '\n')  # user input
         outParamsFile.write('#EXPOSURE_TIME=' + str(exposureTime) + '\n')  # UI
@@ -2782,8 +2725,8 @@ if __name__ == "__main__":
         #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
         #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
         #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
-        outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(
-            semi) + ',inc=' + str(inc) + ',ecc=' + str(eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
+        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(pDict['pPerUnc']) + ',a/R*=' + str(
+            pDict['aRs']) + ',inc=' + str(pDict['inc']) + ',ecc=' + str(pDict['ecc']) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
         # code yields
         outParamsFile.write(
             '#RESULTS=Tc=' + str(round(fitMidT, 8)) + ' +/- ' + str(round(midTranUncert, 8)) + ',Rp/R*=' + str(

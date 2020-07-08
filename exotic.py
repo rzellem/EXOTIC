@@ -2437,9 +2437,9 @@ if __name__ == "__main__":
         mybounds = {
             'rprs':[0,2*rprs],
             'tmid':[min(goodTimes),max(goodTimes)],
-            'ars':[semi/2,2*semi]
-            #'a1':[0, max(Flux)],
-            #'a2':[-10,10]
+            'ars':[semi/2,2*semi],
+            'a1':[0, max(Flux)],
+            'a2':[-10,10]
         }
 
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)

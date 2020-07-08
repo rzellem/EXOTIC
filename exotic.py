@@ -367,6 +367,20 @@ def user_input(prompt, type_, val1=None, val2=None):
             return option
 
 
+# Create a save directory within the current working directory
+def create_directory():
+    try:
+        directoryName = input('Enter the name for your new directory: ')
+        newDirectoryPath = os.getcwd()
+        saveDirectory = newDirectoryPath + '/' + directoryName + '/'
+        os.mkdir(saveDirectory)
+    except OSError:
+        print("Creation of the directory %s failed" % saveDirectory)
+    else:
+        print("Successfully created the directory %s " % saveDirectory)
+        return saveDirectory
+
+
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
 def planetary_parameters(CandidatePlanetBool, pDict=None):
@@ -1323,30 +1337,23 @@ if __name__ == "__main__":
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            saveDirectory = str(input("Enter the Directory to Save Plots into: "))
+            saveDirectory = str(input("Enter the Directory to Save Plots into or type new to create one: "))
 
-        # Check to see if the save directory exists
-        while True:
-            try:
-                # In case the user forgets the trailing / for the folder
-                if saveDirectory[-1] != "/":
-                    saveDirectory += "/"
-                if os.path.isdir(saveDirectory):
-                    break
-                raise OSError
-            except OSError:
-                print('Error: the directory entered does not exist. Please try again.')
-                newDirectory = user_input('Would you like to create a new directory? (y/n): ', type_=str, val1='y', val2='n')
-
-                # Create a save directory within the current working directory
-                if newDirectory == 'y':
-                    directoryName = input('Enter the name of your new directory: ')
-                    newDirectoryPath = os.getcwd()
-                    saveDirectory = newDirectoryPath + '/' + directoryName + '/'
-                    os.mkdir(saveDirectory)
-                    print('Your save directory path is: ' + saveDirectory)
-
-                saveDirectory = input("Enter the Directory to Save Plots into: ")
+        if saveDirectory == 'new':
+            saveDirectory = create_directory()
+        else:
+            # Check to see if the save directory exists
+            while True:
+                try:
+                    # In case the user forgets the trailing / for the folder
+                    if saveDirectory[-1] != "/":
+                        saveDirectory += "/"
+                    if os.path.isdir(saveDirectory):
+                        break
+                    raise OSError
+                except OSError:
+                    print('Error: the directory entered does not exist. Please try again.')
+                    saveDirectory = input("Enter the Directory to Save Plots into: ")
 
         # Make a temp directory of helpful files
         try:

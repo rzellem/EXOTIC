@@ -423,6 +423,9 @@ if __name__ == "__main__":
     data = transit(time, prior) + np.random.normal(0, 2e-4, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
 
+    airmass = np.linspace(0.65,0.85,100)    ##NEEDS FIXED!!!!!!!!!!
+    ##>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
     #plt.plot(time,data,'ko')
     #plt.show()
     #dude()
@@ -433,7 +436,7 @@ if __name__ == "__main__":
         'ars':[13,15]
     }
 
-    myfit = lc_fitter(time, data, dataerr, prior, mybounds)
+    myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds)
 
     for k in myfit.bounds.keys():
         print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))

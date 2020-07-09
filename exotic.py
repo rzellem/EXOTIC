@@ -544,7 +544,7 @@ def plate_solution(fits_file, saveDirectory):
 
     # Login to Exoplanet Watch's profile w/ API key. If session fails, allow 5 attempts of
     # rejoining before returning False and informing user of technical failure.
-    for i in range(4):
+    for i in range(5):
         try:
             r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
             sess = r.json()['session']

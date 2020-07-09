@@ -542,11 +542,22 @@ def check_wcs(fits_file, saveDirectory):
 def plate_solution(fits_file, saveDirectory):
     default_url = 'http://nova.astrometry.net/api/'
 
-    # Login to Exoplanet Watch's profile w/ API key
-    r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
+    # Login to Exoplanet Watch's profile w/ API key. If session fails, allow 5 attempts of
+    # rejoining before returning False and informing user of technical failure.
+    for i in range(4):
+        try:
+            r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
+            sess = r.json()['session']
+            break
+        except KeyError:
+            if i == 4:
+                print('Imaging file could not recieve a plate solution due to technical difficulties '
+                      'from nova.astrometry.net. Please try again later. Data reduction will continue.')
+                return False
+            time.sleep(5)
+            continue
 
     # Saves session number to upload imaging file
-    sess = r.json()['session']
     files = {'file': open(fits_file, 'rb')}
     headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
                'allow_modifications': 'n', 'publicly_visible': 'n'}

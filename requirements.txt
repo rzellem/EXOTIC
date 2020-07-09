@@ -9,6 +9,6 @@ pymc3==3.8
 python_dateutil==2.8.1
 scipy==1.4.1
 theano==1.0.4
-skimage==0.15.0
+scikit-image==0.15.0
 semantic-version==2.8.5
 LDTk==1.1.1

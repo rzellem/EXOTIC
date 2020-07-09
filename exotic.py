@@ -2352,6 +2352,7 @@ if __name__ == "__main__":
     #    airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
 
         aone = np.median(goodFluxes)
+        print(aone)
 
         prior = {
             'rprs':rprs,        # Rp/Rs
@@ -2382,8 +2383,8 @@ if __name__ == "__main__":
         fig,axs = myfit.plot_bestfit()
 
         # triangle plot
-        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
+        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
+        dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs', 'a1', 'a2'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         plt.tight_layout()
         plt.savefig("temp.png")
         print("figure saved")
@@ -2393,7 +2394,6 @@ if __name__ == "__main__":
         # MCMC LIGHTCURVE FIT
         #####################
         # The transit function is based on the analytic expressions of Mandel and Agol et al 2002. and Gael Roudier's transit model
-        break
         log = logging.getLogger(__name__)
         pymc3log = logging.getLogger('pymc3')
         pymc3log.setLevel(logging.ERROR)

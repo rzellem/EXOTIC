@@ -413,7 +413,9 @@ if __name__ == "__main__":
         'u1': 0.3, 'u2': 0.01, # limb darkening (linear, quadratic)
         'ecc':0,            # Eccentricity
         'omega':0,          # Arg of periastron
-        'tmid':0.75         # time of mid transit [day]
+        'tmid':0.75,         # time of mid transit [day],
+        'a1':50,
+        'a2':0
     }
 
     # GENERATE NOISY DATA

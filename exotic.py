@@ -2353,6 +2353,13 @@ if __name__ == "__main__":
 
         aone = np.median(goodFluxes)
         print(aone)
+        rprs = pDict['rprs']
+        print(rprs)
+        semi = pDict['aRs']
+        planetPeriod = pDict['pPer']
+        ecc = pDict['ecc']
+        inc = pDict['inc']
+        tmid = pDict['midT']
 
         prior = {
             'rprs':rprs,        # Rp/Rs
@@ -2360,11 +2367,11 @@ if __name__ == "__main__":
             'per':planetPeriod,     # Period [day]
             'inc':inc,        # Inclination [deg]
             'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
-            'ecc': eccent,            # Eccentricity
+            'ecc': ecc,            # Eccentricity
             'omega':0,          # Arg of periastron
-            'tmid':timeMidTransit,         # time of mid transit [day]
-            'a1': aone,
-            'a2': 0
+            'tmid':tmid,         # time of mid transit [day]
+            'a1': aone,         #mid Flux
+            'a2': 0             #Flux lower bound
         }
 
         mybounds = {
@@ -2403,7 +2410,8 @@ if __name__ == "__main__":
         bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
 
         extractRad = pDict['rprs']
-        extractTime = bjdMidTranCur  # expected mid transit time of the transit the user observed (based on previous calculation)
+        extractTime = midT
+        Cur  # expected mid transit time of the transit the user observed (based on previous calculation)
         sigOff = standardDev1
         amC2Guess = 0  # guess b airmass term is 0
         sigC2 = .1  # this is a huge guess so it's always going to be less than this

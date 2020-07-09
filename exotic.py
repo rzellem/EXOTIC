@@ -594,7 +594,11 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 #Checks if comparison star coordinates don't point to variable stars
-def variableStarCheck(rafile, decfile, compStarList):
+def variableStarCheck(raList, decList, compStarList):
+    #Debugging stuff
+    import pdb
+    pdb.set_trace()
+
     validCoordList = []
     errorMargin = 0.005556
 
@@ -615,16 +619,17 @@ def variableStarCheck(rafile, decfile, compStarList):
         try:
             resultTable = Simbad.query_region(coord.SkyCoord(validCoordList[counter][0], validCoordList[counter][1], unit = (u.deg, u.deg)))
         except TypeError:
+            #Move on to next comparison star if coordinates are invalid
             print("Error: Invalid star coordinates. Checking next star... ")
             continue
 
         #Check if star ID/name explicitly has V* in it
         starName = resultTable['MAIN_ID'][0].decode("utf-8")
         if "V*" in starName:
-            print("Comparison star " + starName + " is variable; selecting alternative star...")
+            print("Comparison star " + starName + " is variable")
             compPixelCoords = validCoordList[counter].all_world2pix()
-            #validCoordList.pop(validCoordList[counter])
             compStarList.remove(compPixelCoords)
+
     return True
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
@@ -1929,11 +1934,9 @@ if __name__ == "__main__":
                             rymax = int(prevRPY) + distFC  # bottom
 
                             # check if the reference is too close to the edge of the detector
-=======
                             if rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData):
                                 print('*************************************************************************************')
                                 print('WARNING: In image '+str(fileNumber)+', your reference star has drifted too close to the edge of the detector.')
->>>>>>> 5c482b5695718c12539b2167b58d3c7fc0b3c27b
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
                                 print('*************************************************************************************')
@@ -2191,13 +2194,10 @@ if __name__ == "__main__":
                     # Exit aperture loop
                 # Exit annulus loop
             # Exit the Comp Stars Loop
+
             #Doublechecking to see if comparison star != variable star
             print("Verifying selected comparison star is not variable. Please wait.")
             isVariable = variableStarCheck(rafile, decfile, compStarList)
-            if isVariable:
-                print("Selected star is variable and not valid for measurements. Now selecting new comparison star.")
-            else:
-                continue
 
             print('\n*********************************************')
             print('Best Comparison Star: #' + str(bestCompStar))

@@ -112,7 +112,7 @@ from photutils import CircularAperture
 from photutils import aperture_photometry
 
 # cross corrolation imports
-from skimage.feature import register_translation
+from skimage.registration import phase_cross_correlation
 
 # Lightcurve imports
 # TODO fix conflicts
@@ -1034,7 +1034,7 @@ def realTimeReduce(i):
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
 
         # corrects for any image shifts that result from a tracking slip
-        shift, error, diffphase = register_translation(prevImageData, imageData)
+        shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
         xShift = shift[1]
         yShift = shift[0]
 
@@ -1842,11 +1842,11 @@ if __name__ == "__main__":
                             # ------ CENTROID FITTING ----------------------------------------
 
                             # corrects for any image shifts that result from a tracking slip
-                            # shift, error, diffphase = register_translation(prevImageData, imageData)
+                            # shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
                             if fileNumber in reg_trans.keys():
                                 shift, error, diffphase = reg_trans[fileNumber]
                             else:
-                                shift, error, diffphase = register_translation(prevImageData, imageData)
+                                shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
                                 reg_trans[fileNumber] = [shift, error, diffphase]
 
                             xShift = shift[1]

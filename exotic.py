@@ -112,7 +112,7 @@ from photutils import CircularAperture
 from photutils import aperture_photometry
 
 # cross corrolation imports
-from skimage.feature import register_translation
+from skimage.registration import phase_cross_correlation
 
 # Lightcurve imports
 # TODO fix conflicts
@@ -363,7 +363,7 @@ def user_input(prompt, type_, val1=None, val2=None):
                 print("Sorry, your response was not valid.")
             else:
                 return option
-        elif type_ == int or type_ == float:
+        elif type_ == int or type_ == float or type_ == str:
             return option
 
 
@@ -433,17 +433,17 @@ def planetary_parameters(CandidatePlanetBool, pDict=None):
                  'loggUncNeg': None}
 
         for i, key in enumerate(pDict):
-            if key in ('pName', 'sName'):
-                pDict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=str)
+            if key not in ('pName', 'sName', 'ra', 'dec'):
+                pDict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=float)
+            elif key in ('pName', 'sName'):
+                pDict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=str)
             elif key == 'ra':
-                    raStr = input('Enter the ' + planet_params[i] + ': ')
-                    pDict['ra'] = astropy.coordinates.Angle(raStr + " hours").deg
+                raStr = input('\nEnter the ' + planet_params[i] + ': ')
+                pDict['ra'] = astropy.coordinates.Angle(raStr + " hours").deg
             elif key == 'dec':
-                    decStr = input('Enter the ' + planet_params[i] + ': ')
-                    decStr = decStr.replace(' ', '').replace(':', '')
-                    pDict['dec'] = astropy.coordinates.Angle(decStr + " degrees").deg
-            else:
-                pDict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
+                decStr = input('\nEnter the ' + planet_params[i] + ': ')
+                decStr = decStr.replace(' ', '').replace(':', '')
+                pDict['dec'] = astropy.coordinates.Angle(decStr + " degrees").deg
 
     return pDict
 
@@ -1034,7 +1034,7 @@ def realTimeReduce(i):
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
 
         # corrects for any image shifts that result from a tracking slip
-        shift, error, diffphase = register_translation(prevImageData, imageData)
+        shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
         xShift = shift[1]
         yShift = shift[0]
 
@@ -1399,7 +1399,7 @@ if __name__ == "__main__":
                 while targetName.lower().replace(' ', '').replace('-', '') not in planets:
                     print("\nCannot find " + targetName + " in the NASA Exoplanet Archive. Check spelling or file: eaConf.json.")
                     targetName = str(input("If this is a planet candidate, type candidate: "))
-                    if targetName == 'candidate':
+                    if targetName.replace(' ', '') == 'candidate':
                         CandidatePlanetBool = True
                         break
             if not CandidatePlanetBool:
@@ -1842,11 +1842,11 @@ if __name__ == "__main__":
                             # ------ CENTROID FITTING ----------------------------------------
 
                             # corrects for any image shifts that result from a tracking slip
-                            # shift, error, diffphase = register_translation(prevImageData, imageData)
+                            # shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
                             if fileNumber in reg_trans.keys():
                                 shift, error, diffphase = reg_trans[fileNumber]
                             else:
-                                shift, error, diffphase = register_translation(prevImageData, imageData)
+                                shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
                                 reg_trans[fileNumber] = [shift, error, diffphase]
 
                             xShift = shift[1]

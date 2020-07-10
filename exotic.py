@@ -688,81 +688,23 @@ def fit_centroid(data, pos, init=None, box=10):
     if init:
         pass
     else:
-        init = [np.max(data[yv,xv]), 1, 1, 0, np.min(data[yv,xv]) ]
+        init = [np.nanmax(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
 
-    # fit gaussian PSF
-    pars = fit_psf(
-        data,
-        [wx, wy], # position estimate 
-        init,    # initial guess: [amp, sigx, sigy, rotation, bg]
-        [wx-5, wy-5, 0,   0, 0, -np.pi/4, np.min(data[yv,xv]) ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-        [wx+5, wy+5, 1e7, 20, 20,  np.pi/4, np.percentile(data[yv,xv],25)], # upper bound
-        psf_function=gaussian_psf,
-        box=box # only fit a subregion +/- 5 px from centroid
-    )
+    try:
+        # fit gaussian PSF
+        pars = fit_psf(
+            data,
+            [wx, wy], # position estimate 
+            init,    # initial guess: [amp, sigx, sigy, rotation, bg]
+            [wx-5, wy-5, np.nanmin(data), 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
+            psf_function=gaussian_psf,
+            box=box # only fit a subregion +/- 5 px from centroid
+        )
+    except:
+        import pdb; pdb.set_trace() 
 
     return pars
-
-
-    # if not init:  # if init is none, then set the values
-    #     init = [-1, 5, 5, 0]
-
-    # # estimate the amplitude and centroid
-    # if init[0] == -1:
-    #     # subarray of data around star
-        
-
-    #     # amplitude guess
-    #     init[0] = np.max(data[yv, xv])
-        
-    #     # weighted sum to estimate center
-    #     wx = np.sum(np.unique(xv) * data[yv, xv].sum(0)) / np.sum(data[yv, xv].sum(0))
-    #     wy = np.sum(np.unique(yv) * data[yv, xv].sum(1)) / np.sum(data[yv, xv].sum(1))
-    #     pos = [wx, wy]
-
-    #     # estimate std by calculation of FWHM
-    #     x, y = data[yv, xv].sum(0), data[yv, xv].sum(1)
-    #     init[1] = estimate_sigma(x)
-    #     init[2] = estimate_sigma(y)
-        
-    #     # star might be saturated
-    #     if init[1] < 1 or init[1] > 40:
-    #         print("out of bounds for seeing, is the star saturated?")
-    #         init[1] = 2
-        
-    #     if init[1] < 1 or init[1] > 40:
-    #         print("out of bounds for seeing, is the star saturated?")
-    #         init[1] = 2
-        
-
-
-    #     # Background Estimate
-    #     # compute the average from 1/4 of the lowest values in the background
-    #     init[3] = np.mean(np.sort(data[yv, xv].flatten())[:int(data[yv, xv].flatten().shape[0] * 0.25)])
-    # # print('init priors for centroid:',init)
-    # # print('init2:',init)
-
-    # # recenter data on weighted average of light (peak amplitude)
-    # xv, yv = mesh_box(pos, box)
-
-    # # pars = x,y, a,sigx,sigy, rotate
-    # def fcn2min(pars):
-    #     model = star_psf(xv, yv, *pars)
-    #     return (data[yv, xv] - model).flatten()  # method for LS
-    #     # return np.sum( (data[yv,xv]-model)**2 ) # method for minimize
-
-
-    # lo = [pos[0] - box, pos[1] - box, 0, 1, 1, 0]
-    # up = [pos[0] + box, pos[1] + box, 200000, 40, 40, np.max(data[yv, xv])]
-    # res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point')
-    # del init
-
-    # if psf_output:
-    #     return psf(*res.x, 0)
-    # else:
-    #     return res.x
-
-
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
 def getFlux(data, xc, yc, r=5, dr=5):
@@ -1077,14 +1019,14 @@ def realTimeReduce(i):
         tGuessAmp = targSearchA.max() - targSearchA.min()
 
         # Fits Centroid for Target
-        myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()]
+        myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
         tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
         currTPX = tx
         currTPY = ty
 
         # Fits Centroid for Reference
         rGuessAmp = refSearchA.max() - refSearchA.min()
-        myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
+        myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
         rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
         currRPX = rx
         currRPY = ry
@@ -1934,7 +1876,7 @@ if __name__ == "__main__":
                                 tGuessAmp = targSearchA.max() - tGuessBkg
                                 if tGuessAmp < 0:
                                     print('Error: the Darks have a higher pixel counts than the image itself')
-                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, tGuessBkg]  #########ERROR HERE
+                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, tGuessBkg]
 
                                 # tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
                                 #                                                     init=myPriors, box=distFC)
@@ -1953,7 +1895,7 @@ if __name__ == "__main__":
                                 yTargCent.append(currTPY)
 
                                 rGuessAmp = refSearchA.max() - rGuessBkg
-                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, rGuessBkg]
+                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, rGuessBkg]
                                 # rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
                                 # init=myRefPriors, box=distFC)
                                 if fileNumber in ref_fits.keys():

@@ -980,6 +980,7 @@ def realTimeReduce(i):
     timesListed = []
 
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
+    directoryP = ""
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
         directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))

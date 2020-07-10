@@ -641,115 +641,35 @@ def image_alignment(sortedallImageData):
     return sortedallImageData, unalignedBoolList, boollist
 
 
-# Method that defines a 2D Gaussian
-def twoD_Gaussian(xdata_tuple, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
-    (x, y) = xdata_tuple
-    xo = float(xo)
-    yo = float(yo)
-    a = (np.cos(theta) ** 2) / (2 * sigma_x ** 2) + (np.sin(theta) ** 2) / (2 * sigma_y ** 2)
-    b = -(np.sin(2 * theta)) / (4 * sigma_x ** 2) + (np.sin(2 * theta)) / (4 * sigma_y ** 2)
-    c = (np.sin(theta) ** 2) / (2 * sigma_x ** 2) + (np.cos(theta) ** 2) / (2 * sigma_y ** 2)
-    g = offset + amplitude * np.exp(- (a * ((x - xo) ** 2) + 2 * b * (x - xo) * (y - yo) + c * ((y - yo) ** 2)))
-    return g
-
-
 # defines the star point spread function as a 2D Gaussian
 def star_psf(x, y, x0, y0, a, sigx, sigy, b):
     gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
     return gaus
 
 
-# Class of star_psf objects with setters and getters
-class psf(object):
-    def __init__(self, x0, y0, a, sigx, sigy, b, rot=0):
-        self.pars = [x0, y0, a, sigx, sigy, b]
-        self.a = a
-        self.x0 = x0
-        self.y0 = y0
-        self.sigx = sigx
-        self.sigy = sigy
-        self.b = b
-        self.rot = rot
-
-    # define the star's rotational orientation and orient the Gaussian to it
-    def eval(self, x, y):
-        if self.rot == 0:
-            return star_psf(x, y, *self.pars)
-        else:
-            return rotate(star_psf(x, y, *self.pars), self.rot, reshape=False)
-
-    @property
-    def gaussian_area(self):
-        # PSF area without background
-        return 2 * np.pi * self.a * self.sigx * self.sigy
-
-    @property
-    def cylinder_area(self):
-        # models background
-        return np.pi * (3 * self.sigx * 3 * self.sigy) * self.b
-
-    @property
-    def area(self):
-        return self.gaussian_area + self.cylinder_area
-
-
 # Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
 def estimate_sigma(x, maxidx=-1):
     if maxidx == -1:
         maxidx = np.argmax(x)
-    lower = np.abs(x - 0.5 * np.max(x))[:maxidx].argmin()
-    upper = np.abs(x - 0.5 * np.max(x))[maxidx:].argmin() + maxidx
+    lower = np.abs(x - 0.5 * np.nanmax(x))[:maxidx].argmin()
+    upper = np.abs(x - 0.5 * np.nanmax(x))[maxidx:].argmin() + maxidx
     FWHM = upper - lower
     return FWHM / (2 * np.sqrt(2 * np.log(2)))
 
+def gaussian_psf(x,y,x0,y0,a,sigx,sigy,rot, b):
+    rx = (x-x0)*np.cos(rot) - (y-y0)*np.sin(rot)
+    ry = (x-x0)*np.sin(rot) + (y-y0)*np.cos(rot)
+    gausx = np.exp(-(rx)**2 / (2*sigx**2) )
+    gausy = np.exp(-(ry)**2 / (2*sigy**2) )
+    return a*gausx*gausy + b
 
-# Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, init=None, psf_output=False, lossfn='linear', box=25):
-    if not init:  # if init is none, then set the values
-        init = [-1, 5, 5, 0]
-
-    # estimate the amplitude and centroid
-    if init[0] == -1:
-        # subarray of data around star
-        xv, yv = mesh_box(pos, box)
-
-        # amplitude guess
-        init[0] = np.max(data[yv, xv])
-
-        # weighted sum to estimate center
-        wx = np.sum(np.unique(xv) * data[yv, xv].sum(0)) / np.sum(data[yv, xv].sum(0))
-        wy = np.sum(np.unique(yv) * data[yv, xv].sum(1)) / np.sum(data[yv, xv].sum(1))
-        pos = [wx, wy]
-        # estimate std by calculation of FWHM
-        x, y = data[yv, xv].sum(0), data[yv, xv].sum(1)
-        init[1] = estimate_sigma(x)
-        init[2] = estimate_sigma(y)
-
-        # Background Estimate
-        # compute the average from 1/4 of the lowest values in the background
-        init[3] = np.mean(np.sort(data[yv, xv].flatten())[:int(data[yv, xv].flatten().shape[0] * 0.25)])
-    # print('init priors for centroid:',init)
-    # print('init2:',init)
-
-    # recenter data on weighted average of light (peak amplitude)
-    xv, yv = mesh_box(pos, box)
-
-    # pars = x,y, a,sigx,sigy, rotate
+def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',box=15):
+    xv,yv = mesh_box(pos, box)
     def fcn2min(pars):
-        model = star_psf(xv, yv, *pars)
-        return (data[yv, xv] - model).flatten()  # method for LS
-        # return np.sum( (data[yv,xv]-model)**2 ) # method for minimize
-
-    lo = [pos[0] - box, pos[1] - box, 0, 1, 1, 0]
-    up = [pos[0] + box, pos[1] + box, 100000, 40, 40, np.max(data[yv, xv])]
-    res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point')
-    del init
-
-    if psf_output:
-        return psf(*res.x, 0)
-    else:
-        return res.x
-
+        model = psf_function(xv,yv,*pars)
+        return (data[yv,xv]-model).flatten()
+    res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point')
+    return res.x
 
 def mesh_box(pos,box):
     pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
@@ -758,6 +678,33 @@ def mesh_box(pos,box):
     xv, yv = np.meshgrid(x, y)
     return xv.astype(int), yv.astype(int)
 
+# Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
+def fit_centroid(data, pos, init=None, box=10):
+
+    # get sub field in image
+    xv, yv = mesh_box(pos, box)
+    wx, wy = pos # could take flux weighted centroid if not crowded
+
+    if init:
+        pass
+    else:
+        init = [np.nanmax(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
+
+    try:
+        # fit gaussian PSF
+        pars = fit_psf(
+            data,
+            [wx, wy], # position estimate 
+            init,    # initial guess: [amp, sigx, sigy, rotation, bg]
+            [wx-5, wy-5, np.nanmin(data), 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
+            psf_function=gaussian_psf,
+            box=box # only fit a subregion +/- 5 px from centroid
+        )
+    except:
+        import pdb; pdb.set_trace() 
+
+    return pars
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
 def getFlux(data, xc, yc, r=5, dr=5):
@@ -1016,8 +963,8 @@ def realTimeReduce(i):
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
     # fit first image
-    targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY], box=15)
-    refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY], box=15)
+    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY], box=10)
+    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY], box=10)
 
     # just use one aperture and annulus
     apertureR = 3 * max(targsigX, targsigY)
@@ -1072,15 +1019,15 @@ def realTimeReduce(i):
         tGuessAmp = targSearchA.max() - targSearchA.min()
 
         # Fits Centroid for Target
-        myPriors = [tGuessAmp, prevTSigX, prevTSigY, targSearchA.min()]
-        tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=15)
+        myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
+        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
         currTPX = tx
         currTPY = ty
 
         # Fits Centroid for Reference
         rGuessAmp = refSearchA.max() - refSearchA.min()
-        myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, refSearchA.min()]
-        rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=15)
+        myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
+        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
         currRPX = rx
         currRPY = ry
 
@@ -1744,7 +1691,7 @@ if __name__ == "__main__":
             while firstimagegood:
                 # fit Target in the first image and use it to determine aperture and annulus range
                 try:
-                    targx, targy, targamplitude, targsigX, targsigY, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
                                                                                             box=10)
                     firstimagegood = False
                 # If the first image is a bad one, then move on to the next image
@@ -1809,7 +1756,7 @@ if __name__ == "__main__":
                 UIprevRPX, UIprevRPY = compStarList[compCounter]
 
                 print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
-                refx, refy, refamplitude, refsigX, refsigY, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
+                refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
                                                                                 box=10)
                 print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
 
@@ -1929,14 +1876,14 @@ if __name__ == "__main__":
                                 tGuessAmp = targSearchA.max() - tGuessBkg
                                 if tGuessAmp < 0:
                                     print('Error: the Darks have a higher pixel counts than the image itself')
-                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, tGuessBkg]  #########ERROR HERE
+                                myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, tGuessBkg]
 
                                 # tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
                                 #                                                     init=myPriors, box=distFC)
                                 if fileNumber in target_fits.keys():
                                     tx, ty, tamplitude, tsigX, tsigY, toff = target_fits[fileNumber]
                                 else:
-                                    tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
+                                    tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, targPos,
                                                                                           init=myPriors, box=distFC)
                                     target_fits[fileNumber] = [tx, ty, tamplitude, tsigX, tsigY, toff]
 
@@ -1948,13 +1895,13 @@ if __name__ == "__main__":
                                 yTargCent.append(currTPY)
 
                                 rGuessAmp = refSearchA.max() - rGuessBkg
-                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, rGuessBkg]
+                                myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, rGuessBkg]
                                 # rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
                                 # init=myRefPriors, box=distFC)
                                 if fileNumber in ref_fits.keys():
                                     rx, ry, ramplitude, rsigX, rsigY, roff = ref_fits[fileNumber]
                                 else:
-                                    rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
+                                    rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY],
                                                                                           init=myRefPriors, box=distFC)
                                     ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff]
                                 currRPX = rx

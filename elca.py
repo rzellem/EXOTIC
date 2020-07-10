@@ -440,15 +440,6 @@ if __name__ == "__main__":
     data += np.random.normal(0, prior['a1']*250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
 
-<<<<<<< HEAD
-=======
-    airmass = np.linspace(0.65,0.85,100)    ##NEEDS FIXED!!!!!!!!!!
-    ##>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-    #plt.plot(time,data,'ko')
-    #plt.show()
-    #dude()
->>>>>>> 072b2a7d8272853b4971d18694b3a15379efce7f
 
     # add bounds for free parameters only
     mybounds = {

@@ -981,6 +981,12 @@ def realTimeReduce(i):
 
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
     directoryP = ""
+    directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
+    # Add / to end of directory if user does not input it
+    if directToWatch[-1] != "/":
+        directToWatch += "/"
+    directoryP = directToWatch
+
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
         directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
@@ -1165,6 +1171,7 @@ if __name__ == "__main__":
         print('**************************************************************\n')
 
         directToWatch = str(input("Enter the Directory Path of imaging files: "))
+        directoryP = ""
         directoryP = directToWatch
         directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
 
@@ -1205,6 +1212,8 @@ if __name__ == "__main__":
         print('\n**************************')
         print('Complete Reduction Routine')
         print('**************************\n')
+
+        directoryP = ""
 
         fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 

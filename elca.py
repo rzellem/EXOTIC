@@ -330,9 +330,9 @@ class lc_fitter(object):
         self.time = time
         self.data = data
         self.dataerr = dataerr
+        self.airmass = airmass
         self.prior = prior
         self.bounds = bounds
-        self.airmass = airmass
         self.fit_nested()
 
     def fit_nested(self):
@@ -345,14 +345,13 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model = model*(self.prior['a1']*np.exp(self.prior['a2']*self.airmass))
+            model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
             return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
 
         def prior_transform(upars):
             # transform unit cube to prior volume
             return (boundarray[:,0] + bounddiff*upars)
 
-        # TODO try
         dsampler = dynesty.DynamicNestedSampler(
             loglike, prior_transform,
             ndim=len(freekeys), bound='multi', sample='unif',
@@ -362,25 +361,35 @@ class lc_fitter(object):
         dsampler.run_nested()
         self.results = dsampler.results
 
-        # alloc data
+        # alloc data for best fit + error
         self.errors = {}
         self.parameters = {}
+        self.quantiles = {}
+        self.best = {}
         for k in self.prior:
             self.parameters[k] = self.prior[k]
+            self.best[k] = self.prior[k]
+
+        bi = np.argmax(self.results.logwt)
 
         # errors + final values
-        self.weights = np.exp(self.results['logwt'] - self.results['logz'][-1])
+        self.weights = np.exp(self.results.logwt - self.results.logz[-1])
+        mean, cov = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
         for i in range(len(freekeys)):
-            lo,me,up = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=self.weights)
-            self.errors[freekeys[i]] = [lo-me,up-me]
-            self.parameters[freekeys[i]] = me
+            self.errors[freekeys[i]] = cov[i,i]**0.5
+            self.parameters[freekeys[i]] = mean[i]
+
+            # sample with best chi^2
+            self.best[freekeys[i]] = self.results.samples[bi,i]
+
+            # finds median and +- 2sigma, will vary from mode if non-gaussian
+            self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=self.weights)
 
         # final model
         self.transit = transit(self.time, self.parameters)
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
-
         self.residuals = self.data - self.model
 
     def plot_bestfit(self):
@@ -390,13 +399,13 @@ class lc_fitter(object):
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1 )
         axs = [ax_lc, ax_res]
 
-        axs[0].errorbar(self.time, self.data, yerr=self.dataerr, ls='none', marker='o', color='black', zorder=1)
-        axs[0].plot(self.time, self.model, 'r-', zorder=2)
+        axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='black', zorder=1)
+        axs[0].plot(self.time, self.transit, 'r-', zorder=2)
         axs[0].set_xlabel("Time [day]")
         axs[0].set_ylabel("Relative Flux")
         axs[0].grid(True,ls='--')
 
-        axs[1].plot(self.time, self.residuals*1e6, 'ko')
+        axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), 'ko')
         axs[1].set_xlabel("Time [day]")
         axs[1].set_ylabel("Residuals [ppm]")
         plt.tight_layout()
@@ -410,30 +419,39 @@ if __name__ == "__main__":
         'ars':14.25,        # a/Rs
         'per':3.336817,     # Period [day]
         'inc':87.5,        # Inclination [deg]
-        'u1': 0.3, 'u2': 0.01, # limb darkening (linear, quadratic)
+        'u1': 0.3, 'u2': 0.1, # limb darkening (linear, quadratic)
         'ecc':0,            # Eccentricity
         'omega':0,          # Arg of periastron
         'tmid':0.75,         # time of mid transit [day],
-        'a1':50,
-        'a2':0
+
+        'a1':50,            # airmass coeffcients
+        'a2':0.25
     }
 
+    time = np.linspace(0.65,0.85,150) # [day]
+
+    # simulate extinction from airmass
+    stime = time-time[0]
+    alt = 90* np.cos(4*stime-np.pi/6)
+    airmass = 1./np.cos( np.deg2rad(90-alt))
+
     # GENERATE NOISY DATA
-    time = np.linspace(0.65,0.85,100) # [day]
-    data = transit(time, prior) + np.random.normal(0, 2e-4, len(time))
+    data = transit(time, prior)*prior['a1']*np.exp(prior['a2']*airmass)
+    data += np.random.normal(0, prior['a1']*250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
 
-    #plt.plot(time,data,'ko')
-    #plt.show()
-    #dude()
 
+    # add bounds for free parameters only
     mybounds = {
         'rprs':[0,0.1],
         'tmid':[min(time),max(time)],
-        'ars':[13,15]
+        'ars':[13,15], 
+
+        'a1':[25,75],
+        'a2':[0,0.3]
     }
 
-    myfit = lc_fitter(time, data, dataerr, prior, mybounds)
+    myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds)
 
     for k in myfit.bounds.keys():
         print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
@@ -441,7 +459,8 @@ if __name__ == "__main__":
     fig,axs = myfit.plot_bestfit()
 
     # triangle plot
-    fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
-    dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
+    fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
+    dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
     plt.tight_layout()
-    plt.savefig("temp.png")
+    plt.show()
+    #plt.savefig("temp.png")

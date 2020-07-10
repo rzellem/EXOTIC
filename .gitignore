@@ -125,3 +125,5 @@ venv.bak/
 
 # Local extra files
 *.swp
+eaConf.json
+get-pip.py

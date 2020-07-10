@@ -107,7 +107,7 @@ from astropy.wcs import WCS
 # Image alignment import
 import astroalign as aa
 
-import astropy.wcs as WCS
+from astropy.wcs import WCS
 from astroquery.simbad import Simbad
 import astropy.coordinates as coord
 import astropy.units as u
@@ -508,8 +508,8 @@ def check_wcs(fits_file, saveDirectory):
         pass
 
     # Gets the WCS of the header and checks to see if it exists
-    wcs = WCS(header)
-    wcsExists = wcs.is_celestial
+    wcz = WCS(header)
+    wcsExists = wcz.is_celestial
 
     # If the fits file has WCS info, ask the user if they trust it
     if wcsExists:

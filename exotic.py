@@ -381,6 +381,89 @@ def create_directory():
         return saveDirectory
 
 
+# Check user's init.txt for information / STILL WORKING ON, VERY UNORGANIZED AND NOT CALLED (won't effect code)
+def init(inits):
+                # Directory Info
+    initinfo = ["Directory with fits files",
+                "Directory to save plots",
+                "Directory of flats",
+                "Directory of darks",
+                "Directory of biases",
+
+                # AAVSO Output Info
+                "AAVSO output?",
+                "AAVSO Observer Account Number",
+                "Secondary Observer Codes",
+
+                # Observatory Info
+                "Observation date",
+                "Obs. Latitude (+=N,-=S)",
+                "Obs. Longitude (+=E,-=W)",
+                "Obs. Elevation (meters)",
+
+                # Observation Setup Info
+                "Camera Type (CCD or DSLR)",
+                "Pixel Binning",
+                "Exposure Time (seconds)",
+                "Filter Name (aavso.org/filters)",
+                "Observing Notes",
+
+                # Target Info
+                "Planet name",
+                "Target Star RA (hh:mm:ss)",
+                "Target Star Dec (+/-hh:mm:ss)",
+                "Target Star pixel coords (x,y)",
+                "Number of Comparison Stars"]
+
+    init_planet_params = ["Planet's Name", "Host Star's Name", "Target Star RA", "Target Star Dec",
+                          "Orbital Period (days)", "Orbital Period Uncertainty (days)", "Published Mid-Transit Time",
+                          "Mid-Transit Time Uncertainty", "Ratio of Planet to Stellar Radius",
+                          "Ratio of Distance to Stellar Radius", "Orbital Inclination", "Orbital Eccentricity",
+                          "Star Effective Temperature (K)", "Star Effective Temperature (+) Uncertainty",
+                          "Star Effective Temperature (-) Uncertainty", "Star Metallicity",
+                          "Star Metallicity (+) Uncertainty", "Star Metallicity (-) Uncertainty", "Star Surface Gravity",
+                          "Star Surface Gravity (+) Uncertainty", "Star Surface Gravity (-) Uncertainty"]
+
+    initdictinfo = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasdir': None, 'aavsoopt': None,
+                      'aavsonum': None, 'secobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None, 'ctype': None,
+                      'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None, 'pName': None, 'ra': None, 'dec': None,
+                      'tarcoords': None, 'compstars': None}
+
+    initdictplanet = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None,
+                      'midT': None, 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None,
+                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
+                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
+    j=0
+
+    for i, key in enumerate(initdictinfo):
+        while initinfo[i].lower() not in inits[j].lower():
+            j += 1
+        initdictinfo[key] = inits[j].split("\t")[-1].rstrip()
+        if 'Number of Comparison Stars'.lower() in inits[j].lower():
+            numCompStars = int(inits[j].split("\t")[-1].rstrip())
+            j += 1
+            break
+
+    # Initial position of target star
+    UIprevTPX = int(initdictinfo['tarcoords'].split(",")[0])
+    UIprevTPY = int(initdictinfo['tarcoords'].split(",")[-1])
+
+    # Read in locations of comp stars
+    compStarList = []
+    for i in range(numCompStars):
+        rxp, ryp = [int(k) for k in inits[j].split("\t")[-1].rstrip().split(',')]
+        compStarList.append((rxp, ryp))
+        j +=1
+
+    for i, key in enumerate(initdictplanet):
+        while init_planet_params[i].lower() not in inits[j].lower():
+            j += 1
+        initdictplanet[key] = inits[j].split("\t")[-1].rstrip()
+
+    # return initdictinfo, initdictplanet
+    return initdictinfo, compStarList
+
+
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
 def planetary_parameters(CandidatePlanetBool, pDict=None):

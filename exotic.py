@@ -2400,6 +2400,23 @@ if __name__ == "__main__":
 
         fig,axs = myfit.plot_bestfit()
 
+        ax_lc = axs[0]
+        ax_res = axs[1]
+
+        ax_lc.spines['bottom'].set_color('black')
+        ax_lc.spines['top'].set_color('black')
+        ax_lc.spines['right'].set_color('black')
+        ax_lc.spines['left'].set_color('black')
+        ax_lc.tick_params(axis='x', colors='black')
+        ax_lc.tick_params(axis='y', colors='black')
+
+        ax_res.spines['bottom'].set_color('black')
+        ax_res.spines['top'].set_color('black')
+        ax_res.spines['right'].set_color('black')
+        ax_res.spines['left'].set_color('black')
+        ax_res.tick_params(axis='x', colors='black')
+        ax_res.tick_params(axis='y', colors='black')
+
         fig.savefig("ns_lc.png")
 
         # triangle plot

@@ -399,7 +399,7 @@ class lc_fitter(object):
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1 )
         axs = [ax_lc, ax_res]
 
-        axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='black', zorder=1)
+        axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', zorder=1)
         axs[0].plot(self.time, self.transit, 'r-', zorder=2)
         axs[0].set_xlabel("Time [day]")
         axs[0].set_ylabel("Relative Flux")
@@ -409,7 +409,6 @@ class lc_fitter(object):
         axs[1].set_xlabel("Time [day]")
         axs[1].set_ylabel("Residuals [ppm]")
         plt.tight_layout()
-        plt.savefig("lc_model.png")
 
         return f,axs
 

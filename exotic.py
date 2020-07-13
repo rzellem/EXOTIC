@@ -1628,6 +1628,9 @@ if __name__ == "__main__":
 
                 hdul.close()  # closes the file to avoid using up all of computer's resources
                 del hdul
+            
+            # Leave this open as we need it later in the code. Yes, I know this is not good coding, but we will fix it later. (TODO)
+            hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
 
             # Recast list as numpy arrays
             allImageData = np.array(allImageData)

@@ -698,7 +698,7 @@ def fit_centroid(data, pos, init=None, box=10):
         # fit gaussian PSF
         pars = fit_psf(
             data,
-            [wx, wy], # position estimate 
+            [wx, wy], # position estimate
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
             [wx-5, wy-5, np.nanmin(data), 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
@@ -706,7 +706,7 @@ def fit_centroid(data, pos, init=None, box=10):
             box=box # only fit a subregion +/- 5 px from centroid
         )
     except:
-        import pdb; pdb.set_trace() 
+        import pdb; pdb.set_trace()
 
     return pars
 

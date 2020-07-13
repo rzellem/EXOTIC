@@ -405,7 +405,7 @@ class lc_fitter(object):
         axs[0].set_ylabel("Relative Flux")
         axs[0].grid(True,ls='--')
 
-        axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), 'ko')
+        axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), marker='o', color='gray')
         axs[1].set_xlabel("Time [day]")
         axs[1].set_ylabel("Residuals [ppm]")
         plt.tight_layout()

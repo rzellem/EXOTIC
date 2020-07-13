@@ -978,8 +978,7 @@ def realTimeReduce(i):
         header = fits.getheader(imageFile)
 
         hdul.close()
-        del hdul#[0].data
-        hdul=None
+        del hdul
 
         # Find the target star in the image and get its pixel coordinates if it is the first file
         if fileNumber == 1:

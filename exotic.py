@@ -107,6 +107,9 @@ from astropy.wcs import WCS
 # Image alignment import
 import astroalign as aa
 
+# Limb darkening tool kit import
+from ldtk import LDPSetCreator, BoxcarFilter
+
 # photometry
 from photutils import CircularAperture
 from photutils import aperture_photometry
@@ -486,8 +489,90 @@ def check_file_extensions(directory, fileName):
             else:
                 directory = input("Enter the directory path where " + fileName + " files are located: ")
         except OSError:
-            print("Error: No such directory exists. Please try again.")
+            print("Error: No such directory exists when searching for FITS files. Please try again.")
             directory = input("Enter the directory path where " + fileName + " files are located: ")
+
+
+# Calculating Limb Darkening Parameters using LDTK
+def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
+                     # Source for min/max band wavelengths (units: nm): https://www.aavso.org/filters
+                     # Near-Infrared
+    minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
+                     'Near-Infrared J': (1040.00, 1360.00), 'Near-Infrared H': (1420.00, 1780.00), 'Near-Infrared K': (2015.00, 2385.00),
+
+                     # Sloan
+                     'SU': (321.80, 386.80), 'SG': (402.50, 551.50), 'SR': (553.10, 693.10), 'SI': (697.50, 827.50), 'SZ': (841.20, 978.20),
+                     'Sloan u': (321.80, 386.80), 'Sloan g': (402.50, 551.50), 'Sloan r': (553.10, 693.10), 'Sloan i': (697.50, 827.50), 'Sloan z': (841.20, 978.20),
+
+                     # Stromgren
+                     'STU': (336.30, 367.70), 'STV': (401.50, 418.50), 'STB': (459.55, 478.05), 'STY': (536.70, 559.30),
+                     'Stromgren u': (336.30, 367.70), 'Stromgren v': (401.50, 418.50), 'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30),
+                     'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
+                     'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
+
+                     # Johnson
+                     'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
+                     'Johnson U': (333.80, 398.80), 'Johnson B': (391.60, 480.60), 'Johnson V': (502.80, 586.80), 'Johnson RJ': (590.00, 810.00), 'Johnson IJ': (780, 1020),
+
+                     # Cousins
+                     'R': (561.70, 719.70), 'I': (721.00, 875.00),
+                     'Cousins R': (561.70, 719.70), 'Cousins R': (721.00, 875.00)}
+
+    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
+
+    # User decides to allow EXOTIC to calculate limb darkening parameters
+    if ldopt == 'y':
+        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int, val1=1, val2=2)
+
+        # Standard filters calculating limb darkening parameters
+        if standcustomopt == 1:
+            while True:
+                try:
+                    filtername = input('\nPlease enter in the filter type using https://www.aavso.org/filters '
+                                       '(EX: Johnson U, U, Stromgren u, STU): ')
+                    if filtername not in minmaxwavelen:
+                        raise KeyError
+                    break
+                except KeyError:
+                    print('Error: The entered filter is not a part of the standard ones listed at https://www.aavso.org/filters.')
+
+            wlmin = minmaxwavelen[filtername][0]
+            wlmax = minmaxwavelen[filtername][1]
+
+        # Custom filters calculating limb darkening parameters
+        else:
+            filtername = input('\nPlease enter in your custom filter name: ')
+            wlmin = float(input('Minimum wavelength: '))
+            wlmax = float(input('Maximum wavelength: '))
+
+        filters = [BoxcarFilter(filtername, wlmin, wlmax)]
+
+        tefferr = np.sqrt(abs(teffpos * teffneg))
+        loggerr = np.sqrt(abs(loggpos * loggneg))
+        meterr = np.sqrt(abs(metpos * metneg))
+
+        sc = LDPSetCreator(teff=(teff, tefferr), logg=(logg, loggerr), z=(met, meterr),
+                           filters=filters)
+        ps = sc.create_profiles(nsamples=1000)
+        qc, qe = ps.coeffs_qd(do_mc=True, n_mc_samples=1000)
+
+        linearlimb = qc[0][0]
+        linearlimbunc = qe[0][0]
+        quadlimb = qc[0][1]
+        quadlimbunc = qe[0][1]
+
+    # User enters in their own limb darkening parameters with uncertainties
+    else:
+        linearlimb = float(input('\nPlease enter in your linear term: '))
+        linearlimbunc = float(input('Enter in your linear term uncertainty: '))
+        quadlimb = float(input('Enter in your quadratic term: '))
+        quadlimbunc = float(input('Enter in your quadratic term uncertainty: '))
+
+    print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
+    print('Linear Term: %s +/- %s' % (linearlimb, linearlimbunc))
+    print('Quadratic Term: %s +/- %s' % (quadlimb, quadlimbunc))
+
+    return linearlimb, quadlimb
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -593,7 +678,7 @@ def plate_solution(fits_file, saveDirectory):
             r = requests.get(fits_download_url)
             with open(wcs_file, 'wb') as f:
                 f.write(r.content)
-            print('\n\nSuccess. Check the directory in which you chose to your save plots.')
+            print('\n\nSuccess. Check the directory in which you chose to save your plots.')
             return wcs_file
 
         # If the new-fits-file failed, inform user and exit
@@ -982,7 +1067,7 @@ def realTimeReduce(i):
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
-        directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
             directToWatch += "/"
@@ -1357,7 +1442,7 @@ if __name__ == "__main__":
         # Check to see if the save directory exists
         while True:
             try:
-                if saveDirectory == 'new':
+                if saveDirectory.replace(' ', '') == 'new':
                     saveDirectory = create_directory()
                     break
                 # In case the user forgets the trailing / for the folder
@@ -1462,7 +1547,14 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 UIprevTPX = user_input('\n' + targetName + " X Pixel Coordinate: ", type_=int)
                 UIprevTPY = user_input(targetName + " Y Pixel Coordinate: ", type_=int)
-                numCompStars = user_input("How many comparison stars would you like to use? (1-10) ", type_=int)
+                while True:
+                    try:
+                        numCompStars = user_input("How many comparison stars would you like to use? (1-10) ", type_=int)
+                        if numCompStars > 10 or numCompStars < 1:
+                            raise ValueError
+                        break
+                    except ValueError:
+                        print('Please enter a number between 1-10 for comparison stars.')
 
                 # MULTIPLE COMPARISON STARS
                 compStarList = []
@@ -1575,50 +1667,9 @@ if __name__ == "__main__":
         else:
             pDict = planetary_parameters(CandidatePlanetBool)
 
-        # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
-        URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
-        URLphp = 'http://astroutils.astronomy.ohio-state.edu/exofast/quadld.php'
-
-        with requests.Session() as sesh:
-            while True:
-                try:
-                    form_newData = {"action": URLphp,
-                                    "teff": str(pDict['teff']),
-                                    "feh": str(pDict['met']),
-                                    "logg": str(pDict['logg']),
-                                    "bname": filterName,
-                                    "pname": "Select Planet"
-                                    }
-                    r = sesh.post(URLphp, data=form_newData)
-                    fullcontents = r.text
-
-                    # linear term
-                    linearString = ''
-                    for indexLinear in range(len(fullcontents)):
-                        if fullcontents[indexLinear].isdigit():
-                            while fullcontents[indexLinear + 1] != ' ':
-                                linearString = linearString + fullcontents[indexLinear]
-                                indexLinear = indexLinear + 1
-                            # print (linearString)
-                            linearLimb = float(linearString)
-                            break
-
-                    # quadratic term
-                    quadString = ''
-                    for indexQuad in range(indexLinear + 1, len(fullcontents)):
-                        if fullcontents[indexQuad].isdigit() or fullcontents[indexQuad] == '.':
-                            quadString = quadString + fullcontents[indexQuad]
-                            indexQuad = indexQuad + 1
-                    # print (quadString)
-                    quadLimb = float(quadString)
-                    break
-                except ValueError:
-                    filterName = input('\nNot valid filter name. Please enter a valid filter name using '
-                                       'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ')
-
-        print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
-        print('Linear Term: ' + linearString)
-        print('Quadratic Term: ' + quadString)
+        linearLimb, quadLimb = ldtk_quadratic(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'], pDict['met'],
+                                              pDict['metUncNeg'], pDict['metUncPos'], pDict['logg'],
+                                              pDict['loggUncPos'], pDict['loggUncNeg'])
 
         if fitsortext == 1:
             print('\n**************************')

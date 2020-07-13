@@ -972,7 +972,7 @@ def realTimeReduce(i):
 
     for imageFile in timeSortedNames:
 
-        hDul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
         imageData = fits.getdata(imageFile, ext=0)
         header = fits.getheader(imageFile)

@@ -2400,6 +2400,8 @@ if __name__ == "__main__":
 
         fig,axs = myfit.plot_bestfit()
 
+        fig.savefig("ns_lc.png")
+
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs', 'a1', 'a2'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
@@ -2421,7 +2423,7 @@ if __name__ == "__main__":
         bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
 
         extractRad = pDict['rprs']
-        extractTime = midT
+        extractTime = tMid
         Cur  # expected mid transit time of the transit the user observed (based on previous calculation)
         sigOff = standardDev1
         amC2Guess = 0  # guess b airmass term is 0

@@ -409,6 +409,7 @@ class lc_fitter(object):
         axs[1].set_xlabel("Time [day]")
         axs[1].set_ylabel("Residuals [ppm]")
         plt.tight_layout()
+        plt.savefig("lc_model.png")
 
         return f,axs
 
@@ -445,7 +446,7 @@ if __name__ == "__main__":
     mybounds = {
         'rprs':[0,0.1],
         'tmid':[min(time),max(time)],
-        'ars':[13,15], 
+        'ars':[13,15],
 
         'a1':[25,75],
         'a2':[0,0.3]

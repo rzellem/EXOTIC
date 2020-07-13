@@ -958,7 +958,7 @@ def realTimeReduce(i):
     # sorts the times for later plotting use
     sortedTimeList = sorted(timeList)
 
-    hdul = fits.open(timeSortedNames[0])  # opens the fits file
+    # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
@@ -972,10 +972,14 @@ def realTimeReduce(i):
 
     for imageFile in timeSortedNames:
 
-        hDul = fits.open(imageFile)  # opens the fits file
+        hDul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
         imageData = fits.getdata(imageFile, ext=0)
         header = fits.getheader(imageFile)
+
+        hdul.close()
+        del hdul[0].data
+        hdul=None
 
         # Find the target star in the image and get its pixel coordinates if it is the first file
         if fileNumber == 1:

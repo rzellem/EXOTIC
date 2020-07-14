@@ -2310,19 +2310,8 @@ if __name__ == "__main__":
         # NESTED SAMPLING FITTING
         ##########################
 
-        # PRIORS
-        ### Double check these priors
-        # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
-    #    midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
-    #    BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
-    #    radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
-    #    airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
-    #    airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
-
         aone = np.median(goodFluxes)
-        print(aone)
         rprs = pDict['rprs']
-        print(rprs)
         semi = pDict['aRs']
         planetPeriod = pDict['pPer']
         ecc = pDict['ecc']
@@ -2350,17 +2339,24 @@ if __name__ == "__main__":
             'a2':[-10,10]
         }
 
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)      #calling fitting method in elca.py
 
         for k in myfit.bounds.keys():
             print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
-        fig,axs = myfit.plot_bestfit()
+        chi2 = myfit.results.logwt        #retrieving chi2 values
+        binNumber = []
+
+        # ----Chi squared plotting---------------------------------------------------------------
+        for k in np.arange(len(goodFluxes) // 10):  # +1
+            rollList.append(k * 10)
+
+        fig,axs = myfit.plot_bestfit()    #plot the results
 
         ax_lc = axs[0]
         ax_res = axs[1]
 
-        ax_lc.spines['bottom'].set_color('black')
+        ax_lc.spines['bottom'].set_color('black')      #altering the border, tick color
         ax_lc.spines['top'].set_color('black')
         ax_lc.spines['right'].set_color('black')
         ax_lc.spines['left'].set_color('black')
@@ -2382,6 +2378,31 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.savefig("temp.png")
         print("figure saved")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
         #####################
@@ -2461,7 +2482,7 @@ if __name__ == "__main__":
         print('MCMC Diagnostic Tests and Chi Squared Burn\n')
 
         # ChiSquared Trace to determine burn in length
-        burn = plotChi2Trace(trace, goodFluxes, goodTimes, goodAirmasses, goodNormUnc)
+    #    burn = plotChi2Trace(trace, goodFluxes, goodTimes, goodAirmasses, goodNormUnc)
 
         # OUTPUTS
         fitMidTArray = trace['Tmid', burn:]
@@ -2623,7 +2644,7 @@ if __name__ == "__main__":
         # Check for how well the light curve fits the data
         chiSum = 0
         chiSquareList = []
-        rollList = []
+        binNumber = []
 
         # ----Chi squared calculation---------------------------------------------------------------
         for k in np.arange(len(finalFluxes) // 10):  # +1
@@ -2639,6 +2660,28 @@ if __name__ == "__main__":
         plt.ylabel('Chi Squared')
         plt.savefig(saveDirectory + 'temp/ChiSquaredRoll' + targetName + '.png')
         plt.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         # print final extracted planetary parameters
 

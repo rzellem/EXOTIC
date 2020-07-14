@@ -690,7 +690,7 @@ def get_radec(hdul):
     xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
     yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
-    ra, dec = wcsheader.all_pix2world(x, y, 1)
+    ra, dec = wcsheader.all_pix2world(x, y, 0)
     return ra, dec
 
 
@@ -713,9 +713,9 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist, blcoords):
             if repixopt == 'y':
                 # Boolean value to keep track if user changed coordinates
                 blcoords = True
+                # Checks for the closest pixel location in ralist and declist for expected ra and dec
                 dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
-                np.unravel_index(dist.argmin(), dist.shape)
-                dist.min()
+                pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
                 searchopt = user_input('Here are the suggested pixel coordinates: X Pixel: %s Y Pixel: %s'
                                        '\nWould you like to use these? (y/n): ' % (pixx, pixy), type_=str, val1='y', val2='n')
                 # Use the coordinates found by code
@@ -1851,38 +1851,30 @@ if __name__ == "__main__":
                     print("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                # # Plate Solution
-                # pathSolve = saveDirectory + 'first_file.fits'
-                #
-                # # Removes existing file of first_fits.fits
-                # try:
-                #     os.remove(pathSolve)
-                # except OSError:
-                #     pass
-                # convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
-                # convertToFITS.writeto(pathSolve)
-                # wcsFile = check_wcs(pathSolve, saveDirectory)
-                #
-                # # Check pixel coordinates by converting to WCS. If not correct, loop over again
-                # if wcsFile:
-                #     hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
-                #
-                #     # Save previously entered x and y pixel coordinates before checking against plate solution
-                #     saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
-                #     rafile, decfile = get_radec(hdulWCS)
-                #     UIprevTPX, UIprevTPY, boolcoords = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
-                #                                                             pDict['dec'], rafile, decfile, boolcoords)
-                #
-                #     # If the coordinates were not changed, do not loop over again
-                #     if not boolcoords:
-                #         break
+                # Plate Solution
+                pathSolve = saveDirectory + 'first_file.fits'
 
-                UIprevTPX, UIprevTPY = 22, 22
-                wcsFile = '/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/sample-data/newfits.fits'
-                hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
-                ralist, declist = get_radec(hdulWCS)
-                UIprevTPX, UIprevTPY = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
-                                                            pDict['dec'], ralist, declist, boolcoords)
+                # Removes existing file of first_fits.fits
+                try:
+                    os.remove(pathSolve)
+                except OSError:
+                    pass
+                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
+                convertToFITS.writeto(pathSolve)
+                wcsFile = check_wcs(pathSolve, saveDirectory)
+
+                # Check pixel coordinates by converting to WCS. If not correct, loop over again
+                if wcsFile:
+                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                    rafile, decfile = get_radec(hdulWCS)
+
+                    # Save previously entered x and y pixel coordinates before checking against plate solution
+                    saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
+                    UIprevTPX, UIprevTPY, boolcoords = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
+                                                                            pDict['dec'], rafile, decfile, boolcoords)
+                    # If the coordinates were not changed, do not loop over again
+                    if not boolcoords or (UIprevTPX == saveUIprevTPX and UIprevTPY == saveUIprevTPY):
+                        break
 
             # Image Alignment
             print("\nAligning your images from FITS files. Please wait.")

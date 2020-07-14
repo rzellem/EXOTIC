@@ -726,7 +726,7 @@ def check_comparisonpixelwcs(pixx, pixy, hdul):
     # NOTE: You can mimic the design from the check_targetpixelwcs from above if you'd like
     # in terms of checking bounds and playing around with it.
     # NOTE: You can call this function anytime after the function call of -
-    # wcsFile = check_wcs(pathSolve, saveDirectory) , currently at line 1853
+    # wcsFile = check_wcs(pathSolve, saveDirectory) , currently at line 1855
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions

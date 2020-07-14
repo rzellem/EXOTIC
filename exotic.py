@@ -1612,7 +1612,7 @@ if __name__ == "__main__":
                 # del fitsHead
 
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
-
+                imageheader = hdul[0].header
                 # TIME
                 timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
                 timeList.append(timeVal)  # adds to time value list
@@ -2142,13 +2142,13 @@ if __name__ == "__main__":
                     imscale = imscaleunits + ": " + str(round(imscalen, 2))
                 hdulWCS.close()  # close stream
                 del hdulWCS
-            elif "IM_SCALE" in hdul[0].header:
-                imscalen = hdul[0].header['IM_SCALE']
-                imscaleunits = hdul[0].header.comments['IM_SCALE']
+            elif "IM_SCALE" in imageheader:
+                imscalen = imageheader['IM_SCALE']
+                imscaleunits = imageheader.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)
             elif "PIXSCALE" in hdul[0].header:
-                imscalen = hdul[0].header['PIXSCALE']
-                imscaleunits = hdul[0].header.comments['PIXSCALE']
+                imscalen = imageheader['PIXSCALE']
+                imscaleunits = imageheader.comments['PIXSCALE']
                 imscale = imscaleunits + ": " + str(imscalen)
             else:
                 print("Cannot find the pixel scale in the image header.")
@@ -2190,7 +2190,7 @@ if __name__ == "__main__":
             plt.close()
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in hdul[0].header:
+            if "BJD_TDB" in imageheader:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

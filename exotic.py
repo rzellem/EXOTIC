@@ -684,7 +684,8 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 
-# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution, DECOMISSIONED FOR NOW
+# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution,
+# DECOMISSIONED FOR NOW
 # def get_radec(wcsfile):
 #     hdulWCS = fits.open(wcsfile)
 #     wcsheader = WCS(hdulWCS[0].header)
@@ -773,12 +774,14 @@ def estimate_sigma(x, maxidx=-1):
     FWHM = upper - lower
     return FWHM / (2 * np.sqrt(2 * np.log(2)))
 
+
 def gaussian_psf(x,y,x0,y0,a,sigx,sigy,rot, b):
     rx = (x-x0)*np.cos(rot) - (y-y0)*np.sin(rot)
     ry = (x-x0)*np.sin(rot) + (y-y0)*np.cos(rot)
     gausx = np.exp(-(rx)**2 / (2*sigx**2) )
     gausy = np.exp(-(ry)**2 / (2*sigy**2) )
     return a*gausx*gausy + b
+
 
 def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',box=15):
     xv,yv = mesh_box(pos, box)
@@ -788,12 +791,14 @@ def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',box=15
     res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point')
     return res.x
 
+
 def mesh_box(pos,box):
     pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
     x = np.arange(pos[0]-box, pos[0]+box+1)
     y = np.arange(pos[1]-box, pos[1]+box+1)
     xv, yv = np.meshgrid(x, y)
     return xv.astype(int), yv.astype(int)
+
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
 def fit_centroid(data, pos, init=None, box=10):
@@ -822,6 +827,7 @@ def fit_centroid(data, pos, init=None, box=10):
         import pdb; pdb.set_trace() 
 
     return pars
+
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
 def getFlux(data, xc, yc, r=5, dr=5):
@@ -2258,20 +2264,25 @@ if __name__ == "__main__":
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             if wcsFile:
-                if hdulWCS[0].header['COMMENT'][135].split(' ')[0] == 'scale:':
-                    imscalen = float(hdulWCS[0].header['COMMENT'][135].split(' ')[1])
-                    imscaleunits = 'Image scale in arc-secs/pixel'
-                    imscale = imscaleunits + ": " + str(round(imscalen, 2))
-                else:
-                    i = 100
-                    while hdulWCS[0].header['COMMENT'][i].split(' ')[0] != 'scale:':
-                        i += 1
-                    imscalen = float(hdulWCS[0].header['COMMENT'][i].split(' ')[1])
-                    imscaleunits = 'Image scale in arc-secs/pixel'
-                    imscale = imscaleunits + ": " + str(round(imscalen, 2))
-                hdulWCS.close()  # close stream
-                del hdulWCS
-            elif "IM_SCALE" in imageheader:
+                # For those who use their own plate solution and may not have pixel scale
+                # involved like nova.astrometry.net
+                try:
+                    if hdulWCS[0].header['COMMENT'][135].split(' ')[0] == 'scale:':
+                        imscalen = float(hdulWCS[0].header['COMMENT'][135].split(' ')[1])
+                        imscaleunits = 'Image scale in arc-secs/pixel'
+                        imscale = imscaleunits + ": " + str(round(imscalen, 2))
+                    else:
+                        i = 100
+                        while hdulWCS[0].header['COMMENT'][i].split(' ')[0] != 'scale:':
+                            i += 1
+                        imscalen = float(hdulWCS[0].header['COMMENT'][i].split(' ')[1])
+                        imscaleunits = 'Image scale in arc-secs/pixel'
+                        imscale = imscaleunits + ": " + str(round(imscalen, 2))
+                    hdulWCS.close()  # close stream
+                    del hdulWCS
+                except KeyError:
+                    pass
+            if "IM_SCALE" in imageheader:
                 imscalen = imageheader['IM_SCALE']
                 imscaleunits = imageheader.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)

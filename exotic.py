@@ -571,8 +571,10 @@ def check_file_extensions(directory, fileName):
 
 # Check for WCS in the user's imaging data and possibly plate solves.
 def check_wcs(fits_file, saveDirectory):
-    hdulist = fits.open(fits_file)
+    hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     header = hdulist[0].header
+    hdulist.close()  # close stream
+    del hdulist
 
     # MJD seems sometimes throw off an error. Deleted since not important for plate solving
     try:
@@ -1045,13 +1047,13 @@ def realTimeReduce(i):
 
     fileNumber = 1
     for fileName in g.glob(directoryP):  # Loop through all the fits files and time sorts
-
-        fitsHead = fits.open(fileName)  # opens the file
-
+        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
         # TIME
         timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
         timeList.append(timeVal)  # adds to time value list
         fileNameList.append(fileName)
+        fitsHead.close()  # close stream
+        del fitsHead
 
     # Time sorts the file names based on the fits file header
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
@@ -1059,7 +1061,7 @@ def realTimeReduce(i):
     # sorts the times for later plotting use
     sortedTimeList = sorted(timeList)
 
-    hdul = fits.open(timeSortedNames[0])  # opens the fits file
+    # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
@@ -1073,10 +1075,14 @@ def realTimeReduce(i):
 
     for imageFile in timeSortedNames:
 
-        hDul = fits.open(imageFile)  # opens the fits file
+        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
-        imageData = fits.getdata(imageFile, ext=0)
-        header = fits.getheader(imageFile)
+        currTime = getJulianTime(hdul)
+        imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
+        header = hdul[0].header  # fits.getheader(imageFile)
+
+        hdul.close()  # close the stream
+        del hdul
 
         # Find the target star in the image and get its pixel coordinates if it is the first file
         if fileNumber == 1:
@@ -1143,7 +1149,6 @@ def realTimeReduce(i):
         normalizedFluxVals.append((tFluxVal / rFluxVal))
 
         # TIME
-        currTime = getJulianTime(hDul)
         timesListed.append(currTime)
 
         # UPDATE PIXEL COORDINATES and SIGMAS
@@ -1161,7 +1166,6 @@ def realTimeReduce(i):
         # UPDATE FILE COUNT
         prevImageData = imageData
         fileNumber = fileNumber + 1
-        hDul.close()  # close the stream
 
     # EXIT THE FILE LOOP
 
@@ -1696,7 +1700,7 @@ if __name__ == "__main__":
                 # ----TIME SORT THE FILES-------------------------------------------------------------
                 for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
-                    # fitsHead = fits.open(fileName)  # opens the file
+                    # fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
 
                     # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
                     # if fitsHead[0].header ['FILTER']== 'Harris-B':
@@ -1704,9 +1708,11 @@ if __name__ == "__main__":
                     #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
                     #     timeList.append(timeVal) #adds to time value list
                     #     fileNameList.append (fileName)
+                    # fitsHead.close()  # close stream
+                    # del fitsHead
 
-                    hdul = fits.open(fileName)  # opens the file
-
+                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                    imageheader = hdul[0].header
                     # TIME
                     timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
                     timeList.append(timeVal)  # adds to time value list
@@ -1724,12 +1730,15 @@ if __name__ == "__main__":
                     allImageData.append(hdul[0].data)
 
                     hdul.close()  # closes the file to avoid using up all of computer's resources
+                    del hdul
 
                 # Recast list as numpy arrays
                 allImageData = np.array(allImageData)
                 timesListed = np.array(timesListed)
                 airMassList = np.array(airMassList)
 
+                # TODO: Is this dead code? The vars pointing and location are undefined.
+                # TODO: comment out conditional block?
                 # If all of the airmasses == 1, then you need to calculate the airmass for the user
                 if set(airMassList) == 1:
                     pointingAltAz = pointing.transform_to(AltAz(obstime=t, location=location))
@@ -1781,8 +1790,8 @@ if __name__ == "__main__":
                 # Loops through all of the possible aperture and annulus radius
                 # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
 
-                # hdul = fits.open(timeSortedNames[0])  # opens the fits file
-                # firstImageData = fits.getdata(timeSortedNames[0], ext=0)
+                # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                # firstImageData = hdul['ext', 0].data  # fits.getdata(timeSortedNames[0], ext=0)
                 firstimagecounter = 0
                 firstImageData = sortedallImageData[firstimagecounter]
 
@@ -1833,7 +1842,7 @@ if __name__ == "__main__":
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
-                    hdulWCS = fits.open(wcsFile)
+                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
 
                     # Save previously entered x and y pixel coordinates before checking against plate solution
                     saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
@@ -1899,7 +1908,7 @@ if __name__ == "__main__":
                         print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
                         for fileNumber, imageData in enumerate(sortedallImageData):
 
-                            # hDul = fits.open(imageFile)  # opens the fits file
+                            # hDul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
                             # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
 
                             # header = fits.getheader(imageFile)
@@ -2246,13 +2255,15 @@ if __name__ == "__main__":
                     imscalen = float(hdulWCS[0].header['COMMENT'][i].split(' ')[1])
                     imscaleunits = 'Image scale in arc-secs/pixel'
                     imscale = imscaleunits + ": " + str(round(imscalen, 2))
-            elif "IM_SCALE" in hdul[0].header:
-                imscalen = hdul[0].header['IM_SCALE']
-                imscaleunits = hdul[0].header.comments['IM_SCALE']
+                hdulWCS.close()  # close stream
+                del hdulWCS
+            elif "IM_SCALE" in imageheader:
+                imscalen = imageheader['IM_SCALE']
+                imscaleunits = imageheader.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)
             elif "PIXSCALE" in hdul[0].header:
-                imscalen = hdul[0].header['PIXSCALE']
-                imscaleunits = hdul[0].header.comments['PIXSCALE']
+                imscalen = imageheader['PIXSCALE']
+                imscaleunits = imageheader.comments['PIXSCALE']
                 imscale = imscaleunits + ": " + str(imscalen)
             else:
                 print("Cannot find the pixel scale in the image header.")
@@ -2294,7 +2305,7 @@ if __name__ == "__main__":
             plt.close()
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in hdul[0].header:
+            if "BJD_TDB" in imageheader:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

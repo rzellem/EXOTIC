@@ -2310,428 +2310,85 @@ if __name__ == "__main__":
         # NESTED SAMPLING FITTING
         ##########################
 
-        aone = np.median(goodFluxes)
-        rprs = pDict['rprs']
-        semi = pDict['aRs']
-        planetPeriod = pDict['pPer']
-        ecc = pDict['ecc']
-        inc = pDict['inc']
-        tmid = pDict['midT']
-
         prior = {
-            'rprs':rprs,        # Rp/Rs
-            'ars':semi,        # a/Rs
-            'per':planetPeriod,     # Period [day]
-            'inc':inc,        # Inclination [deg]
+            'rprs':pDict['rprs'],        # Rp/Rs
+            'ars':pDict['aRs'],        # a/Rs
+            'per':pDict['pPer'],     # Period [day]
+            'inc':pDict['inc'],        # Inclination [deg]
             'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
-            'ecc': ecc,            # Eccentricity
+            'ecc': pDict['ecc'],            # Eccentricity
             'omega':0,          # Arg of periastron
-            'tmid':tmid,         # time of mid transit [day]
-            'a1': aone,         #mid Flux
+            'tmid':pDict['midT'],         # time of mid transit [day]
+            'a1': np.median(goodFluxes),         #mid Flux
             'a2': 0             #Flux lower bound
         }
 
         mybounds = {
             'rprs':[0,2*rprs],
             'tmid':[min(goodTimes),max(goodTimes)],
-            'ars':[semi/2,2*semi],
+            #'ars':[semi/2,2*semi],
             'a1':[0, max(goodFluxes)],
             'a2':[-10,10]
         }
+
+        # TODO 3-sigma clip 
 
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)      #calling fitting method in elca.py
 
         for k in myfit.bounds.keys():
             print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
-        chi2 = myfit.results.logwt        #retrieving chi2 values
-        binNumber = []
 
-        # ----Chi squared plotting---------------------------------------------------------------
-        for k in np.arange(len(goodFluxes) // 10):  # +1
-            rollList.append(k * 10)
+        # BEST FIT MODEL
+        f,axs = myfit.plot_bestfit()
 
-        fig,axs = myfit.plot_bestfit()    #plot the results
-
-        ax_lc = axs[0]
-        ax_res = axs[1]
-
-        ax_lc.spines['bottom'].set_color('black')      #altering the border, tick color
-        ax_lc.spines['top'].set_color('black')
-        ax_lc.spines['right'].set_color('black')
-        ax_lc.spines['left'].set_color('black')
-        ax_lc.tick_params(axis='x', colors='black')
-        ax_lc.tick_params(axis='y', colors='black')
-
-        ax_res.spines['bottom'].set_color('black')
-        ax_res.spines['top'].set_color('black')
-        ax_res.spines['right'].set_color('black')
-        ax_res.spines['left'].set_color('black')
-        ax_res.tick_params(axis='x', colors='black')
-        ax_res.tick_params(axis='y', colors='black')
-
-        fig.savefig("ns_lc.png")
-
-        # triangle plot
-        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid','a/Rs', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a/Rs', 'a1', 'a2'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        plt.tight_layout()
-        plt.savefig("temp.png")
-        print("figure saved")
-
-###################################################################################################
-#Here starts the uncertain code
-###################################################################################################
-
-        fittedTimes = myfit.time  #use this variable or goodTimes???
-
-        fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)  #does this function need to be called?
-        airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))   #need to re-create fitMidT, fitRadius, etc. 
-
-        # Final 3-sigma Clip
-        residuals = (goodFluxes / fittedModel) - 1.0
-        try:
-            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
-        except TypeError:
-            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
-
-        finalFluxes = goodFluxes[~finalFilter.mask]
-        finalTimes = goodTimes[~finalFilter.mask]
-        # finalPhases = goodPhases[~finalFilter.mask]
-        finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
-        finalAirmasses = goodAirmasses[~finalFilter.mask]
-        # finalTargets = goodTargets[~finalFilter.mask]
-        # finalReferences = goodReferences[~finalFilter.mask]
-        # finalTUnc = goodTUnc[~finalFilter.mask]
-        # finalRUnc = goodRUnc[~finalFilter.mask]
-        finalNormUnc = goodNormUnc[~finalFilter.mask]
-
-        finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))
-
-        # Final Light Curve Model
-        finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
-
-        # recaclculate phases based on fitted mid transit time
-        adjPhases = []
-        for bTime in finalTimes:
-            newPhase = ((bTime - fitMidT) / pDict['pPer'])
-            adjPhases.append(newPhase)
-        adjustedPhases = np.array(adjPhases)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        #####################
-        # MCMC LIGHTCURVE FIT
-        #####################
-        # The transit function is based on the analytic expressions of Mandel and Agol et al 2002. and Gael Roudier's transit model
-        log = logging.getLogger(__name__)
-        pymc3log = logging.getLogger('pymc3')
-        pymc3log.setLevel(logging.ERROR)
-
-        # OBSERVATIONS
-
-        bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
-
-        extractRad = pDict['rprs']
-        extractTime = tMid
-        Cur  # expected mid transit time of the transit the user observed (based on previous calculation)
-        sigOff = standardDev1
-        amC2Guess = 0  # guess b airmass term is 0
-        sigC2 = .1  # this is a huge guess so it's always going to be less than this
-        sigRad = (np.median(standardDev1)) / (2 * pDict['rprs'])  # uncertainty is the uncertainty in the dataset w/ propogation
-        # propMidTUnct = uncTMid(ogPeriodErr, ogMidTErr, goodTimes, planetPeriod,bjdMidTOld)  # use method to calculate propogated midTUncertainty
-
-        contextupdt(times=goodTimes, airm=goodAirmasses)  # update my global constant variable
-
-        # define the light curve model using theano tensors
-        @tco.as_op(itypes=[tt.dscalar, tt.dscalar, tt.dscalar, tt.dscalar], otypes=[tt.dvector])
-        def gaelModel(*specparams):
-            tranTime, pRad, amc1, amc2 = specparams
-
-            # lightcurve model
-            sep, ophase = time2z(context['times'], pDict['inc'], float(tranTime), pDict['aRs'], pDict['pPer'], pDict['ecc'])
-            gmodel, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
-
-            # exponential airmass model
-            airmassModel = (float(amc1) * (np.exp(float(amc2) * context['airmass'])))
-            completeModel = gmodel * airmassModel
-
-            return completeModel
-
-
-        # initialize pymc3 sampler using gael model
-        nodes = []
-        lcMod = pm.Model()
-        with lcMod:
-
-            # PRIORS
-            ### Double check these priors
-            # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
-            midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
-            BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
-            radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
-            airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
-            airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
-
-            # append to list of parameters
-            nodes.append(midT)
-            nodes.append(radius)
-            nodes.append(airmassCoeff1)
-            nodes.append(airmassCoeff2)
-
-            # OBSERVATION MODEL
-            obs = pm.Normal('obs', mu=gaelModel(*nodes), tau=1. / (goodNormUnc ** 2.), observed=goodFluxes)
-
-        # Sample from the model
-        final_chain_length = int(100000)
-
-        with lcMod:
-            step = pm.Metropolis()  # Metropolis-Hastings Sampling Technique
-            if "Windows" in platform.system():
-                trace = pm.sample(final_chain_length, step, chains=None, cores=1) # For some reason, Windows machines do not like using multi-cores with pymc3....
-            else:
-                trace = pm.sample(final_chain_length, step, chains=None, cores=None)
-
-        # ----Plot the Results from the MCMC -------------------------------------------------------------------
-        print('\n******************************************')
-        print('MCMC Diagnostic Tests and Chi Squared Burn\n')
-
-        # ChiSquared Trace to determine burn in length
-    #    burn = plotChi2Trace(trace, goodFluxes, goodTimes, goodAirmasses, goodNormUnc)
-
-        # OUTPUTS
-        fitMidTArray = trace['Tmid', burn:]
-        fitRadiusArray = trace['RpRs', burn:]
-
-        fitMidT = float(np.median(trace['Tmid', burn:]))
-        fitRadius = float(np.median(trace['RpRs', burn:]))
-        fitAm1 = float(np.median(trace['Am1', burn:]))
-        fitAm2 = float(np.median(trace['Am2', burn:]))
-
-        midTranUncert = round(np.std(trace['Tmid', burn:]), 6)
-        radUncert = round(np.std(trace['RpRs', burn:]), 6)
-        am1Uncert = round(np.std(trace['Am1', burn:]), 6)
-        am2Uncert = round(np.std(trace['Am2', burn:]), 6)
-
-        # Plot Traces
-        for keyi in trace.varnames:
-            if "interval" not in keyi:
-                plt.plot(trace[keyi, burn:])
-                plt.title(keyi)
-                plt.savefig(saveDirectory + 'temp/Traces' + targetName + date + "_" + keyi + '.png')
-                plt.close()
-
-        # # Gelman Rubin
-        # print("Gelman Rubin Convergence Test:")
-        # print(pm.gelman_rubin(trace))
-
-        # TODO set the MCMC chain length low, then run a gelman_rubin(trace) to see if <=1.1
-        # (RTZ will probably make this 1.01 to be safe)
-        # if they are not below this value, then run more chains
-        # Hopefully this will keep the code running for less time
-
-        fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)
-        airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))      #what is the purpose of this variable??
-
-        # Final 3-sigma Clip
-        residuals = (goodFluxes / fittedModel) - 1.0
-        try:
-            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
-        except TypeError:
-            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
-
-        finalFluxes = goodFluxes[~finalFilter.mask]
-        finalTimes = goodTimes[~finalFilter.mask]
-        # finalPhases = goodPhases[~finalFilter.mask]
-        finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
-        finalAirmasses = goodAirmasses[~finalFilter.mask]
-        # finalTargets = goodTargets[~finalFilter.mask]
-        # finalReferences = goodReferences[~finalFilter.mask]
-        # finalTUnc = goodTUnc[~finalFilter.mask]
-        # finalRUnc = goodRUnc[~finalFilter.mask]
-        finalNormUnc = goodNormUnc[~finalFilter.mask]
-
-        finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))
-
-        # Final Light Curve Model
-        finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
-
-        # recaclculate phases based on fitted mid transit time
-        adjPhases = []
-        for bTime in finalTimes:
-            newPhase = ((bTime - fitMidT) / pDict['pPer'])
-            adjPhases.append(newPhase)
-        adjustedPhases = np.array(adjPhases)
-
-        #########################
-        # PLOT FINAL LIGHT CURVE
-        #########################
-
-        f = plt.figure(figsize=(12 / 1.5, 9.5 / 1.5))
-        f.subplots_adjust(top=0.94, bottom=0.08, left=0.1, right=0.96)
-        ax_lc = plt.subplot2grid((4, 5), (0, 0), colspan=5, rowspan=3)
-        ax_res = plt.subplot2grid((4, 5), (3, 0), colspan=5, rowspan=1)
-        f.suptitle(targetName)
-
-        x = adjustedPhases
-        ax_res.set_xlabel('Phase')
-
-        # # make symmetric about 0 phase
-        # maxdist = max(np.abs(adjustedPhases[0]), adjustedPhases[-1])
-        # ax_res.set_xlim([-maxdist, maxdist])
-        # ax_lc.set_xlim([-maxdist, maxdist])
-
-        # clip plot to get rid of white space
-        ax_res.set_xlim([min(adjustedPhases), max(adjustedPhases)])
-        ax_lc.set_xlim([min(adjustedPhases), max(adjustedPhases)])
-
-        # making borders and tick labels black
-        ax_lc.spines['bottom'].set_color('black')
-        ax_lc.spines['top'].set_color('black')
-        ax_lc.spines['right'].set_color('black')
-        ax_lc.spines['left'].set_color('black')
-        ax_lc.tick_params(axis='x', colors='black')
-        ax_lc.tick_params(axis='y', colors='black')
-
-        ax_res.spines['bottom'].set_color('black')
-        ax_res.spines['top'].set_color('black')
-        ax_res.spines['right'].set_color('black')
-        ax_res.spines['left'].set_color('black')
-        ax_res.tick_params(axis='x', colors='black')
-        ax_res.tick_params(axis='y', colors='black')
-
-        # residual histogramfinalAirmassModel
-        # bins up to 3 std of Residuals
-
-        # # key cahnge of dividing residuals by the airmass model too
-        finalResiduals = finalFluxes / finalModel - 1.0
-
-        maxbs = np.round(3 * np.std(finalResiduals), -2) * 1e6
-        bins = np.linspace(-maxbs, maxbs, 7)
-
-        # residual plot
-        ax_res.plot(x, finalResiduals, color='gray', marker='o', markersize=5, linestyle='None')
-        ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=1, zorder=100)
-        ax_res.set_ylabel('Residuals')
-        # ax_res.set_ylim([-.04, .04])
-        ax_res.set_ylim([-2 * np.nanstd(finalResiduals), 2 * np.nanstd(finalResiduals)])
-
-        correctedSTD = np.std(finalResiduals)
-        # ax_lc.errorbar( x, self.y/self.data[t]['airmass'], yerr=self.yerr/self.data[t]['airmass'], ls='none', marker='o', color='black')
-        ax_lc.errorbar(adjustedPhases, finalFluxes / finalAirmassModel, yerr=finalNormUnc / finalAirmassModel, ls='none',
-                       marker='o', color='gray', markersize=4)
-        ax_lc.plot(adjustedPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
-
-        ax_lc.set_ylabel('Relative Flux')
-        ax_lc.get_xaxis().set_visible(False)
-
-        if binplotBool:
-            ax_res.errorbar(binner(x, len(finalResiduals) // 10), binner(finalResiduals, len(finalResiduals) // 10),
-                            yerr=binner(finalResiduals, len(finalResiduals) // 10, finalNormUnc / finalAirmassModel)[1],
-                            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            ax_lc.errorbar(binner(adjustedPhases, len(adjustedPhases) // 10),
-                           binner(finalFluxes / finalAirmassModel, len(adjustedPhases) // 10),
-                           yerr=binner(finalResiduals, len(finalResiduals) // 10, finalNormUnc / finalAirmassModel)[1],
-                           fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".pdf", bbox_inches="tight")
         except AttributeError:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".png", bbox_inches="tight")
         plt.close()
 
+
+        # triangle plot
+        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
+        dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a1', 'a2'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
+        plt.tight_layout()
+        plt.savefig(saveDirectory + 'temp/Triangle_{}_{}.png'.format(targetName, date))
+        print("triangle figure saved")
+
+
         # write output to text file
         outParamsFile = open(saveDirectory + 'FinalLightCurve' + targetName + date + '.csv', 'w+')
-        outParamsFile.write('FINAL TIMESERIES OF ' + targetName + '\n')
-        outParamsFile.write('BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
+        outParamsFile.write('# FINAL TIMESERIES OF ' + targetName + '\n')
+        outParamsFile.write('# BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 
-        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(finalTimes, adjustedPhases, finalFluxes/finalAirmassModel,
-                                                              finalNormUnc/finalAirmassModel, finalModel/finalAirmassModel, finalAirmassModel):
-            outParamsFile.write(str(bjdi)+","+str(phasei)+","+str(modeli)+","+str(fluxi)+","+str(fluxerri)+"\n")
+        phase = (myfit.time - myfit.parameters['tmid'] + 0.5*pDict['pPer'])/pDict['pPer'] % 1
+
+        for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip( myfit.time, phase, myfit.detrended, myfit.dataerr/myfit.airmass_model, myfit.transit, myfit.airmass_model):
+
+            outParamsFile.write("{}, {}, {}, {}, {}, {}\n".format(bjdi, phasei, fluxi, fluxerri, modeli, ami))
 
         outParamsFile.close()
-
-        ###################
-        # CHI SQUARED ROLL
-        ###################
-
-        # Check for how well the light curve fits the data
-        chiSum = 0
-        chiSquareList = []
-        binNumber = []
-
-        # ----Chi squared calculation---------------------------------------------------------------
-        for k in np.arange(len(finalFluxes) // 10):  # +1
-            sushi = np.roll(finalFluxes, k * 10)
-
-            # Performs a chi squared roll
-            chiSquareList.append(np.sum(((sushi - finalModel) / finalNormUnc) ** 2.) / (len(sushi) - 4))
-            rollList.append(k * 10)
-
-        plt.figure()
-        plt.plot(rollList, chiSquareList, "-o")
-        plt.xlabel('Bin Number')
-        plt.ylabel('Chi Squared')
-        plt.savefig(saveDirectory + 'temp/ChiSquaredRoll' + targetName + '.png')
-        plt.close()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
         # print final extracted planetary parameters
 
+        # x = Rp/Rs
+        # f(x) = x^2 
+        # uncertainty on f^2:
+        # (sig_f) = df/dx * sig_x 
+        # df/dx = 2*x
+
         print('*********************************************************')
         print('FINAL PLANETARY PARAMETERS')
-        print('\nThe fitted Mid-Transit Time is: ' + str(fitMidT) + ' +/- ' + str(midTranUncert) + ' (BJD)')
-        print('The fitted Ratio of Planet to Stellar Radius is: ' + str(fitRadius) + ' +/- ' + str(
-            radUncert) + ' (Rp/Rs)')
+        print('\nThe fitted Mid-Transit Time is: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)')
+        print('The fitted Ratio of Planet to Stellar Radius is: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
+            myfit.errors['rprs']) + ' (Rp/Rs)')
         print('The transit depth uncertainty is: ' + str(
-            100 * 2 * fitRadius * round(np.std(trace['RpRs', burn:]), 6)) + ' (%)')
-        print('The fitted airmass1 is: ' + str(fitAm1) + ' +/- ' + str(am1Uncert))
-        print('The fitted airmass2 is: ' + str(fitAm2) + ' +/- ' + str(am2Uncert))
-        print('The scatter in the residuals of the lightcurve fit is: ' + str(round(100 * correctedSTD, 3)) + ' (%)')
+            100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs'] + ' (%)')
+        print('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']))
+        print('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a1']))
+        print('The scatter in the residuals of the lightcurve fit is: {:.2f}'.format(np.std(myfit.residuals/np.median(myfit.data))))
         print('\n*********************************************************')
 
         ##########
@@ -2742,15 +2399,15 @@ if __name__ == "__main__":
         outParamsFile = open(saveDirectory + 'FinalParams' + targetName + date + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
-        outParamsFile.write('The fitted Mid-Transit Time is: ' + str(fitMidT) + ' +/- ' + str(midTranUncert) + ' (BJD)\n')
-        outParamsFile.write('The fitted Ratio of Planet to Stellar Radius is: ' + str(fitRadius) + ' +/- ' + str(
-            radUncert) + ' (Rp/Rs)\n')
+        outParamsFile.write('The fitted Mid-Transit Time is: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)\n')
+        outParamsFile.write('The fitted Ratio of Planet to Stellar Radius is: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
+            myfit.errors['rprs']) + ' (Rp/Rs)\n')
         outParamsFile.write('The transit depth uncertainty is: ' + str(
-            2 * 100 * fitRadius * round(np.std(trace['RpRs', burn:]), 6)) + ' (%)\n')
-        outParamsFile.write('The fitted airmass1 is: ' + str(fitAm1) + ' +/- ' + str(am1Uncert) + '\n')
-        outParamsFile.write('The fitted airmass2 is: ' + str(fitAm2) + ' +/- ' + str(am2Uncert) + '\n')
+            100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
+        outParamsFile.write('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
+        outParamsFile.write('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
         outParamsFile.write(
-            'The scatter in the residuals of the lightcurve fit is: ' + str(round(100 * correctedSTD, 3)) + '%\n')
+            'The scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) ) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + saveDirectory + ' as ' + targetName + date + '.txt' + '\n')
 
@@ -2783,17 +2440,18 @@ if __name__ == "__main__":
             pDict['aRs']) + ',inc=' + str(pDict['inc']) + ',ecc=' + str(pDict['ecc']) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
         # code yields
         outParamsFile.write(
-            '#RESULTS=Tc=' + str(round(fitMidT, 8)) + ' +/- ' + str(round(midTranUncert, 8)) + ',Rp/R*=' + str(
-                round(fitRadius, 6)) + ' +/- ' + str(round(radUncert, 6)) + ',Am1=' + str(
-                round(fitAm1, 5)) + ' +/- ' + str(round(am1Uncert, 5)) + ',Am2=' + str(
-                round(fitAm2, 5)) + ' +/- ' + str(round(am2Uncert, 5)) + '\n')  # code yields
+            '#RESULTS=Tc=' + str(round(myfit.parameters['tmid'], 8)) + ' +/- ' + str(round(myfit.errors['tmid'], 8)) + ',Rp/R*=' + str(
+                round(myfit.parameters['rprs'], 6)) + ' +/- ' + str(round(myfit.errors['rprs'], 6)) + ',Am1=' + str(
+                round(myfit.parameters['a1'], 5)) + ' +/- ' + str(round(myfit.errors['a1'], 5)) + ',Am2=' + str(
+                round(myfit.parameters['a2'], 5)) + ' +/- ' + str(round(myfit.errors['a2'], 5)) + '\n')  # code yields
         # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
         outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1,DETREND_2\n')
-        for aavsoC in range(0, len(finalTimes)):
+        for aavsoC in range(0, len(myfit.times)):
             outParamsFile.write(
-                str(round(finalTimes[aavsoC], 8)) + ',' + str(round(finalFluxes[aavsoC], 7)) + ',' + str(
-                    round(finalNormUnc[aavsoC], 7)) + ',' + str(round(finalAirmasses[aavsoC], 7)) + ',' + str(
-                    round(finalAirmassModel[aavsoC], 7)) + '\n')
+                str(round(myfit.times[aavsoC], 8)) + ',' + str(round(myfit.data[aavsoC], 7)) + ',' + str(
+                    round(myfit.dataerr[aavsoC], 7)) + ',' + str(round(goodAirmasses[aavsoC], 7)) + ',' + str(
+                    round(myfit.airmass_model[aavsoC], 7)) + '\n')
+                    
         # CODE YIELDED DATA IN PREV LINE FORMAT
         outParamsFile.close()
         print('Output File Saved')
@@ -2811,6 +2469,342 @@ if __name__ == "__main__":
         print('\n************************')
         print('End of Reduction Process')
         print('************************')
+
+
+        # binNumber = []
+
+        # # ----Chi squared plotting---------------------------------------------------------------
+        # for k in np.arange(len(goodFluxes) // 10):  # +1
+        #     rollList.append(k * 10)
+
+        #     #plot the results
+
+        # ax_lc = axs[0]
+        # ax_res = axs[1]
+
+        # ax_lc.spines['bottom'].set_color('black')      #altering the border, tick color
+        # ax_lc.spines['top'].set_color('black')
+        # ax_lc.spines['right'].set_color('black')
+        # ax_lc.spines['left'].set_color('black')
+        # ax_lc.tick_params(axis='x', colors='black')
+        # ax_lc.tick_params(axis='y', colors='black')
+
+        # ax_res.spines['bottom'].set_color('black')
+        # ax_res.spines['top'].set_color('black')
+        # ax_res.spines['right'].set_color('black')
+        # ax_res.spines['left'].set_color('black')
+        # ax_res.tick_params(axis='x', colors='black')
+        # ax_res.tick_params(axis='y', colors='black')
+
+        # fig.savefig("ns_lc.png")
+
+
+
+
+
+###################################################################################################
+#Here starts the uncertain code
+###################################################################################################
+
+    #     fittedTimes = myfit.time  #use this variable or goodTimes???
+
+    #     fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)  #does this function need to be called?
+    #     airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))   #need to re-create fitMidT, fitRadius, etc. 
+
+    #     # Final 3-sigma Clip
+    #     residuals = (goodFluxes / fittedModel) - 1.0
+    #     try:
+    #         finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
+    #     except TypeError:
+    #         finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
+
+    #     finalFluxes = goodFluxes[~finalFilter.mask]
+    #     finalTimes = goodTimes[~finalFilter.mask]
+    #     # finalPhases = goodPhases[~finalFilter.mask]
+    #     finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
+    #     finalAirmasses = goodAirmasses[~finalFilter.mask]
+    #     # finalTargets = goodTargets[~finalFilter.mask]
+    #     # finalReferences = goodReferences[~finalFilter.mask]
+    #     # finalTUnc = goodTUnc[~finalFilter.mask]
+    #     # finalRUnc = goodRUnc[~finalFilter.mask]
+    #     finalNormUnc = goodNormUnc[~finalFilter.mask]
+
+    #     finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))
+
+    #     # Final Light Curve Model
+    #     finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
+
+    #     # recaclculate phases based on fitted mid transit time
+    #     adjPhases = []
+    #     for bTime in finalTimes:
+    #         newPhase = ((bTime - fitMidT) / pDict['pPer'])
+    #         adjPhases.append(newPhase)
+    #     adjustedPhases = np.array(adjPhases)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #     #####################
+    #     # MCMC LIGHTCURVE FIT
+    #     #####################
+    #     # The transit function is based on the analytic expressions of Mandel and Agol et al 2002. and Gael Roudier's transit model
+    #     log = logging.getLogger(__name__)
+    #     pymc3log = logging.getLogger('pymc3')
+    #     pymc3log.setLevel(logging.ERROR)
+
+    #     # OBSERVATIONS
+
+    #     bjdMidTranCur = float(nearestTransitTime(goodTimes, pDict['pPer'], bjdMidTOld))
+
+    #     extractRad = pDict['rprs']
+    #     extractTime = tMid
+    #     Cur  # expected mid transit time of the transit the user observed (based on previous calculation)
+    #     sigOff = standardDev1
+    #     amC2Guess = 0  # guess b airmass term is 0
+    #     sigC2 = .1  # this is a huge guess so it's always going to be less than this
+    #     sigRad = (np.median(standardDev1)) / (2 * pDict['rprs'])  # uncertainty is the uncertainty in the dataset w/ propogation
+    #     # propMidTUnct = uncTMid(ogPeriodErr, ogMidTErr, goodTimes, planetPeriod,bjdMidTOld)  # use method to calculate propogated midTUncertainty
+
+    #     contextupdt(times=goodTimes, airm=goodAirmasses)  # update my global constant variable
+
+    #     # define the light curve model using theano tensors
+    #     @tco.as_op(itypes=[tt.dscalar, tt.dscalar, tt.dscalar, tt.dscalar], otypes=[tt.dvector])
+    #     def gaelModel(*specparams):
+    #         tranTime, pRad, amc1, amc2 = specparams
+
+    #         # lightcurve model
+    #         sep, ophase = time2z(context['times'], pDict['inc'], float(tranTime), pDict['aRs'], pDict['pPer'], pDict['ecc'])
+    #         gmodel, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
+
+    #         # exponential airmass model
+    #         airmassModel = (float(amc1) * (np.exp(float(amc2) * context['airmass'])))
+    #         completeModel = gmodel * airmassModel
+
+    #         return completeModel
+
+
+    #     # initialize pymc3 sampler using gael model
+    #     nodes = []
+    #     lcMod = pm.Model()
+    #     with lcMod:
+
+    #         # PRIORS
+    #         ### Double check these priors
+    #         # BoundedNormal = pm.Bound(pm.Normal, lower=extractTime - 3 * planetPeriod / 4, upper=extractTime + 3 * planetPeriod / 4)  # ###get the transit duration
+    #         midT = pm.Uniform('Tmid', upper=goodTimes[len(goodTimes) - 1], lower=goodTimes[0])
+    #         BoundedNormal2 = pm.Bound(pm.Normal, lower=0, upper=1)
+    #         radius = BoundedNormal2('RpRs', mu=extractRad, tau=1.0 / (sigRad ** 2))
+    #         airmassCoeff1 = pm.Normal('Am1', mu=np.median(goodFluxes), tau=1.0 / (sigOff ** 2))
+    #         airmassCoeff2 = pm.Normal('Am2', mu=amC2Guess, tau=1.0 / (sigC2 ** 2))
+
+    #         # append to list of parameters
+    #         nodes.append(midT)
+    #         nodes.append(radius)
+    #         nodes.append(airmassCoeff1)
+    #         nodes.append(airmassCoeff2)
+
+    #         # OBSERVATION MODEL
+    #         obs = pm.Normal('obs', mu=gaelModel(*nodes), tau=1. / (goodNormUnc ** 2.), observed=goodFluxes)
+
+    #     # Sample from the model
+    #     final_chain_length = int(100000)
+
+    #     with lcMod:
+    #         step = pm.Metropolis()  # Metropolis-Hastings Sampling Technique
+    #         if "Windows" in platform.system():
+    #             trace = pm.sample(final_chain_length, step, chains=None, cores=1) # For some reason, Windows machines do not like using multi-cores with pymc3....
+    #         else:
+    #             trace = pm.sample(final_chain_length, step, chains=None, cores=None)
+
+    #     # ----Plot the Results from the MCMC -------------------------------------------------------------------
+    #     print('\n******************************************')
+    #     print('MCMC Diagnostic Tests and Chi Squared Burn\n')
+
+    #     # ChiSquared Trace to determine burn in length
+    # #    burn = plotChi2Trace(trace, goodFluxes, goodTimes, goodAirmasses, goodNormUnc)
+
+    #     # OUTPUTS
+    #     fitMidTArray = trace['Tmid', burn:]
+    #     fitRadiusArray = trace['RpRs', burn:]
+
+    #     fitMidT = float(np.median(trace['Tmid', burn:]))
+    #     fitRadius = float(np.median(trace['RpRs', burn:]))
+    #     fitAm1 = float(np.median(trace['Am1', burn:]))
+    #     fitAm2 = float(np.median(trace['Am2', burn:]))
+
+    #     midTranUncert = round(np.std(trace['Tmid', burn:]), 6)
+    #     radUncert = round(np.std(trace['RpRs', burn:]), 6)
+    #     am1Uncert = round(np.std(trace['Am1', burn:]), 6)
+    #     am2Uncert = round(np.std(trace['Am2', burn:]), 6)
+
+    #     # Plot Traces
+    #     for keyi in trace.varnames:
+    #         if "interval" not in keyi:
+    #             plt.plot(trace[keyi, burn:])
+    #             plt.title(keyi)
+    #             plt.savefig(saveDirectory + 'temp/Traces' + targetName + date + "_" + keyi + '.png')
+    #             plt.close()
+
+    #     # # Gelman Rubin
+    #     # print("Gelman Rubin Convergence Test:")
+    #     # print(pm.gelman_rubin(trace))
+
+    #     # TODO set the MCMC chain length low, then run a gelman_rubin(trace) to see if <=1.1
+    #     # (RTZ will probably make this 1.01 to be safe)
+    #     # if they are not below this value, then run more chains
+    #     # Hopefully this will keep the code running for less time
+
+    #     fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)
+    #     airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))      #what is the purpose of this variable??
+
+    #     # Final 3-sigma Clip
+    #     residuals = (goodFluxes / fittedModel) - 1.0
+    #     try:
+    #         finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
+    #     except TypeError:
+    #         finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
+
+    #     finalFluxes = goodFluxes[~finalFilter.mask]
+    #     finalTimes = goodTimes[~finalFilter.mask]
+    #     # finalPhases = goodPhases[~finalFilter.mask]
+    #     finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
+    #     finalAirmasses = goodAirmasses[~finalFilter.mask]
+    #     # finalTargets = goodTargets[~finalFilter.mask]
+    #     # finalReferences = goodReferences[~finalFilter.mask]
+    #     # finalTUnc = goodTUnc[~finalFilter.mask]
+    #     # finalRUnc = goodRUnc[~finalFilter.mask]
+    #     finalNormUnc = goodNormUnc[~finalFilter.mask]
+
+    #     finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))
+
+    #     # Final Light Curve Model
+    #     finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
+
+    #     # recaclculate phases based on fitted mid transit time
+    #     adjPhases = []
+    #     for bTime in finalTimes:
+    #         newPhase = ((bTime - fitMidT) / pDict['pPer'])
+    #         adjPhases.append(newPhase)
+    #     adjustedPhases = np.array(adjPhases)
+
+    #     #########################
+    #     # PLOT FINAL LIGHT CURVE
+    #     #########################
+
+    #     f = plt.figure(figsize=(12 / 1.5, 9.5 / 1.5))
+    #     f.subplots_adjust(top=0.94, bottom=0.08, left=0.1, right=0.96)
+    #     ax_lc = plt.subplot2grid((4, 5), (0, 0), colspan=5, rowspan=3)
+    #     ax_res = plt.subplot2grid((4, 5), (3, 0), colspan=5, rowspan=1)
+    #     f.suptitle(targetName)
+
+    #     x = adjustedPhases
+    #     ax_res.set_xlabel('Phase')
+
+    #     # # make symmetric about 0 phase
+    #     # maxdist = max(np.abs(adjustedPhases[0]), adjustedPhases[-1])
+    #     # ax_res.set_xlim([-maxdist, maxdist])
+    #     # ax_lc.set_xlim([-maxdist, maxdist])
+
+    #     # clip plot to get rid of white space
+    #     ax_res.set_xlim([min(adjustedPhases), max(adjustedPhases)])
+    #     ax_lc.set_xlim([min(adjustedPhases), max(adjustedPhases)])
+
+    #     # making borders and tick labels black
+    #     ax_lc.spines['bottom'].set_color('black')
+    #     ax_lc.spines['top'].set_color('black')
+    #     ax_lc.spines['right'].set_color('black')
+    #     ax_lc.spines['left'].set_color('black')
+    #     ax_lc.tick_params(axis='x', colors='black')
+    #     ax_lc.tick_params(axis='y', colors='black')
+
+    #     ax_res.spines['bottom'].set_color('black')
+    #     ax_res.spines['top'].set_color('black')
+    #     ax_res.spines['right'].set_color('black')
+    #     ax_res.spines['left'].set_color('black')
+    #     ax_res.tick_params(axis='x', colors='black')
+    #     ax_res.tick_params(axis='y', colors='black')
+
+    #     # residual histogramfinalAirmassModel
+    #     # bins up to 3 std of Residuals
+
+    #     # # key cahnge of dividing residuals by the airmass model too
+    #     finalResiduals = finalFluxes / finalModel - 1.0
+
+    #     maxbs = np.round(3 * np.std(finalResiduals), -2) * 1e6
+    #     bins = np.linspace(-maxbs, maxbs, 7)
+
+    #     # residual plot
+    #     ax_res.plot(x, finalResiduals, color='gray', marker='o', markersize=5, linestyle='None')
+    #     ax_res.plot(x, np.zeros(len(adjustedPhases)), 'r-', lw=2, alpha=1, zorder=100)
+    #     ax_res.set_ylabel('Residuals')
+    #     # ax_res.set_ylim([-.04, .04])
+    #     ax_res.set_ylim([-2 * np.nanstd(finalResiduals), 2 * np.nanstd(finalResiduals)])
+
+    #     correctedSTD = np.std(finalResiduals)
+    #     # ax_lc.errorbar( x, self.y/self.data[t]['airmass'], yerr=self.yerr/self.data[t]['airmass'], ls='none', marker='o', color='black')
+    #     ax_lc.errorbar(adjustedPhases, finalFluxes / finalAirmassModel, yerr=finalNormUnc / finalAirmassModel, ls='none',
+    #                    marker='o', color='gray', markersize=4)
+    #     ax_lc.plot(adjustedPhases, finalModel / finalAirmassModel, 'r', zorder=1000, lw=2)
+
+    #     ax_lc.set_ylabel('Relative Flux')
+    #     ax_lc.get_xaxis().set_visible(False)
+
+    #     if binplotBool:
+    #         ax_res.errorbar(binner(x, len(finalResiduals) // 10), binner(finalResiduals, len(finalResiduals) // 10),
+    #                         yerr=binner(finalResiduals, len(finalResiduals) // 10, finalNormUnc / finalAirmassModel)[1],
+    #                         fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+    #         ax_lc.errorbar(binner(adjustedPhases, len(adjustedPhases) // 10),
+    #                        binner(finalFluxes / finalAirmassModel, len(adjustedPhases) // 10),
+    #                        yerr=binner(finalResiduals, len(finalResiduals) // 10, finalNormUnc / finalAirmassModel)[1],
+    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+
+    #     # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+
+
+    #     ###################
+    #     # CHI SQUARED ROLL
+    #     ###################
+
+    #     # Check for how well the light curve fits the data
+    #     chiSum = 0
+    #     chiSquareList = []
+    #     binNumber = []
+
+    #     # ----Chi squared calculation---------------------------------------------------------------
+    #     for k in np.arange(len(finalFluxes) // 10):  # +1
+    #         sushi = np.roll(finalFluxes, k * 10)
+
+    #         # Performs a chi squared roll
+    #         chiSquareList.append(np.sum(((sushi - finalModel) / finalNormUnc) ** 2.) / (len(sushi) - 4))
+    #         rollList.append(k * 10)
+
+    #     plt.figure()
+    #     plt.plot(rollList, chiSquareList, "-o")
+    #     plt.xlabel('Bin Number')
+    #     plt.ylabel('Chi Squared')
+    #     plt.savefig(saveDirectory + 'temp/ChiSquaredRoll' + targetName + '.png')
+    #     plt.close()
 
     # end regular reduction script
 

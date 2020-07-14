@@ -381,7 +381,7 @@ def create_directory():
         return saveDirectory
 
 
-# Check user's init.txt for information / STILL WORKING ON, VERY UNORGANIZED AND NOT CALLED (won't effect code)
+# Check user's init.txt for information / STILL WORKING ON, VERY UNORGANIZED AND NOT CALLED (won't effect code). Just for saving.
 def init(inits):
                 # Directory Info
     initinfo = ["Directory with fits files",
@@ -691,28 +691,42 @@ def plate_solution(fits_file, saveDirectory):
 #     xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
 #     yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
 #     x, y = np.meshgrid(xaxis, yaxis)
-#     ra, dec = wcsheader.all_pix2world(x, y, 1)
+#     ra, dec = wcsheader.all_pix2world(x, y, 0)
 #     return ra, dec
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
-def check_pixelwcs(pixx, pixy, neara, neadec, hdul, tarorcomp):
+def check_targetpixelwcs(pixx, pixy, expra, expdec, hdul):
     while True:
         try:
             wcsheader = WCS(hdul[0].header)
-            wcsra, wcsdec = wcsheader.all_pix2world(pixx, pixy, 0)
+            obsra, obsdec = wcsheader.all_pix2world(pixx, pixy, 0)
 
             # Margins are within 20 arcseconds ~ 0.00556 degrees
-            if neara - 0.00556 >= wcsra or wcsra >= neara + 0.00556:
-                print('\nError: The X Pixel Coordinate entered does not match the right ascension given.')
+            if expra - 0.00556 >= obsra or obsra >= expra + 0.00556:
+                print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
-            if neadec - 0.00556 >= wcsdec or wcsdec >= neadec + 0.00556:
-                print('\nError: The Y Pixel Coordinate entered does not match the declination given.')
+            if expdec - 0.00556 >= obsdec or obsdec >= expdec + 0.00556:
+                print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
             return pixx, pixy
         except ValueError:
-            pixx = user_input("Please re-enter the " + tarorcomp + " star's X Pixel Coordinate: ", type_=int)
-            pixy = user_input("Please re-enter the " + tarorcomp + " star's Y Pixel Coordinate: ", type_=int)
+            pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
+            pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
+
+
+# Checking for the WCS for comparison star pixel coordinates
+def check_comparisonpixelwcs(pixx, pixy, hdul):
+    # NOTE: pixx == x pixel coordinate of comparison star
+    # NOTE: pixy == y pixel coordinate of comparison star
+    wcsheader = WCS(hdul[0].header)
+    obsra, obsdec = wcsheader.all_pix2world(pixx, pixy, 0)
+    # NOTE: obsra == observed right ascension of x pixel coordinate
+    # NOTE: obsdec == observed declination of y pixel coordinate
+    # NOTE: You can mimic the design from the check_targetpixelwcs from above if you'd like
+    # in terms of checking bounds and playing around with it.
+    # NOTE: You can call this function anytime after the function call of -
+    # wcsFile = check_wcs(pathSolve, saveDirectory) , currently at line 1853
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1846,8 +1860,8 @@ if __name__ == "__main__":
 
                     # Save previously entered x and y pixel coordinates before checking against plate solution
                     saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
-                    UIprevTPX, UIprevTPY = check_pixelwcs(UIprevTPX, UIprevTPY, pDict['ra'], pDict['dec'],
-                                                          hdulWCS, 'target')
+                    UIprevTPX, UIprevTPY = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
+                                                                pDict['dec'], hdulWCS)
 
                     # If the coordinates were not changed, do not loop over again
                     if UIprevTPX != saveUIprevTPX or UIprevTPY != saveUIprevTPY:

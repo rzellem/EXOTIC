@@ -2379,7 +2379,44 @@ if __name__ == "__main__":
         plt.savefig("temp.png")
         print("figure saved")
 
+###################################################################################################
+#Here starts the uncertain code
+###################################################################################################
 
+        fittedTimes = myfit.time  #use this variable or goodTimes???
+
+        fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)  #does this function need to be called?
+        airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))   #need to re-create fitMidT, fitRadius, etc. 
+
+        # Final 3-sigma Clip
+        residuals = (goodFluxes / fittedModel) - 1.0
+        try:
+            finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
+        except TypeError:
+            finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
+
+        finalFluxes = goodFluxes[~finalFilter.mask]
+        finalTimes = goodTimes[~finalFilter.mask]
+        # finalPhases = goodPhases[~finalFilter.mask]
+        finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
+        finalAirmasses = goodAirmasses[~finalFilter.mask]
+        # finalTargets = goodTargets[~finalFilter.mask]
+        # finalReferences = goodReferences[~finalFilter.mask]
+        # finalTUnc = goodTUnc[~finalFilter.mask]
+        # finalRUnc = goodRUnc[~finalFilter.mask]
+        finalNormUnc = goodNormUnc[~finalFilter.mask]
+
+        finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))
+
+        # Final Light Curve Model
+        finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
+
+        # recaclculate phases based on fitted mid transit time
+        adjPhases = []
+        for bTime in finalTimes:
+            newPhase = ((bTime - fitMidT) / pDict['pPer'])
+            adjPhases.append(newPhase)
+        adjustedPhases = np.array(adjPhases)
 
 
 
@@ -2516,7 +2553,7 @@ if __name__ == "__main__":
         # Hopefully this will keep the code running for less time
 
         fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)
-        airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))
+        airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))      #what is the purpose of this variable??
 
         # Final 3-sigma Clip
         residuals = (goodFluxes / fittedModel) - 1.0

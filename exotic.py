@@ -632,7 +632,7 @@ def plate_solution(fits_file, saveDirectory):
             break
         except KeyError:
             if i == 4:
-                print('Imaging file could not recieve a plate solution due to technical difficulties '
+                print('Imaging file could not receive a plate solution due to technical difficulties '
                       'from nova.astrometry.net. Please try again later. Data reduction will continue.')
                 return False
             time.sleep(5)
@@ -684,50 +684,50 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 
-# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution,
-# DECOMISSIONED FOR NOW
-# def get_radec(wcsfile):
-#     hdulWCS = fits.open(wcsfile)
-#     wcsheader = WCS(hdulWCS[0].header)
-#     xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
-#     yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
-#     x, y = np.meshgrid(xaxis, yaxis)
-#     ra, dec = wcsheader.all_pix2world(x, y, 0)
-#     return ra, dec
+# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
+def get_radec(hdul):
+    wcsheader = WCS(hdul[0].header)
+    xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
+    yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
+    x, y = np.meshgrid(xaxis, yaxis)
+    ra, dec = wcsheader.all_pix2world(x, y, 1)
+    return ra, dec
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
-def check_targetpixelwcs(pixx, pixy, expra, expdec, hdul):
+def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist, blcoords):
     while True:
         try:
-            wcsheader = WCS(hdul[0].header)
-            obsra, obsdec = wcsheader.all_pix2world(pixx, pixy, 0)
-
             # Margins are within 20 arcseconds ~ 0.00556 degrees
-            if expra - 0.00556 >= obsra or obsra >= expra + 0.00556:
+            if expra - 0.00556 >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + 0.00556:
                 print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
-            if expdec - 0.00556 >= obsdec or obsdec >= expdec + 0.00556:
+            if expdec - 0.00556 >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 0.00556:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
-            return pixx, pixy
+            return pixx, pixy, blcoords
         except ValueError:
-            pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
-            pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
+            repixopt = user_input('Would you like to re-enter the pixel coordinates? (y/n): ', type_=str, val1='y', val2='n')
 
-
-# Checking for the WCS for comparison star pixel coordinates
-def check_comparisonpixelwcs(pixx, pixy, hdul):
-    # NOTE: pixx == x pixel coordinate of comparison star
-    # NOTE: pixy == y pixel coordinate of comparison star
-    wcsheader = WCS(hdul[0].header)
-    obsra, obsdec = wcsheader.all_pix2world(pixx, pixy, 0)
-    # NOTE: obsra == observed right ascension of x pixel coordinate
-    # NOTE: obsdec == observed declination of y pixel coordinate
-    # NOTE: You can mimic the design from the check_targetpixelwcs from above if you'd like
-    # in terms of checking bounds and playing around with it.
-    # NOTE: You can call this function anytime after the function call of -
-    # wcsFile = check_wcs(pathSolve, saveDirectory) , currently at line 1855
+            # User wants to change their coordinates
+            if repixopt == 'y':
+                # Boolean value to keep track if user changed coordinates
+                blcoords = True
+                dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
+                np.unravel_index(dist.argmin(), dist.shape)
+                dist.min()
+                searchopt = user_input('Here are the suggested pixel coordinates: X Pixel: %s Y Pixel: %s'
+                                       '\nWould you like to use these? (y/n): ' % (pixx, pixy), type_=str, val1='y', val2='n')
+                # Use the coordinates found by code
+                if searchopt == 'y':
+                    return pixx, pixy, blcoords
+                # User enters their own coordinates to be re-checked
+                else:
+                    pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
+                    pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
+            else:
+                # User does not want to change coordinates even though they don't match the expected ra and dec
+                return pixx, pixy, blcoords
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1711,6 +1711,9 @@ if __name__ == "__main__":
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
+            # Keeping tracking of the user deciding to change their inputted coordinates
+            boolcoords = False
+
             # Loop placed to check user-entered x and y target coordinates against WCS. Should iterate at MAX 2 times.
             # Once if the user entered the values in correctly the first time.
             while True:
@@ -1848,40 +1851,47 @@ if __name__ == "__main__":
                     print("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                # Plate Solution
-                pathSolve = saveDirectory + 'first_file.fits'
+                # # Plate Solution
+                # pathSolve = saveDirectory + 'first_file.fits'
+                #
+                # # Removes existing file of first_fits.fits
+                # try:
+                #     os.remove(pathSolve)
+                # except OSError:
+                #     pass
+                # convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
+                # convertToFITS.writeto(pathSolve)
+                # wcsFile = check_wcs(pathSolve, saveDirectory)
+                #
+                # # Check pixel coordinates by converting to WCS. If not correct, loop over again
+                # if wcsFile:
+                #     hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                #
+                #     # Save previously entered x and y pixel coordinates before checking against plate solution
+                #     saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
+                #     rafile, decfile = get_radec(hdulWCS)
+                #     UIprevTPX, UIprevTPY, boolcoords = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
+                #                                                             pDict['dec'], rafile, decfile, boolcoords)
+                #
+                #     # If the coordinates were not changed, do not loop over again
+                #     if not boolcoords:
+                #         break
 
-                # Removes existing file of first_fits.fits
-                try:
-                    os.remove(pathSolve)
-                except OSError:
-                    pass
-                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
-                convertToFITS.writeto(pathSolve)
-                wcsFile = check_wcs(pathSolve, saveDirectory)
+                UIprevTPX, UIprevTPY = 22, 22
+                wcsFile = '/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/sample-data/newfits.fits'
+                hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
+                ralist, declist = get_radec(hdulWCS)
+                UIprevTPX, UIprevTPY = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
+                                                            pDict['dec'], ralist, declist, boolcoords)
 
-                # Check pixel coordinates by converting to WCS. If not correct, loop over again
-                if wcsFile:
-                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
-
-                    # Save previously entered x and y pixel coordinates before checking against plate solution
-                    saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
-                    UIprevTPX, UIprevTPY = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
-                                                                pDict['dec'], hdulWCS)
-
-                    # If the coordinates were not changed, do not loop over again
-                    if UIprevTPX != saveUIprevTPX or UIprevTPY != saveUIprevTPY:
-                        continue
-
-                # Image Alignment
-                print("\nAligning your images from .FITS. Please wait.")
-                done = False
-                t = threading.Thread(target=animate, daemon=True)
-                t.start()
-                sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
-                done = True
-                print('\n\nImages Aligned.')
-                break
+            # Image Alignment
+            print("\nAligning your images from FITS files. Please wait.")
+            done = False
+            t = threading.Thread(target=animate, daemon=True)
+            t.start()
+            sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
+            done = True
+            print('\n\nImages Aligned.')
 
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)

@@ -409,9 +409,6 @@ def init(inits):
                 "Observing Notes",
 
                 # Target Info
-                "Planet name",
-                "Target Star RA (hh:mm:ss)",
-                "Target Star Dec (+/-hh:mm:ss)",
                 "Target Star pixel coords (x,y)",
                 "Number of Comparison Stars"]
 
@@ -426,8 +423,7 @@ def init(inits):
 
     initdictinfo = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasdir': None, 'aavsoopt': None,
                       'aavsonum': None, 'secobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None, 'ctype': None,
-                      'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None, 'pName': None, 'ra': None, 'dec': None,
-                      'tarcoords': None, 'compstars': None}
+                      'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None, 'tarcoords': None, 'compstars': None}
 
     initdictplanet = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None,
                       'midT': None, 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None,
@@ -686,13 +682,35 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 
-# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
-def get_radec(hdulWCS):
-    wcsheader = WCS(hdulWCS[0].header)
-    xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
-    yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
-    x, y = np.meshgrid(xaxis, yaxis)
-    return wcsheader.all_pix2world(x, y, 0)
+# Getting the right ascension and declination for every pixel in imaging file if there is a plate solution, DECOMISSIONED FOR NOW
+# def get_radec(wcsfile):
+#     hdulWCS = fits.open(wcsfile)
+#     wcsheader = WCS(hdulWCS[0].header)
+#     xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
+#     yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
+#     x, y = np.meshgrid(xaxis, yaxis)
+#     ra, dec = wcsheader.all_pix2world(x, y, 1)
+#     return ra, dec
+
+
+# Check the ra and dec against the plate solution to see if the user entered in the correct values
+def check_pixelwcs(pixx, pixy, neara, neadec, hdul, tarorcomp):
+    while True:
+        try:
+            wcsheader = WCS(hdul[0].header)
+            wcsra, wcsdec = wcsheader.all_pix2world(pixx, pixy, 0)
+
+            # Margins are within 20 arcseconds ~ 0.00556 degrees
+            if neara - 0.00556 >= wcsra or wcsra >= neara + 0.00556:
+                print('\nError: The X Pixel Coordinate entered does not match the right ascension given.')
+                raise ValueError
+            if neadec - 0.00556 >= wcsdec or wcsdec >= neadec + 0.00556:
+                print('\nError: The Y Pixel Coordinate entered does not match the declination given.')
+                raise ValueError
+            return pixx, pixy
+        except ValueError:
+            pixx = user_input("Please re-enter the " + tarorcomp + " star's X Pixel Coordinate: ", type_=int)
+            pixy = user_input("Please re-enter the " + tarorcomp + " star's Y Pixel Coordinate: ", type_=int)
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1669,158 +1687,172 @@ if __name__ == "__main__":
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            fileNumber = 1
-            allImageData = []
-            timeList = []
-            fileNameList = []
-            timesListed = []
-            airMassList = []
+            # Loop placed to check user-entered x and y target coordinates against WCS. Should iterate at MAX 2 times.
+            # Once if the user entered the values in correctly the first time.
+            while True:
+                fileNumber = 1
+                allImageData, timeList, fileNameList, timesListed, airMassList = [], [], [], [], []
 
-            # ----TIME SORT THE FILES-------------------------------------------------------------
-            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
+                # ----TIME SORT THE FILES-------------------------------------------------------------
+                for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
-                # fitsHead = fits.open(fileName)  # opens the file
+                    # fitsHead = fits.open(fileName)  # opens the file
 
-                # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
-                # if fitsHead[0].header ['FILTER']== 'Harris-B':
-                #     #TIME
-                #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
-                #     timeList.append(timeVal) #adds to time value list
-                #     fileNameList.append (fileName)
+                    # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
+                    # if fitsHead[0].header ['FILTER']== 'Harris-B':
+                    #     #TIME
+                    #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
+                    #     timeList.append(timeVal) #adds to time value list
+                    #     fileNameList.append (fileName)
 
-                hdul = fits.open(fileName)  # opens the file
+                    hdul = fits.open(fileName)  # opens the file
 
-                # TIME
-                timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
-                timeList.append(timeVal)  # adds to time value list
-                fileNameList.append(fileName)
+                    # TIME
+                    timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
+                    timeList.append(timeVal)  # adds to time value list
+                    fileNameList.append(fileName)
 
-                # TIME
-                currTime = getJulianTime(hdul)
-                timesListed.append(currTime)
+                    # TIME
+                    currTime = getJulianTime(hdul)
+                    timesListed.append(currTime)
 
-                # AIRMASS
-                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, elevation)  # gets the airmass at the time the image was taken
-                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+                    # AIRMASS
+                    airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, elevation)  # gets the airmass at the time the image was taken
+                    airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
-                # IMAGES
-                allImageData.append(hdul[0].data)
+                    # IMAGES
+                    allImageData.append(hdul[0].data)
 
-                hdul.close()  # closes the file to avoid using up all of computer's resources
+                    hdul.close()  # closes the file to avoid using up all of computer's resources
 
-            # Recast list as numpy arrays
-            allImageData = np.array(allImageData)
-            timesListed = np.array(timesListed)
-            airMassList = np.array(airMassList)
+                # Recast list as numpy arrays
+                allImageData = np.array(allImageData)
+                timesListed = np.array(timesListed)
+                airMassList = np.array(airMassList)
 
-            # If all of the airmasses == 1, then you need to calculate the airmass for the user
-            if set(airMassList) == 1:
-                pointingAltAz = pointing.transform_to(AltAz(obstime=t, location=location))
+                # If all of the airmasses == 1, then you need to calculate the airmass for the user
+                if set(airMassList) == 1:
+                    pointingAltAz = pointing.transform_to(AltAz(obstime=t, location=location))
 
-            # # Time sorts the file names based on the fits file header
-            # timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
-            # tsnCopy = timeSortedNames
+                # # Time sorts the file names based on the fits file header
+                # timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
+                # tsnCopy = timeSortedNames
 
-            # sorts the times for later plotting use
-            sortedallImageData = allImageData[np.argsort(timeList)]
-            timesListed = timesListed[np.argsort(timeList)]
-            airMassList = airMassList[np.argsort(timeList)]
-            sortedTimeList = sorted(timeList)
+                # sorts the times for later plotting use
+                sortedallImageData = allImageData[np.argsort(timeList)]
+                timesListed = timesListed[np.argsort(timeList)]
+                airMassList = airMassList[np.argsort(timeList)]
+                sortedTimeList = sorted(timeList)
 
-            # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
-            # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
-            # if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
-            #     cosmicrayfilter_bool = True
-            # else:
-            #     cosmicrayfilter_bool = False
+                # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
+                # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
+                # if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
+                #     cosmicrayfilter_bool = True
+                # else:
+                #     cosmicrayfilter_bool = False
 
-            # The cosmic ray filter isn't really working for now...so let's just turn it off
-            cosmicrayfilter_bool = False
-            if cosmicrayfilter_bool:
-                print("\nFiltering your data for cosmic rays.")
+                # The cosmic ray filter isn't really working for now...so let's just turn it off
+                cosmicrayfilter_bool = False
+                if cosmicrayfilter_bool:
+                    print("\nFiltering your data for cosmic rays.")
+                    done = False
+                    t = threading.Thread(target=animate, daemon=True)
+                    t.start()
+                    # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
+                    # For now, this is a simple median filter...in the future, should use something more smart later
+                    for xi in np.arange(np.shape(sortedallImageData)[-2]):
+                        # print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
+                        for yi in np.arange(np.shape(sortedallImageData)[-1]):
+                            # Simple median filter
+                            idx = np.abs(sortedallImageData[:, xi, yi]-np.nanmedian(sortedallImageData[:, xi, yi])) > 5*np.nanstd(sortedallImageData[:, xi, yi])
+                            sortedallImageData[idx, xi, yi] = np.nanmedian(sortedallImageData[:, xi, yi])
+                            # Filter iteratively until no more 5sigma outliers exist - not currently working, so keep commented out for now
+                            # while sum(idx) > 0:
+                            #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
+                            #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
+                    done = True
+
+                # if len(sortedTimeList) == 0:
+                #     print("Error: .FITS files not found in " + directoryP)
+                #     sys.exit()
+
+                # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
+
+                # Loops through all of the possible aperture and annulus radius
+                # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
+
+                # hdul = fits.open(timeSortedNames[0])  # opens the fits file
+                # firstImageData = fits.getdata(timeSortedNames[0], ext=0)
+                firstimagecounter = 0
+                firstImageData = sortedallImageData[firstimagecounter]
+
+                # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
+                firstimagegood = True
+                while firstimagegood:
+                    # fit Target in the first image and use it to determine aperture and annulus range
+                    try:
+                        targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
+                                                                                                box=10)
+                        firstimagegood = False
+                    # If the first image is a bad one, then move on to the next image
+                    except:
+                        firstimagecounter = firstimagecounter + 1
+                        firstImageData = sortedallImageData[firstimagecounter]
+
+                # Filter the other data as well
+                sortedallImageData = sortedallImageData[firstimagecounter:]
+                timesListed = timesListed[firstimagecounter:]
+                airMassList = airMassList[firstimagecounter:]
+                sortedTimeList = sortedTimeList[firstimagecounter:]
+
+                # apply cals correction if applicable
+                if darksBool:
+                    print("Dark subtracting images.")
+                    sortedallImageData = sortedallImageData - generalDark
+                elif biasesBool:
+                    print("Bias-correcting images.")
+                    sortedallImageData = sortedallImageData - generalBias
+                else:
+                    pass
+
+                if flatsBool:
+                    print("Flattening images.")
+                    sortedallImageData = sortedallImageData / generalFlat
+
+                # Plate Solution
+                pathSolve = saveDirectory + 'first_file.fits'
+
+                # Removes existing file of first_fits.fits
+                try:
+                    os.remove(pathSolve)
+                except OSError:
+                    pass
+                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
+                convertToFITS.writeto(pathSolve)
+                wcsFile = check_wcs(pathSolve, saveDirectory)
+
+                # Check pixel coordinates by converting to WCS. If not correct, loop over again
+                if wcsFile:
+                    hdulWCS = fits.open(wcsFile)
+
+                    # Save previously entered x and y pixel coordinates before checking against plate solution
+                    saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
+                    UIprevTPX, UIprevTPY = check_pixelwcs(UIprevTPX, UIprevTPY, pDict['ra'], pDict['dec'],
+                                                          hdulWCS, 'target')
+
+                    # If the coordinates were not changed, do not loop over again
+                    if UIprevTPX != saveUIprevTPX or UIprevTPY != saveUIprevTPY:
+                        continue
+
+                # Image Alignment
+                print("\nAligning your images from .FITS. Please wait.")
                 done = False
                 t = threading.Thread(target=animate, daemon=True)
                 t.start()
-                # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
-                # For now, this is a simple median filter...in the future, should use something more smart later
-                for xi in np.arange(np.shape(sortedallImageData)[-2]):
-                    # print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
-                    for yi in np.arange(np.shape(sortedallImageData)[-1]):
-                        # Simple median filter
-                        idx = np.abs(sortedallImageData[:, xi, yi]-np.nanmedian(sortedallImageData[:, xi, yi])) > 5*np.nanstd(sortedallImageData[:, xi, yi])
-                        sortedallImageData[idx, xi, yi] = np.nanmedian(sortedallImageData[:, xi, yi])
-                        # Filter iteratively until no more 5sigma outliers exist - not currently working, so keep commented out for now
-                        # while sum(idx) > 0:
-                        #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
-                        #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
+                sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
                 done = True
-
-            # if len(sortedTimeList) == 0:
-            #     print("Error: .FITS files not found in " + directoryP)
-            #     sys.exit()
-
-            # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
-
-            # Loops through all of the possible aperture and annulus radius
-            # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
-
-            # hdul = fits.open(timeSortedNames[0])  # opens the fits file
-            # firstImageData = fits.getdata(timeSortedNames[0], ext=0)
-            firstimagecounter = 0
-            firstImageData = sortedallImageData[firstimagecounter]
-
-            # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
-            firstimagegood = True
-            while firstimagegood:
-                # fit Target in the first image and use it to determine aperture and annulus range
-                try:
-                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
-                                                                                            box=10)
-                    firstimagegood = False
-                # If the first image is a bad one, then move on to the next image
-                except:
-                    firstimagecounter = firstimagecounter + 1
-                    firstImageData = sortedallImageData[firstimagecounter]
-
-            # Filter the other data as well
-            sortedallImageData = sortedallImageData[firstimagecounter:]
-            timesListed = timesListed[firstimagecounter:]
-            airMassList = airMassList[firstimagecounter:]
-            sortedTimeList = sortedTimeList[firstimagecounter:]
-
-            # apply cals correction if applicable
-            if darksBool:
-                print("Dark subtracting images.")
-                sortedallImageData = sortedallImageData - generalDark
-            elif biasesBool:
-                print("Bias-correcting images.")
-                sortedallImageData = sortedallImageData - generalBias
-            else:
-                pass
-
-            if flatsBool:
-                print("Flattening images.")
-                sortedallImageData = sortedallImageData / generalFlat
-
-            pathSolve = saveDirectory + 'first_file.fits'
-            try:
-                os.remove(pathSolve)
-            except OSError:
-                pass
-            convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
-            convertToFITS.writeto(pathSolve)
-            wcsFile = check_wcs(pathSolve, saveDirectory)
-            if wcsFile:
-                hdulWCS = fits.open(wcsFile)
-                rafile, decfile = get_radec(hdulWCS)
-
-            print("\nAligning your images from .FITS. Please wait.")
-            done = False
-            t = threading.Thread(target=animate, daemon=True)
-            t.start()
-            sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
-            done = True
-            print('\n\nImages Aligned.')
+                print('\n\nImages Aligned.')
+                break
 
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)

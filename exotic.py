@@ -674,7 +674,7 @@ def plate_solution(fits_file, saveDirectory):
             r = requests.get(fits_download_url)
             with open(wcs_file, 'wb') as f:
                 f.write(r.content)
-            print('\n\nSuccess. Check the directory in which you chose to your save plots.')
+            print('\n\nSuccess. ')
             return wcs_file
 
         # If the new-fits-file failed, inform user and exit
@@ -695,7 +695,7 @@ def get_radec(hdulWCSrd):
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
-def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist, blcoords):
+def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
             # Margins are within 20 arcseconds ~ 0.00556 degrees
@@ -705,14 +705,12 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist, blcoords):
             if expdec - 0.00556 >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 0.00556:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
-            return pixx, pixy, blcoords
+            return pixx, pixy
         except ValueError:
             repixopt = user_input('Would you like to re-enter the pixel coordinates? (y/n): ', type_=str, val1='y', val2='n')
 
             # User wants to change their coordinates
             if repixopt == 'y':
-                # Boolean value to keep track if user changed coordinates
-                blcoords = True
                 # Checks for the closest pixel location in ralist and declist for expected ra and dec
                 dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
                 pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
@@ -720,14 +718,14 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist, blcoords):
                                        '\nWould you like to use these? (y/n): ' % (pixx, pixy), type_=str, val1='y', val2='n')
                 # Use the coordinates found by code
                 if searchopt == 'y':
-                    return pixx, pixy, blcoords
+                    return pixx, pixy
                 # User enters their own coordinates to be re-checked
                 else:
                     pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
                     pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
             else:
                 # User does not want to change coordinates even though they don't match the expected ra and dec
-                return pixx, pixy, blcoords
+                return pixx, pixy
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1711,9 +1709,6 @@ if __name__ == "__main__":
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            # Keeping tracking of the user deciding to change their inputted coordinates
-            boolcoords = False
-
             # Loop placed to check user-entered x and y target coordinates against WCS. Should iterate at MAX 2 times.
             # Once if the user entered the values in correctly the first time.
             while True:
@@ -1865,15 +1860,16 @@ if __name__ == "__main__":
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
+                    print('Here it the path to your plate solution: ' + wcsFile)
                     hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
                     rafile, decfile = get_radec(hdulWCS)
 
                     # Save previously entered x and y pixel coordinates before checking against plate solution
                     saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
-                    UIprevTPX, UIprevTPY, boolcoords = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
-                                                                            pDict['dec'], rafile, decfile, boolcoords)
+                    UIprevTPX, UIprevTPY = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
+                                                                pDict['dec'], rafile, decfile)
                     # If the coordinates were not changed, do not loop over again
-                    if not boolcoords or (UIprevTPX == saveUIprevTPX and UIprevTPY == saveUIprevTPY):
+                    if UIprevTPX == saveUIprevTPX and UIprevTPY == saveUIprevTPY:
                         break
 
             # Image Alignment

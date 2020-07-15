@@ -44,7 +44,6 @@ import sys
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
-
 # here is the animation
 def animate():
     for c in itertools.cycle(['|', '/', '-', '\\']):

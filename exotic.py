@@ -2360,7 +2360,7 @@ if __name__ == "__main__":
         #     # finalTUnc = goodTUnc[~finalFilter.mask]
         #     # finalRUnc = goodRUnc[~finalFilter.mask]
         #     finalNormUnc = goodNormUnc[~finalFilter.mask]
-        
+
 
         # # ----Chi squared plotting---------------------------------------------------------------
         # binNumber = []
@@ -2445,8 +2445,7 @@ if __name__ == "__main__":
         print('\nThe fitted Mid-Transit Time is: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)')
         print('The fitted Ratio of Planet to Stellar Radius is: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
             myfit.errors['rprs']) + ' (Rp/Rs)')
-        print('The transit depth uncertainty is: ' + str(
-            100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs'] + ' (%)'))
+        print('The transit depth uncertainty is: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)')
         print('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']))
         print('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a1']))
         print('The scatter in the residuals of the lightcurve fit is: {:.2f}'.format(np.std(myfit.residuals/np.median(myfit.data))))
@@ -2463,8 +2462,7 @@ if __name__ == "__main__":
         outParamsFile.write('The fitted Mid-Transit Time is: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)\n')
         outParamsFile.write('The fitted Ratio of Planet to Stellar Radius is: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
             myfit.errors['rprs']) + ' (Rp/Rs)\n')
-        outParamsFile.write('The transit depth uncertainty is: ' + str(
-            100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
+        outParamsFile.write('The transit depth uncertainty is: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
         outParamsFile.write('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
         outParamsFile.write('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
         outParamsFile.write('The scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
@@ -2506,9 +2504,9 @@ if __name__ == "__main__":
                 round(myfit.parameters['a2'], 5)) + ' +/- ' + str(round(myfit.errors['a2'], 5)) + '\n')  # code yields
         # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
         outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1,DETREND_2\n')
-        for aavsoC in range(0, len(myfit.times)):
+        for aavsoC in range(0, len(myfit.time)):
             outParamsFile.write(
-                str(round(myfit.times[aavsoC], 8)) + ',' + str(round(myfit.data[aavsoC], 7)) + ',' + str(
+                str(round(myfit.time[aavsoC], 8)) + ',' + str(round(myfit.data[aavsoC], 7)) + ',' + str(
                     round(myfit.dataerr[aavsoC], 7)) + ',' + str(round(goodAirmasses[aavsoC], 7)) + ',' + str(
                     round(myfit.airmass_model[aavsoC], 7)) + '\n')
 

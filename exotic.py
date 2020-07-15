@@ -690,7 +690,7 @@ def fit_centroid(data, pos, init=None, box=10):
     if init:
         pass
     else:
-        init = [np.nanmax(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
+        init = [np.nanmax(data[yv,xv])-np.nanmin(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
 
     try:
         # fit gaussian PSF
@@ -698,7 +698,7 @@ def fit_centroid(data, pos, init=None, box=10):
             data,
             [wx, wy], # position estimate 
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
-            [wx-5, wy-5, np.nanmin(data), 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
             psf_function=gaussian_psf,
             box=box # only fit a subregion +/- 5 px from centroid

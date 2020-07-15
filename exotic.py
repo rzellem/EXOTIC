@@ -44,7 +44,6 @@ import sys
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 
-
 # here is the animation
 def animate():
     for c in itertools.cycle(['|', '/', '-', '\\']):
@@ -690,7 +689,7 @@ def fit_centroid(data, pos, init=None, box=10):
     if init:
         pass
     else:
-        init = [np.nanmax(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
+        init = [np.nanmax(data[yv,xv])-np.nanmin(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv])]
 
     try:
         # fit gaussian PSF

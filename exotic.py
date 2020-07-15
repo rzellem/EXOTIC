@@ -689,11 +689,7 @@ def fit_centroid(data, pos, init=None, box=10):
     if init:
         pass
     else:
-<<<<<<< HEAD
         init = [np.nanmax(data[yv,xv])-np.nanmin(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv])]
-=======
-        init = [np.nanmax(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
->>>>>>> 015d832072d242bdded3707d4c813ef00ea44643
 
     try:
         # fit gaussian PSF

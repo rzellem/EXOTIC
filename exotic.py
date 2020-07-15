@@ -2412,9 +2412,7 @@ if __name__ == "__main__":
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a1', 'a2'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        plt.tight_layout()
-        plt.savefig(saveDirectory + 'temp/Triangle_{}_{}.png'.format(targetName, date))
-        print("triangle figure saved")
+        fig.savefig(saveDirectory + 'temp/Triangle_{}_{}.png'.format(targetName, date))
 
 
         # write output to text file

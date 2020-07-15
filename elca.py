@@ -1,8 +1,13 @@
+import copy
 import numpy as np
 import matplotlib.pyplot as plt
 
 import dynesty
-from dynesty import plotting as dyplot
+from dynesty import plotting
+from dynesty.utils import resample_equal
+
+from scipy.ndimage import gaussian_filter as norm_kde
+from scipy.stats import gaussian_kde
 
 # Computes Hasting's polynomial approximation for the complete
 # elliptic integral of the first (ek) and second (kk) kind
@@ -363,27 +368,61 @@ class lc_fitter(object):
 
         # alloc data for best fit + error
         self.errors = {}
-        self.parameters = {}
         self.quantiles = {}
-        self.best = {}
-        for k in self.prior:
-            self.parameters[k] = self.prior[k]
-            self.best[k] = self.prior[k]
+        self.parameters = copy.deepcopy(self.prior)
 
-        bi = np.argmax(self.results.logwt)
+        tests = [copy.deepcopy(self.prior) for i in range(6)]
+
+        # Derive kernel density estimate for best fit
+        weights = np.exp(self.results.logwt - self.results.logz[-1])
+        samples = self.results['samples']
+        logvol = self.results['logvol']
+        wt_kde = gaussian_kde(resample_equal(-logvol, weights))  # KDE
+        logvol_grid = np.linspace(logvol[0], logvol[-1], 1000)  # resample
+        wt_grid = wt_kde.pdf(-logvol_grid)  # evaluate KDE PDF
+        self.weights = np.interp(-logvol, -logvol_grid, wt_grid)  # interpolate
 
         # errors + final values
-        self.weights = np.exp(self.results.logwt - self.results.logz[-1])
-        mean, cov = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
+        mean, cov = dynesty.utils.mean_and_cov(self.results.samples, weights)
+        mean2, cov2 = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
         for i in range(len(freekeys)):
             self.errors[freekeys[i]] = cov[i,i]**0.5
-            self.parameters[freekeys[i]] = mean[i]
+            tests[0][freekeys[i]] = mean[i]
+            tests[1][freekeys[i]] = mean2[i]
 
-            # sample with best chi^2
-            self.best[freekeys[i]] = self.results.samples[bi,i]
+            counts, bins = np.histogram(samples[:,i], bins=100, weights=weights)
+            mi = np.argmax(counts)
+            tests[5][freekeys[i]] = bins[mi] + 0.5*np.mean(np.diff(bins))
 
             # finds median and +- 2sigma, will vary from mode if non-gaussian
-            self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=self.weights)
+            self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=weights)
+            tests[2][freekeys[i]] = self.quantiles[freekeys[i]][1]
+
+        # find minimum near weighted mean
+        mask = (samples[:,0] < self.parameters[freekeys[0]]+2*self.errors[freekeys[0]]) & (samples[:,0] > self.parameters[freekeys[0]]-2*self.errors[freekeys[0]])
+        bi = np.argmin(self.weights[mask])
+
+        for i in range(len(freekeys)):
+            tests[3][freekeys[i]] = samples[mask][bi,i]
+            tests[4][freekeys[i]] = np.average(samples[mask][:,i],weights=self.weights[mask],axis=0)
+
+        # find best fit
+        chis = []
+        for i in range(len(tests)):
+            lightcurve = transit(self.time, tests[i])
+            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass)
+            residuals = self.data - (lightcurve*airmass)
+            chis.append( np.sum(residuals**2) )
+            # chi2 of binned data in transit + small Oot
+            # btime, br = time_bin(self.time, residuals)
+            # blc = transit(btime, tests[i])
+            # mask = blc < 1
+            # duration = btime[mask].max() - btime[mask].min()
+            # tmask = ((btime - tests[i]['tmid']) < duration) & ((btime - tests[i]['tmid']) > -1*duration)
+            # chis.append( np.mean(br[tmask]**2) )
+
+        mi = np.argmin(chis)
+        self.parameters = copy.deepcopy(tests[mi])
 
         # final model
         self.transit = transit(self.time, self.parameters)

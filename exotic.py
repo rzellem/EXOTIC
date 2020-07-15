@@ -685,10 +685,10 @@ def plate_solution(fits_file, saveDirectory):
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
-def get_radec(hdul):
-    wcsheader = WCS(hdul[0].header)
-    xaxis = np.arange(hdulWCS[0].header['NAXIS1'])
-    yaxis = np.arange(hdulWCS[0].header['NAXIS2'])
+def get_radec(hdulWCSrd):
+    wcsheader = WCS(hdulWCSrd[0].header)
+    xaxis = np.arange(hdulWCSrd[0].header['NAXIS1'])
+    yaxis = np.arange(hdulWCSrd[0].header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
     ra, dec = wcsheader.all_pix2world(x, y, 0)
     return ra, dec

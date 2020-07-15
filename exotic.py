@@ -1870,6 +1870,8 @@ if __name__ == "__main__":
                     # If the coordinates were not changed, do not loop over again
                     if UIprevTPX == saveUIprevTPX and UIprevTPY == saveUIprevTPY:
                         break
+                else:
+                    break
 
             # Image Alignment
             print("\nAligning your images from FITS files. Please wait.")

@@ -104,11 +104,11 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 
+# Limb darkening import
+import gaelLDQparams
+
 # Image alignment import
 import astroalign as aa
-
-# Limb darkening tool kit import
-from ldtk import LDPSetCreator, BoxcarFilter
 
 # photometry
 from photutils import CircularAperture
@@ -498,7 +498,7 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
                      # Source for min/max band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
     minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
-                     'Near-Infrared J': (1040.00, 1360.00), 'Near-Infrared H': (1420.00, 1780.00), 'Near-Infrared K': (2015.00, 2385.00),
+                     'J NIR 1.2micron': (1040.00, 1360.00), 'H NIR 1.6micron': (1420.00, 1780.00), 'K NIR 2.2micron': (2015.00, 2385.00),
 
                      # Sloan
                      'SU': (321.80, 386.80), 'SG': (402.50, 551.50), 'SR': (553.10, 693.10), 'SI': (697.50, 827.50), 'SZ': (841.20, 978.20),
@@ -512,11 +512,15 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
 
                      # Johnson
                      'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
-                     'Johnson U': (333.80, 398.80), 'Johnson B': (391.60, 480.60), 'Johnson V': (502.80, 586.80), 'Johnson RJ': (590.00, 810.00), 'Johnson IJ': (780, 1020),
+                     'Johnson U': (333.80, 398.80), 'Johnson B': (391.60, 480.60), 'Johnson V': (502.80, 586.80), 'Johnson R': (590.00, 810.00), 'Johnson I': (780, 1020),
 
                      # Cousins
                      'R': (561.70, 719.70), 'I': (721.00, 875.00),
-                     'Cousins R': (561.70, 719.70), 'Cousins R': (721.00, 875.00)}
+                     'Cousins R': (561.70, 719.70), 'Cousins I': (721.00, 875.00)}
+
+    print('\n\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
+    for key, value in minmaxwavelen.items():
+        print('\t%s: %s-%s nm' % (key, value[0], value[1]))
 
     ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
 
@@ -528,16 +532,15 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
         if standcustomopt == 1:
             while True:
                 try:
-                    filtername = input('\nPlease enter in the filter type using https://www.aavso.org/filters '
-                                       '(EX: Johnson U, U, Stromgren u, STU): ')
+                    filtername = input('\nPlease enter in the filter type (EX: Johnson U, U, Stromgren u, STU): ')
                     if filtername not in minmaxwavelen:
                         raise KeyError
                     break
                 except KeyError:
-                    print('Error: The entered filter is not a part of the standard ones listed at https://www.aavso.org/filters.')
+                    print('Error: The entered filter is not a part of the standard ones.')
 
-            wlmin = minmaxwavelen[filtername][0]
-            wlmax = minmaxwavelen[filtername][1]
+            wlmin = [minmaxwavelen[filtername][0] / 1000]
+            wlmax = [minmaxwavelen[filtername][1] / 1000]
 
         # Custom filters calculating limb darkening parameters
         else:
@@ -545,21 +548,16 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
             wlmin = float(input('Minimum wavelength: '))
             wlmax = float(input('Maximum wavelength: '))
 
-        filters = [BoxcarFilter(filtername, wlmin, wlmax)]
+        priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
+                  'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
+                  'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
 
-        tefferr = np.sqrt(abs(teffpos * teffneg))
-        loggerr = np.sqrt(abs(loggpos * loggneg))
-        meterr = np.sqrt(abs(metpos * metneg))
+        ldparams = gaelLDQparams.createldgrid(np.array(wlmin), np.array(wlmax), priors, segmentation=int(10))
 
-        sc = LDPSetCreator(teff=(teff, tefferr), logg=(logg, loggerr), z=(met, meterr),
-                           filters=filters)
-        ps = sc.create_profiles(nsamples=1000)
-        qc, qe = ps.coeffs_qd(do_mc=True, n_mc_samples=1000)
-
-        linearlimb = qc[0][0]
-        linearlimbunc = qe[0][0]
-        quadlimb = qc[0][1]
-        quadlimbunc = qe[0][1]
+        linearlimb = ldparams['LD'][0][0]
+        linearlimbunc = ldparams['ERR'][0][0]
+        quadlimb = ldparams['LD'][1][0]
+        quadlimbunc = ldparams['ERR'][1][0]
 
     # User enters in their own limb darkening parameters with uncertainties
     else:
@@ -572,7 +570,7 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
     print('Linear Term: %s +/- %s' % (linearlimb, linearlimbunc))
     print('Quadratic Term: %s +/- %s' % (quadlimb, quadlimbunc))
 
-    return linearlimb, quadlimb
+    return linearlimb, quadlimb, filtername
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -790,6 +788,7 @@ def fit_centroid(data, pos, init=None, box=10):
         import pdb; pdb.set_trace() 
 
     return pars
+
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
 def getFlux(data, xc, yc, r=5, dr=5):
@@ -1615,7 +1614,7 @@ if __name__ == "__main__":
             binning = str(input('Please enter your pixel binning: '))
             exposureTime = str(input('Please enter your exposure time (seconds): '))
             filterName = str(input('Please enter your filter name from the options at '
-                                   'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
+                                   'https://www.aavso.org/filters: '))
             obsNotes = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
         # Get the planetary parameters for calculations
@@ -1624,7 +1623,7 @@ if __name__ == "__main__":
         else:
             pDict = planetary_parameters(CandidatePlanetBool)
 
-        linearLimb, quadLimb = ldtk_quadratic(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'], pDict['met'],
+        linearLimb, quadLimb, filterName = ldtk_quadratic(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'], pDict['met'],
                                               pDict['metUncNeg'], pDict['metUncPos'], pDict['logg'],
                                               pDict['loggUncPos'], pDict['loggUncNeg'])
 

@@ -2324,14 +2324,45 @@ if __name__ == "__main__":
         }
 
         mybounds = {
-            'rprs':[0,2*rprs],
+            'rprs':[0,2*pDict['rprs']],
             'tmid':[min(goodTimes),max(goodTimes)],
             #'ars':[semi/2,2*semi],
             'a1':[0, max(goodFluxes)],
             'a2':[-10,10]
         }
 
-        # TODO 3-sigma clip 
+        # TODO 3-sigma clip
+        #     # Final 3-sigma Clip
+        #     residuals = (goodFluxes / fittedModel) - 1.0
+        #     try:
+        #         finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
+        #     except TypeError:
+        #         finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
+
+        #     finalFluxes = goodFluxes[~finalFilter.mask]
+        #     finalTimes = goodTimes[~finalFilter.mask]
+        #     # finalPhases = goodPhases[~finalFilter.mask]
+        #     finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
+        #     finalAirmasses = goodAirmasses[~finalFilter.mask]
+        #     # finalTargets = goodTargets[~finalFilter.mask]
+        #     # finalReferences = goodReferences[~finalFilter.mask]
+        #     # finalTUnc = goodTUnc[~finalFilter.mask]
+        #     # finalRUnc = goodRUnc[~finalFilter.mask]
+        #     finalNormUnc = goodNormUnc[~finalFilter.mask]
+        
+
+        # # ----Chi squared plotting---------------------------------------------------------------
+        # binNumber = []
+        # for k in np.arange(len(goodFluxes) // 10):  # +1
+        #     binNumber.append(k * 10)
+
+        #     #plot the results
+        #     plt.figure()
+        #     plt.plot(binNumber, chiSquareList, "-o")
+        #     plt.xlabel('Bin Number')
+        #     plt.ylabel('Chi Squared')
+        #     plt.savefig(saveDirectory + 'temp/ChiSquaredRoll' + targetName + '.png')
+        #     plt.close()
 
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)      #calling fitting method in elca.py
 
@@ -2339,8 +2370,26 @@ if __name__ == "__main__":
             print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
 
-        # BEST FIT MODEL
+        # PLOTTING BEST FIT MODEL
         f,axs = myfit.plot_bestfit()
+
+        ax_lc = axs[0]
+        ax_res = axs[1]
+
+        ax_lc.spines['bottom'].set_color('black')      #altering the border, tick color
+        ax_lc.spines['top'].set_color('black')
+        ax_lc.spines['right'].set_color('black')
+        ax_lc.spines['left'].set_color('black')
+        ax_lc.tick_params(axis='x', colors='black')
+        ax_lc.tick_params(axis='y', colors='black')
+
+        ax_res.spines['bottom'].set_color('black')
+        ax_res.spines['top'].set_color('black')
+        ax_res.spines['right'].set_color('black')
+        ax_res.spines['left'].set_color('black')
+        ax_res.tick_params(axis='x', colors='black')
+        ax_res.tick_params(axis='y', colors='black')
+
 
         try:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".pdf", bbox_inches="tight")
@@ -2370,13 +2419,14 @@ if __name__ == "__main__":
 
         outParamsFile.close()
 
-
+        #######################################################################
         # print final extracted planetary parameters
+        #######################################################################
 
         # x = Rp/Rs
-        # f(x) = x^2 
+        # f(x) = x^2
         # uncertainty on f^2:
-        # (sig_f) = df/dx * sig_x 
+        # (sig_f) = df/dx * sig_x
         # df/dx = 2*x
 
         print('*********************************************************')
@@ -2385,7 +2435,7 @@ if __name__ == "__main__":
         print('The fitted Ratio of Planet to Stellar Radius is: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
             myfit.errors['rprs']) + ' (Rp/Rs)')
         print('The transit depth uncertainty is: ' + str(
-            100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs'] + ' (%)')
+            100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs'] + ' (%)'))
         print('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']))
         print('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a1']))
         print('The scatter in the residuals of the lightcurve fit is: {:.2f}'.format(np.std(myfit.residuals/np.median(myfit.data))))
@@ -2406,8 +2456,7 @@ if __name__ == "__main__":
             100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
         outParamsFile.write('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
         outParamsFile.write('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        outParamsFile.write(
-            'The scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) ) + '%\n')
+        outParamsFile.write('The scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + saveDirectory + ' as ' + targetName + date + '.txt' + '\n')
 
@@ -2451,7 +2500,7 @@ if __name__ == "__main__":
                 str(round(myfit.times[aavsoC], 8)) + ',' + str(round(myfit.data[aavsoC], 7)) + ',' + str(
                     round(myfit.dataerr[aavsoC], 7)) + ',' + str(round(goodAirmasses[aavsoC], 7)) + ',' + str(
                     round(myfit.airmass_model[aavsoC], 7)) + '\n')
-                    
+
         # CODE YIELDED DATA IN PREV LINE FORMAT
         outParamsFile.close()
         print('Output File Saved')
@@ -2469,98 +2518,6 @@ if __name__ == "__main__":
         print('\n************************')
         print('End of Reduction Process')
         print('************************')
-
-
-        # binNumber = []
-
-        # # ----Chi squared plotting---------------------------------------------------------------
-        # for k in np.arange(len(goodFluxes) // 10):  # +1
-        #     rollList.append(k * 10)
-
-        #     #plot the results
-
-        # ax_lc = axs[0]
-        # ax_res = axs[1]
-
-        # ax_lc.spines['bottom'].set_color('black')      #altering the border, tick color
-        # ax_lc.spines['top'].set_color('black')
-        # ax_lc.spines['right'].set_color('black')
-        # ax_lc.spines['left'].set_color('black')
-        # ax_lc.tick_params(axis='x', colors='black')
-        # ax_lc.tick_params(axis='y', colors='black')
-
-        # ax_res.spines['bottom'].set_color('black')
-        # ax_res.spines['top'].set_color('black')
-        # ax_res.spines['right'].set_color('black')
-        # ax_res.spines['left'].set_color('black')
-        # ax_res.tick_params(axis='x', colors='black')
-        # ax_res.tick_params(axis='y', colors='black')
-
-        # fig.savefig("ns_lc.png")
-
-
-
-
-
-###################################################################################################
-#Here starts the uncertain code
-###################################################################################################
-
-    #     fittedTimes = myfit.time  #use this variable or goodTimes???
-
-    #     fittedModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, goodTimes, goodAirmasses, plots=False)  #does this function need to be called?
-    #     airmassMo = (fitAm1 * (np.exp(fitAm2 * goodAirmasses)))   #need to re-create fitMidT, fitRadius, etc. 
-
-    #     # Final 3-sigma Clip
-    #     residuals = (goodFluxes / fittedModel) - 1.0
-    #     try:
-    #         finalFilter = sigma_clip(residuals, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
-    #     except TypeError:
-    #         finalFilter = sigma_clip(residuals, sigma=3, cenfunc=np.median, copy=False)
-
-    #     finalFluxes = goodFluxes[~finalFilter.mask]
-    #     finalTimes = goodTimes[~finalFilter.mask]
-    #     # finalPhases = goodPhases[~finalFilter.mask]
-    #     finalPhases = (finalTimes - fitMidT) / pDict['pPer'] + 1.
-    #     finalAirmasses = goodAirmasses[~finalFilter.mask]
-    #     # finalTargets = goodTargets[~finalFilter.mask]
-    #     # finalReferences = goodReferences[~finalFilter.mask]
-    #     # finalTUnc = goodTUnc[~finalFilter.mask]
-    #     # finalRUnc = goodRUnc[~finalFilter.mask]
-    #     finalNormUnc = goodNormUnc[~finalFilter.mask]
-
-    #     finalAirmassModel = (fitAm1 * (np.exp(fitAm2 * finalAirmasses)))
-
-    #     # Final Light Curve Model
-    #     finalModel = lcmodel(fitMidT, fitRadius, fitAm1, fitAm2, finalTimes, finalAirmasses, plots=False)
-
-    #     # recaclculate phases based on fitted mid transit time
-    #     adjPhases = []
-    #     for bTime in finalTimes:
-    #         newPhase = ((bTime - fitMidT) / pDict['pPer'])
-    #         adjPhases.append(newPhase)
-    #     adjustedPhases = np.array(adjPhases)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

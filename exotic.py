@@ -1709,8 +1709,7 @@ if __name__ == "__main__":
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            # Loop placed to check user-entered x and y target coordinates against WCS. Should iterate at MAX 2 times.
-            # Once if the user entered the values in correctly the first time.
+            # Loop placed to check user-entered x and y target coordinates against WCS.
             while True:
                 fileNumber = 1
                 allImageData, timeList, fileNameList, timesListed, airMassList = [], [], [], [], []

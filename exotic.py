@@ -40,6 +40,8 @@ import threading
 import time
 import sys
 
+print('Python Version: %s' % sys.version)
+
 # To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
@@ -382,7 +384,7 @@ def create_directory():
 
 
 # Check user's init.txt for information / STILL WORKING ON, VERY UNORGANIZED AND NOT CALLED (won't effect code). Just for saving.
-def init(inits):
+def inits_file(initspath, initsdictinfo, initsdictplanet):
                 # Directory Info
     initinfo = ["Directory with fits files",
                 "Directory to save plots",
@@ -412,8 +414,8 @@ def init(inits):
                 "Target Star pixel coords (x,y)",
                 "Number of Comparison Stars"]
 
-    init_planet_params = ["Planet's Name", "Host Star's Name", "Target Star RA", "Target Star Dec",
-                          "Orbital Period (days)", "Orbital Period Uncertainty (days)", "Published Mid-Transit Time",
+    inits_planetparams = ["Planet's Name", "Host Star's Name", "Target Star RA", "Target Star DEC",
+                          "Orbital Period", "Orbital Period Uncertainty", "Published Mid-Transit Time",
                           "Mid-Transit Time Uncertainty", "Ratio of Planet to Stellar Radius",
                           "Ratio of Distance to Stellar Radius", "Orbital Inclination", "Orbital Eccentricity",
                           "Star Effective Temperature (K)", "Star Effective Temperature (+) Uncertainty",
@@ -421,43 +423,34 @@ def init(inits):
                           "Star Metallicity (+) Uncertainty", "Star Metallicity (-) Uncertainty", "Star Surface Gravity",
                           "Star Surface Gravity (+) Uncertainty", "Star Surface Gravity (-) Uncertainty"]
 
-    initdictinfo = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasdir': None, 'aavsoopt': None,
-                      'aavsonum': None, 'secobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None, 'ctype': None,
-                      'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None, 'tarcoords': None, 'compstars': None}
-
-    initdictplanet = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None,
-                      'midT': None, 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None,
-                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
-                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
-    j=0
-
-    for i, key in enumerate(initdictinfo):
-        while initinfo[i].lower() not in inits[j].lower():
-            j += 1
-        initdictinfo[key] = inits[j].split("\t")[-1].rstrip()
-        if 'Number of Comparison Stars'.lower() in inits[j].lower():
-            numCompStars = int(inits[j].split("\t")[-1].rstrip())
-            j += 1
+    counter = 0
+    for i, key in enumerate(initsdictinfo):
+        while initinfo[i].lower() not in initspath[counter].lower():
+            counter += 1
+        initsdictinfo[key] = initspath[counter].split("\t")[-1].rstrip()
+        if 'Number of Comparison Stars'.lower() in initspath[counter].lower():
+            numCompStars = int(initspath[counter].split("\t")[-1].rstrip())
+            counter += 1
             break
 
     # Initial position of target star
-    UIprevTPX = int(initdictinfo['tarcoords'].split(",")[0])
-    UIprevTPY = int(initdictinfo['tarcoords'].split(",")[-1])
+    UIprevTPX = int(initsdictinfo['tarcoords'].split(",")[0])
+    UIprevTPY = int(initsdictinfo['tarcoords'].split(",")[-1])
 
     # Read in locations of comp stars
     compStarList = []
     for i in range(numCompStars):
-        rxp, ryp = [int(k) for k in inits[j].split("\t")[-1].rstrip().split(',')]
+        rxp, ryp = [int(k) for k in initspath[counter].split("\t")[-1].rstrip().split(',')]
         compStarList.append((rxp, ryp))
-        j +=1
+        counter += 1
 
-    for i, key in enumerate(initdictplanet):
-        while init_planet_params[i].lower() not in inits[j].lower():
-            j += 1
-        initdictplanet[key] = inits[j].split("\t")[-1].rstrip()
+    for i, key in enumerate(initsdictplanet):
+        while inits_planetparams[i].lower() not in initspath[counter].lower():
+            counter += 1
+        initsdictplanet[key] = initspath[counter].split("\t")[-1].rstrip()
 
     # return initdictinfo, initdictplanet
-    return initdictinfo, compStarList
+    return initsdictinfo, compStarList
 
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
@@ -469,12 +462,12 @@ def planetary_parameters(CandidatePlanetBool, pDict=None):
     # The order of planet_params list must match the pDict that is declared when scraping the NEA
     planet_params = ["Planet's Name",
                      "Host Star's Name",
-                     "Ra of your target star in the form: HH:MM:SS (ignore the decimal values)",
-                     "Dec of your target star in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)",
+                     "Target Star RA in the form: HH:MM:SS (ignore the decimal values)",
+                     "Target Star DEC in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)",
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \nKeep in mind that 1.2e-34 is the same as 1.2 x 10^-34",
-                     "Published Time of Mid-Transit (BJD_UTC)",
-                     "Time of Mid-Transit Uncertainty (JD)",
+                     "Published Mid-Transit Time (BJD_UTC)",
+                     "Mid-Transit Time Uncertainty (JD)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs)",
                      "Ratio of Distance to Stellar Radius (a/Rs)",
                      "Orbital Inclination (deg)",
@@ -1285,9 +1278,21 @@ if __name__ == "__main__":
 
         directoryP = ""
 
-        fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
+        dictinfo = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasdir': None,
+                    'aavsoopt': None, 'aavsonum': None, 'secobs': None, 'date': None, 'lat': None, 'long': None,
+                    'elev': None, 'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
+                    'tarcoords': None, 'compstars': None}
 
-        fileorcommandline = user_input('How would you like to input your initial parameters? Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
+        dictplanet = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None,
+                      'midT': None, 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None,
+                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
+                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
+
+        fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start '
+                                'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
+
+        fileorcommandline = user_input('How would you like to input your initial parameters? '
+                                       'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:

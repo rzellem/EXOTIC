@@ -328,6 +328,19 @@ def transit(time, values):
     model, _ = occultquad(abs(sep), values['u1'], values['u2'], values['rprs'])
     return model
 
+#def getPhase(curTime, pPeriod, tMid):
+#    phase = ((curTime - tMid) / pPeriod) % 1
+#    if phase >= .5:
+#        return -1 * (1 - phase)
+#    else:
+#        return phase
+
+def getPhase(curTime, pPeriod, tMid):
+    phase = ((curTime - tMid) / pPeriod) % 1
+    mask = phase >= 0.5
+    phase[mask] = -1 * (1-phase[mask])
+    return phase
+
 
 class lc_fitter(object):
 
@@ -344,6 +357,7 @@ class lc_fitter(object):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
         bounddiff = np.diff(boundarray,1).reshape(-1)
+        self.phase = getPhase(self.time, self.prior['per'], self.prior['tmid'])
 
         def loglike(pars):
             # chi-squared
@@ -432,21 +446,34 @@ class lc_fitter(object):
         self.residuals = self.data - self.model
 
     def plot_bestfit(self):
+        phase = True
+
         f = plt.figure( figsize=(12,7) )
         #f.subplots_adjust(top=0.94,bottom=0.08,left=0.07,right=0.96)
         ax_lc = plt.subplot2grid( (4,5), (0,0), colspan=5,rowspan=3 )
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1 )
         axs = [ax_lc, ax_res]
 
-        axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', zorder=1)
-        axs[0].plot(self.time, self.transit, 'r-', zorder=2)
-        axs[0].set_xlabel("Time [day]")
-        axs[0].set_ylabel("Relative Flux")
-        axs[0].grid(True,ls='--')
+        if phase == True:
+            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', zorder=1)
+            axs[0].plot(self.phase, self.transit, 'r-', zorder=2)
+            axs[0].set_ylabel("Relative Flux")
+            axs[0].grid(True,ls='--')
 
-        axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), marker='o', color='gray')
-        axs[1].set_xlabel("Time [day]")
-        axs[1].set_ylabel("Residuals [ppm]")
+            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='gray')
+            axs[1].set_xlabel("Phase")
+            axs[1].set_ylabel("Residuals")
+
+        else:
+            axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', zorder=1)
+            axs[0].plot(self.time, self.transit, 'r-', zorder=2)
+            axs[0].set_ylabel("Relative Flux")
+            axs[0].grid(True,ls='--')
+
+            axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), marker='o', color='gray')
+            axs[1].set_xlabel("Time [day]")
+            axs[1].set_ylabel("Residuals")
+
         plt.tight_layout()
 
         return f,axs

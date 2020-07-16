@@ -2381,13 +2381,15 @@ if __name__ == "__main__":
             print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
 
-        # PLOTTING BEST FIT MODEL
+        ########################
+        # PLOT FINAL LIGHT CURVE
+        ########################
         f,axs = myfit.plot_bestfit()
 
         ax_lc = axs[0]
         ax_res = axs[1]
 
-        ax_lc.spines['bottom'].set_color('black')      #altering the border, tick color
+        ax_lc.spines['bottom'].set_color('black')
         ax_lc.spines['top'].set_color('black')
         ax_lc.spines['right'].set_color('black')
         ax_lc.spines['left'].set_color('black')
@@ -2401,6 +2403,7 @@ if __name__ == "__main__":
         ax_res.tick_params(axis='x', colors='black')
         ax_res.tick_params(axis='y', colors='black')
 
+        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
 
         try:
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".pdf", bbox_inches="tight")
@@ -2408,6 +2411,7 @@ if __name__ == "__main__":
             f.savefig(saveDirectory + 'FinalLightCurve' + targetName + date + ".png", bbox_inches="tight")
         plt.close()
 
+###################################################################################
 
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})

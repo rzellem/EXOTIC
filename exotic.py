@@ -2263,25 +2263,20 @@ if __name__ == "__main__":
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             if wcsFile:
-                # For those who use their own plate solution and may not have pixel scale
-                # involved like nova.astrometry.net
-                try:
-                    if hdulWCS[0].header['COMMENT'][135].split(' ')[0] == 'scale:':
-                        imscalen = float(hdulWCS[0].header['COMMENT'][135].split(' ')[1])
-                        imscaleunits = 'Image scale in arc-secs/pixel'
-                        imscale = imscaleunits + ": " + str(round(imscalen, 2))
-                    else:
-                        i = 100
-                        while hdulWCS[0].header['COMMENT'][i].split(' ')[0] != 'scale:':
-                            i += 1
-                        imscalen = float(hdulWCS[0].header['COMMENT'][i].split(' ')[1])
-                        imscaleunits = 'Image scale in arc-secs/pixel'
-                        imscale = imscaleunits + ": " + str(round(imscalen, 2))
-                    hdulWCS.close()  # close stream
-                    del hdulWCS
-                except KeyError:
-                    pass
-            if "IM_SCALE" in imageheader:
+                if hdulWCS[0].header['COMMENT'][135].split(' ')[0] == 'scale:':
+                    imscalen = float(hdulWCS[0].header['COMMENT'][135].split(' ')[1])
+                    imscaleunits = 'Image scale in arc-secs/pixel'
+                    imscale = imscaleunits + ": " + str(round(imscalen, 2))
+                else:
+                    i = 100
+                    while hdulWCS[0].header['COMMENT'][i].split(' ')[0] != 'scale:':
+                        i += 1
+                    imscalen = float(hdulWCS[0].header['COMMENT'][i].split(' ')[1])
+                    imscaleunits = 'Image scale in arc-secs/pixel'
+                    imscale = imscaleunits + ": " + str(round(imscalen, 2))
+                hdulWCS.close()  # close stream
+                del hdulWCS
+            elif "IM_SCALE" in imageheader:
                 imscalen = imageheader['IM_SCALE']
                 imscaleunits = imageheader.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)

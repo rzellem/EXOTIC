@@ -1343,9 +1343,9 @@ if __name__ == "__main__":
             targetName = str(input("\nEnter the Planet Name: "))
 
         print("\nLooking up ", targetName, "- please wait.")
-        # done = False
-        # t = threading.Thread(target=animate, daemon=True)
-        # t.start()
+        done = False
+        t = threading.Thread(target=animate, daemon=True)
+        t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
 
         # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
@@ -1368,6 +1368,8 @@ if __name__ == "__main__":
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
                 print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+        
+        done = True
 
         # observation date
         if fileorcommandline == 1:

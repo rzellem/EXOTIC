@@ -610,9 +610,6 @@ def plate_solution(fits_file, saveDirectory):
 
 #Checks if comparison star coordinates don't point to variable stars
 def variableStarCheck(raList, decList, compStarList):
-    #Debugging stuff
-    import pdb
-    pdb.set_trace()
 
     validCoordList = []
     errorMargin = 0.005556

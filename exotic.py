@@ -40,6 +40,8 @@ import threading
 import time
 import sys
 
+print('Python Version: %s' % sys.version)
+
 # To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
@@ -2145,7 +2147,7 @@ if __name__ == "__main__":
                 imscalen = imageheader['IM_SCALE']
                 imscaleunits = imageheader.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)
-            elif "PIXSCALE" in hdul[0].header:
+            elif "PIXSCALE" in imageheader:
                 imscalen = imageheader['PIXSCALE']
                 imscaleunits = imageheader.comments['PIXSCALE']
                 imscale = imscaleunits + ": " + str(imscalen)

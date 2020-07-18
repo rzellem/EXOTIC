@@ -355,7 +355,8 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             print('Sorry, not a valid data type.')
             continue
         if type_ == str and val1 and val2:
-            if option.lower() not in (val1, val2):
+            option = option.lower()
+            if option not in (val1, val2):
                 print("Sorry, your response was not valid.")
             else:
                 return option
@@ -375,16 +376,17 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
 
 # Create a save directory within the current working directory
 def create_directory():
-    try:
-        directoryname = input('Enter the name for your new directory: ')
-        newdirectoryPath = os.getcwd()
-        savedirectory = newdirectoryPath + '/' + directoryname + '/'
-        os.mkdir(savedirectory)
-    except OSError:
-        print("Creation of the directory %s failed" % savedirectory)
-    else:
-        print("Successfully created the directory %s " % savedirectory)
-        return savedirectory
+    while True:
+        try:
+            directoryname = input('Enter the name for your new directory: ')
+            newdirectoryPath = os.getcwd()
+            savedirectory = newdirectoryPath + '/' + directoryname + '/'
+            os.mkdir(savedirectory)
+        except OSError:
+            print("Creation of the directory %s failed" % savedirectory)
+        else:
+            print("Successfully created the directory %s " % savedirectory)
+            return savedirectory
 
 
 # Check user's inits.json for user information and planetary parameters
@@ -447,7 +449,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if pdict[key] == userpdict[key]:
                 continue
             # Initialization planetary parameters don't match NEA
-            if userpdict[key] != '' or userpdict[key] is not None:
+            if userpdict[key] is not None:
                 print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[i]))
                 print("NASA Exoplanet Archive: %s" % pdict[key])
                 print("Initialization file: %s" % userpdict[key])
@@ -480,7 +482,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 decstr = decstr.replace(' ', '').replace(':', '')
                 userpdict['dec'] = astropy.coordinates.Angle(decstr + " degrees").deg
             # Used initialization files and is not empty
-            elif userpdict[key] != '' or userpdict[key] is not None:
+            elif userpdict[key] is not None:
                 continue
             elif key in ('pName', 'sName'):
                 userpdict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=str)
@@ -1249,8 +1251,8 @@ if __name__ == "__main__":
         compStarList = []
 
         infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
-                    'aavsoopt': None, 'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None,
-                    'elev': None, 'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
+                    'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None,'elev': None,
+                    'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
                     'tarcoords': None, 'compstars': None}
 
         userpDict = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None,
@@ -1289,11 +1291,6 @@ if __name__ == "__main__":
             # initf.close()
 
             infoDict, userpDict = inits_file(initfilename, infoDict, userpDict)
-
-            if infoDict['aavsoopt'] == "n":
-                AAVSOBool = False
-            else:
-                AAVSOBool = True
 
             if infoDict['flatsdir'] == "n":
                 flats = 'n'
@@ -1551,19 +1548,14 @@ if __name__ == "__main__":
 
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
-            infoDict['aavsoopt'] = user_input('Do you have an AAVSO Observer Account? (y/n): ', type_=str, val1='y', val2='n')
-            if infoDict['aavsoopt'] == 'n':
-                AAVSOBool = False
-            else:
-                AAVSOBool = True
-                # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
-                infoDict['aavsonum'] = str(input('Please enter your AAVSO Observer Account Number: '))
-                infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type none if only 1 observer code): '))
+            # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
+            infoDict['aavsonum'] = str(input('Please enter your AAVSO Observer Account Number (type n/a if you do not currently have an account): '))
+            infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type n/a if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-            infoDict['exposure'] = str(input('Please enter your exposure time (seconds): '))
+            infoDict['exposure'] = input('Please enter your exposure time (seconds): ')
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
-                                   'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
+                                           'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
         # Get the planetary parameters non-candidate exoplanets
@@ -2671,9 +2663,8 @@ if __name__ == "__main__":
               + pDict['pName'] + infoDict['date'] + '.txt' + '\n')
 
         # AAVSO Format
-        if not AAVSOBool:
-            userCode = "N/A"
-            secuserCode = "N/A"
+        userCode = infoDict['aavsonum']
+        secuserCode = infoDict['secondobs']
         # else:
         outParamsFile = open(infoDict['saveplot'] + 'AAVSO' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
@@ -2686,7 +2677,7 @@ if __name__ == "__main__":
         outParamsFile.write('#STAR_NAME=' + pDict['sName'] + '\n')  # code yields
         outParamsFile.write('#EXOPLANET_NAME=' + pDict['pName'] + '\n')  # code yields
         outParamsFile.write('#BINNING=' + infoDict['pixelbin'] + '\n')  # user input
-        outParamsFile.write('#EXPOSURE_TIME=' + infoDict['exposure'] + '\n')  # UI
+        outParamsFile.write('#EXPOSURE_TIME=' + str(infoDict['exposure']) + '\n')  # UI
         outParamsFile.write('#FILTER=' + infoDict['filter'] + '\n')
         outParamsFile.write('#NOTES=' + infoDict['notes'] + '\n')
         outParamsFile.write('#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n')  # fixed

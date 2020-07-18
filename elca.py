@@ -335,8 +335,7 @@ def getPhase(curTime, pPeriod, tMid):
     phase[mask] = -1 * (1-phase[mask])
     return phase
 
-
-#Creates binned data points for Final Light Curve
+# Creates binned data points for Final Light Curve
 def time_bin(time, flux, dt):
     bins = int(np.floor((max(time) - min(time))/dt))
     bflux = np.zeros(bins)
@@ -365,8 +364,7 @@ class lc_fitter(object):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
         bounddiff = np.diff(boundarray,1).reshape(-1)
-        self.phase = getPhase(self.time, self.prior['per'], self.prior['tmid'])
-
+        
         def loglike(pars):
             # chi-squared
             for i in range(len(pars)):
@@ -447,14 +445,14 @@ class lc_fitter(object):
         self.parameters = copy.deepcopy(tests[mi])
 
         # final model
+        self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
         self.residuals = self.data - self.model
 
-    def plot_bestfit(self):
-        phase = True
+    def plot_bestfit(self, nbins=10, phase=True):
 
         f = plt.figure( figsize=(12,7) )
         #f.subplots_adjust(top=0.94,bottom=0.08,left=0.07,right=0.96)
@@ -462,21 +460,21 @@ class lc_fitter(object):
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1, sharex=ax_lc )
         axs = [ax_lc, ax_res]
 
-        dt = (max(self.time) - min(self.time))/10
+        dt = (max(self.time) - min(self.time))/nbins
 
         if phase == True:
-            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
+            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='black', markersize=5, zorder=1)
             axs[0].plot(self.phase, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
+            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='black', markersize=5, ls='none')
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Phase")
             axs[1].set_ylabel("Residuals")
 
-            binnedPhase, binnedFlux = time_bin(self.phase, self.detrended, dt)
-            binnedPhase2, binnedResids = time_bin(self.phase, self.residuals, dt)
+            binnedPhase, binnedFlux = time_bin(self.phase, self.detrended, dt/self.parameters['per'])
+            binnedPhase2, binnedResids = time_bin(self.phase, self.residuals, dt/self.parameters['per'])
             axs[0].plot(binnedPhase, binnedFlux, marker='s', color='blue', markersize=5, ls='none')
             axs[1].plot(binnedPhase2, binnedResids, marker='s', color='blue', markersize=5, ls='none')
 

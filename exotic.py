@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.11.0"
+versionid = "0.11.3"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -40,10 +40,11 @@ import threading
 import time
 import sys
 
-## To increase memory allocation for EXOTIC; allows for more fits files
+print('Python Version: %s' % sys.version)
+
+# To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
-
 
 # here is the animation
 def animate():
@@ -694,7 +695,7 @@ def fit_centroid(data, pos, init=None, box=10):
     if init:
         pass
     else:
-        init = [np.nanmax(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv]) ]
+        init = [np.nanmax(data[yv,xv])-np.nanmin(data[yv,xv]), 1, 1, 0, np.nanmin(data[yv,xv])]
 
     try:
         # fit gaussian PSF
@@ -702,7 +703,7 @@ def fit_centroid(data, pos, init=None, box=10):
             data,
             [wx, wy], # position estimate
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
-            [wx-5, wy-5, np.nanmin(data), 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
             psf_function=gaussian_psf,
             box=box # only fit a subregion +/- 5 px from centroid
@@ -1346,9 +1347,9 @@ if __name__ == "__main__":
             targetName = str(input("\nEnter the Planet Name: "))
 
         print("\nLooking up ", targetName, "- please wait.")
-        # done = False
-        # t = threading.Thread(target=animate, daemon=True)
-        # t.start()
+        done = False
+        t = threading.Thread(target=animate, daemon=True)
+        t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
 
         # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
@@ -1371,6 +1372,8 @@ if __name__ == "__main__":
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
                 print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+
+        done = True
 
         # observation date
         if fileorcommandline == 1:
@@ -2150,7 +2153,7 @@ if __name__ == "__main__":
                 imscalen = imageheader['IM_SCALE']
                 imscaleunits = imageheader.comments['IM_SCALE']
                 imscale = imscaleunits + ": " + str(imscalen)
-            elif "PIXSCALE" in hdul[0].header:
+            elif "PIXSCALE" in imageheader:
                 imscalen = imageheader['PIXSCALE']
                 imscaleunits = imageheader.comments['PIXSCALE']
                 imscale = imscaleunits + ": " + str(imscalen)

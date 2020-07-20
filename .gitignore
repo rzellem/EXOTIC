@@ -127,3 +127,4 @@ venv.bak/
 *.swp
 eaConf.json
 get-pip.py
+newfits.fits

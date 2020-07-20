@@ -130,7 +130,6 @@ from occultquad import *
 # time.sleep(10)
 done = True
 
-
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
 # Function that bins an array
 def binner(arr, n, err=''):
@@ -738,7 +737,7 @@ def fit_centroid(data, pos, init=None, box=10):
         # fit gaussian PSF
         pars = fit_psf(
             data,
-            [wx, wy], # position estimate 
+            [wx, wy], # position estimate
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
             [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
@@ -746,7 +745,7 @@ def fit_centroid(data, pos, init=None, box=10):
             box=box # only fit a subregion +/- 5 px from centroid
         )
     except:
-        import pdb; pdb.set_trace() 
+        import pdb; pdb.set_trace()
 
     return pars
 
@@ -2173,6 +2172,10 @@ if __name__ == "__main__":
                     # Exit aperture loop
                 # Exit annulus loop
             # Exit the Comp Stars Loop
+            #Bypass Plate Solution using sample data for now
+                wcsFile = "/mnt/c/Users/aaron/Documents/EXOTIC/EXOTIC/sample-data/newfits.fits"
+            hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
+            rafile, decfile = get_radec(hdulWCS)
 
             #Doublechecking to see if comparison star != variable star
             print("Verifying selected comparison star is not variable. Please wait.")

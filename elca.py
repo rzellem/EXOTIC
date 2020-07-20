@@ -364,7 +364,7 @@ class lc_fitter(object):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
         bounddiff = np.diff(boundarray,1).reshape(-1)
-        
+
         def loglike(pars):
             # chi-squared
             for i in range(len(pars)):
@@ -463,20 +463,21 @@ class lc_fitter(object):
         dt = (max(self.time) - min(self.time))/nbins
 
         if phase == True:
-            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='black', markersize=5, zorder=1)
+            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
             axs[0].plot(self.phase, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='black', markersize=5, ls='none')
+            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Phase")
-            axs[1].set_ylabel("Residuals")
+            axs[1].set_ylabel("Residuals [PPM]")
 
             binnedPhase, binnedFlux = time_bin(self.phase, self.detrended, dt/self.parameters['per'])
-            binnedPhase2, binnedResids = time_bin(self.phase, self.residuals, dt/self.parameters['per'])
-            axs[0].plot(binnedPhase, binnedFlux, marker='s', color='blue', markersize=5, ls='none')
-            axs[1].plot(binnedPhase2, binnedResids, marker='s', color='blue', markersize=5, ls='none')
+            #binnedPhase2, binnedResids = time_bin(self.phase, self.residuals, dt/self.parameters['per'])
+            binnedPhase2, binnedResids = time_bin(self.phase, 1e6*self.residuals/np.median(self.data), dt/self.parameters['per'])
+            axs[0].plot(binnedPhase, binnedFlux, marker='s', color='blue', markersize=6, ls='none')
+            axs[1].plot(binnedPhase2, binnedResids, marker='s', color='blue', markersize=6, ls='none')
 
         else:
             axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
@@ -487,12 +488,13 @@ class lc_fitter(object):
             axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
             axs[1].plot(phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Time [day]")
-            axs[1].set_ylabel("Residuals")
+            axs[1].set_ylabel("Residuals [PPM]")
 
             binnedTime, binnedFlux = time_bin(self.time, self.detrended, dt)
-            binnedTime2, binnedResids = time_bin(self.time, self.residuals, dt)
-            axs[0].plot(binnedTime, binnedFlux, marker='s', color='blue', markersize=5, ls='none')
-            axs[1].plot(binnedTime2, binnedResids, marker='s', color='blue', markersize=5, ls='none')
+            #binnedTime2, binnedResids = time_bin(self.time, self.residuals, dt)
+            binnedTime2, binnedResids = time_bin(self.time, 1e6*self.residuals/np.median(self.data), dt)
+            axs[0].plot(binnedTime, binnedFlux, marker='s', color='blue', markersize=6, ls='none')
+            axs[1].plot(binnedTime2, binnedResids, marker='s', color='blue', markersize=6, ls='none')
 
         plt.tight_layout()
 

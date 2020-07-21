@@ -42,10 +42,10 @@
     ],
     "planetary_parameters": [
         {
+            "Target Star RA (hh:mm:ss)": "02:05:15",
+            "Target Star Dec (+/-hh:mm:ss)": "+46:46:09",
             "Planet's Name": "HAT-P-32 b",
             "Host Star's Name": "HAT-P-32",
-            "Target Star RA (hh:mm:ss)": "02:05.25",
-            "Target Star Dec (+/-hh:mm:ss)": "+46:46.15",
             "Orbital Period (days)": 2.1500082,
             "Orbital Period Uncertainty": 1.3e-07,
             "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,

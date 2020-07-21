@@ -241,10 +241,10 @@ def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
 
     planetDictionary = {
-        'pName': data['pl_name'],
-        'sName': data['hostname'],
         'ra': data['ra'],
         'dec': data['dec'],
+        'pName': data['pl_name'],
+        'sName': data['hostname'],
         'pPer': data['pl_orbper'],
         'pPerUnc': data['pl_orbpererr1'],
         'midT': data['pl_tranmid'],
@@ -436,8 +436,9 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Star Surface Gravity Negative Uncertainty (log(g))"]
 
     # Conversion between hours to degrees if user entered ra and dec
-    if userpdict['ra'] and userpdict['dec'] is None:
+    if userpdict['ra'] is None:
         userpdict['ra'] = input('\nEnter the %s: ' % planet_params[0])
+    if userpdict['dec'] is None:
         userpdict['dec'] = input('\nEnter the %s: ' % planet_params[1])
     userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
@@ -445,7 +446,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     for idx, item in enumerate(radeclist):
         if not candplanetbool and pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
             pdict[item] = userpdict[item]
-        else:
+        elif not candplanetbool:
             print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[idx]))
             print("NASA Exoplanet Archive: %s" % pdict[item])
             print("Initialization file: %s" % userpdict[item])
@@ -457,7 +458,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             else:
                 pdict[item] = user_input('Enter the ' + planet_params[idx] + ': ', type_=str)
-        if candplanetbool:
+        elif candplanetbool:
             agreement = user_input('%s: %s \nDo you confirm the results? (y/n): '
                                    % (planet_params[idx], userpdict[item]), type_=str, val1='y', val2='n')
             if agreement == 'y':
@@ -503,7 +504,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 if agreement == 'y':
                     userpdict[key] = pdict[key]
                 else:
-                    userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
+                    userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(pdict[key]))
 
     # Exoplanet not confirmed in NEA
     else:
@@ -520,7 +521,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
             # Did not use initialization file
             else:
-                userpdict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
+                if key in ('pName', 'sName'):
+                    userpdict[key] = input('\nEnter the ' + planet_params[i] + ': ')
+                else:
+                    userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
     return userpdict
 
 
@@ -1301,7 +1305,7 @@ if __name__ == "__main__":
                     'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
                     'tarcoords': None, 'compstars': None}
 
-        userpDict = {'pName': None, 'sName': None, 'ra': None, 'dec': None, 'pPer': None, 'pPerUnc': None,
+        userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                      'midT': None, 'midTUnc': None, 'rprs': None, 'aRs': None, 'inc': None, 'ecc': None, 'teff': None,
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
@@ -1430,23 +1434,28 @@ if __name__ == "__main__":
         # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
         if not os.path.exists("eaConf.json") or time.time() - os.path.getmtime('eaConf.json') > 604800:
             new_scrape(filename="eaConf.json")
+        targetName = userpDict['pName']
 
         CandidatePlanetBool = False
         with open("eaConf.json", "r") as confirmedFile:
             data = json.load(confirmedFile)
             planets = [data[i]['pl_name'].lower().replace(' ', '').replace('-', '') for i in range(len(data))]
             #stars = [data[i]['hostname'] for i in range(len(data))]
-            if userpDict['pName'].lower().replace(' ', '').replace('-', '') not in planets:
-                while userpDict['pName'].lower().replace(' ', '').replace('-', '') not in planets:
+            if targetName.lower().replace(' ', '').replace('-', '') not in planets:
+                while targetName.lower().replace(' ', '').replace('-', '') not in planets:
+                    done = True
                     print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or file: eaConf.json.")
-                    userpDict['pName'] = str(input("If this is a planet candidate, type candidate: "))
-                    if userpDict['pName'].replace(' ', '') == 'candidate':
+                    targetName = input("If this is a planet candidate, type candidate or re-enter the planet's name: ")
+                    if targetName.replace(' ', '') == 'candidate':
                         CandidatePlanetBool = True
                         break
             if not CandidatePlanetBool:
-                idx = planets.index(userpDict['pName'].lower().replace(' ', '').replace('-', ''))
+                idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
-                print('\nSuccessfuly found ' + pDict['pName'] + ' in the NASA Exoplanet Archive!')
+                print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+
+        if targetName.replace(' ','') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
+            userpDict['pName'] = targetName
 
         done = True
 

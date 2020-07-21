@@ -443,23 +443,24 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
     radeclist = ['ra', 'dec']
-    for idx, item in enumerate(radeclist):
-        if not candplanetbool and pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
-            continue
-        elif not candplanetbool:
-            print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[idx]))
-            print("NASA Exoplanet Archive: %s" % pdict[item])
-            print("Initialization file: %s" % userpdict[item])
-            print("Would you like to: (1) use NEA data, (2) use initialization data, or (3) enter in a new parameter.")
-            option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
-            if option == 1:
-                userpdict[item] = pdict[item]
-            elif option == 2:
+    if not candplanetbool:
+        for idx, item in enumerate(radeclist):
+            if pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
                 continue
             else:
-                userpdict['ra'] = user_input('Enter the ' + planet_params[0] + ': ', type_=str)
-                userpdict['dec'] = user_input('Enter the ' + planet_params[1] + ': ', type_=str)
-                break
+                print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[idx]))
+                print("NASA Exoplanet Archive: %s" % pdict[item])
+                print("Initialization file: %s" % userpdict[item])
+                print("Would you like to: (1) use NEA data, (2) use initialization data, or (3) enter in a new parameter.")
+                option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
+                if option == 1:
+                    userpdict[item] = pdict[item]
+                elif option == 2:
+                    continue
+                else:
+                    userpdict['ra'] = user_input('Enter the ' + planet_params[0] + ': ', type_=str)
+                    userpdict['dec'] = user_input('Enter the ' + planet_params[1] + ': ', type_=str)
+                    break
 
     if type(userpdict['ra']) and type(userpdict['dec']) is str:
         userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])

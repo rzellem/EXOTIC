@@ -450,33 +450,27 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
     radeclist = ['ra', 'dec']
-    for idx, item in enumerate(radeclist):
-        if not candplanetbool and pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
-            pdict[item] = userpdict[item]
-        elif not candplanetbool:
-            print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
-            print("\tNASA Exoplanet Archive value: %s" % pdict[item])
-            print("\tInitialization file value: %s" % userpdict[item])
-            print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
-            option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
-            if option == 1:
-                userpdict[item] = pdict[item]
-            elif option == 2:
+    if not candplanetbool:
+        for idx, item in enumerate(radeclist):
+            if pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
                 continue
             else:
-                pdict[item] = user_input('Enter the ' + planet_params[idx] + ': ', type_=str)
-        elif candplanetbool:
-            agreement = user_input('%s: %s \nDo you confirm the results? (y/n): '
-                                   % (planet_params[idx], userpdict[item]), type_=str, val1='y', val2='n')
-            if agreement == 'y':
-                continue
-            else:
-                if item == 'ra':
-                    rastr = input('\nEnter the ' + planet_params[idx] + ': ')
-                    pdict['ra'] = radec_hours_to_degree(rastr)
-                elif item == 'dec':
-                    decstr = input('\nEnter the ' + planet_params[idx] + ': ')
-                    pdict['dec'] = radec_hours_to_degree(decstr)
+                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+                print("\tNASA Exoplanet Archive value: %s" % pdict[item])
+                print("\tInitialization file value: %s" % userpdict[item])
+                print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
+                option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
+                if option == 1:
+                    userpdict[item] = pdict[item]
+                elif option == 2:
+                    continue
+                else:
+                    userpdict['ra'] = user_input('Enter the ' + planet_params[0] + ': ', type_=str)
+                    userpdict['dec'] = user_input('Enter the ' + planet_params[1] + ': ', type_=str)
+                    break
+
+    if type(userpdict['ra']) and type(userpdict['dec']) is str:
+        userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
     # Exoplanet confirmed in NASA Exoplanet Archive
     if not candplanetbool:
@@ -486,9 +480,11 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
         # print('decided to use an initialization file.')
 
         for i, key in enumerate(userpdict):
-            if key in ('ra', 'dec', 'pName', 'sName'):
+            if key in ('ra', 'dec'):
                 continue
-            # Initialization planetary parameters match NASA Exoplanet Archive
+            if key in ('pName', 'sName'):
+                userpdict[key] = pdict[key]
+            # Initialization planetary parameters match NEA
             if pdict[key] == userpdict[key]:
                 continue
             # Initialization planetary parameters don't match NASA Exoplanet Archive
@@ -1611,8 +1607,8 @@ if __name__ == "__main__":
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
             # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
-            infoDict['aavsonum'] = str(input('Please enter your AAVSO Observer Account Number (type n/a if you do not currently have an account): '))
-            infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type n/a if only 1 observer code): '))
+            infoDict['aavsonum'] = str(input('Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): '))
+            infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
             infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
@@ -1622,7 +1618,7 @@ if __name__ == "__main__":
 
         # Get the planetary parameters non-candidate exoplanets
         if not CandidatePlanetBool:
-            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pDict)
+            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
         # Candidate planetary parameters for exoplanets
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)

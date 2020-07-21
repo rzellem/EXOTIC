@@ -2519,11 +2519,11 @@ if __name__ == "__main__":
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=['Rp/Rs','Tmid', 'a1', 'a2'], quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=['Rp/Rs','Tmid','a1', 'a2'], fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        fig.savefig(saveDirectory + 'temp/Triangle_{}_{}.png'.format(targetName, date))
+        fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(targetName, infoDict['date']))
 
 
         # write output to text file
-        outParamsFile = open(saveDirectory + 'FinalLightCurve' + targetName + date + '.csv', 'w+')
+        outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + targetName + infoDict['date'] + '.csv', 'w+')
         outParamsFile.write('# FINAL TIMESERIES OF ' + targetName + '\n')
         outParamsFile.write('# BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 

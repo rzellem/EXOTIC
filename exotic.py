@@ -419,7 +419,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     print('\n*******************************************')
     print("Planetary Parameters for Lightcurve Fitting\n")
 
-    # The order of planet_params list must match the pDict that is declared when scraping the NEA
+    # The order of planet_params list must match the pDict that is declared when scraping the NASA Exoplanet Archive
     planet_params = ["Target Star RA in the form: HH:MM:SS (ignore the decimal values)",
                      "Target Star DEC in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)",
                      "Planet's Name",
@@ -472,12 +472,12 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     if type(userpdict['ra']) and type(userpdict['dec']) is str:
         userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
-    # Exoplanet confirmed in NEA
+    # Exoplanet confirmed in NASA Exoplanet Archive
     if not candplanetbool:
-        print('\nHere are the values scraped from the NASA Exoplanet Archive for %s.' % pdict['pName'])
-        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree or ')
-        print('enter "1" to use NEA data, "2" to use initialization data, or "3" to enter a new parameter if you ')
-        print('decided to use an initialization file.')
+        print('\n\n*** Here are the values scraped from the NASA Exoplanet Archive for %s that were not set (or set to null) in your initialization file. ***' % pdict['pName'])
+        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree.')
+        # print('enter "1" to use NASA Exoplanet Archive value, "2" to use initialization file value, or "3" to enter a new value if you ')
+        # print('decided to use an initialization file.')
 
         for i, key in enumerate(userpdict):
             if key in ('ra', 'dec'):
@@ -487,12 +487,12 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             # Initialization planetary parameters match NEA
             if pdict[key] == userpdict[key]:
                 continue
-            # Initialization planetary parameters don't match NEA
+            # Initialization planetary parameters don't match NASA Exoplanet Archive
             if userpdict[key] is not None:
-                print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[i]))
-                print("NASA Exoplanet Archive: %s" % pdict[key])
-                print("Initialization file: %s" % userpdict[key])
-                print("Would you like to: (1) use NEA data, (2) use initialization data, or (3) enter in a new parameter.")
+                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
+                print("\tNASA Exoplanet Archive value: %s" % pdict[key])
+                print("\tInitialization file value: %s" % userpdict[key])
+                print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
                 if option == 1:
                     userpdict[key] = pdict[key]
@@ -509,7 +509,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(pdict[key]))
 
-    # Exoplanet not confirmed in NEA
+    # Exoplanet not confirmed in NASA Exoplanet Archive
     else:
         for i, key in enumerate(userpdict):
             if key in ('ra', 'dec'):

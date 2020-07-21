@@ -107,8 +107,6 @@ from astropy.wcs import WCS
 
 # Image alignment import
 import astroalign as aa
-
-from astropy.wcs import WCS
 from astroquery.simbad import Simbad
 import astropy.coordinates as coord
 import astropy.units as u
@@ -611,21 +609,30 @@ def plate_solution(fits_file, saveDirectory):
         time.sleep(5)
 
 #Checks if comparison star coordinates don't point to variable stars
-def variableStarCheck(raList, decList, compStarList):
+def variableStarCheck(wcsList, raList, decList, compStarList):
 
     validCoordList = []
     errorMargin = 0.005556
 
+    wcsFile = WCS(wcsList)
+    #Convert all pixel tuples into WCS and add them to a list
+    for i in range(0, len(compStarList)):
+        #wcsXCoord = compStarList[i][0].all_pix2world()
+        #wcsYCoord = compStarList[i][1].all_pix2world()
+        XCoord = wcsFile[i][0]
+        YCoord = wcsFile[i][1]
+        wcsXCoord, wcsYCoord = wcsFile.all_pix2world(XCoord, YCoord, 0)
+        validCoordList.append((wcsXCoord, wcsYCoord))
+
     #For every comparison star, convert into WCS coordinates and check if it's in WCS file before querying
-    #Also accounts for error margin of 20 arcseconds
-    for compStar in compStarList:
+    '''for compStar in compStarList:
         compStarCoords = compStar.all_pix2world()
         raLowerBound = compStarCoords[0] - errorMargin
         raUpperBound = compStarCoords[0] + errorMargin
         decLowerBound = compStarCoords[1] - errorMargin
         decLowerBound = compStarCoords[1] + errorMargin
         if compStarCoords[0] in raList and compStarCoords[1] in decList:
-            validCoordList.append((compStarCoords[0], compStarCoords[1]))
+            validCoordList.append((compStarCoords[0], compStarCoords[1]))'''
 
     #Use normalized Coordinates to search on SIMBAD to check if that star is variable
     #Throws an error if invalid coordinates are inputted
@@ -637,12 +644,13 @@ def variableStarCheck(raList, decList, compStarList):
             print("Error: Invalid star coordinates. Checking next star... ")
             continue
 
-        #Check if star ID/name explicitly has V* in it
+        #Check if star ID/name explicitly has V* in it upon successful query
         starName = resultTable['MAIN_ID'][0].decode("utf-8")
         if "V*" in starName:
             print("Comparison star " + starName + " is variable")
-            compPixelCoords = validCoordList[counter].all_world2pix()
-            compStarList.remove(compPixelCoords)
+            compXCoord = validCoordList[counter][0].all_world2pix()
+            compYCoord = validCoordList[counter][1].all_world2pix()
+            compStarList.remove((compXCoord, compYCoord))
 
     return True
 
@@ -1408,7 +1416,7 @@ if __name__ == "__main__":
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
                 print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
-        
+
         done = True
 
         # observation date
@@ -2175,13 +2183,13 @@ if __name__ == "__main__":
                 # Exit annulus loop
             # Exit the Comp Stars Loop
             #Bypass Plate Solution using sample data for now
-                wcsFile = "/mnt/c/Users/aaron/Documents/EXOTIC/EXOTIC/sample-data/newfits.fits"
+            wcsFile = "/mnt/c/Users/aaron/Documents/EXOTIC/EXOTIC/sample-data/newfits.fits"
             hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
             rafile, decfile = get_radec(hdulWCS)
 
             #Doublechecking to see if comparison star != variable star
             print("Verifying selected comparison star is not variable. Please wait.")
-            isVariable = variableStarCheck(rafile, decfile, compStarList)
+            isVariable = variableStarCheck(hdulWCS, rafile, decfile, compStarList)
 
             print('\n*********************************************')
             print('Best Comparison Star: #' + str(bestCompStar))

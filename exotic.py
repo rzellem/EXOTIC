@@ -455,10 +455,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
                 continue
             else:
-                print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[idx]))
-                print("NASA Exoplanet Archive: %s" % pdict[item])
-                print("Initialization file: %s" % userpdict[item])
-                print("Would you like to: (1) use NEA data, (2) use initialization data, or (3) enter in a new parameter.")
+                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+                print("\tNASA Exoplanet Archive value: %s" % pdict[item])
+                print("\tInitialization file value: %s" % userpdict[item])
+                print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
                 if option == 1:
                     userpdict[item] = pdict[item]

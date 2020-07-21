@@ -454,10 +454,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
         if not candplanetbool and pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
             pdict[item] = userpdict[item]
         elif not candplanetbool:
-            print("\nThe %s initialization file's %s does not match the NASA Exoplanet Archive." % (pdict['pName'], planet_params[idx]))
-            print("NASA Exoplanet Archive: %s" % pdict[item])
-            print("Initialization file: %s" % userpdict[item])
-            print("Would you like to: (1) use NASA Exoplanet Archive value, (2) use initialization value, or (3) enter in a new parameter.")
+            print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+            print("\tNASA Exoplanet Archive value: %s" % pdict[item])
+            print("\tInitialization file value: %s" % userpdict[item])
+            print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
             option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
             if option == 1:
                 userpdict[item] = pdict[item]
@@ -480,10 +480,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
 
     # Exoplanet confirmed in NASA Exoplanet Archive
     if not candplanetbool:
-        print('\nHere are the values scraped from the NASA Exoplanet Archive for %s.' % pdict['pName'])
-        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree or ')
-        print('enter "1" to use NASA Exoplanet Archive value, "2" to use initialization value, or "3" to enter a new parameter if you ')
-        print('decided to use an initialization file.')
+        print('\n\n*** Here are the values scraped from the NASA Exoplanet Archive for %s that were not set (or set to null) in your initialization file. ***' % pdict['pName'])
+        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree.')
+        # print('enter "1" to use NASA Exoplanet Archive value, "2" to use initialization file value, or "3" to enter a new value if you ')
+        # print('decided to use an initialization file.')
 
         for i, key in enumerate(userpdict):
             if key in ('ra', 'dec', 'pName', 'sName'):
@@ -493,10 +493,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             # Initialization planetary parameters don't match NASA Exoplanet Archive
             if userpdict[key] is not None:
-                print("\nThe %s initialization file's %s does not match the NASA Exoplanet Archive." % (pdict['pName'], planet_params[i]))
-                print("NASA Exoplanet Archive: %s" % pdict[key])
-                print("Initialization file: %s" % userpdict[key])
-                print("Would you like to: (1) use NASA Exoplanet Archive value, (2) use initialization value, or (3) enter in a new parameter.")
+                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
+                print("\tNASA Exoplanet Archive value: %s" % pdict[key])
+                print("\tInitialization file value: %s" % userpdict[key])
+                print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
                 if option == 1:
                     userpdict[key] = pdict[key]

@@ -1327,7 +1327,7 @@ if __name__ == "__main__":
                 try:
                     initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
                     if initfilename == 'ok':
-                        initfilename = "/Users/rzellem/Documents/EXOTIC/inits.txt"
+                        initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
                     break
                 except FileNotFoundError:
                     print("Error: Initialization file not found. Please try again.")

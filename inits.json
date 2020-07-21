@@ -1,7 +1,17 @@
 {
     "inits_guide": [
         {
-            "Comments": ""
+            "Title": "EXOTIC's Initialization File",
+            "Comments": "Please answer all the following requirements below by following the format of the given",
+            "Comments": "sample dataset HAT-P-32 b. Edit this file as needed to match the data wanting to be reduced.",
+            "Comments": "Do not delete areas where there are quotation marks, commas, and brackets.",
+            "Comments": "The inits_guide dictionary (these lines of text) does not have to be edited",
+            "Comments": "and is only here to serve as a guide. Will be updated per user's advice.",
+            "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in n for none.",
+            "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
+            "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
+            "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees.",
+            "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees."
         }
     ],
     "user_info": [
@@ -16,8 +26,8 @@
             "Secondary Observer Codes (N/A if none)": "N/A",
 
             "Observation date": "December 17, 2017",
-            "Obs. Latitude (+=N,-=S)": "+31.68",
-            "Obs. Longitude (+=E,-=W)": "-110.88",
+            "Obs. Latitude": "+31.68",
+            "Obs. Longitude": "-110.88",
             "Obs. Elevation (meters)": 2616,
 
             "Camera Type (CCD or DSLR)": "CCD",

@@ -413,10 +413,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     print("Planetary Parameters for Lightcurve Fitting\n")
 
     # The order of planet_params list must match the pDict that is declared when scraping the NEA
-    planet_params = ["Planet's Name",
-                     "Host Star's Name",
-                     "Target Star RA in the form: HH:MM:SS (ignore the decimal values)",
+    planet_params = ["Target Star RA in the form: HH:MM:SS (ignore the decimal values)",
                      "Target Star DEC in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)",
+                     "Planet's Name",
+                     "Host Star's Name",
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \nKeep in mind that 1.2e-34 is the same as 1.2 x 10^-34",
                      "Published Mid-Transit Time (BJD_UTC)",
@@ -435,15 +435,50 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Star Surface Gravity Positive Uncertainty (log(g))",
                      "Star Surface Gravity Negative Uncertainty (log(g))"]
 
+    # Conversion between hours to degrees if user entered ra and dec
+    if userpdict['ra'] and userpdict['dec'] is None:
+        userpdict['ra'] = input('\nEnter the %s: ' % planet_params[0])
+        userpdict['dec'] = input('\nEnter the %s: ' % planet_params[1])
+    userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
+
+    radeclist = ['ra', 'dec']
+    for idx, item in enumerate(radeclist):
+        if not candplanetbool and pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
+            pdict[item] = userpdict[item]
+        else:
+            print("\nThe %s initialization file's %s does not match the NEA." % (pdict['pName'], planet_params[idx]))
+            print("NASA Exoplanet Archive: %s" % pdict[item])
+            print("Initialization file: %s" % userpdict[item])
+            print("Would you like to: (1) use NEA data, (2) use initialization data, or (3) enter in a new parameter.")
+            option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
+            if option == 1:
+                userpdict[item] = pdict[item]
+            elif option == 2:
+                continue
+            else:
+                pdict[item] = user_input('Enter the ' + planet_params[idx] + ': ', type_=str)
+        if candplanetbool:
+            agreement = user_input('%s: %s \nDo you confirm the results? (y/n): '
+                                   % (planet_params[idx], userpdict[item]), type_=str, val1='y', val2='n')
+            if agreement == 'y':
+                continue
+            else:
+                if item == 'ra':
+                    rastr = input('\nEnter the ' + planet_params[idx] + ': ')
+                    pdict['ra'] = radec_hours_to_degree(rastr)
+                elif item == 'dec':
+                    decstr = input('\nEnter the ' + planet_params[idx] + ': ')
+                    pdict['dec'] = radec_hours_to_degree(decstr)
+
     # Exoplanet confirmed in NEA
     if not candplanetbool:
-        print('Here are the values scraped from the NASA Exoplanet Archive for %s.' % pdict['pName'])
+        print('\nHere are the values scraped from the NASA Exoplanet Archive for %s.' % pdict['pName'])
         print('For each planetary parameter, enter "y" if you agree and "n" if you disagree or ')
         print('enter "1" to use NEA data, "2" to use initialization data, or "3" to enter a new parameter if you ')
         print('decided to use an initialization file.')
 
-        for i, key in enumerate(pdict):
-            if key in ('pName', 'sName', 'ra', 'dec', 'flag'):
+        for i, key in enumerate(userpdict):
+            if key in ('ra', 'dec', 'pName', 'sName'):
                 continue
             # Initialization planetary parameters match NEA
             if pdict[key] == userpdict[key]:
@@ -456,39 +491,50 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 print("Would you like to: (1) use NEA data, (2) use initialization data, or (3) enter in a new parameter.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
                 if option == 1:
-                    continue
+                    userpdict[key] = pdict[key]
                 elif option == 2:
-                    pdict[key] = userpdict[key]
+                    continue
                 else:
-                    pdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
+                    userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
             # Did not use initialization file
             else:
                 print('\n' + pdict['pName'] + ' ' + planet_params[i] + ': ' + str(pdict[key]))
                 agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-                if agreement.lower() == 'y':
-                    continue
-                elif agreement.lower() == 'n':
-                    pdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
-        return pdict
+                if agreement == 'y':
+                    userpdict[key] = pdict[key]
+                else:
+                    userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
 
     # Exoplanet not confirmed in NEA
     else:
         for i, key in enumerate(userpdict):
-            if key == 'ra':
-                rastr = input('\nEnter the ' + planet_params[i] + ': ')
-                userpdict['ra'] = astropy.coordinates.Angle(rastr + " hours").deg
-            elif key == 'dec':
-                decstr = input('\nEnter the ' + planet_params[i] + ': ')
-                decstr = decstr.replace(' ', '').replace(':', '')
-                userpdict['dec'] = astropy.coordinates.Angle(decstr + " degrees").deg
-            # Used initialization files and is not empty
-            elif userpdict[key] is not None:
+            if key in ('ra', 'dec'):
                 continue
-            elif key in ('pName', 'sName'):
-                userpdict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=str)
+            # Used initialization file and is not empty
+            if userpdict[key] is not None:
+                agreement = user_input('%s: %s \nDo you agree? (y/n): '
+                                       % (planet_params[i], userpdict[key]), type_=str, val1='y', val2='n')
+                if agreement == 'y':
+                    continue
+                else:
+                    userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
+            # Did not use initialization file
             else:
-                userpdict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=float)
-        return userpdict
+                userpdict[key] = user_input('\nEnter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
+    return userpdict
+
+
+def radec_hours_to_degree(ra, dec):
+    while True:
+        try:
+            ra = ra.replace(' ', '').replace(':', ' ')
+            dec = dec.replace(' ', '').replace(':', ' ')
+            c = SkyCoord(ra + ' ' + dec, unit=(u.hourangle, u.deg))
+            return c.ra.degree, c.dec.degree
+        except ValueError:
+            print('Error: The format is not correct, please try again.')
+            ra = input('Input the right ascension of target (HH:MM:SS): ')
+            dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
 
 # Check if user's directory contains imaging files that are able to be reduced
@@ -560,7 +606,7 @@ def check_wcs(fits_file, saveDirectory):
         plateSol = user_input("\nWould you like to upload the your image for a plate solution?"
                               "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
         # Plate solve the fits file
-        if plateSol.lower() == 'y':
+        if plateSol == 'y':
             print("\nGetting the plate solution for your imaging file. Please wait.")
             global done
             done = False
@@ -786,7 +832,7 @@ def fit_centroid(data, pos, init=None, box=10):
             box=box  # only fit a subregion +/- 5 px from centroid
         )
     except:
-        import pdb; pdb.set_trace() 
+        import pdb; pdb.set_trace()
 
     return pars
 
@@ -1462,9 +1508,9 @@ if __name__ == "__main__":
                 numCompStars = user_input("How many comparison stars would you like to use? (1-10) ", type_=int)
 
                 for num in range(numCompStars):
-                    infoDict['compstars'][num][0] = user_input("Comparison Star %s X Pixel Coordinate: " % num+1, type_=int)
-                    infoDict['compstars'][num][1] = user_input("Comparison Star %s Y Pixel Coordinate: " % num+1, type_=int)
-                    compStarList.append((infoDict['compstars'][num][0], infoDict['compstars'][num][1]))
+                    xpix = user_input("Comparison Star %s X Pixel Coordinate: " % str(num+1), type_=int)
+                    ypix = user_input("Comparison Star %s Y Pixel Coordinate: " % str(num+1), type_=int)
+                    compStarList.append((xpix, ypix))
 
             # ---HANDLE CALIBRATION IMAGES------------------------------------------------
             if fileorcommandline == 1:
@@ -1553,7 +1599,7 @@ if __name__ == "__main__":
             infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type n/a if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-            infoDict['exposure'] = input('Please enter your exposure time (seconds): ')
+            infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
@@ -1626,7 +1672,7 @@ if __name__ == "__main__":
             # Loop placed to check user-entered x and y target coordinates against WCS.
             while True:
                 fileNumber = 1
-                allImageData, timeList, fileNameList, timesListed, airMassList = [], [], [], [], []
+                allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr = [], [], [], [], [], []
 
                 # ----TIME SORT THE FILES-------------------------------------------------------------
                 for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -1641,6 +1687,9 @@ if __name__ == "__main__":
                     #     fileNameList.append (fileName)
                     # fitsHead.close()  # close stream
                     # del fitsHead
+
+                    # Keeps a list of file names
+                    fileNameStr.append(fileName)
 
                     hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
                     imageheader = hdul[0].header
@@ -1727,16 +1776,15 @@ if __name__ == "__main__":
                 firstImageData = sortedallImageData[firstimagecounter]
 
                 # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
-                firstimagegood = True
-                while firstimagegood:
+                while True:
                     # fit Target in the first image and use it to determine aperture and annulus range
                     try:
                         targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
                                                                                                 box=10)
-                        firstimagegood = False
+                        break
                     # If the first image is a bad one, then move on to the next image
-                    except:
-                        firstimagecounter = firstimagecounter + 1
+                    except Exception:
+                        firstimagecounter += 1
                         firstImageData = sortedallImageData[firstimagecounter]
 
                 # Filter the other data as well
@@ -1760,7 +1808,7 @@ if __name__ == "__main__":
                     sortedallImageData = sortedallImageData / generalFlat
 
                 # Plate Solution
-                pathSolve = infoDict['saveplot'] + 'first_file.fits'
+                pathSolve = infoDict['saveplot'] + 'ref_file_%s_%s' % (str(firstimagecounter), fileNameStr[firstimagecounter].split('/')[-1])
 
                 # Removes existing file of first_fits.fits
                 try:
@@ -2365,7 +2413,7 @@ if __name__ == "__main__":
             print("Whoa! You have a lot of datapoints (" + str(len(goodTimes)) + ")!")
             bin_option = user_input("In order to limit EXOTIC's run time, EXOTIC can automatically bin down your data."
                                     "Would you to perform this action? (y/n): ", type_=str, val1='y', val2='n')
-            if bin_option.lower() == 'y':
+            if bin_option == 'y':
                 goodTimes = binner(goodTimes, len(goodTimes) // 200)
                 goodFluxes, goodNormUnc = binner(goodFluxes, len(goodFluxes) // 200, goodNormUnc)
                 goodAirmasses = binner(goodAirmasses, len(goodAirmasses) // 200)

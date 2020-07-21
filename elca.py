@@ -476,6 +476,10 @@ class lc_fitter(object):
         axs = [ax_lc, ax_res]
 
         dt = (max(self.time) - min(self.time))/nbins
+        phasebinned = binner(self.phase, len(self.phase)//10)
+        timebinned = binner(self.time, len(self.time)//10)
+        databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.dataerr)
+        residbinned, res_errbinned = binner(1e6*self.residuals/np.median(self.data), len(self.residuals)//10, 1e6*self.dataerr/np.median(self.data))
 
         if phase == True:
             axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
@@ -484,17 +488,24 @@ class lc_fitter(object):
             axs[0].grid(True,ls='--')
 
             axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
-            axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
+            axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
             axs[1].set_xlabel("Phase")
             axs[1].set_ylabel("Residuals [PPM]")
 
-            ax_res.errorbar(binner(self.phase, len(self.residuals) // 10), binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10),
-                            yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-                            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            ax_lc.errorbar(binner(self.phase, len(self.phase) // 10),
-                            binner(self.detrended / self.airmass_model, len(self.phase) // 10),
-                            yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-                            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+            ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+            ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+
+        #    ax_res.errorbar(binner(self.phase, len(self.residuals) // 10), binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10),
+        #                    yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
+                #            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+            #ax_lc.errorbar(binner(self.phase, len(self.phase) // 10),
+            #                binner(self.detrended / self.airmass_model, len(self.phase) // 10),
+            #                yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
+            #                fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+
+
+
+
 
         #    binnedPhase,
         ##    binnedPhase2,
@@ -517,13 +528,20 @@ class lc_fitter(object):
             axs[1].set_xlabel("Time [day]")
             axs[1].set_ylabel("Residuals [PPM]")
 
-            ax_res.errorbar(binner(self.time, len(self.residuals) // 10), binner(self.residuals, len(self.residuals) // 10),
-                            yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-                            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            ax_lc.errorbar(binner(self.time, len(self.time) // 10),
-                            binner(self.detrended / self.airmass_model, len(self.phase) // 10),
-                            yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-                            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+            ax_lc.errorbar(timebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+            ax_res.errorbar(timebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+
+    #        ax_res.errorbar(binner(self.time, len(self.residuals) // 10), binner(self.residuals, len(self.residuals) // 10),
+    #                        yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
+    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+    #        ax_lc.errorbar(binner(self.time, len(self.time) // 10),
+    #                        binner(self.detrended / self.airmass_model, len(self.phase) // 10),
+    #                        yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
+    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
+
+
+
+
 #
         #    binnedTime,
 #            binnedFlux = binner(self.time, self.detrended, dt)

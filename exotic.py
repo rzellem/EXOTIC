@@ -124,6 +124,22 @@ from occultquad import *
 # time.sleep(10)
 done = True
 
+# ################### START PROPERTIES ########################################
+# CONFIGURATIONS
+requests_timeout = 16, 512  # connection timeout, response timeout in secs.
+
+# SHARED CONSTANTS
+pi = 3.14159
+au = 1.496e11  # m
+rsun = 6.955e8  # m
+rjup = 7.1492e7  # m
+G = 0.00029591220828559104  # day, AU, Msun
+
+# SHARED LAMBDAS
+# keplerian semi-major axis (au)
+sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
+# ################### END PROPERTIES ##########################################
+
 
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
 # Function that bins an array
@@ -141,17 +157,8 @@ def binner(arr, n, err=''):
         err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
         return arr, err
 
-## ARCHIVE PRIOR SCRAPER ################################################################
-pi = 3.14159
-au = 1.496e11  # m
-rsun = 6.955e8  # m
-rjup = 7.1492e7  # m
-G = 0.00029591220828559104  # day, AU, Msun
 
-# keplerian semi-major axis (au)
-sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
-
-
+# ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 def dataframe_to_jsonfile(dataframe, filename):
     jsondata = json.loads(dataframe.to_json(orient='table', index=False))
     with open(filename, "w") as f:
@@ -171,7 +178,7 @@ def tap_query(base_url, query, dataframe=True):
     uri_full = uri_full.replace(' ', '+')
     print(uri_full)
 
-    response = requests.get(uri_full, timeout=90)
+    response = requests.get(uri_full, timeout=requests_timeout)
     # TODO check status_code?
 
     if dataframe:
@@ -266,7 +273,7 @@ def new_getParams(data):
     }
 
     return planetDictionary
-#################### END ARCHIVE SCRAPER ########################################
+# ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
 
 # Method that gets and returns the julian time of the observation

@@ -2472,7 +2472,7 @@ if __name__ == "__main__":
         mybounds = {
             'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
             'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
-            'ars':[pDict['aRs']-3*pDict['aRsUnc'], pDict['aRs']+3*pDict['aRsUnc']],
+            'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
             'a1':[0, max(goodFluxes)],
             'a2':[-10,10]

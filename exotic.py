@@ -653,24 +653,25 @@ def ldtk_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
 
         ldparams = gaelLDNL.createldgrid(np.array(wlmin), np.array(wlmax), priors)
 
-        ld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
-        ld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
-        ld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
-        ld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
+        nlld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
+        nlld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
+        nlld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
+        nlld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
 
     # User enters in their own limb darkening parameters with uncertainties
     else:
-        ld0 = user_input('\nPlease enter in your first nonlinear term: ', type_=float)
-        ld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
-        ld1 = user_input('\nPlease enter in your second nonlinear term: ', type_=float)
-        ld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
-        ld2 = user_input('\nPlease enter in your third nonlinear term: ', type_=float)
-        ld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
-        ld3 = user_input('\nPlease enter in your fourth nonlinear term: ', type_=float)
-        ld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
-        ld0, ld1, ld2, ld3 = (ld0, ld0unc), (ld1, ld1unc), (ld2, ld2unc), (ld3, ld3unc)
+        filtername = input('\nEnter in your filter name: ')
+        nlld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
+        nlld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
+        nlld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
+        nlld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
+        nlld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
+        nlld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
+        nlld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
+        nlld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
+        nlld0, nlld1, nlld2, nlld3 = (nlld0, nlld0unc), (nlld1, nlld1unc), (nlld2, nlld2unc), (nlld3, nlld3unc)
 
-    return ld0, ld1, ld2, ld3, filtername
+    return nlld0, nlld1, nlld2, nlld3, filtername
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.

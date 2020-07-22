@@ -1,11 +1,11 @@
 import logging
 import numpy as np
 import lmfit as lm
+log = logging.getLogger(__name__)
 import matplotlib.pyplot as plt
 import ldtk
 from ldtk import LDPSetCreator, BoxcarFilter
 from ldtk.ldmodel import LinearModel, QuadraticModel, NonlinearModel
-log = logging.getLogger(__name__)
 
 
 class LDPSet(ldtk.LDPSet):
@@ -18,16 +18,12 @@ class LDPSet(ldtk.LDPSet):
     @property
     def profile_mu(self): return self._mu
     pass
-
-
 setattr(ldtk, 'LDPSet', LDPSet)
 setattr(ldtk.ldtk, 'LDPSet', LDPSet)
 
 
-# --------------------------------- ----------------------------------
-# -- CREATE LD GRID -- -----------------------------------------------
 def createldgrid(minmu, maxmu, orbp,
-                 ldmodel='quadratic', phoenixmin=1e-1,
+                 ldmodel='nonlinear', phoenixmin=1e-1,
                  segmentation=int(10), verbose=False):
     '''
     G. ROUDIER: Wrapper around LDTK downloading tools
@@ -74,7 +70,7 @@ def createldgrid(minmu, maxmu, orbp,
                 if np.all(~np.isfinite(testprof)): itpfail = True
                 pass
             pass
-        cl, el = ldx(np.array(ps.profile_mu), ps.profile_averages, ps.profile_uncertainties,
+        cl, el = ldx(ps.profile_mu, ps.profile_averages, ps.profile_uncertainties,
                      mumin=phoenixmin, debug=verbose, model=ldmodel)
         if allcl is None: allcl = cl
         else: allcl = np.concatenate((allcl, cl), axis=0)
@@ -93,8 +89,6 @@ def createldgrid(minmu, maxmu, orbp,
     return out
 
 
-# -------------------- -----------------------------------------------
-# -- LDX -- ----------------------------------------------------------
 def ldx(psmu, psmean, psstd, mumin=1e-1, debug=False, model='nonlinear'):
     '''
     G. ROUDIER: Limb darkening coefficient retrievial on PHOENIX GRID models,
@@ -111,11 +105,10 @@ def ldx(psmu, psmean, psstd, mumin=1e-1, debug=False, model='nonlinear'):
     cl=[]
     el=[]
     params=lm.Parameters()
-    params.add('gamma1', value=0)
+    params.add('gamma1', value=1e-1)
     params.add('gamma2', value=5e-1)
-    params.add('gamma3', value=0)
-    params.add('gamma4', value=5e-1)
-    # params.add('gamma4', expr='1 - gamma1 - gamma2 - gamma3')
+    params.add('gamma3', value=1e-1)
+    params.add('gamma4', expr='1 - gamma1 - gamma2 - gamma3')
     if debug: plt.figure()
     for iwave in np.arange(nwave):
         select = fitsprfs[iwave] == 0e0
@@ -129,8 +122,8 @@ def ldx(psmu, psmean, psstd, mumin=1e-1, debug=False, model='nonlinear'):
             params['gamma4'].vary = False
             out=lm.minimize(lnldx, params,
                             args=(fitmup, fitprfs[iwave], fitsprfs[iwave]))
-            cl.append([out.params['gamma2'].value])
-            el.append([out.params['gamma2'].stderr])
+            cl.append([out.params['gamma1'].value])
+            el.append([out.params['gamma1'].stderr])
             pass
         if model == 'quadratic':
             params['gamma1'].value = 0
@@ -167,21 +160,17 @@ def ldx(psmu, psmean, psstd, mumin=1e-1, debug=False, model='nonlinear'):
     return np.array(cl), np.array(el)
 
 
-# --------- ----------------------------------------------------------
-# -- LNLDX -- --------------------------------------------------------
 def lnldx(params, x, data=None, weights=None):
     '''
     G. ROUDIER: Linear law
     '''
-    gamma1=params['gamma2'].value
+    gamma1=params['gamma1'].value
     model=LinearModel.evaluate(x, [gamma1])
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights
 
 
-# ----------- --------------------------------------------------------
-# -- QDLDX -- --------------------------------------------------------
 def qdldx(params, x, data=None, weights=None):
     '''
     G. ROUDIER: Quadratic law
@@ -194,8 +183,6 @@ def qdldx(params, x, data=None, weights=None):
     return (data - model)/weights
 
 
-# ----------- --------------------------------------------------------
-# -- NLLDX -- --------------------------------------------------------
 def nlldx(params, x, data=None, weights=None):
     '''
     G. ROUDIER: Non Linear law
@@ -208,4 +195,3 @@ def nlldx(params, x, data=None, weights=None):
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights
-

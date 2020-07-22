@@ -104,9 +104,6 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 
-# Limb darkening import
-import gaelLDQparams
-
 # Image alignment import
 import astroalign as aa
 
@@ -120,7 +117,9 @@ from skimage.registration import phase_cross_correlation
 # Lightcurve imports
 # TODO fix conflicts
 from gaelLCFuncs import *
-from occultquad import *
+
+# Limb darkening import
+import gaelLDNL
 
 # long process here
 # time.sleep(10)
@@ -552,7 +551,7 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
                   'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
                   'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
 
-        ldparams = gaelLDQparams.createldgrid(np.array(wlmin), np.array(wlmax), priors, segmentation=int(10))
+        ldparams, ldunc = gaelLDNL.createldgrid(np.array(wlmin), np.array(wlmax), priors)
 
         linearlimb = ldparams['LD'][0][0]
         linearlimbunc = ldparams['ERR'][0][0]
@@ -988,10 +987,10 @@ def contextupdt(times=None, airm=None):
 # -- LIGHT CURVE MODEL -- ----------------------------------------------------------------
 def lcmodel(midTran, radi, am1, am2, theTimes, theAirmasses, plots=False):
     sep, ophase = time2z(theTimes, pDict['inc'], midTran, pDict['aRs'], pDict['pPer'], pDict['ecc'])
-    model, junk = occultquad(abs(sep), linearLimb, quadLimb, radi)
+    ldlc, junk = occultquad(abs(sep), linearLimb, quadLimb, radi)
 
     airmassModel = (am1 * (np.exp(am2 * theAirmasses)))
-    fittedModel = model * airmassModel
+    fittedModel = ldlc * airmassModel
     if plots:
         plt.figure()
         plt.plot(ophase, fittedModel, '-o')
@@ -2392,11 +2391,11 @@ if __name__ == "__main__":
 
             # lightcurve model
             sep, ophase = time2z(context['times'], pDict['inc'], float(tranTime), pDict['aRs'], pDict['pPer'], pDict['ecc'])
-            gmodel, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
+            ldlc, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
 
             # exponential airmass model
             airmassModel = (float(amc1) * (np.exp(float(amc2) * context['airmass'])))
-            completeModel = gmodel * airmassModel
+            completeModel = ldlc * airmassModel
 
             return completeModel
 

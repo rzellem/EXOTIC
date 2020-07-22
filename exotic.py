@@ -589,7 +589,7 @@ def check_file_extensions(directory, filename):
 
 
 # Calculating Limb Darkening Parameters using LDTK
-def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
+def ldtk_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
                      # Source for min/max band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
     minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
@@ -612,6 +612,10 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
                      # Cousins
                      'R': (561.70, 719.70), 'I': (721.00, 875.00),
                      'Cousins R': (561.70, 719.70), 'Cousins I': (721.00, 875.00)}
+
+    print('\n***************************')
+    print('Limb Darkening Coefficients')
+    print('***************************')
 
     print('\n\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
     for key, value in minmaxwavelen.items():
@@ -647,25 +651,26 @@ def ldtk_quadratic(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
                   'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
                   'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
 
-        ldparams, ldunc = gaelLDNL.createldgrid(np.array(wlmin), np.array(wlmax), priors)
+        ldparams = gaelLDNL.createldgrid(np.array(wlmin), np.array(wlmax), priors)
 
-        linearlimb = ldparams['LD'][0][0]
-        linearlimbunc = ldparams['ERR'][0][0]
-        quadlimb = ldparams['LD'][1][0]
-        quadlimbunc = ldparams['ERR'][1][0]
+        ld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
+        ld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
+        ld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
+        ld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
 
     # User enters in their own limb darkening parameters with uncertainties
     else:
-        linearlimb = float(input('\nPlease enter in your linear term: '))
-        linearlimbunc = float(input('Enter in your linear term uncertainty: '))
-        quadlimb = float(input('Enter in your quadratic term: '))
-        quadlimbunc = float(input('Enter in your quadratic term uncertainty: '))
+        ld0 = float(input('\nPlease enter in your first nonlinear term: '))
+        ld0unc = float(input('Enter in your first nonlinear term uncertainty: '))
+        ld1 = float(input('\nPlease enter in your second nonlinear term: '))
+        ld1unc = float(input('Enter in your second nonlinear term uncertainty: '))
+        ld2 = float(input('\nPlease enter in your third nonlinear term: '))
+        ld2unc = float(input('Enter in your third nonlinear term uncertainty: '))
+        ld3 = float(input('\nPlease enter in your fourth nonlinear term: '))
+        ld3unc = float(input('Enter in your fourth nonlinear term uncertainty: '))
+        ld0, ld1, ld2, ld3 = (ld0, ld0unc), (ld1, ld1unc), (ld2, ld2unc), (ld3, ld3unc)
 
-    print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
-    print('Linear Term: %s +/- %s' % (linearlimb, linearlimbunc))
-    print('Quadratic Term: %s +/- %s' % (quadlimb, quadlimbunc))
-
-    return linearlimb, quadlimb, filtername
+    return ld0, ld1, ld2, ld3, filtername
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -1124,7 +1129,7 @@ def contextupdt(times=None, airm=None):
 # -- LIGHT CURVE MODEL -- ----------------------------------------------------------------
 def lcmodel(midTran, radi, am1, am2, theTimes, theAirmasses, plots=False):
     sep, ophase = time2z(theTimes, pDict['inc'], midTran, pDict['aRs'], pDict['pPer'], pDict['ecc'])
-    ldlc, junk = occultquad(abs(sep), linearLimb, quadLimb, radi)
+    ldlc = tldlc(abs(sep), pDict['rprs'], ld0[0], ld1[0], ld2[0], ld3[0])
 
     airmassModel = (am1 * (np.exp(am2 * theAirmasses)))
     fittedModel = ldlc * airmassModel
@@ -1705,57 +1710,9 @@ if __name__ == "__main__":
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
 
-        print('\n***************************')
-        print('Limb Darkening Coefficients')
-        print('***************************')
-
-        # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
-        URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
-        URLphp = 'http://astroutils.astronomy.ohio-state.edu/exofast/quadld.php'
-
-        with requests.Session() as sesh:
-            while True:
-                try:
-                    form_newData = {"action": URLphp,
-                                    "teff": str(pDict['teff']),
-                                    "feh": str(pDict['met']),
-                                    "logg": str(pDict['logg']),
-                                    "bname": infoDict['filter'],
-                                    "pname": "Select Planet"
-                                    }
-                    r = sesh.post(URLphp, data=form_newData)
-                    fullcontents = r.text
-
-                    # linear term
-                    linearString = ''
-                    for indexLinear in range(len(fullcontents)):
-                        if fullcontents[indexLinear].isdigit():
-                            while fullcontents[indexLinear + 1] != ' ':
-                                linearString = linearString + fullcontents[indexLinear]
-                                indexLinear = indexLinear + 1
-                            # print (linearString)
-                            linearLimb = float(linearString)
-                            break
-
-                    # quadratic term
-                    quadString = ''
-                    for indexQuad in range(indexLinear + 1, len(fullcontents)):
-                        if fullcontents[indexQuad].isdigit() or fullcontents[indexQuad] == '.':
-                            quadString = quadString + fullcontents[indexQuad]
-                            indexQuad = indexQuad + 1
-                    # print (quadString)
-                    quadLimb = float(quadString)
-                    break
-                except ValueError:
-                    infoDict['filter'] = input('\nNot valid filter name. Please enter a valid filter name using '
-                                               'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ')
-
-        print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
-        print('Linear Term: ' + linearString)
-        print('Quadratic Term: ' + quadString)
-        linearLimb, quadLimb, filterName = ldtk_quadratic(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'], pDict['met'],
-                                              pDict['metUncNeg'], pDict['metUncPos'], pDict['logg'],
-                                              pDict['loggUncPos'], pDict['loggUncNeg'])
+        ld0, ld1, ld2, ld3, filterName = ldtk_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
+                                                        pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
+                                                        pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
         if fitsortext == 1:
             print('\n**************************')
@@ -2546,7 +2503,7 @@ if __name__ == "__main__":
 
             # lightcurve model
             sep, ophase = time2z(context['times'], pDict['inc'], float(tranTime), pDict['aRs'], pDict['pPer'], pDict['ecc'])
-            ldlc, garb = occultquad(abs(sep), linearLimb, quadLimb, float(pRad))
+            ldlc = tldlc(abs(sep), pDict['rprs'], ld0[0], ld1[0], ld2[0], ld3[0])
 
             # exponential airmass model
             airmassModel = (float(amc1) * (np.exp(float(amc2) * context['airmass'])))
@@ -2831,8 +2788,11 @@ if __name__ == "__main__":
         #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
         #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
         #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
-        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(pDict['pPerUnc']) + ',a/R*=' + str(
-            pDict['aRs']) + ',inc=' + str(pDict['inc']) + ',ecc=' + str(pDict['ecc']) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
+        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(pDict['pPerUnc']) + ',a/R*='
+                            + str(pDict['aRs']) + ',inc=' + str(pDict['inc']) + ',ecc=' + str(pDict['ecc']) + ',u0='
+                            + str(ld0[0]) + ' +/- ' + str(ld0[1]) + ',u1=' + str(ld1[0]) + ' +/- ' + str(ld1[1])
+                            + ',u2=' + str(ld2[0]) + ' +/- ' + str(ld2[1]) + ',u3=' + str(ld3[0]) + ' +/- '
+                            + str(ld3[1]) + '\n')
         # code yields
         outParamsFile.write(
             '#RESULTS=Tc=' + str(round(fitMidT, 8)) + ' +/- ' + str(round(midTranUncert, 8)) + ',Rp/R*=' + str(

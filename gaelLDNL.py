@@ -20,8 +20,8 @@ class LDPSet(ldtk.LDPSet):
     pass
 setattr(ldtk, 'LDPSet', LDPSet)
 setattr(ldtk.ldtk, 'LDPSet', LDPSet)
-
-
+# --------------------------------- ----------------------------------
+# -- CREATE LD GRID -- -----------------------------------------------
 def createldgrid(minmu, maxmu, orbp,
                  ldmodel='nonlinear', phoenixmin=1e-1,
                  segmentation=int(10), verbose=False):
@@ -87,8 +87,8 @@ def createldgrid(minmu, maxmu, orbp,
                     str(int(i)), str(float(allcl.T[i])), str(float(allel.T[i])))
         pass
     return out
-
-
+# -------------------- -----------------------------------------------
+# -- LDX -- ----------------------------------------------------------
 def ldx(psmu, psmean, psstd, mumin=1e-1, debug=False, model='nonlinear'):
     '''
     G. ROUDIER: Limb darkening coefficient retrievial on PHOENIX GRID models,
@@ -158,8 +158,8 @@ def ldx(psmu, psmean, psstd, mumin=1e-1, debug=False, model='nonlinear'):
         plt.show()
         pass
     return np.array(cl), np.array(el)
-
-
+# --------- ----------------------------------------------------------
+# -- LNLDX -- --------------------------------------------------------
 def lnldx(params, x, data=None, weights=None):
     '''
     G. ROUDIER: Linear law
@@ -169,8 +169,8 @@ def lnldx(params, x, data=None, weights=None):
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights
-
-
+# ----------- --------------------------------------------------------
+# -- QDLDX -- --------------------------------------------------------
 def qdldx(params, x, data=None, weights=None):
     '''
     G. ROUDIER: Quadratic law
@@ -181,8 +181,8 @@ def qdldx(params, x, data=None, weights=None):
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights
-
-
+# ----------- --------------------------------------------------------
+# -- NLLDX -- --------------------------------------------------------
 def nlldx(params, x, data=None, weights=None):
     '''
     G. ROUDIER: Non Linear law

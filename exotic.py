@@ -660,14 +660,14 @@ def ldtk_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
 
     # User enters in their own limb darkening parameters with uncertainties
     else:
-        ld0 = float(input('\nPlease enter in your first nonlinear term: '))
-        ld0unc = float(input('Enter in your first nonlinear term uncertainty: '))
-        ld1 = float(input('\nPlease enter in your second nonlinear term: '))
-        ld1unc = float(input('Enter in your second nonlinear term uncertainty: '))
-        ld2 = float(input('\nPlease enter in your third nonlinear term: '))
-        ld2unc = float(input('Enter in your third nonlinear term uncertainty: '))
-        ld3 = float(input('\nPlease enter in your fourth nonlinear term: '))
-        ld3unc = float(input('Enter in your fourth nonlinear term uncertainty: '))
+        ld0 = user_input('\nPlease enter in your first nonlinear term: ', type_=float)
+        ld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
+        ld1 = user_input('\nPlease enter in your second nonlinear term: ', type_=float)
+        ld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
+        ld2 = user_input('\nPlease enter in your third nonlinear term: ', type_=float)
+        ld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
+        ld3 = user_input('\nPlease enter in your fourth nonlinear term: ', type_=float)
+        ld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
         ld0, ld1, ld2, ld3 = (ld0, ld0unc), (ld1, ld1unc), (ld2, ld2unc), (ld3, ld3unc)
 
     return ld0, ld1, ld2, ld3, filtername

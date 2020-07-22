@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.12.0"
+versionid = "0.12.1"
 
 
 # --IMPORTS -----------------------------------------------------------

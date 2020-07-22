@@ -1833,7 +1833,7 @@ if __name__ == "__main__":
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
-                    print('Here it the path to your plate solution: ' + wcsFile)
+                    print('Here is the path to your plate solution: ' + wcsFile)
                     hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
                     rafile, decfile = get_radec(hdulWCS)
 

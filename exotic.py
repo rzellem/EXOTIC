@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.12.0"
+versionid = "0.12.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -765,21 +765,19 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
-    newlist, boollist = [], []
+    boollist = []
     notAligned = 0
 
     # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
     # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-    for image_file in sortedallImageData:
+    for i, image_file in enumerate(sortedallImageData):
         try:
-            newData, footprint = aa.register(image_file, sortedallImageData[0])
-            newlist.append(newData)
+            sortedallImageData[i], footprint = aa.register(image_file, sortedallImageData[0])
             boollist.append(True)
         except:
             notAligned += 1
             boollist.append(False)
 
-    sortedallImageData = np.array(newlist)
     unalignedBoolList = np.array(boollist)
 
     if notAligned > 0:

@@ -111,6 +111,9 @@ from astroquery.simbad import Simbad
 import astropy.coordinates as coord
 import astropy.units as u
 from astropy.table import Table, QTable, Column
+import pyvo as vo
+import urllib.request
+from io import BytesIO
 
 # photometry
 from photutils import CircularAperture
@@ -689,22 +692,49 @@ def plate_solution(fits_file, saveDirectory):
 
 #Checks if comparison star coordinates don't point to variable stars
 def variableStarCheck(wcsList, raList, decList, compStarList):
+    service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
 
-    validCoordList = []
-    errorMargin = 0.005556
+    # query simbad to get proper motions for each comparison star
+    for target in compStarList:
+        query = '''
+        SELECT basic.OID, ra, dec, main_id, pmra, pmdec
+        FROM basic JOIN ident ON oidref = oid
+        WHERE id = '{}';
+        '''.format(target)
 
-    wcsFile = WCS(wcsList)
+        #check if result table exists
+        try:
+            resultTable = service.search(query)
+        except TypeError:
+            print("Unsuccessful query, moving to next star")
+            continue
+
+        coord = SkyCoord(
+            ra = resultTable['ra'][0]*u.deg,
+            dec = resultTable['dec'][0]*u.deg,
+            distance=1*u.pc,
+            pm_ra_cosdec=result['pmra'][0]*u.mas/u.yr,
+            pm_dec=result['pmdec'][0]*u.mas/u.yr,
+            frame="icrs",
+            obstime=Time("2000-1-1T00:00:00")
+        )
+        # apply proper motion
+        t = Time(hdu.header['DATE_OBS'], format='isot', scale='utc')
+        coordpm = coord.apply_space_motion(new_obstime=t)
+
+        # wcs coordinate translation
+        try:
+            wcs = WCS(hdu.header)
+        except ValueError:
+            hdu.header['NAXIS'] = 2
+            wcs = WCS(hdu.header)
+
+        pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]],0)
+
     #Convert all pixel tuples into WCS and add them to a list
-    for i in range(0, len(compStarList)):
-        #wcsXCoord = compStarList[i][0].all_pix2world()
-        #wcsYCoord = compStarList[i][1].all_pix2world()
-        XCoord = wcsFile[i][0]
-        YCoord = wcsFile[i][1]
-        wcsXCoord, wcsYCoord = wcsFile.all_pix2world(XCoord, YCoord, 0)
-        validCoordList.append((wcsXCoord, wcsYCoord))
-
+    '''
     #For every comparison star, convert into WCS coordinates and check if it's in WCS file before querying
-    '''for compStar in compStarList:
+    for compStar in compStarList:
         compStarCoords = compStar.all_pix2world()
         raLowerBound = compStarCoords[0] - errorMargin
         raUpperBound = compStarCoords[0] + errorMargin

@@ -1,3 +1,25 @@
+# Copyright (c) 2002-2019, California Institute of Technology.
+# All rights reserved.  Based on Government Sponsored Research under contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
+
+# Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+#    1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+#    2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+#    3. Neither the name of the California Institute of Technology (Caltech), its operating division the Jet Propulsion Laboratory (JPL), the National Aeronautics and Space Administration (NASA), nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+# IN NO EVENT SHALL THE CALIFORNIA INSTITUTE OF TECHNOLOGY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+####################################################################
+# ExopLanet tranSit Analyzer
+#
+# Authors: Kyle Pearson, Marlee Smith
+# Supplemental Code: Gael Roudier and Jason Eastman
+####################################################################
+
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,6 +28,7 @@ import dynesty
 from dynesty import plotting
 from dynesty.utils import resample_equal
 
+from scipy.optimize import least_squares
 from scipy.ndimage import gaussian_filter as norm_kde
 from scipy.stats import gaussian_kde
 
@@ -366,14 +389,49 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns'):
         self.time = time
         self.data = data
         self.dataerr = dataerr
         self.airmass = airmass
         self.prior = prior
         self.bounds = bounds
-        self.fit_nested()
+        if mode == "lm":
+            self.fit_LM()
+        elif mode == "ns":
+            self.fit_nested()
+
+    def fit_LM(self):
+
+        freekeys = list(self.bounds.keys())
+        boundarray = np.array([self.bounds[k] for k in freekeys])
+
+        def lc2min(pars):
+            for i in range(len(pars)):
+                self.prior[freekeys[i]] = pars[i]
+            model = transit(self.time, self.prior)
+            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass) + self.prior['a3'])
+            return ((self.data-model)/self.dataerr)**2 
+
+        res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], 
+            bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
+        
+        self.parameters = copy.deepcopy(self.prior)
+        self.errors = {}
+
+        for i,k in enumerate(freekeys):
+            self.parameters[k] = res.x[i]
+            self.errors[k] = 0
+
+        self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
+        self.transit = transit(self.time, self.parameters)
+        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)+self.parameters['a3']
+        self.model = self.transit * self.airmass_model
+        self.detrended = self.data / self.airmass_model
+        self.detrended_error = self.dataerr / self.airmass_model
+        self.residuals = self.data - self.model
+        self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
+        pass
 
     def fit_nested(self):
         freekeys = list(self.bounds.keys())
@@ -385,7 +443,7 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
+            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass) + self.prior['a3'])
             return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
 
         def prior_transform(upars):
@@ -445,16 +503,9 @@ class lc_fitter(object):
         chis = []
         for i in range(len(tests)):
             lightcurve = transit(self.time, tests[i])
-            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass)
+            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass) + tests[i]['a3']
             residuals = self.data - (lightcurve*airmass)
             chis.append( np.sum(residuals**2) )
-            # chi2 of binned data in transit + small Oot
-            # btime, br = time_bin(self.time, residuals)
-            # blc = transit(btime, tests[i])
-            # mask = blc < 1
-            # duration = btime[mask].max() - btime[mask].min()
-            # tmask = ((btime - tests[i]['tmid']) < duration) & ((btime - tests[i]['tmid']) > -1*duration)
-            # chis.append( np.mean(br[tmask]**2) )
 
         mi = np.argmin(chis)
         self.parameters = copy.deepcopy(tests[mi])
@@ -462,10 +513,12 @@ class lc_fitter(object):
         # final model
         self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
-        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
+        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)+self.parameters['a3']
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
+        self.detrended_error = self.dataerr / self.airmass_model
         self.residuals = self.data - self.model
+        self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
 
     def plot_bestfit(self, nbins=10, phase=True):
 
@@ -478,11 +531,11 @@ class lc_fitter(object):
         dt = (max(self.time) - min(self.time))/nbins
         phasebinned = binner(self.phase, len(self.phase)//10)
         timebinned = binner(self.time, len(self.time)//10)
-        databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.dataerr)
+        databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.detrended_error)
         residbinned, res_errbinned = binner(1e6*self.residuals/np.median(self.data), len(self.residuals)//10, 1e6*self.dataerr/np.median(self.data))
 
         if phase == True:
-            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
+            axs[0].errorbar(self.phase, self.detrended, yerr=self.detrended_error, ls='none', marker='o', color='gray', markersize=5, zorder=1)
             axs[0].plot(self.phase, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
@@ -495,30 +548,8 @@ class lc_fitter(object):
             ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
 
-        #    ax_res.errorbar(binner(self.phase, len(self.residuals) // 10), binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10),
-        #                    yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-                #            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            #ax_lc.errorbar(binner(self.phase, len(self.phase) // 10),
-            #                binner(self.detrended / self.airmass_model, len(self.phase) // 10),
-            #                yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-            #                fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-
-
-
-
-        #    binnedPhase,
-        ##    binnedPhase2,
-        #    binnedResids = binner(self.phase, 1e6*self.residuals/np.median(self.data), dt/self.parameters['per'])
-            #binnedPhase, binnedFlux = time_bin(self.phase, self.detrended, dt/self.parameters['per'])
-            #binnedPhase2, binnedResids = time_bin(self.phase, 1e6*self.residuals/np.median(self.data), dt/self.parameters['per'])
-        #    axs[0].plot(binnedPhase, binnedFlux, marker='s', color='blue', markersize=6, ls='none')
-        #    axs[1].plot(binnedPhase2, binnedResids, marker='s', color='blue', markersize=6, ls='none')
-
-        #COPY INTO BELOW!
-
         else:
-            axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
+            axs[0].errorbar(self.time, self.detrended, yerr=self.detrended_error, ls='none', marker='o', color='gray', markersize=5, zorder=1)
             axs[0].plot(self.time, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
@@ -530,27 +561,6 @@ class lc_fitter(object):
 
             ax_lc.errorbar(timebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(timebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-    #        ax_res.errorbar(binner(self.time, len(self.residuals) // 10), binner(self.residuals, len(self.residuals) // 10),
-    #                        yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-    #        ax_lc.errorbar(binner(self.time, len(self.time) // 10),
-    #                        binner(self.detrended / self.airmass_model, len(self.phase) // 10),
-    #                        yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-
-
-
-#
-        #    binnedTime,
-#            binnedFlux = binner(self.time, self.detrended, dt)
-#            binnedTime2,
-#            binnedResids = binner(self.time, 1e6*self.residuals/np.median(self.data), dt)
-            #binnedTime, binnedFlux = time_bin(self.time, self.detrended, dt)
-            #binnedTime2, binnedResids = time_bin(self.time, 1e6*self.residuals/np.median(self.data), dt)
-#            axs[0].plot(binnedTime, binnedFlux, marker='s', color='blue', markersize=6, ls='none')
-#            axs[1].plot(binnedTime2, binnedResids, marker='s', color='blue', markersize=6, ls='none')
 
         plt.tight_layout()
 
@@ -595,12 +605,13 @@ if __name__ == "__main__":
         'a2':[0,0.3]
     }
 
-    myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds)
+    myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds, mode='ns')
 
     for k in myfit.bounds.keys():
         print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
     fig,axs = myfit.plot_bestfit()
+    plt.show()
 
     # triangle plot
     fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})

@@ -83,6 +83,7 @@ from barycorrpy import utc_tdb
 
 # Curve fitting imports
 from scipy.optimize import least_squares
+from scipy.ndimage import median_filter
 
 # Pyplot imports
 import matplotlib.pyplot as plt
@@ -92,19 +93,13 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca import lc_fitter
+from elca import lc_fitter, transit
 import dynesty
-
-# MCMC imports
-import pymc3 as pm
-import theano.compile.ops as tco
-import theano.tensor as tt
 
 # astropy imports
 import astropy.time
 import astropy.coordinates
 from astropy.io import fits
-from astropy.stats import sigma_clip
 import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
@@ -118,11 +113,6 @@ from photutils import aperture_photometry
 
 # cross corrolation imports
 from skimage.registration import phase_cross_correlation
-
-# Lightcurve imports
-# TODO fix conflicts
-from gaelLCFuncs import *
-from occultquad import *
 
 # long process here
 # time.sleep(10)
@@ -161,6 +151,12 @@ def binner(arr, n, err=''):
         err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
         return arr, err
 
+def sigma_clip(ogdata, sigma=3, dt=20):
+    mdata = median_filter(ogdata, dt)
+    res = ogdata - mdata
+    std = np.nanmedian([np.nanstd(np.random.choice(res,50)) for i in range(100)])
+    #std = np.nanstd(res) # biased from large outliers
+    return np.abs(res) > sigma*std 
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 def dataframe_to_jsonfile(dataframe, filename):
@@ -857,7 +853,7 @@ def fit_centroid(data, pos, init=None, box=10):
             box=box  # only fit a subregion +/- 5 px from centroid
         )
     except:
-        import pdb; pdb.set_trace()
+        print("bad star at:",wx,wy)
 
     return pars
 
@@ -894,96 +890,9 @@ def skybg_phot(data, xc, yc, r=10, dr=5):
 def numberOfTransitsAway(timeData, period, originalT):
     return int((np.nanmin(timeData) - originalT) / period) + 1
 
-
 def nearestTransitTime(timeData, period, originalT):
     nearT = ((numberOfTransitsAway(timeData, period, originalT) * period) + originalT)
     return nearT
-
-
-# Mid-Transit Time Error Helper Functions
-def propMidTVariance(uncertainP, uncertainT, timeData, period, originalT):
-    n = numberOfTransitsAway(timeData, period, originalT)
-    varTMid = n * n * uncertainP + uncertainT
-    return varTMid
-
-
-def uncTMid(uncertainP, uncertainT, timeData, period, originalT):
-    n = numberOfTransitsAway(timeData, period, originalT)
-    midErr = np.sqrt((n * n * uncertainP * uncertainP) + 2 * n * uncertainP * uncertainT + (uncertainT * uncertainT))
-    return midErr
-
-
-def transitDuration(rStar, rPlan, period, semi):
-    rSun = 6.957 * 10 ** 8  # m
-    tDur = (period / np.pi) * np.arcsin((np.sqrt((rStar * rSun + rPlan * rSun) ** 2)) / (semi * rStar * rSun))
-    return tDur
-
-
-# calculates chi squared which is used to determine the quality of the LC fit
-def chisquared(observed_values, expected_values, uncertainty):
-    for chiCount in range(0, len(observed_values)):
-        zeta = ((observed_values[chiCount] - expected_values[chiCount]) / uncertainty[chiCount])
-        chiToReturn = np.sum(zeta ** 2)
-        return chiToReturn
-
-
-# make and plot the chi squared traces
-def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty, targetname, date):
-    print("Performing Chi^2 Burn")
-    print("Please be patient- this step can take a few minutes.")
-    global done
-    done = False
-    t = threading.Thread(target=animate, daemon=True)
-    t.start()
-
-    midTArr = myTrace.get_values('Tmid', combine=False)
-    radiusArr = myTrace.get_values('RpRs', combine=False)
-    am1Arr = myTrace.get_values('Am1', combine=False)
-    am2Arr = myTrace.get_values('Am2', combine=False)
-
-    allchiSquared = []
-    for chain in myTrace.chains:
-        chiSquaredList1 = []
-        for counter in np.arange(len(midTArr[chain])):  # [::25]:
-            # first chain
-            midT1 = midTArr[chain][counter]
-            rad1 = radiusArr[chain][counter]
-            am11 = am1Arr[chain][counter]
-            am21 = am2Arr[chain][counter]
-
-            fittedModel1 = lcmodel(midT1, rad1, am11, am21, myTimes, theAirmasses, plots=False)
-            chis1 = np.sum(((myFluxes - fittedModel1) / uncertainty) ** 2.) / (len(myFluxes) - 4)
-            chiSquaredList1.append(chis1)
-        allchiSquared.append(chiSquaredList1)
-
-    plt.figure()
-    plt.xlabel('Chain Length')
-    plt.ylabel('Chi^2')
-    for chain in np.arange(myTrace.nchains):
-        plt.plot(np.arange(len(allchiSquared[chain])), allchiSquared[chain], '-bo')
-    plt.rc('grid', linestyle="-", color='black')
-    plt.grid(True)
-    plt.title(targetname + ' Chi^2 vs. Chain Length ' + date)
-    # plt.show()
-    plt.savefig(infoDict['saveplot'] + 'temp/ChiSquaredTrace' + date + targetname + '.png')
-    plt.close()
-
-    chiMedian = np.nanmedian(allchiSquared)
-
-    burns = []
-    for chain in np.arange(myTrace.nchains):
-        idxburn, = np.where(allchiSquared[chain] <= chiMedian)
-        if len(idxburn) == 0:
-            burnno = 0
-        else:
-            burnno = idxburn[0]
-        burns.append(burnno)
-
-    completeBurn = np.max(burns)
-    done = True
-    print('Chi^2 Burn In Length: ' + str(completeBurn))
-
-    return completeBurn
 
 
 # make plots of the centroid positions as a function of time
@@ -1045,32 +954,6 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.title('Difference between Target and Comparison Y position')
     plt.savefig(infoDict['saveplot'] + 'temp/YCentroidDistance' + targetname + date + '.png')
     plt.close()
-
-
-# -----CONTEXT FREE GLOBAL VARIABLES-----------------------------
-def contextupdt(times=None, airm=None):
-    global context
-
-    if times is not None:
-        context['times'] = times
-    if airm is not None:
-        context['airmass'] = airm
-
-
-# -- LIGHT CURVE MODEL -- ----------------------------------------------------------------
-def lcmodel(midTran, radi, am1, am2, theTimes, theAirmasses, plots=False):
-    sep, ophase = time2z(theTimes, pDict['inc'], midTran, pDict['aRs'], pDict['pPer'], pDict['ecc'])
-    model, junk = occultquad(abs(sep), linearLimb, quadLimb, radi)
-
-    airmassModel = (am1 * (np.exp(am2 * theAirmasses)))
-    fittedModel = model * airmassModel
-    if plots:
-        plt.figure()
-        plt.plot(ophase, fittedModel, '-o')
-        plt.xlabel('Orbital Phase')
-        plt.show()
-        pass
-    return fittedModel
 
 
 def realTimeReduce(i):
@@ -1642,6 +1525,8 @@ if __name__ == "__main__":
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
 
+
+
         print('\n***************************')
         print('Limb Darkening Coefficients')
         print('***************************')
@@ -1690,6 +1575,20 @@ if __name__ == "__main__":
         print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
         print('Linear Term: ' + linearString)
         print('Quadratic Term: ' + quadString)
+
+        # used for LM fit to get best aperture
+        prior = {
+            'rprs':pDict['rprs'],    # Rp/Rs
+            'ars':pDict['aRs'],      # a/Rs
+            'per':pDict['pPer'],     # Period [day]
+            'inc':pDict['inc'],      # Inclination [deg]
+            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+            'ecc': pDict['ecc'],     # Eccentricity
+            'omega':0,          # Arg of periastron
+            'tmid':pDict['midT'],    # time of mid transit [day]
+            'a1': 1,           #mid Flux
+            'a2': 0             #Flux lower bound
+        }
 
         if fitsortext == 1:
             print('\n**************************')
@@ -2121,9 +2020,7 @@ if __name__ == "__main__":
 
                         # NORMALIZE BY REF STAR
                         # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        rawFinalFluxData = np.array(targetFluxVals) / np.array(referenceFluxVals)
-
-                        # --- 5 Sigma Clip from mean to get rid of ridiculous outliers (based on sigma of entire dataset)-----------------------------------------
+                        rawFinalFluxData = np.array(targetFluxVals)
 
                         # Convert Everything to numpy Arrays
                         arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
@@ -2141,58 +2038,69 @@ if __name__ == "__main__":
                             arrayTimes = arrayTimes[boollist]
                             arrayAirmass = arrayAirmass[boollist]
 
-                        normUncertainties = (arrayTargets / arrayReferences) * np.sqrt(
-                            ((arrayTUnc / arrayTargets) ** 2.) + ((arrayRUnc / arrayReferences) ** 2.))
+                        normUncertainties = rawFinalFluxData**0.5
                         arrayNormUnc = np.array(normUncertainties)
 
                         # Execute sigma_clip
                         try:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, maxiters=1, cenfunc=np.mean, copy=False)
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=3)
                         except TypeError:
-                            filtered_data = sigma_clip(arrayFinalFlux, sigma=5, cenfunc=np.mean, copy=False)
+                            filtered_data = sigma_clip(arrayFinalFlux, sigma=3)
 
                         # -----LM LIGHTCURVE FIT--------------------------------------
 
-                        midTranCur = nearestTransitTime(timesListed, pDict['pPer'], pDict['midT'])
-                        #midTranCur was in the initval first
-                        initvals = [np.median(arrayTimes), pDict['rprs'], np.median(arrayFinalFlux[~filtered_data.mask]), 0]
-                        up = [arrayTimes[-1], 1, np.inf, 1.0]
-                        low = [arrayTimes[0], 0, -np.inf, -1.0]
-                        bound = [low, up]
+                        prior = {
+                            'rprs':pDict['rprs'],    # Rp/Rs
+                            'ars':pDict['aRs'],      # a/Rs
+                            'per':pDict['pPer'],     # Period [day]
+                            'inc':pDict['inc'],      # Inclination [deg]
+                            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+                            'ecc': pDict['ecc'],     # Eccentricity
+                            'omega':0,          # Arg of periastron
+                            'tmid':pDict['midT'],    # time of mid transit [day]
+                            'a1': arrayFinalFlux.max() - arrayFinalFlux.min(), #mid Flux
+                            'a2': -0.5,             #Flux lower bound
+                            'a3': arrayFinalFlux.min()
+                        }
 
-                        # define residual function to be minimized
-                        def lc2min(x):
-                            gaelMod = lcmodel(x[0], x[1], x[2], x[3], arrayTimes[~filtered_data.mask],
-                                            arrayAirmass[~filtered_data.mask], plots=False)
-                            # airMod= ( x[2]*(np.exp(x[3]*arrayAirmass[~filtered_data.mask])))
-                            # return arrayFinalFlux[~filtered_data.mask]/airMod - gaelMod/airMod
-                            return (arrayFinalFlux[~filtered_data.mask] / gaelMod) - 1.
+                        phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
+                        prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
+                        upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
+                        lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
 
+                        if np.floor(phase).max()-np.floor(phase).min() == 0:
+                            print('Estimated mid-transit not in observation range (check priors or observation time)')
+                            print('start:', arrayTimes[~filtered_data].min())
+                            print('  end:', arrayTimes[~filtered_data].max())
+                            print('prior:', prior['tmid'])
+                        
+                        mybounds = {
+                            'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                            'tmid':[max(lower,arrayTimes[~filtered_data].min()),min(arrayTimes[~filtered_data].max(),upper)],
+                            'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-                        res = least_squares(lc2min, x0=initvals, bounds=bound, method='trf')  # results of least squares fit
+                            'a1':[0, 3*max(arrayFinalFlux[~filtered_data])],
+                            'a2':[-3,3],
+                            'a3':[0, max(arrayFinalFlux[~filtered_data])]
+                        }
+    
+                        myfit = lc_fitter(
+                            arrayTimes[~filtered_data], 
+                            arrayFinalFlux[~filtered_data], 
+                            arrayNormUnc[~filtered_data], 
+                            arrayAirmass[~filtered_data], 
+                            prior, 
+                            mybounds,
+                            mode='lm'
+                        )
 
-                        # Calculate the standard deviation of the residuals
-                        residualVals = res.fun
-                        standardDev2 = np.std(residualVals, dtype=np.float64)  # calculates standard deviation of data
-
-                        lsFit = lcmodel(res.x[0], res.x[1], res.x[2], res.x[3], arrayTimes[~filtered_data.mask],
-                                        arrayAirmass[~filtered_data.mask], plots=False)
-
-                        # compute chi^2 from least squares fit
-                        # print('Median Uncertainty Value: '+ str(round(np.median(arrayNormUnc),5)))
-                        chi2_init = np.sum(((arrayFinalFlux[~filtered_data.mask] - lsFit) / arrayNormUnc[~filtered_data.mask]) ** 2.) / (
-                                len(arrayFinalFlux[~filtered_data.mask]) - len(res.x))
-                        # print("Non-Reduced chi2: ",np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.))
-
-                        # chi2 = np.sum(((arrayFinalFlux[~filtered_data.mask]-lsFit)/arrayNormUnc)**2.)/(len(arrayFinalFlux[~filtered_data.mask])-len(res.x)-1)
-
-                        print('The Residual Standard Deviation is: ' + str(round(standardDev2, 6)))
-                        print('The Reduced Chi-Squared is: ' + str(round(chi2_init, 6)) + '\n')
-                        if minSTD > standardDev2:  # If the standard deviation is less than the previous min
+                        print('The Residual Standard Deviation is: %' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6)))
+                        print('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
+                        if minSTD > myfit.residuals.std():  # If the standard deviation is less than the previous min
                             bestCompStar = compCounter + 1
-                            minSTD = standardDev2  # set the minimum standard deviation to that
+                            minSTD = myfit.residuals.std()  # set the minimum standard deviation to that
 
-                            arrayNormUnc = arrayNormUnc * np.sqrt(chi2_init)  # scale errorbars by sqrt(chi2) so that chi2 == 1
+                            arrayNormUnc = arrayNormUnc * np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
@@ -2203,21 +2111,21 @@ if __name__ == "__main__":
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
-                            finXTargCent = finXTargCentArray[~filtered_data.mask]
-                            finYTargCent = finYTargCentArray[~filtered_data.mask]
-                            finXRefCent = finXRefCentArray[~filtered_data.mask]
-                            finYRefCent = finYRefCentArray[~filtered_data.mask]
+                            finXTargCent = finXTargCentArray[~filtered_data]
+                            finYTargCent = finYTargCentArray[~filtered_data]
+                            finXRefCent = finXRefCentArray[~filtered_data]
+                            finYRefCent = finYRefCentArray[~filtered_data]
                             # sets the lists we want to print to correspond to the optimal aperature
-                            goodFluxes = arrayFinalFlux[~filtered_data.mask]
-                            nonBJDTimes = arrayTimes[~filtered_data.mask]
-                            nonBJDPhases = arrayPhases[~filtered_data.mask]
-                            goodAirmasses = arrayAirmass[~filtered_data.mask]
-                            goodTargets = arrayTargets[~filtered_data.mask]
-                            goodReferences = arrayReferences[~filtered_data.mask]
-                            goodTUnc = arrayTUnc[~filtered_data.mask]
-                            goodRUnc = arrayRUnc[~filtered_data.mask]
-                            goodNormUnc = arrayNormUnc[~filtered_data.mask]
-                            goodResids = residualVals
+                            goodFluxes = arrayFinalFlux[~filtered_data]
+                            nonBJDTimes = arrayTimes[~filtered_data]
+                            nonBJDPhases = arrayPhases[~filtered_data]
+                            goodAirmasses = arrayAirmass[~filtered_data]
+                            goodTargets = arrayTargets[~filtered_data]
+                            goodReferences = arrayReferences[~filtered_data]
+                            goodTUnc = arrayTUnc[~filtered_data]
+                            goodRUnc = arrayRUnc[~filtered_data]
+                            goodNormUnc = arrayNormUnc[~filtered_data]
+                            goodResids = myfit.residuals
 
                         # Reinitialize the the arrays to be empty
                         # airMassList = []
@@ -2238,7 +2146,7 @@ if __name__ == "__main__":
             # Exit the Comp Stars Loop
             print('\n*********************************************')
             print('Best Comparison Star: #' + str(bestCompStar))
-            print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+            print('Minimum Residual Scatter: ' + str(round(minSTD/np.median(goodFluxes) * 100, 4)) + '%')
             print('Optimal Aperture: ' + str(minAperture))
             print('Optimal Annulus: ' + str(minAnnulus))
             print('********************************************\n')
@@ -2356,19 +2264,19 @@ if __name__ == "__main__":
 
             # another 3 sigma clip based on residuals of the best LM fit
             try:
-                interFilter = sigma_clip(goodResids, sigma=3, maxiters=1, cenfunc=np.median, copy=False)
+                interFilter = sigma_clip(goodResids, sigma=3)
             except TypeError:
-                interFilter = sigma_clip(goodResids, sigma=3, cenfunc=np.median, copy=False)
+                interFilter = sigma_clip(goodResids, sigma=3)
 
-            goodFluxes = goodFluxes[~interFilter.mask]
-            goodTimes = goodTimes[~interFilter.mask]
-            goodPhases = goodPhases[~interFilter.mask]
-            goodAirmasses = goodAirmasses[~interFilter.mask]
-            goodTargets = goodTargets[~interFilter.mask]
-            goodReferences = goodReferences[~interFilter.mask]
-            goodTUnc = goodTUnc[~interFilter.mask]
-            goodRUnc = goodRUnc[~interFilter.mask]
-            goodNormUnc = goodNormUnc[~interFilter.mask]
+            goodFluxes = goodFluxes[~interFilter]
+            goodTimes = goodTimes[~interFilter]
+            goodPhases = goodPhases[~interFilter]
+            goodAirmasses = goodAirmasses[~interFilter]
+            goodTargets = goodTargets[~interFilter]
+            goodReferences = goodReferences[~interFilter]
+            goodTUnc = goodTUnc[~interFilter]
+            goodRUnc = goodRUnc[~interFilter]
+            goodNormUnc = goodNormUnc[~interFilter]
 
             # Calculate the standard deviation of the normalized flux values
             standardDev1 = np.std(goodFluxes)
@@ -2453,8 +2361,9 @@ if __name__ == "__main__":
             'ecc': pDict['ecc'],     # Eccentricity
             'omega':0,          # Arg of periastron
             'tmid':pDict['midT'],    # time of mid transit [day]
-            'a1': np.median(goodFluxes), #mid Flux
-            'a2': 0             #Flux lower bound
+            'a1': goodFluxes.max() - goodFluxes.min(), #mid Flux
+            'a2': -0.25,          #Flux lower bound
+            'a3': goodFluxes.min()
         }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
@@ -2474,15 +2383,16 @@ if __name__ == "__main__":
             'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
             'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-            'a1':[0, max(goodFluxes)],
-            'a2':[-10,10]
+            'a1':[0, 3*max(goodFluxes)],
+            'a2':[-3,3],
+            'a3':[0, 3*max(goodFluxes)],
         }
 
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds)      #calling fitting method in elca.py
+        # fitting method in elca.py
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')      
 
         # for k in myfit.bounds.keys():
         #     print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
-
 
         ########################
         # PLOT FINAL LIGHT CURVE

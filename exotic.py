@@ -2485,17 +2485,19 @@ if __name__ == "__main__":
         # SAVE DATA
         ##########
 
-        # write output to text file
+        # TODO write as json
+        # write output to text file 
         outParamsFile = open(infoDict['saveplot'] + 'FinalParams' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
-        outParamsFile.write('The fitted Mid-Transit Time is: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)\n')
-        outParamsFile.write('The fitted Ratio of Planet to Stellar Radius is: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
+        outParamsFile.write(' Mid-Transit Time: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)\n')
+        outParamsFile.write(' Ratio of Planet to Stellar Radius: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
             myfit.errors['rprs']) + ' (Rp/Rs)\n')
-        outParamsFile.write('The transit depth uncertainty is: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
-        outParamsFile.write('The fitted airmass1 is: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
-        outParamsFile.write('The fitted airmass2 is: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        outParamsFile.write('The scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
+        outParamsFile.write(' transit depth uncertainty: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
+        outParamsFile.write(' airmass coefficient 1: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
+        outParamsFile.write(' airmass coefficient 2: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
+        outParamsFile.write(' bias coefficient: ' + str(myfit.parameters['a3']) + ' +/- ' + str(myfit.errors['a3']) + '\n')
+        outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '
               + pDict['pName'] + infoDict['date'] + '.txt' + '\n')

@@ -465,6 +465,7 @@ class lc_fitter(object):
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
+        self.detrendederr = self.dataerr / self.airmass_model
         self.residuals = self.data - self.model
 
     def plot_bestfit(self, nbins=10, phase=True):
@@ -475,82 +476,42 @@ class lc_fitter(object):
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1, sharex=ax_lc )
         axs = [ax_lc, ax_res]
 
+        ax_res.set_xlim([min(myfit.phase), max(myfit.phase)])
+        ax_lc.set_xlim([min(myfit.phase), max(myfit.phase)])
+
         dt = (max(self.time) - min(self.time))/nbins
-        phasebinned = binner(self.phase, len(self.phase)//10)
-        timebinned = binner(self.time, len(self.time)//10)
-        databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.dataerr)
-        residbinned, res_errbinned = binner(1e6*self.residuals/np.median(self.data), len(self.residuals)//10, 1e6*self.dataerr/np.median(self.data))
+        phasebinned = binner(self.phase, len(self.phase)//nbins)
+        timebinned = binner(self.time, len(self.time)//nbins)
+        databinned, errbinned = binner(self.detrended, len(self.detrended)//nbins, self.dataerr)
+        residbinned, res_errbinned = binner(self.residuals, len(self.residuals)//nbins, self.detrendederr)
 
         if phase == True:
-            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
+            axs[0].errorbar(self.phase, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', mec='None', markersize=5, zorder=1)
             axs[0].plot(self.phase, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
+            axs[1].plot(self.phase, self.residuals, marker='o', color='gray', mec='None', markersize=5, ls='none')
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
             axs[1].set_xlabel("Phase")
-            axs[1].set_ylabel("Residuals [PPM]")
+            axs[1].set_ylabel("Residuals")
 
-            ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-        #    ax_res.errorbar(binner(self.phase, len(self.residuals) // 10), binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10),
-        #                    yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-                #            fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            #ax_lc.errorbar(binner(self.phase, len(self.phase) // 10),
-            #                binner(self.detrended / self.airmass_model, len(self.phase) // 10),
-            #                yerr=binner(1e6*self.residuals/np.median(self.data), len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-            #                fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-
-
-
-
-        #    binnedPhase,
-        ##    binnedPhase2,
-        #    binnedResids = binner(self.phase, 1e6*self.residuals/np.median(self.data), dt/self.parameters['per'])
-            #binnedPhase, binnedFlux = time_bin(self.phase, self.detrended, dt/self.parameters['per'])
-            #binnedPhase2, binnedResids = time_bin(self.phase, 1e6*self.residuals/np.median(self.data), dt/self.parameters['per'])
-        #    axs[0].plot(binnedPhase, binnedFlux, marker='s', color='blue', markersize=6, ls='none')
-        #    axs[1].plot(binnedPhase2, binnedResids, marker='s', color='blue', markersize=6, ls='none')
-
-        #COPY INTO BELOW!
+            ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', ecolor='b', mec='None', zorder=10)
+            ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', ecolor='b', mec='None', zorder=10)
 
         else:
-            axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
+            axs[0].errorbar(self.time, self.detrended, yerr=self.dataerr, ls='none', marker='o', color='gray', mec='None', markersize=5, zorder=1)
             axs[0].plot(self.time, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
+            axs[1].plot(self.time, self.residuals, marker='o', color='gray', markersize=5, mec='None', ls='none')
             axs[1].plot(phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Time [day]")
             axs[1].set_ylabel("Residuals [PPM]")
 
             ax_lc.errorbar(timebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(timebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-    #        ax_res.errorbar(binner(self.time, len(self.residuals) // 10), binner(self.residuals, len(self.residuals) // 10),
-    #                        yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-    #        ax_lc.errorbar(binner(self.time, len(self.time) // 10),
-    #                        binner(self.detrended / self.airmass_model, len(self.phase) // 10),
-    #                        yerr=binner(self.residuals, len(self.residuals) // 10, self.dataerr / self.airmass_model)[1],
-    #                        fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-
-
-
-#
-        #    binnedTime,
-#            binnedFlux = binner(self.time, self.detrended, dt)
-#            binnedTime2,
-#            binnedResids = binner(self.time, 1e6*self.residuals/np.median(self.data), dt)
-            #binnedTime, binnedFlux = time_bin(self.time, self.detrended, dt)
-            #binnedTime2, binnedResids = time_bin(self.time, 1e6*self.residuals/np.median(self.data), dt)
-#            axs[0].plot(binnedTime, binnedFlux, marker='s', color='blue', markersize=6, ls='none')
-#            axs[1].plot(binnedTime2, binnedResids, marker='s', color='blue', markersize=6, ls='none')
 
         plt.tight_layout()
 

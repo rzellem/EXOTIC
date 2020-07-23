@@ -959,8 +959,8 @@ def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty, targetn
     plt.ylabel('Chi^2')
     for chain in np.arange(myTrace.nchains):
         plt.plot(np.arange(len(allchiSquared[chain])), allchiSquared[chain], '-bo')
-    plt.rc('grid', linestyle="-", color='black')
-    plt.grid(True)
+    # plt.rc('grid', linestyle="-", color='black')
+    # plt.grid(True)
     plt.title(targetname + ' Chi^2 vs. Chain Length ' + date)
     # plt.show()
     plt.savefig(infoDict['saveplot'] + 'temp/ChiSquaredTrace' + date + targetname + '.png')
@@ -2379,8 +2379,8 @@ if __name__ == "__main__":
             plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
             plt.xlabel('Time (BJD)')
             plt.ylabel('Total Flux')
-            plt.rc('grid', linestyle="-", color='black')
-            plt.grid(True)
+            # plt.rc('grid', linestyle="-", color='black')
+            # plt.grid(True)
             plt.title(pDict['pName'] + ' Raw Flux Values ' + infoDict['date'])
             plt.savefig(infoDict['saveplot'] + 'temp/TargetRawFlux' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
@@ -2389,8 +2389,8 @@ if __name__ == "__main__":
             plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
             plt.xlabel('Time (BJD)')
             plt.ylabel('Total Flux')
-            plt.rc('grid', linestyle="-", color='black')
-            plt.grid(True)
+            # plt.rc('grid', linestyle="-", color='black')
+            # plt.grid(True)
             plt.title('Comparison Star Raw Flux Values ' + infoDict['date'])
             plt.savefig(infoDict['saveplot'] + 'temp/CompRawFlux' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
@@ -2400,8 +2400,8 @@ if __name__ == "__main__":
             plt.errorbar(goodPhases, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
             plt.xlabel('Phase')
             plt.ylabel('Normalized Flux')
-            plt.rc('grid', linestyle="-", color='black')
-            plt.grid(True)
+            # plt.rc('grid', linestyle="-", color='black')
+            # plt.grid(True)
             plt.title(pDict['pName'] + ' Normalized Flux vs. Phase ' + infoDict['date'])
             plt.savefig(infoDict['saveplot'] + 'NormalizedFluxPhase' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
@@ -2485,11 +2485,16 @@ if __name__ == "__main__":
         ########################
         # PLOT FINAL LIGHT CURVE
         ########################
-        f,axs = myfit.plot_bestfit()
+        f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
+        
+        ax_lc.set_title(pDict['pName'])
+        ax_res.set_xlabel('Phase')
 
-        ax_lc = axs[0]
-        ax_res = axs[1]
+        # clip plot to get rid of white space
+        ax_res.set_xlim([min(myfit.phase), max(myfit.phase)])
+        ax_lc.set_xlim([min(myfit.phase), max(myfit.phase)])
 
+        # making borders and tick labels black
         ax_lc.spines['bottom'].set_color('black')
         ax_lc.spines['top'].set_color('black')
         ax_lc.spines['right'].set_color('black')
@@ -2504,8 +2509,33 @@ if __name__ == "__main__":
         ax_res.tick_params(axis='x', colors='black')
         ax_res.tick_params(axis='y', colors='black')
 
-        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        # residual plot
+        ax_res.errorbar(myfit.phase, myfit.residuals, yerr=myfit.detrendederr ,color='gray', marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
+        ax_res.plot(myfit.phase, np.zeros(len(myfit.phase)), 'r-', lw=2, alpha=1, zorder=100)
+        ax_res.set_ylabel('Residuals')
+        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals), 3 * np.nanstd(myfit.residuals)])
 
+        correctedSTD = np.std(myfit.residuals)
+        ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
+                       marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
+        ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
+
+        ax_lc.set_ylabel('Relative Flux')
+        ax_lc.get_xaxis().set_visible(False)
+
+        if binplotBool:
+            ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals, len(myfit.residuals) // 10),
+                            yerr=binner(myfit.residuals, len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                            fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+            ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
+                           binner(myfit.detrended, len(myfit.detrended) // 10),
+                           yerr=binner(myfit.residuals, len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                           fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+        
+        # remove vertical whitespace
+        f.subplots_adjust(hspace=0)
+
+        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:
             f.savefig(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + ".pdf", bbox_inches="tight")
         except AttributeError:

@@ -51,11 +51,11 @@
             "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
             "Mid-Transit Time Uncertainty": 4.9e-05,
             "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14856104152345367,
-            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.01,
+            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.004688608636917226,
             "Ratio of Distance to Stellar Radius (a/Rs)": 5.344,
-            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.1,
+            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.04,
             "Orbital Inclination (deg)": 88.98,
-            "Orbital Inclination (deg) Uncertainity": 0.98,
+            "Orbital Inclination (deg) Uncertainity": 0.68,
             "Orbital Eccentricity (0 if null)": 0.159,
             "Star Effective Temperature (K)": 6001.0,
             "Star Effective Temperature (+) Uncertainty": 88.0,
@@ -64,7 +64,7 @@
             "Star Metallicity (+) Uncertainty": 0.08,
             "Star Metallicity (-) Uncertainty": -0.08,
             "Star Surface Gravity (log(g))": 4.22,
-            "Star Surface Gravity (+) Uncertainty": null,
+            "Star Surface Gravity (+) Uncertainty": 0.04,
             "Star Surface Gravity (-) Uncertainty": -0.04
         }
     ]

@@ -156,7 +156,7 @@ def sigma_clip(ogdata, sigma=3, dt=20):
     res = ogdata - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res,50)) for i in range(100)])
     #std = np.nanstd(res) # biased from large outliers
-    return np.abs(res) > sigma*std 
+    return np.abs(res) > sigma*std
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 def dataframe_to_jsonfile(dataframe, filename):
@@ -279,8 +279,7 @@ def new_getParams(data):
         'metUncNeg': data['st_meterr2'],
         'logg': data['st_logg'],
         'loggUncPos': data['st_loggerr1'],
-        'loggUncNeg': data['st_loggerr2'],
-        'flag': data['tran_flag']
+        'loggUncNeg': data['st_loggerr2']
     }
 
     return planetDictionary
@@ -444,7 +443,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Ratio of Distance to Stellar Radius (a/Rs)",
                      "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty",
                      "Orbital Inclination (deg)",
-                     "Orbital Inclination (deg) Uncertainty",                     
+                     "Orbital Inclination (deg) Uncertainty",
                      "Orbital Eccentricity (0 if null)",
                      "Star Effective Temperature (K)",
                      "Star Effective Temperature Positive Uncertainty (K)",
@@ -1208,7 +1207,7 @@ if __name__ == "__main__":
                     'tarcoords': None, 'compstars': None}
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
-                     'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None, 
+                     'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
                      'inc': None, 'incUnc': None, 'ecc': None, 'teff': None,
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
@@ -2050,7 +2049,7 @@ if __name__ == "__main__":
                             print('start:', arrayTimes[~filtered_data].min())
                             print('  end:', arrayTimes[~filtered_data].max())
                             print('prior:', prior['tmid'])
-                        
+
                         mybounds = {
                             'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
                             'tmid':[max(lower,arrayTimes[~filtered_data].min()),min(arrayTimes[~filtered_data].max(),upper)],
@@ -2060,20 +2059,20 @@ if __name__ == "__main__":
                             'a2':[-3,3],
                             # 'a3':[0, max(arrayFinalFlux[~filtered_data])]
                         }
-    
+
                         myfit = lc_fitter(
-                            arrayTimes[~filtered_data], 
-                            arrayFinalFlux[~filtered_data], 
-                            arrayNormUnc[~filtered_data], 
-                            arrayAirmass[~filtered_data], 
-                            prior, 
+                            arrayTimes[~filtered_data],
+                            arrayFinalFlux[~filtered_data],
+                            arrayNormUnc[~filtered_data],
+                            arrayAirmass[~filtered_data],
+                            prior,
                             mybounds,
                             mode='lm'
                         )
 
                         for k in myfit.bounds.keys():
                             print("  {}: {:.6f}".format(k, myfit.parameters[k])) #, myfit.errors[k]))
-                        
+
                         print('The Residual Standard Deviation is: %' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6)))
                         print('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
                         if minSTD > myfit.residuals.std():  # If the standard deviation is less than the previous min
@@ -2369,7 +2368,7 @@ if __name__ == "__main__":
         }
 
         # fitting method in elca.py
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')      
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')
 
         # for k in myfit.bounds.keys():
         #     print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
@@ -2378,7 +2377,7 @@ if __name__ == "__main__":
         # PLOT FINAL LIGHT CURVE
         ########################
         f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
-        
+
         ax_lc.set_title(pDict['pName'])
         ax_res.set_xlabel('Phase')
 
@@ -2415,7 +2414,7 @@ if __name__ == "__main__":
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
 
-    
+
         ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10),
                         yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
                         fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
@@ -2423,7 +2422,7 @@ if __name__ == "__main__":
                         binner(myfit.detrended, len(myfit.detrended) // 10),
                         yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
                         fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-    
+
         # remove vertical whitespace
         f.subplots_adjust(hspace=0)
 
@@ -2478,7 +2477,7 @@ if __name__ == "__main__":
         ##########
 
         # TODO write as json
-        # write output to text file 
+        # write output to text file
         outParamsFile = open(infoDict['saveplot'] + 'FinalParams' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')

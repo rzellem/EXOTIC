@@ -2477,6 +2477,7 @@ if __name__ == "__main__":
         print(' Semi Major Axis/ Star Radius [a/Rs]: {:.3f} +- {:.3f} '.format(myfit.parameters['ars'], myfit.errors['ars']))
         print('               Airmass coefficient 1: {:.3f} +- {:.4f} '.format(myfit.parameters['a1'], myfit.errors['a1']))
         print('               Airmass coefficient 2: {:.4f} +- {:.4f} '.format(myfit.parameters['a2'], myfit.errors['a2']))
+        print('                    Bias coefficient: {:.4f} +- {:.4f} '.format(myfit.parameters['a3'], myfit.errors['a3']))
         print('The scatter in the residuals of the lightcurve fit is: {:.4f} %'.format(100*np.std(myfit.residuals/np.median(myfit.data))))
         print('\n*********************************************************')
 

@@ -1567,20 +1567,6 @@ if __name__ == "__main__":
         print('Linear Term: ' + linearString)
         print('Quadratic Term: ' + quadString)
 
-        # used for LM fit to get best aperture
-        prior = {
-            'rprs':pDict['rprs'],    # Rp/Rs
-            'ars':pDict['aRs'],      # a/Rs
-            'per':pDict['pPer'],     # Period [day]
-            'inc':pDict['inc'],      # Inclination [deg]
-            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
-            'ecc': pDict['ecc'],     # Eccentricity
-            'omega':0,          # Arg of periastron
-            'tmid':pDict['midT'],    # time of mid transit [day]
-            'a1': 1,           #mid Flux
-            'a2': 0             #Flux lower bound
-        }
-
         if fitsortext == 1:
             print('\n**************************')
             print('Starting Reduction Process')
@@ -2049,9 +2035,9 @@ if __name__ == "__main__":
                             'ecc': pDict['ecc'],     # Eccentricity
                             'omega':0,          # Arg of periastron
                             'tmid':pDict['midT'],    # time of mid transit [day]
-                            'a1': arrayFinalFlux.max() - arrayFinalFlux.min(), #mid Flux
-                            'a2': -0.5,             #Flux lower bound
-                            'a3': arrayFinalFlux.min()
+                            'a1': arrayFinalFlux.mean(), #max() - arrayFinalFlux.min(), #mid Flux
+                            'a2': 0,             #Flux lower bound
+                            'a3': 0, #arrayFinalFlux.min()
                         }
 
                         phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
@@ -2072,7 +2058,7 @@ if __name__ == "__main__":
 
                             'a1':[0, 3*max(arrayFinalFlux[~filtered_data])],
                             'a2':[-3,3],
-                            'a3':[0, max(arrayFinalFlux[~filtered_data])]
+                            # 'a3':[0, max(arrayFinalFlux[~filtered_data])]
                         }
     
                         myfit = lc_fitter(
@@ -2085,6 +2071,9 @@ if __name__ == "__main__":
                             mode='lm'
                         )
 
+                        for k in myfit.bounds.keys():
+                            print("  {}: {:.6f}".format(k, myfit.parameters[k])) #, myfit.errors[k]))
+                        
                         print('The Residual Standard Deviation is: %' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6)))
                         print('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
                         if minSTD > myfit.residuals.std():  # If the standard deviation is less than the previous min
@@ -2355,7 +2344,7 @@ if __name__ == "__main__":
             'tmid':pDict['midT'],    # time of mid transit [day]
             'a1': bestlmfit.parameters['a1'], #mid Flux
             'a2': bestlmfit.parameters['a2'], #Flux lower bound
-            'a3': bestlmfit.parameters['a3']
+            'a3': 0 #bestlmfit.parameters['a3']
         }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
@@ -2376,7 +2365,7 @@ if __name__ == "__main__":
 
             'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
             'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
-            'a3':[bestlmfit.parameters['a3']*0.75, bestlmfit.parameters['a3']*1.25],
+            #'a3':[bestlmfit.parameters['a3']*0.75, bestlmfit.parameters['a3']*1.25],
         }
 
         # fitting method in elca.py

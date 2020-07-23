@@ -527,7 +527,7 @@ class lc_fitter(object):
         phasebinned = binner(self.phase, len(self.phase)//10)
         timebinned = binner(self.time, len(self.time)//10)
         databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.detrendederr)
-        residbinned, res_errbinned = binner(self.residuals/np.median(self.data), len(self.residuals)//10, 1e6*self.dataerr/np.median(self.data))
+        residbinned, res_errbinned = binner(self.residuals/np.median(self.data), len(self.residuals)//10, self.dataerr/np.median(self.data))
 
         if phase == True:
             axs[0].errorbar(self.phase, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)

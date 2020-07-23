@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.12.1"
+versionid = "0.12.2"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -362,7 +362,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             print('Sorry, not a valid data type.')
             continue
         if type_ == str and val1 and val2:
-            option = option.lower()
+            option = option.lower().replace(' ', '')
             if option not in (val1, val2):
                 print("Sorry, your response was not valid.")
             else:
@@ -746,30 +746,33 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def image_alignment(sortedallImageData):
+def image_alignment(imagedata):
+    print("\nAligning your images from FITS files. Please wait.")
     boollist = []
-    notAligned = 0
+    notaligned = 0
 
-    # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
-    # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-    for i, image_file in enumerate(sortedallImageData):
+    # Align images from .FITS files and catch exceptions if images can't be aligned.
+    # boollist for discarded images to delete .FITS data from airmass and times.
+    for i, image_file in enumerate(imagedata):
         try:
-            sortedallImageData[i], footprint = aa.register(image_file, sortedallImageData[0])
+            print('Aligning image %s of %s' % (str(i+1), str(len(imagedata))))
+            imagedata[i], footprint = aa.register(image_file, imagedata[0])
             boollist.append(True)
         except:
-            notAligned += 1
+            print('Image %s of %s failed to align' % (str(i+1), str(len(imagedata))))
+            notaligned += 1
             boollist.append(False)
 
-    unalignedBoolList = np.array(boollist)
+    imagedata = imagedata[boollist]
 
-    if notAligned > 0:
+    if notaligned > 0:
         print('\n\n*********************************************************************')
-        print('WARNING: From the given imaging files: ' + str(notAligned) + ' of ' +
-              str(len(sortedallImageData) + notAligned) + ' were not aligned.')
+        print('WARNING: From the given imaging files: %s of %s were not aligned.'
+              % (str(notaligned), str(len(imagedata) + notaligned)))
         print('*********************************************************************')
         time.sleep(5)
 
-    return sortedallImageData, unalignedBoolList, boollist
+    return imagedata, boollist
 
 
 # defines the star point spread function as a 2D Gaussian
@@ -1827,11 +1830,12 @@ if __name__ == "__main__":
                     pass
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
                 convertToFITS.writeto(pathSolve)
+                print('Here is the path to the reference imaging file EXOTIC: \n' + pathSolve)
                 wcsFile = check_wcs(pathSolve, infoDict['saveplot'])
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
-                    print('Here is the path to your plate solution: ' + wcsFile)
+                    print('Here is the path to your plate solution: \n' + wcsFile)
                     hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
                     rafile, decfile = get_radec(hdulWCS)
 
@@ -1846,13 +1850,7 @@ if __name__ == "__main__":
                     break
 
             # Image Alignment
-            print("\nAligning your images from FITS files. Please wait.")
-            done = False
-            t = threading.Thread(target=animate, daemon=True)
-            t.start()
-            sortedallImageData, unalignedBoolList, boollist = image_alignment(sortedallImageData)
-            done = True
-            print('\n\nImages Aligned.')
+            sortedallImageData, boollist = image_alignment(sortedallImageData)
 
             minAperture = int(2 * max(targsigX, targsigY))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
@@ -2116,7 +2114,7 @@ if __name__ == "__main__":
                         arrayRUnc = np.array(refUncertanties)
 
                         # If unaligned images existed, delete .fits data w/ boollist from airmass and times.
-                        if unalignedBoolList.size > 0:
+                        if False in boollist:
                             arrayTimes = arrayTimes[boollist]
                             arrayAirmass = arrayAirmass[boollist]
 

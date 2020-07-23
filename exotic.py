@@ -893,95 +893,6 @@ def nearestTransitTime(timeData, period, originalT):
     return nearT
 
 
-<<<<<<< HEAD
-=======
-# Mid-Transit Time Error Helper Functions
-def propMidTVariance(uncertainP, uncertainT, timeData, period, originalT):
-    n = numberOfTransitsAway(timeData, period, originalT)
-    varTMid = n * n * uncertainP + uncertainT
-    return varTMid
-
-
-def uncTMid(uncertainP, uncertainT, timeData, period, originalT):
-    n = numberOfTransitsAway(timeData, period, originalT)
-    midErr = np.sqrt((n * n * uncertainP * uncertainP) + 2 * n * uncertainP * uncertainT + (uncertainT * uncertainT))
-    return midErr
-
-
-def transitDuration(rStar, rPlan, period, semi):
-    rSun = 6.957 * 10 ** 8  # m
-    tDur = (period / np.pi) * np.arcsin((np.sqrt((rStar * rSun + rPlan * rSun) ** 2)) / (semi * rStar * rSun))
-    return tDur
-
-
-# calculates chi squared which is used to determine the quality of the LC fit
-def chisquared(observed_values, expected_values, uncertainty):
-    for chiCount in range(0, len(observed_values)):
-        zeta = ((observed_values[chiCount] - expected_values[chiCount]) / uncertainty[chiCount])
-        chiToReturn = np.sum(zeta ** 2)
-        return chiToReturn
-
-
-# make and plot the chi squared traces
-def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty, targetname, date):
-    print("Performing Chi^2 Burn")
-    print("Please be patient- this step can take a few minutes.")
-    global done
-    done = False
-    t = threading.Thread(target=animate, daemon=True)
-    t.start()
-
-    midTArr = myTrace.get_values('Tmid', combine=False)
-    radiusArr = myTrace.get_values('RpRs', combine=False)
-    am1Arr = myTrace.get_values('Am1', combine=False)
-    am2Arr = myTrace.get_values('Am2', combine=False)
-
-    allchiSquared = []
-    for chain in myTrace.chains:
-        chiSquaredList1 = []
-        for counter in np.arange(len(midTArr[chain])):  # [::25]:
-            # first chain
-            midT1 = midTArr[chain][counter]
-            rad1 = radiusArr[chain][counter]
-            am11 = am1Arr[chain][counter]
-            am21 = am2Arr[chain][counter]
-
-            fittedModel1 = lcmodel(midT1, rad1, am11, am21, myTimes, theAirmasses, plots=False)
-            chis1 = np.sum(((myFluxes - fittedModel1) / uncertainty) ** 2.) / (len(myFluxes) - 4)
-            chiSquaredList1.append(chis1)
-        allchiSquared.append(chiSquaredList1)
-
-    plt.figure()
-    plt.xlabel('Chain Length')
-    plt.ylabel('Chi^2')
-    for chain in np.arange(myTrace.nchains):
-        plt.plot(np.arange(len(allchiSquared[chain])), allchiSquared[chain], '-bo')
-    # plt.rc('grid', linestyle="-", color='black')
-    # plt.grid(True)
-    plt.title(targetname + ' Chi^2 vs. Chain Length ' + date)
-    # plt.show()
-    plt.savefig(infoDict['saveplot'] + 'temp/ChiSquaredTrace' + date + targetname + '.png')
-    plt.close()
-
-    chiMedian = np.nanmedian(allchiSquared)
-
-    burns = []
-    for chain in np.arange(myTrace.nchains):
-        idxburn, = np.where(allchiSquared[chain] <= chiMedian)
-        if len(idxburn) == 0:
-            burnno = 0
-        else:
-            burnno = idxburn[0]
-        burns.append(burnno)
-
-    completeBurn = np.max(burns)
-    done = True
-    print('Chi^2 Burn In Length: ' + str(completeBurn))
-
-    return completeBurn
-
-
->>>>>>> e2c8d8406c16963b38d0dca92fc8fd395e5b2830
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     times = np.array(times)
@@ -1585,13 +1496,6 @@ if __name__ == "__main__":
                 biasesBool = False
 
         print("\n***************************************")
-        print("Plotting Options")
-        binplotBool = True
-        # binplot = str(input("Would you like to overplot a binned version of your data for plotting purposes? (y/n; select y if you have a lot of data.) "))
-        # if binplot == 'y' or binplot == 'yes' or binplot == 'Y' or binplot == 'Yes':
-        #     binplotBool = True
-        # else:
-        #     binplotBool = False
 
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
@@ -2509,12 +2413,12 @@ if __name__ == "__main__":
         ax_res.tick_params(axis='y', colors='black')
 
         # residual plot
-        ax_res.errorbar(myfit.phase, myfit.residuals, yerr=myfit.detrendederr ,color='gray', marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
+        ax_res.errorbar(myfit.phase, myfit.residuals/np.median(myfit.data), yerr=myfit.detrendederr ,color='gray', marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
         ax_res.plot(myfit.phase, np.zeros(len(myfit.phase)), 'r-', lw=2, alpha=1, zorder=100)
         ax_res.set_ylabel('Residuals')
-        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals), 3 * np.nanstd(myfit.residuals)])
+        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals/np.median(myfit.data)), 3 * np.nanstd(myfit.residuals/np.median(myfit.data))])
 
-        correctedSTD = np.std(myfit.residuals)
+        correctedSTD = np.std(myfit.residuals/np.median(myfit.data))
         ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
                        marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
         ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
@@ -2522,15 +2426,15 @@ if __name__ == "__main__":
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
 
-        if binplotBool:
-            ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals, len(myfit.residuals) // 10),
-                            yerr=binner(myfit.residuals, len(myfit.residuals) // 10, myfit.detrendederr)[1],
-                            fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-            ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
-                           binner(myfit.detrended, len(myfit.detrended) // 10),
-                           yerr=binner(myfit.residuals, len(myfit.residuals) // 10, myfit.detrendederr)[1],
-                           fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-        
+    
+        ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10),
+                        yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+        ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
+                        binner(myfit.detrended, len(myfit.detrended) // 10),
+                        yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+    
         # remove vertical whitespace
         f.subplots_adjust(hspace=0)
 

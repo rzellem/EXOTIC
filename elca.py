@@ -528,6 +528,9 @@ class lc_fitter(object):
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1, sharex=ax_lc )
         axs = [ax_lc, ax_res]
 
+        ax_res.set_xlim([min(myfit.phase), max(myfit.phase)])
+        ax_lc.set_xlim([min(myfit.phase), max(myfit.phase)])
+
         dt = (max(self.time) - min(self.time))/nbins
         phasebinned = binner(self.phase, len(self.phase)//10)
         timebinned = binner(self.time, len(self.time)//10)
@@ -540,7 +543,7 @@ class lc_fitter(object):
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.phase, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
+            axs[1].plot(self.phase, self.residuals, marker='o', color='gray', mec='None', markersize=5, ls='none')
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
             axs[1].set_xlabel("Phase")
             axs[1].set_ylabel("Residuals [PPM]")
@@ -554,7 +557,7 @@ class lc_fitter(object):
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.time, 1e6*self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, ls='none')
+            axs[1].plot(self.time, self.residuals, marker='o', color='gray', markersize=5, mec='None', ls='none')
             axs[1].plot(phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Time [day]")
             axs[1].set_ylabel("Residuals [PPM]")

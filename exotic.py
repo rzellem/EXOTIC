@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.12.0"
+versionid = "0.12.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -761,21 +761,19 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(sortedallImageData):
-    newlist, boollist = [], []
+    boollist = []
     notAligned = 0
 
     # Align images from .FITS files and catch exceptions if images can't be aligned. Keep two lists: newlist for
     # images aligned and boollist for discarded images to delete .FITS data from airmass and times.
-    for image_file in sortedallImageData:
+    for i, image_file in enumerate(sortedallImageData):
         try:
-            newData, footprint = aa.register(image_file, sortedallImageData[0])
-            newlist.append(newData)
+            sortedallImageData[i], footprint = aa.register(image_file, sortedallImageData[0])
             boollist.append(True)
         except:
             notAligned += 1
             boollist.append(False)
 
-    sortedallImageData = np.array(newlist)
     unalignedBoolList = np.array(boollist)
 
     if notAligned > 0:
@@ -895,6 +893,95 @@ def nearestTransitTime(timeData, period, originalT):
     return nearT
 
 
+<<<<<<< HEAD
+=======
+# Mid-Transit Time Error Helper Functions
+def propMidTVariance(uncertainP, uncertainT, timeData, period, originalT):
+    n = numberOfTransitsAway(timeData, period, originalT)
+    varTMid = n * n * uncertainP + uncertainT
+    return varTMid
+
+
+def uncTMid(uncertainP, uncertainT, timeData, period, originalT):
+    n = numberOfTransitsAway(timeData, period, originalT)
+    midErr = np.sqrt((n * n * uncertainP * uncertainP) + 2 * n * uncertainP * uncertainT + (uncertainT * uncertainT))
+    return midErr
+
+
+def transitDuration(rStar, rPlan, period, semi):
+    rSun = 6.957 * 10 ** 8  # m
+    tDur = (period / np.pi) * np.arcsin((np.sqrt((rStar * rSun + rPlan * rSun) ** 2)) / (semi * rStar * rSun))
+    return tDur
+
+
+# calculates chi squared which is used to determine the quality of the LC fit
+def chisquared(observed_values, expected_values, uncertainty):
+    for chiCount in range(0, len(observed_values)):
+        zeta = ((observed_values[chiCount] - expected_values[chiCount]) / uncertainty[chiCount])
+        chiToReturn = np.sum(zeta ** 2)
+        return chiToReturn
+
+
+# make and plot the chi squared traces
+def plotChi2Trace(myTrace, myFluxes, myTimes, theAirmasses, uncertainty, targetname, date):
+    print("Performing Chi^2 Burn")
+    print("Please be patient- this step can take a few minutes.")
+    global done
+    done = False
+    t = threading.Thread(target=animate, daemon=True)
+    t.start()
+
+    midTArr = myTrace.get_values('Tmid', combine=False)
+    radiusArr = myTrace.get_values('RpRs', combine=False)
+    am1Arr = myTrace.get_values('Am1', combine=False)
+    am2Arr = myTrace.get_values('Am2', combine=False)
+
+    allchiSquared = []
+    for chain in myTrace.chains:
+        chiSquaredList1 = []
+        for counter in np.arange(len(midTArr[chain])):  # [::25]:
+            # first chain
+            midT1 = midTArr[chain][counter]
+            rad1 = radiusArr[chain][counter]
+            am11 = am1Arr[chain][counter]
+            am21 = am2Arr[chain][counter]
+
+            fittedModel1 = lcmodel(midT1, rad1, am11, am21, myTimes, theAirmasses, plots=False)
+            chis1 = np.sum(((myFluxes - fittedModel1) / uncertainty) ** 2.) / (len(myFluxes) - 4)
+            chiSquaredList1.append(chis1)
+        allchiSquared.append(chiSquaredList1)
+
+    plt.figure()
+    plt.xlabel('Chain Length')
+    plt.ylabel('Chi^2')
+    for chain in np.arange(myTrace.nchains):
+        plt.plot(np.arange(len(allchiSquared[chain])), allchiSquared[chain], '-bo')
+    # plt.rc('grid', linestyle="-", color='black')
+    # plt.grid(True)
+    plt.title(targetname + ' Chi^2 vs. Chain Length ' + date)
+    # plt.show()
+    plt.savefig(infoDict['saveplot'] + 'temp/ChiSquaredTrace' + date + targetname + '.png')
+    plt.close()
+
+    chiMedian = np.nanmedian(allchiSquared)
+
+    burns = []
+    for chain in np.arange(myTrace.nchains):
+        idxburn, = np.where(allchiSquared[chain] <= chiMedian)
+        if len(idxburn) == 0:
+            burnno = 0
+        else:
+            burnno = idxburn[0]
+        burns.append(burnno)
+
+    completeBurn = np.max(burns)
+    done = True
+    print('Chi^2 Burn In Length: ' + str(completeBurn))
+
+    return completeBurn
+
+
+>>>>>>> e2c8d8406c16963b38d0dca92fc8fd395e5b2830
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     times = np.array(times)
@@ -2289,8 +2376,8 @@ if __name__ == "__main__":
             plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
             plt.xlabel('Time (BJD)')
             plt.ylabel('Total Flux')
-            plt.rc('grid', linestyle="-", color='black')
-            plt.grid(True)
+            # plt.rc('grid', linestyle="-", color='black')
+            # plt.grid(True)
             plt.title(pDict['pName'] + ' Raw Flux Values ' + infoDict['date'])
             plt.savefig(infoDict['saveplot'] + 'temp/TargetRawFlux' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
@@ -2299,8 +2386,8 @@ if __name__ == "__main__":
             plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
             plt.xlabel('Time (BJD)')
             plt.ylabel('Total Flux')
-            plt.rc('grid', linestyle="-", color='black')
-            plt.grid(True)
+            # plt.rc('grid', linestyle="-", color='black')
+            # plt.grid(True)
             plt.title('Comparison Star Raw Flux Values ' + infoDict['date'])
             plt.savefig(infoDict['saveplot'] + 'temp/CompRawFlux' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
@@ -2310,8 +2397,8 @@ if __name__ == "__main__":
             plt.errorbar(goodPhases, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
             plt.xlabel('Phase')
             plt.ylabel('Normalized Flux')
-            plt.rc('grid', linestyle="-", color='black')
-            plt.grid(True)
+            # plt.rc('grid', linestyle="-", color='black')
+            # plt.grid(True)
             plt.title(pDict['pName'] + ' Normalized Flux vs. Phase ' + infoDict['date'])
             plt.savefig(infoDict['saveplot'] + 'NormalizedFluxPhase' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
@@ -2397,11 +2484,16 @@ if __name__ == "__main__":
         ########################
         # PLOT FINAL LIGHT CURVE
         ########################
-        f,axs = myfit.plot_bestfit()
+        f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
+        
+        ax_lc.set_title(pDict['pName'])
+        ax_res.set_xlabel('Phase')
 
-        ax_lc = axs[0]
-        ax_res = axs[1]
+        # clip plot to get rid of white space
+        ax_res.set_xlim([min(myfit.phase), max(myfit.phase)])
+        ax_lc.set_xlim([min(myfit.phase), max(myfit.phase)])
 
+        # making borders and tick labels black
         ax_lc.spines['bottom'].set_color('black')
         ax_lc.spines['top'].set_color('black')
         ax_lc.spines['right'].set_color('black')
@@ -2416,8 +2508,33 @@ if __name__ == "__main__":
         ax_res.tick_params(axis='x', colors='black')
         ax_res.tick_params(axis='y', colors='black')
 
-        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        # residual plot
+        ax_res.errorbar(myfit.phase, myfit.residuals, yerr=myfit.detrendederr ,color='gray', marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
+        ax_res.plot(myfit.phase, np.zeros(len(myfit.phase)), 'r-', lw=2, alpha=1, zorder=100)
+        ax_res.set_ylabel('Residuals')
+        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals), 3 * np.nanstd(myfit.residuals)])
 
+        correctedSTD = np.std(myfit.residuals)
+        ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
+                       marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
+        ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
+
+        ax_lc.set_ylabel('Relative Flux')
+        ax_lc.get_xaxis().set_visible(False)
+
+        if binplotBool:
+            ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals, len(myfit.residuals) // 10),
+                            yerr=binner(myfit.residuals, len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                            fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+            ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
+                           binner(myfit.detrended, len(myfit.detrended) // 10),
+                           yerr=binner(myfit.residuals, len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                           fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+        
+        # remove vertical whitespace
+        f.subplots_adjust(hspace=0)
+
+        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:
             f.savefig(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + ".pdf", bbox_inches="tight")
         except AttributeError:

@@ -2374,9 +2374,9 @@ if __name__ == "__main__":
             'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
             'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-            'a1':[0, 3*max(goodFluxes)],
+            'a1':[0, 2*max(goodFluxes)],
             'a2':[-3,3],
-            'a3':[0, 3*max(goodFluxes)],
+            'a3':[0, max(goodFluxes)],
         }
 
         # fitting method in elca.py

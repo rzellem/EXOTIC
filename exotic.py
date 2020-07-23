@@ -2117,6 +2117,7 @@ if __name__ == "__main__":
                             goodRUnc = arrayRUnc[~filtered_data]
                             goodNormUnc = arrayNormUnc[~filtered_data]
                             goodResids = myfit.residuals
+                            bestlmfit = myfit
 
                         # Reinitialize the the arrays to be empty
                         # airMassList = []
@@ -2352,9 +2353,9 @@ if __name__ == "__main__":
             'ecc': pDict['ecc'],     # Eccentricity
             'omega':0,          # Arg of periastron
             'tmid':pDict['midT'],    # time of mid transit [day]
-            'a1': goodFluxes.max() - goodFluxes.min(), #mid Flux
-            'a2': -0.25,          #Flux lower bound
-            'a3': goodFluxes.min()
+            'a1': bestlmfit.parameters['a1'], #mid Flux
+            'a2': bestlmfit.parameters['a2'], #Flux lower bound
+            'a3': bestlmfit.parameters['a3']
         }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
@@ -2367,16 +2368,15 @@ if __name__ == "__main__":
             print('start:', goodTimes.min())
             print('  end:', goodTimes.max())
             print('prior:', prior['tmid'])
-            
 
         mybounds = {
             'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
             'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
             'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-            'a1':[0, 2*max(goodFluxes)],
-            'a2':[-3,3],
-            'a3':[0, max(goodFluxes)],
+            'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
+            'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
+            'a3':[bestlmfit.parameters['a3']*0.75, bestlmfit.parameters['a3']*1.25],
         }
 
         # fitting method in elca.py
@@ -2477,7 +2477,10 @@ if __name__ == "__main__":
         print(' Semi Major Axis/ Star Radius [a/Rs]: {:.3f} +- {:.3f} '.format(myfit.parameters['ars'], myfit.errors['ars']))
         print('               Airmass coefficient 1: {:.3f} +- {:.4f} '.format(myfit.parameters['a1'], myfit.errors['a1']))
         print('               Airmass coefficient 2: {:.4f} +- {:.4f} '.format(myfit.parameters['a2'], myfit.errors['a2']))
-        print('                    Bias coefficient: {:.4f} +- {:.4f} '.format(myfit.parameters['a3'], myfit.errors['a3']))
+        try:
+            print('                    Bias coefficient: {:.4f} +- {:.4f} '.format(myfit.parameters['a3'], myfit.errors['a3']))
+        except:
+            pass
         print('The scatter in the residuals of the lightcurve fit is: {:.4f} %'.format(100*np.std(myfit.residuals/np.median(myfit.data))))
         print('\n*********************************************************')
 
@@ -2496,7 +2499,10 @@ if __name__ == "__main__":
         outParamsFile.write(' transit depth uncertainty: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
         outParamsFile.write(' airmass coefficient 1: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
         outParamsFile.write(' airmass coefficient 2: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        outParamsFile.write(' bias coefficient: ' + str(myfit.parameters['a3']) + ' +/- ' + str(myfit.errors['a3']) + '\n')
+        try:
+            outParamsFile.write(' bias coefficient: ' + str(myfit.parameters['a3']) + ' +/- ' + str(myfit.errors['a3']) + '\n')
+        except:
+            pass
         outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '

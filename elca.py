@@ -423,15 +423,17 @@ class lc_fitter(object):
             self.parameters[k] = res.x[i]
             self.errors[k] = 0
 
+        self.create_fit_variables()
+
+    def create_fit_variables(self):
         self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)+self.parameters['a3']
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
-        self.detrended_error = self.dataerr / self.airmass_model
+        self.detrendederr = self.dataerr / self.airmass_model
         self.residuals = self.data - self.model
         self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
-        pass
 
     def fit_nested(self):
         freekeys = list(self.bounds.keys())
@@ -511,14 +513,7 @@ class lc_fitter(object):
         self.parameters = copy.deepcopy(tests[mi])
 
         # final model
-        self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
-        self.transit = transit(self.time, self.parameters)
-        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)+self.parameters['a3']
-        self.model = self.transit * self.airmass_model
-        self.detrended = self.data / self.airmass_model
-        self.detrendederr = self.dataerr / self.airmass_model
-        self.residuals = self.data - self.model
-        self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
+        self.create_fit_variables()
 
     def plot_bestfit(self, nbins=10, phase=True):
 
@@ -528,14 +523,11 @@ class lc_fitter(object):
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1, sharex=ax_lc )
         axs = [ax_lc, ax_res]
 
-        ax_res.set_xlim([min(myfit.phase), max(myfit.phase)])
-        ax_lc.set_xlim([min(myfit.phase), max(myfit.phase)])
-
         dt = (max(self.time) - min(self.time))/nbins
         phasebinned = binner(self.phase, len(self.phase)//10)
         timebinned = binner(self.time, len(self.time)//10)
         databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.detrendederr)
-        residbinned, res_errbinned = binner(1e6*self.residuals/np.median(self.data), len(self.residuals)//10, 1e6*self.dataerr/np.median(self.data))
+        residbinned, res_errbinned = binner(self.residuals/np.median(self.data), len(self.residuals)//10, 1e6*self.dataerr/np.median(self.data))
 
         if phase == True:
             axs[0].errorbar(self.phase, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
@@ -543,7 +535,7 @@ class lc_fitter(object):
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.phase, self.residuals, marker='o', color='gray', mec='None', markersize=5, ls='none')
+            axs[1].plot(self.phase, self.residuals/np.median(self.data), marker='o', color='gray', mec='None', markersize=5, ls='none')
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
             axs[1].set_xlabel("Phase")
             axs[1].set_ylabel("Residuals [ADU]")
@@ -551,20 +543,24 @@ class lc_fitter(object):
             ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
 
+            ax_res.set_xlim([min(self.phase), max(self.phase)])
+            ax_lc.set_xlim([min(self.phase), max(self.phase)])
         else:
             axs[0].errorbar(self.time, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
             axs[0].plot(self.time, self.transit, 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
-            axs[1].plot(self.time, self.residuals, marker='o', color='gray', markersize=5, mec='None', ls='none')
-            axs[1].plot(phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
+            axs[1].plot(self.time, self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, mec='None', ls='none')
+            axs[1].plot(self.time, np.zeros(len(self.time)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Time [day]")
             axs[1].set_ylabel("Residuals [ADU]")
 
             ax_lc.errorbar(timebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(timebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
 
+            ax_res.set_xlim([min(self.time), max(self.time)])
+            ax_lc.set_xlim([min(self.time), max(self.time)])
         plt.tight_layout()
 
         return f,axs

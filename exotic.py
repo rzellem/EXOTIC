@@ -2541,7 +2541,7 @@ if __name__ == "__main__":
                 round(myfit.parameters['a1'], 5)) + ' +/- ' + str(round(myfit.errors['a1'], 5)) + ',Am2=' + str(
                 round(myfit.parameters['a2'], 5)) + ' +/- ' + str(round(myfit.errors['a2'], 5)) + '\n')  # code yields
         # outParamsFile.write('#NOTES= ' + userNameEmails + '\n')
-        outParamsFile.write('#DATE,NORM_FLUX,MERR,DETREND_1,DETREND_2\n')
+        outParamsFile.write('#DATE,FLUX,MERR,DETREND_1,DETREND_2\n')
         for aavsoC in range(0, len(myfit.time)):
             outParamsFile.write(
                 str(round(myfit.time[aavsoC], 8)) + ',' + str(round(myfit.data[aavsoC], 7)) + ',' + str(

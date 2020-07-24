@@ -14,9 +14,9 @@
 # EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ####################################################################
-# ExopLanet tranSit Analyzer
+# Exoplanet light curve analysis
 #
-# Authors: Kyle Pearson, Marlee Smith
+# Authors: Kyle Pearson, Marlee Smith, Rob Zellem
 # Supplemental Code: Gael Roudier and Jason Eastman
 ####################################################################
 

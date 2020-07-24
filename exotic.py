@@ -2076,7 +2076,6 @@ if __name__ == "__main__":
                             'tmid':pDict['midT'],    # time of mid transit [day]
                             'a1': arrayFinalFlux.mean(), #max() - arrayFinalFlux.min(), #mid Flux
                             'a2': 0,             #Flux lower bound
-                            'a3': 0, #arrayFinalFlux.min()
                         }
 
                         phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
@@ -2383,7 +2382,6 @@ if __name__ == "__main__":
             'tmid':pDict['midT'],    # time of mid transit [day]
             'a1': bestlmfit.parameters['a1'], #mid Flux
             'a2': bestlmfit.parameters['a2'], #Flux lower bound
-            'a3': 0 #bestlmfit.parameters['a3']
         }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
@@ -2404,7 +2402,6 @@ if __name__ == "__main__":
 
             'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
             'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
-            #'a3':[bestlmfit.parameters['a3']*0.75, bestlmfit.parameters['a3']*1.25],
         }
 
         # fitting method in elca.py
@@ -2505,10 +2502,6 @@ if __name__ == "__main__":
         print(' Semi Major Axis/ Star Radius [a/Rs]: {:.3f} +- {:.3f} '.format(myfit.parameters['ars'], myfit.errors['ars']))
         print('               Airmass coefficient 1: {:.3f} +- {:.4f} '.format(myfit.parameters['a1'], myfit.errors['a1']))
         print('               Airmass coefficient 2: {:.4f} +- {:.4f} '.format(myfit.parameters['a2'], myfit.errors['a2']))
-        try:
-            print('                    Bias coefficient: {:.4f} +- {:.4f} '.format(myfit.parameters['a3'], myfit.errors['a3']))
-        except:
-            pass
         print('The scatter in the residuals of the lightcurve fit is: {:.4f} %'.format(100*np.std(myfit.residuals/np.median(myfit.data))))
         print('\n*********************************************************')
 
@@ -2527,10 +2520,6 @@ if __name__ == "__main__":
         outParamsFile.write(' transit depth uncertainty: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
         outParamsFile.write(' airmass coefficient 1: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
         outParamsFile.write(' airmass coefficient 2: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        try:
-            outParamsFile.write(' bias coefficient: ' + str(myfit.parameters['a3']) + ' +/- ' + str(myfit.errors['a3']) + '\n')
-        except:
-            pass
         outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '

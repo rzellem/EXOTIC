@@ -244,7 +244,7 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass) + self.prior['a3'])
+            model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
             return ((self.data-model)/self.dataerr)**2 
 
         res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], 
@@ -262,7 +262,7 @@ class lc_fitter(object):
     def create_fit_variables(self):
         self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
-        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)+self.parameters['a3']
+        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
         self.detrendederr = self.dataerr / self.airmass_model
@@ -279,7 +279,7 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass) + self.prior['a3'])
+            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass))
             return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
 
         def prior_transform(upars):
@@ -339,7 +339,7 @@ class lc_fitter(object):
         chis = []
         for i in range(len(tests)):
             lightcurve = transit(self.time, tests[i])
-            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass) + tests[i]['a3']
+            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass)
             residuals = self.data - (lightcurve*airmass)
             chis.append( np.sum(residuals**2) )
 

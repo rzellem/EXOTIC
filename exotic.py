@@ -604,7 +604,7 @@ def check_file_extensions(directory, filename):
 
 # Calculating Limb Darkening Parameters using LDTK
 def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
-                     # Source for min/max band wavelengths (units: nm): https://www.aavso.org/filters
+                     # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
     minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
                      'J NIR 1.2micron': (1040.00, 1360.00), 'H NIR 1.6micron': (1420.00, 1780.00), 'K NIR 2.2micron': (2015.00, 2385.00),
@@ -658,8 +658,9 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
         # Custom filters calculating limb darkening parameters
         else:
             filtername = input('\nPlease enter in your custom filter name: ')
-            wlmin = float(input('Minimum wavelength: '))
-            wlmax = float(input('Maximum wavelength: '))
+            wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
+            wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
+
 
         priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
                   'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,

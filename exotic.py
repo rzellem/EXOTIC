@@ -103,6 +103,7 @@ from astropy.io import fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
+from astroquery.simbad import Simbad
 
 # Image alignment import
 import astroalign as aa
@@ -756,6 +757,24 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             else:
                 # User does not want to change coordinates even though they don't match the expected ra and dec
                 return pixx, pixy
+
+# Checks if comparison star is variable via querying SIMBAD
+def variableStarCheck(refx, refy, hdulWCS):
+    #Read in WCS data from plate solution file and convert comparison star coordinates from pixel to WCS
+    w = WCS(hdulWCS[0].header)
+    world = w.wcs_pix2world(np.array([[refx, refy]], dtype = np.float64), 1)
+    ra = world[0][0]
+    dec = world[0][1]
+    sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
+
+    #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
+    starName = simbad_result['MAIN_ID'][0].decode("utf-8")
+    identifiers = Simbad.query_objectids(starName)
+    for currName in identifiers:
+        if "V*" in currName[0]:
+            return True
+    return False
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1763,11 +1782,18 @@ if __name__ == "__main__":
                 # timeSortedNames = tsnCopy
 
                 UIprevRPX, UIprevRPY = compStarList[compCounter]
-
                 print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
                 refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
                                                                                 box=10)
                 print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
+
+                #If plate solution was generated, use it to check if the comparison stars selected are variable
+                #If yes, skip determining optimal aperture and annulus for that comparison star
+                if wcsFile:
+                    print("Checking for variability in current comparison star... ")
+                    if variableStarCheck(refx, refy, hdulWCS):
+                        print("Current comparison star is variable, proceeding to next star...")
+                        continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))

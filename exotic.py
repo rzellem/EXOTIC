@@ -107,13 +107,6 @@ from astroquery.simbad import Simbad
 
 # Image alignment import
 import astroalign as aa
-from astroquery.simbad import Simbad
-import astropy.coordinates as coord
-import astropy.units as u
-from astropy.table import Table, QTable, Column
-import pyvo as vo
-import urllib.request
-from io import BytesIO
 
 # photometry
 from photutils import CircularAperture
@@ -125,6 +118,23 @@ from skimage.registration import phase_cross_correlation
 # long process here
 # time.sleep(10)
 done = True
+
+# ################### START PROPERTIES ########################################
+# CONFIGURATIONS
+requests_timeout = 16, 512  # connection timeout, response timeout in secs.
+
+# SHARED CONSTANTS
+pi = 3.14159
+au = 1.496e11  # m
+rsun = 6.955e8  # m
+rjup = 7.1492e7  # m
+G = 0.00029591220828559104  # day, AU, Msun
+
+# SHARED LAMBDAS
+# keplerian semi-major axis (au)
+sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
+# ################### END PROPERTIES ##########################################
+
 
 # ---HELPER FUNCTIONS----------------------------------------------------------------------
 # Function that bins an array
@@ -704,78 +714,6 @@ def plate_solution(fits_file, saveDirectory):
             return False
         time.sleep(5)
 
-#Checks if comparison star coordinates don't point to variable stars
-def variableStarCheck(wcsList, raList, decList, compStarList):
-    service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
-
-    # query simbad to get proper motions for each comparison star
-    for target in compStarList:
-        query = '''
-        SELECT basic.OID, ra, dec, main_id, pmra, pmdec
-        FROM basic JOIN ident ON oidref = oid
-        WHERE id = '{}';
-        '''.format(target)
-
-        #check if result table exists
-        try:
-            resultTable = service.search(query)
-        except TypeError:
-            print("Unsuccessful query, moving to next star")
-            continue
-
-        coord = SkyCoord(
-            ra = resultTable['ra'][0]*u.deg,
-            dec = resultTable['dec'][0]*u.deg,
-            distance=1*u.pc,
-            pm_ra_cosdec=result['pmra'][0]*u.mas/u.yr,
-            pm_dec=result['pmdec'][0]*u.mas/u.yr,
-            frame="icrs",
-            obstime=Time("2000-1-1T00:00:00")
-        )
-        # apply proper motion
-        t = Time(hdu.header['DATE_OBS'], format='isot', scale='utc')
-        coordpm = coord.apply_space_motion(new_obstime=t)
-
-        # wcs coordinate translation
-        try:
-            wcs = WCS(hdu.header)
-        except ValueError:
-            hdu.header['NAXIS'] = 2
-            wcs = WCS(hdu.header)
-
-        pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]],0)
-
-    #Convert all pixel tuples into WCS and add them to a list
-    '''
-    #For every comparison star, convert into WCS coordinates and check if it's in WCS file before querying
-    for compStar in compStarList:
-        compStarCoords = compStar.all_pix2world()
-        raLowerBound = compStarCoords[0] - errorMargin
-        raUpperBound = compStarCoords[0] + errorMargin
-        decLowerBound = compStarCoords[1] - errorMargin
-        decLowerBound = compStarCoords[1] + errorMargin
-        if compStarCoords[0] in raList and compStarCoords[1] in decList:
-            validCoordList.append((compStarCoords[0], compStarCoords[1]))'''
-
-    #Use normalized Coordinates to search on SIMBAD to check if that star is variable
-    #Throws an error if invalid coordinates are inputted
-    for counter in range(0, len(validCoordList)):
-        try:
-            resultTable = Simbad.query_region(coord.SkyCoord(validCoordList[counter][0], validCoordList[counter][1], unit = (u.deg, u.deg)))
-        except TypeError:
-            #Move on to next comparison star if coordinates are invalid
-            print("Error: Invalid star coordinates. Checking next star... ")
-            continue
-
-        #Check if star ID/name explicitly has V* in it upon successful query
-        starName = resultTable['MAIN_ID'][0].decode("utf-8")
-        if "V*" in starName:
-            print("Comparison star " + starName + " is variable")
-            compXCoord = validCoordList[counter][0].all_world2pix()
-            compYCoord = validCoordList[counter][1].all_world2pix()
-            compStarList.remove((compXCoord, compYCoord))
-
-    return True
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
 def get_radec(hdulWCSrd):
@@ -2210,15 +2148,6 @@ if __name__ == "__main__":
                     # Exit aperture loop
                 # Exit annulus loop
             # Exit the Comp Stars Loop
-            #Bypass Plate Solution using sample data for now
-            wcsFile = "/mnt/c/Users/aaron/Documents/EXOTIC/EXOTIC/sample-data/newfits.fits"
-            hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
-            rafile, decfile = get_radec(hdulWCS)
-
-            #Doublechecking to see if comparison star != variable star
-            print("Verifying selected comparison star is not variable. Please wait.")
-            isVariable = variableStarCheck(hdulWCS, rafile, decfile, compStarList)
-
             print('\n*********************************************')
             print('Best Comparison Star: #' + str(bestCompStar))
             print('Minimum Residual Scatter: ' + str(round(minSTD/np.median(goodFluxes) * 100, 4)) + '%')

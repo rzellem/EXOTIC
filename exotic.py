@@ -107,6 +107,9 @@ from astropy.wcs import WCS
 # Image alignment import
 import astroalign as aa
 
+# Nonlinear Limb Darkening Calculations import
+from gaelLDNL import createldgrid
+
 # photometry
 from photutils import CircularAperture
 from photutils import aperture_photometry
@@ -600,7 +603,7 @@ def check_file_extensions(directory, filename):
 
 
 # Calculating Limb Darkening Parameters using LDTK
-def ldtk_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
+def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
                      # Source for min/max band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
     minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
@@ -662,7 +665,7 @@ def ldtk_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, l
                   'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
                   'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
 
-        ldparams = gaelLDNL.createldgrid(np.array(wlmin), np.array(wlmax), priors)
+        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), priors)
 
         nlld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
         nlld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
@@ -1604,9 +1607,9 @@ if __name__ == "__main__":
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
 
-        ld0, ld1, ld2, ld3, filterName = ldtk_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
-                                                        pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
-                                                        pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+        ld0, ld1, ld2, ld3, filterName = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
+                                                      pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
+                                                      pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
         if fitsortext == 1:
             print('\n**************************')
@@ -2067,7 +2070,7 @@ if __name__ == "__main__":
                             'ars':pDict['aRs'],      # a/Rs
                             'per':pDict['pPer'],     # Period [day]
                             'inc':pDict['inc'],      # Inclination [deg]
-                            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+                            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
                             'ecc': pDict['ecc'],     # Eccentricity
                             'omega':0,          # Arg of periastron
                             'tmid':pDict['midT'],    # time of mid transit [day]
@@ -2374,7 +2377,7 @@ if __name__ == "__main__":
             'ars':pDict['aRs'],      # a/Rs
             'per':pDict['pPer'],     # Period [day]
             'inc':pDict['inc'],      # Inclination [deg]
-            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
             'ecc': pDict['ecc'],     # Eccentricity
             'omega':0,          # Arg of periastron
             'tmid':pDict['midT'],    # time of mid transit [day]

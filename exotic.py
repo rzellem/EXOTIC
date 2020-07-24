@@ -108,6 +108,9 @@ from astroquery.simbad import Simbad
 # Image alignment import
 import astroalign as aa
 
+# Nonlinear Limb Darkening Calculations import
+from gaelLDNL import createldgrid
+
 # photometry
 from photutils import CircularAperture
 from photutils import aperture_photometry
@@ -596,8 +599,95 @@ def check_file_extensions(directory, filename):
             else:
                 directory = input("Enter the directory path where " + filename + " files are located: ")
         except OSError:
-            print("Error: No such directory exists. Please try again.")
-            directory = input("Enter the directory path where " + filename + " files are located: ")
+            print("Error: No such directory exists when searching for FITS files. Please try again.")
+            directory = input("Enter the directory path where " + fileName + " files are located: ")
+
+
+# Calculating Limb Darkening Parameters using LDTK
+def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
+                     # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
+                     # Near-Infrared
+    minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
+                     'J NIR 1.2micron': (1040.00, 1360.00), 'H NIR 1.6micron': (1420.00, 1780.00), 'K NIR 2.2micron': (2015.00, 2385.00),
+
+                     # Sloan
+                     'SU': (321.80, 386.80), 'SG': (402.50, 551.50), 'SR': (553.10, 693.10), 'SI': (697.50, 827.50), 'SZ': (841.20, 978.20),
+                     'Sloan u': (321.80, 386.80), 'Sloan g': (402.50, 551.50), 'Sloan r': (553.10, 693.10), 'Sloan i': (697.50, 827.50), 'Sloan z': (841.20, 978.20),
+
+                     # Stromgren
+                     'STU': (336.30, 367.70), 'STV': (401.50, 418.50), 'STB': (459.55, 478.05), 'STY': (536.70, 559.30),
+                     'Stromgren u': (336.30, 367.70), 'Stromgren v': (401.50, 418.50), 'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30),
+                     'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
+                     'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
+
+                     # Johnson
+                     'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
+                     'Johnson U': (333.80, 398.80), 'Johnson B': (391.60, 480.60), 'Johnson V': (502.80, 586.80), 'Johnson R': (590.00, 810.00), 'Johnson I': (780, 1020),
+
+                     # Cousins
+                     'R': (561.70, 719.70), 'I': (721.00, 875.00),
+                     'Cousins R': (561.70, 719.70), 'Cousins I': (721.00, 875.00)}
+
+    print('\n***************************')
+    print('Limb Darkening Coefficients')
+    print('***************************')
+
+    print('\n\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
+    for key, value in minmaxwavelen.items():
+        print('\t%s: %s-%s nm' % (key, value[0], value[1]))
+
+    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
+
+    # User decides to allow EXOTIC to calculate limb darkening parameters
+    if ldopt == 'y':
+        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int, val1=1, val2=2)
+
+        # Standard filters calculating limb darkening parameters
+        if standcustomopt == 1:
+            while True:
+                try:
+                    filtername = input('\nPlease enter in the filter type (EX: Johnson U, U, Stromgren u, STU): ')
+                    if filtername not in minmaxwavelen:
+                        raise KeyError
+                    break
+                except KeyError:
+                    print('Error: The entered filter is not a part of the standard ones.')
+
+            wlmin = [minmaxwavelen[filtername][0] / 1000]
+            wlmax = [minmaxwavelen[filtername][1] / 1000]
+
+        # Custom filters calculating limb darkening parameters
+        else:
+            filtername = input('\nPlease enter in your custom filter name: ')
+            wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
+            wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
+
+
+        priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
+                  'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
+                  'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+
+        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), priors)
+
+        nlld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
+        nlld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
+        nlld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
+        nlld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
+
+    # User enters in their own limb darkening parameters with uncertainties
+    else:
+        filtername = input('\nEnter in your filter name: ')
+        nlld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
+        nlld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
+        nlld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
+        nlld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
+        nlld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
+        nlld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
+        nlld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
+        nlld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
+        nlld0, nlld1, nlld2, nlld3 = (nlld0, nlld0unc), (nlld1, nlld1unc), (nlld2, nlld2unc), (nlld3, nlld3unc)
+
+    return nlld0, nlld1, nlld2, nlld3, filtername
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -994,7 +1084,7 @@ def realTimeReduce(i):
 
     while len(g.glob(directoryP)) == 0:
         print("Error: .FITS files not found in " + directoryP)
-        directToWatch = str(input("Enter the Directory Path where .FITS or .FTS Image Files are located: "))
+        directToWatch = str(input("Enter the Directory Path where FITS Image Files are located: "))
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
             directToWatch += "/"
@@ -1537,56 +1627,9 @@ if __name__ == "__main__":
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
 
-
-
-        print('\n***************************')
-        print('Limb Darkening Coefficients')
-        print('***************************')
-
-        # curl exofast for the limb darkening terms based on effective temperature, metallicity, surface gravity
-        URL = 'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml'
-        URLphp = 'http://astroutils.astronomy.ohio-state.edu/exofast/quadld.php'
-
-        with requests.Session() as sesh:
-            while True:
-                try:
-                    form_newData = {"action": URLphp,
-                                    "teff": str(pDict['teff']),
-                                    "feh": str(pDict['met']),
-                                    "logg": str(pDict['logg']),
-                                    "bname": infoDict['filter'],
-                                    "pname": "Select Planet"
-                                    }
-                    r = sesh.post(URLphp, data=form_newData)
-                    fullcontents = r.text
-
-                    # linear term
-                    linearString = ''
-                    for indexLinear in range(len(fullcontents)):
-                        if fullcontents[indexLinear].isdigit():
-                            while fullcontents[indexLinear + 1] != ' ':
-                                linearString = linearString + fullcontents[indexLinear]
-                                indexLinear = indexLinear + 1
-                            # print (linearString)
-                            linearLimb = float(linearString)
-                            break
-
-                    # quadratic term
-                    quadString = ''
-                    for indexQuad in range(indexLinear + 1, len(fullcontents)):
-                        if fullcontents[indexQuad].isdigit() or fullcontents[indexQuad] == '.':
-                            quadString = quadString + fullcontents[indexQuad]
-                            indexQuad = indexQuad + 1
-                    # print (quadString)
-                    quadLimb = float(quadString)
-                    break
-                except ValueError:
-                    infoDict['filter'] = input('\nNot valid filter name. Please enter a valid filter name using '
-                                               'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ')
-
-        print('\nBased on the stellar parameters you just entered, the limb darkening coefficients are: ')
-        print('Linear Term: ' + linearString)
-        print('Quadratic Term: ' + quadString)
+        ld0, ld1, ld2, ld3, filterName = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
+                                                      pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
+                                                      pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
         if fitsortext == 1:
             print('\n**************************')
@@ -2054,13 +2097,12 @@ if __name__ == "__main__":
                             'ars':pDict['aRs'],      # a/Rs
                             'per':pDict['pPer'],     # Period [day]
                             'inc':pDict['inc'],      # Inclination [deg]
-                            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+                            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
                             'ecc': pDict['ecc'],     # Eccentricity
                             'omega':0,          # Arg of periastron
                             'tmid':pDict['midT'],    # time of mid transit [day]
                             'a1': arrayFinalFlux.mean(), #max() - arrayFinalFlux.min(), #mid Flux
                             'a2': 0,             #Flux lower bound
-                            'a3': 0, #arrayFinalFlux.min()
                         }
 
                         phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
@@ -2361,13 +2403,12 @@ if __name__ == "__main__":
             'ars':pDict['aRs'],      # a/Rs
             'per':pDict['pPer'],     # Period [day]
             'inc':pDict['inc'],      # Inclination [deg]
-            'u1': linearLimb, 'u2': quadLimb, # limb darkening (linear, quadratic)
+            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
             'ecc': pDict['ecc'],     # Eccentricity
             'omega':0,          # Arg of periastron
             'tmid':pDict['midT'],    # time of mid transit [day]
             'a1': bestlmfit.parameters['a1'], #mid Flux
             'a2': bestlmfit.parameters['a2'], #Flux lower bound
-            'a3': 0 #bestlmfit.parameters['a3']
         }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
@@ -2388,7 +2429,6 @@ if __name__ == "__main__":
 
             'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
             'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
-            #'a3':[bestlmfit.parameters['a3']*0.75, bestlmfit.parameters['a3']*1.25],
         }
 
         # fitting method in elca.py
@@ -2489,10 +2529,6 @@ if __name__ == "__main__":
         print(' Semi Major Axis/ Star Radius [a/Rs]: {:.3f} +- {:.3f} '.format(myfit.parameters['ars'], myfit.errors['ars']))
         print('               Airmass coefficient 1: {:.3f} +- {:.4f} '.format(myfit.parameters['a1'], myfit.errors['a1']))
         print('               Airmass coefficient 2: {:.4f} +- {:.4f} '.format(myfit.parameters['a2'], myfit.errors['a2']))
-        try:
-            print('                    Bias coefficient: {:.4f} +- {:.4f} '.format(myfit.parameters['a3'], myfit.errors['a3']))
-        except:
-            pass
         print('The scatter in the residuals of the lightcurve fit is: {:.4f} %'.format(100*np.std(myfit.residuals/np.median(myfit.data))))
         print('\n*********************************************************')
 
@@ -2511,10 +2547,6 @@ if __name__ == "__main__":
         outParamsFile.write(' transit depth uncertainty: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
         outParamsFile.write(' airmass coefficient 1: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
         outParamsFile.write(' airmass coefficient 2: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        try:
-            outParamsFile.write(' bias coefficient: ' + str(myfit.parameters['a3']) + ' +/- ' + str(myfit.errors['a3']) + '\n')
-        except:
-            pass
         outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '
@@ -2544,8 +2576,11 @@ if __name__ == "__main__":
         #     semi) + ',Tc=' + str(round(bjdMidTranCur, 8)) + ' +/- ' + str(round(propMidTUnct, 8)) + ',T0=' + str(
         #     round(bjdMidTOld, 8)) + ' +/- ' + str(round(ogMidTErr, 8)) + ',inc=' + str(inc) + ',ecc=' + str(
         #     eccent) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')  # code yields
-        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(pDict['pPerUnc']) + ',a/R*=' + str(
-            pDict['aRs']) + ',inc=' + str(pDict['inc']) + ',ecc=' + str(pDict['ecc']) + ',u1=' + str(linearLimb) + ',u2=' + str(quadLimb) + '\n')
+        outParamsFile.write('#PRIORS=Period=' + str(pDict['pPer']) + ' +/- ' + str(pDict['pPerUnc']) + ',a/R*='
+                            + str(pDict['aRs']) + ',inc=' + str(pDict['inc']) + ',ecc=' + str(pDict['ecc']) + ',u0='
+                            + str(ld0[0]) + ' +/- ' + str(ld0[1]) + ',u1=' + str(ld1[0]) + ' +/- ' + str(ld1[1])
+                            + ',u2=' + str(ld2[0]) + ' +/- ' + str(ld2[1]) + ',u3=' + str(ld3[0]) + ' +/- '
+                            + str(ld3[1]) + '\n')
         # code yields
         outParamsFile.write(
             '#RESULTS=Tc=' + str(round(myfit.parameters['tmid'], 8)) + ' +/- ' + str(round(myfit.errors['tmid'], 8)) + ',Rp/R*=' + str(

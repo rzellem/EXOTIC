@@ -2407,8 +2407,12 @@ if __name__ == "__main__":
             'ecc': pDict['ecc'],     # Eccentricity
             'omega':0,          # Arg of periastron
             'tmid':pDict['midT'],    # time of mid transit [day]
-            'a1': bestlmfit.parameters['a1'], #mid Flux
-            'a2': bestlmfit.parameters['a2'], #Flux lower bound
+            try:
+                'a1': bestlmfit.parameters['a1'], #mid Flux
+                'a2': bestlmfit.parameters['a2'], #Flux lower bound
+            except:
+                'a1': goodFluxes.mean(), #max() - arrayFinalFlux.min(), #mid Flux
+                'a2': 0,             #Flux lower bound
         }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
@@ -2427,8 +2431,8 @@ if __name__ == "__main__":
             'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
             'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-            'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
-            'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
+            'a1':[0, 3*np.nanmax(goodFluxes)],
+            'a2':[-3,3],
         }
 
         # fitting method in elca.py

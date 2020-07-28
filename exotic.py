@@ -1615,7 +1615,7 @@ if __name__ == "__main__":
             infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-            infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+        #    infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
@@ -1630,6 +1630,11 @@ if __name__ == "__main__":
         ld0, ld1, ld2, ld3, filterName = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
                                                       pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                       pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+
+        #needed for comparison
+        curr_fits_exposuretime = 0
+        fits_exposuretime = 0
+        consistent_et = 0
 
         if fitsortext == 1:
             print('\n**************************')
@@ -1680,8 +1685,22 @@ if __name__ == "__main__":
                     # IMAGES
                     allImageData.append(hdul[0].data)
 
+                    # EXPOSURE_TIME
+                    if curr_fits_exposuretime == 0:
+                        curr_fits_exposuretime = imageheader['EXPTIME']
+                        fits_exposuretime = imageheader['EXPTIME']
+                    else:
+                        curr_fits_exposuretime = imageheader['EXPTIME']
+                        if curr_fits_exposuretime == fits_exposuretime:
+                            fits_exposuretime = imageheader['EXPTIME']
+                        else:
+                            consistent_et = 1
+                            fits_exposuretime = imageheader['EXPTIME']
+
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
+
+                infoDict['exposure'] = fits_exposuretime
 
                 # Recast list as numpy arrays
                 allImageData = np.array(allImageData)

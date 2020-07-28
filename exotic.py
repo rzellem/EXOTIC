@@ -1631,10 +1631,7 @@ if __name__ == "__main__":
                                                       pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                       pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
-        #needed for comparison
-        curr_fits_exposuretime = 0
-        fits_exposuretime = 0
-        consistent_et = 0
+        exptimes = list()
 
         if fitsortext == 1:
             print('\n**************************')
@@ -1686,21 +1683,24 @@ if __name__ == "__main__":
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
-                    if curr_fits_exposuretime == 0:
-                        curr_fits_exposuretime = imageheader['EXPTIME']
-                        fits_exposuretime = imageheader['EXPTIME']
-                    else:
-                        curr_fits_exposuretime = imageheader['EXPTIME']
-                        if curr_fits_exposuretime == fits_exposuretime:
-                            fits_exposuretime = imageheader['EXPTIME']
-                        else:
-                            consistent_et = 1
-                            fits_exposuretime = imageheader['EXPTIME']
+                    exptimes.append(imageheader['EXPTIME'])
 
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
 
-                infoDict['exposure'] = fits_exposuretime
+                consistent_et = False
+                if len(exptimes) > 0 :
+                    consistent_et = all(elem == exptimes[0] for elem in exptimes)
+
+                exptimes = np.array(exptimes)
+
+                if consistent_et :
+                    #print("All Elements in List are Equal")
+                    infoDict['exposure'] = exptimes[0]
+                else:
+                    #print("All Elements in List are Not Equal")
+                    infoDict['exposure'] = np.median(exptimes)
+                    #print(infoDict['exposure'])
 
                 # Recast list as numpy arrays
                 allImageData = np.array(allImageData)

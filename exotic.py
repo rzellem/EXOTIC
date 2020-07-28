@@ -2398,18 +2398,32 @@ if __name__ == "__main__":
         # NESTED SAMPLING FITTING
         ##########################
 
-        prior = {
-            'rprs':pDict['rprs'],    # Rp/Rs
-            'ars':pDict['aRs'],      # a/Rs
-            'per':pDict['pPer'],     # Period [day]
-            'inc':pDict['inc'],      # Inclination [deg]
-            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
-            'ecc': pDict['ecc'],     # Eccentricity
-            'omega':0,          # Arg of periastron
-            'tmid':pDict['midT'],    # time of mid transit [day]
-            'a1': bestlmfit.parameters['a1'], #mid Flux
-            'a2': bestlmfit.parameters['a2'], #Flux lower bound
-        }
+        try:
+            prior = {
+                'rprs':pDict['rprs'],    # Rp/Rs
+                'ars':pDict['aRs'],      # a/Rs
+                'per':pDict['pPer'],     # Period [day]
+                'inc':pDict['inc'],      # Inclination [deg]
+                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
+                'ecc': pDict['ecc'],     # Eccentricity
+                'omega':0,          # Arg of periastron
+                'tmid':pDict['midT'],    # time of mid transit [day]
+                'a1': bestlmfit.parameters['a1'], #mid Flux
+                'a2': bestlmfit.parameters['a2'], #Flux lower bound
+            }
+        except:
+            prior = {
+                'rprs':pDict['rprs'],    # Rp/Rs
+                'ars':pDict['aRs'],      # a/Rs
+                'per':pDict['pPer'],     # Period [day]
+                'inc':pDict['inc'],      # Inclination [deg]
+                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
+                'ecc': pDict['ecc'],     # Eccentricity
+                'omega':0,          # Arg of periastron
+                'tmid':pDict['midT'],    # time of mid transit [day]
+                'a1': goodFluxes.mean(), #max() - arrayFinalFlux.min(), #mid Flux
+                'a2': 0,             #Flux lower bound
+            }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
@@ -2422,14 +2436,23 @@ if __name__ == "__main__":
             print('  end:', goodTimes.max())
             print('prior:', prior['tmid'])
 
-        mybounds = {
-            'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
-            'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
-            'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+        try:
+            mybounds = {
+                'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
+                'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-            'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
-            'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
-        }
+                'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
+                'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
+            }
+        except:
+            mybounds = {
+                'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
+                'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+                'a1':[0, 3*np.nanmax(goodFluxes)],
+                'a2':[-3,3],
+            }
 
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

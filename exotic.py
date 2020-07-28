@@ -191,7 +191,7 @@ def tap_query(base_url, query, dataframe=True):
         return response.text
 
 
-def new_scrape(filename="eaConf.json"):
+def new_scrape(filename="eaConf.json", target=None):
 
     # scrape_new()
     uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
@@ -209,10 +209,17 @@ def new_scrape(filename="eaConf.json"):
         "format"   : "csv"
     }
 
+    if target:
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
     # fill in missing columns
     uri_ipac_query['where'] = 'tran_flag=1'
+
+    if target:
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
     # for each planet
@@ -245,8 +252,13 @@ def new_scrape(filename="eaConf.json"):
                         default.loc[default.pl_name == i, k] = 0
                     elif k == "st_met":  # [Fe/H]
                         default.loc[default.pl_name == i, k] = 0
-
-    dataframe_to_jsonfile(default, filename)
+    
+    if len(default)==0:
+        print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
+        target = str(input("\n Enter the Planet Name: "))
+        new_scrape("eaConf.json", target)
+    else:
+        dataframe_to_jsonfile(default, filename)
 
 
 def new_getParams(data):
@@ -1441,13 +1453,13 @@ if __name__ == "__main__":
 
         print("\nLooking up ", userpDict['pName'], "- please wait.")
         done = False
-        t = threading.Thread(target=animate, daemon=True)
-        t.start()
+        #t = threading.Thread(target=animate, daemon=True)
+        #t.start()
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
 
         # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
         if not os.path.exists("eaConf.json") or time.time() - os.path.getmtime('eaConf.json') > 604800:
-            new_scrape(filename="eaConf.json")
+            new_scrape(filename="eaConf.json", target=userpDict['pName'])
         targetName = userpDict['pName']
 
         CandidatePlanetBool = False

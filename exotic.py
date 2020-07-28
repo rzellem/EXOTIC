@@ -139,28 +139,13 @@ sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
 # ################### END PROPERTIES ##########################################
 
 
-# ---HELPER FUNCTIONS----------------------------------------------------------------------
-# Function that bins an array
-def binner(arr, n, err=''):
-    if len(err) == 0:
-        ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        arr = np.nanmean(ecks, axis=1)
-        return arr
-    else:
-        ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        why = np.pad(err.astype(float), (0, ((n - err.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        weights = 1./(why**2.)
-        # Calculate the weighted average
-        arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
-        err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
-        return arr, err
-
 def sigma_clip(ogdata, sigma=3, dt=20):
     mdata = median_filter(ogdata, dt)
     res = ogdata - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res,50)) for i in range(100)])
     #std = np.nanstd(res) # biased from large outliers
     return np.abs(res) > sigma*std
+
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 def dataframe_to_jsonfile(dataframe, filename):
@@ -1627,9 +1612,9 @@ if __name__ == "__main__":
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
 
-        ld0, ld1, ld2, ld3, filterName = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
-                                                      pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
-                                                      pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+        ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
+                                                              pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
+                                                              pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
         if fitsortext == 1:
             print('\n**************************')
@@ -1817,7 +1802,7 @@ if __name__ == "__main__":
             # exit()
             # fit centroids for first image to determine priors to be used later
             for compCounter in range(0, len(compStarList)):
-                print('\n***************************************************************')
+                print('\n\n***************************************************************')
                 print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
                 print('***************************************************************')
 

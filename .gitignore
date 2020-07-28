@@ -108,7 +108,7 @@ venv.bak/
 # real-time svg files
 /fe/images/svg/*.svg
 
-# os / system / installation files 
+# os / system / installation files
 **/.DS_Store
 **/installers/
 
@@ -122,3 +122,10 @@ venv.bak/
 # IDE
 .idea
 **/Pipfile*
+
+# Local extra files
+*.swp
+eaConf.json
+get-pip.py
+newfits.fits
+eaConf.json

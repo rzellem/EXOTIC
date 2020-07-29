@@ -289,6 +289,8 @@ def new_getParams(data):
     return planetDictionary
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
+#Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE
+#Find separate funciton in code that does julian conversion to BJD_TDB
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
@@ -425,6 +427,23 @@ def inits_file(initspath, dictinfo, dictplanet):
         dictplanet[key] = initdictplanet[0][key2]
 
     return dictinfo, dictplanet
+
+#Convert time units to BJD_TDB if pre-reduced file not in proper units
+#Flux: normalized flux, magnitude, and millimagnitude
+def timeConvert(timeList, datafile, timeFormat):
+    #if timeFormat is already in BJD_TDB, just do nothing
+    if timeFormat == "BJD_TDB":
+        return timeList
+    #Perform appropriate conversion for each time format
+    if timeFormat == "JD_UTC":
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=infoDict['elev'])
+        return convertedTimes[0]
+    if timeFormat == "MJD_UTC":
+        for counter in range(0, len(timeList)):
+            timeList[counter] = getJulianTime(datafile)
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=infoDict['elev'])
+        return convertedTimes[0]
+
 
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
@@ -2385,6 +2404,19 @@ if __name__ == "__main__":
             goodFluxes = np.array(goodFluxes)
             goodNormUnc = np.array(goodNormUnc)
             goodAirmasses = np.array(goodAirmasses)
+
+            #Ask user for time format and convert it if not in BJD_TDB
+            validFormats = ['BJD_TDB', "MJD_UTC", "JD_TDB"]
+            formatEntered = False
+            print("NOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            while not formatEntered:
+                print("Which of the following time formats is your data file stored in?")
+                timeFormat = str(input("BJD_TDB / MJD_UTC / JD_TDB: "))
+                if (timeFormat.upper()).strip() not in validFormats:
+                    print("Invalid entry; please try again.\n")
+                else:
+                    formatEntered = True
+            #goodTimes = timeConvert(goodTimes, processeddata, timeFormat)
 
             bjdMidTOld = goodTimes[0]
             standardDev1 = np.std(goodFluxes)

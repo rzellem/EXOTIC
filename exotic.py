@@ -93,7 +93,7 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca import lc_fitter, transit
+from elca import lc_fitter, binner
 import dynesty
 
 # astropy imports
@@ -585,7 +585,7 @@ def check_file_extensions(directory, filename):
                 directory = input("Enter the directory path where " + filename + " files are located: ")
         except OSError:
             print("Error: No such directory exists when searching for FITS files. Please try again.")
-            directory = input("Enter the directory path where " + fileName + " files are located: ")
+            directory = input("Enter the directory path where " + filename + " files are located: ")
 
 
 # Calculating Limb Darkening Parameters using LDTK
@@ -736,7 +736,7 @@ def plate_solution(fits_file, saveDirectory):
             r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
             sess = r.json()['session']
             break
-        except KeyError:
+        except Exception:
             if i == 4:
                 print('Imaging file could not receive a plate solution due to technical difficulties '
                       'from nova.astrometry.net. Please try again later. Data reduction will continue.')

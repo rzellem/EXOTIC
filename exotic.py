@@ -585,7 +585,7 @@ def check_file_extensions(directory, filename):
                 directory = input("Enter the directory path where " + filename + " files are located: ")
         except OSError:
             print("Error: No such directory exists when searching for FITS files. Please try again.")
-            directory = input("Enter the directory path where " + fileName + " files are located: ")
+            directory = input("Enter the directory path where " + filename + " files are located: ")
 
 
 # Calculating Limb Darkening Parameters using LDTK

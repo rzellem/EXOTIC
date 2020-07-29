@@ -205,6 +205,7 @@ def time_bin(time, flux, dt):
     zmask = (bflux==0) | (btime==0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask]
 
+
 # Function that bins an array
 def binner(arr, n, err=''):
     if len(err) == 0:

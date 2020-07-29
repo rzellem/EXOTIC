@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.12.2"
+versionid = "0.13.2"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -93,7 +93,7 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca import lc_fitter, transit
+from elca import lc_fitter, binner
 import dynesty
 
 # astropy imports
@@ -139,28 +139,13 @@ sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
 # ################### END PROPERTIES ##########################################
 
 
-# ---HELPER FUNCTIONS----------------------------------------------------------------------
-# Function that bins an array
-def binner(arr, n, err=''):
-    if len(err) == 0:
-        ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        arr = np.nanmean(ecks, axis=1)
-        return arr
-    else:
-        ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        why = np.pad(err.astype(float), (0, ((n - err.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(-1, n)
-        weights = 1./(why**2.)
-        # Calculate the weighted average
-        arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
-        err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
-        return arr, err
-
 def sigma_clip(ogdata, sigma=3, dt=20):
     mdata = median_filter(ogdata, dt)
     res = ogdata - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res,50)) for i in range(100)])
     #std = np.nanstd(res) # biased from large outliers
     return np.abs(res) > sigma*std
+
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 def dataframe_to_jsonfile(dataframe, filename):
@@ -619,7 +604,7 @@ def check_file_extensions(directory, filename):
                 directory = input("Enter the directory path where " + filename + " files are located: ")
         except OSError:
             print("Error: No such directory exists when searching for FITS files. Please try again.")
-            directory = input("Enter the directory path where " + fileName + " files are located: ")
+            directory = input("Enter the directory path where " + filename + " files are located: ")
 
 
 # Calculating Limb Darkening Parameters using LDTK
@@ -770,7 +755,7 @@ def plate_solution(fits_file, saveDirectory):
             r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
             sess = r.json()['session']
             break
-        except KeyError:
+        except Exception:
             if i == 4:
                 print('Imaging file could not receive a plate solution due to technical difficulties '
                       'from nova.astrometry.net. Please try again later. Data reduction will continue.')
@@ -878,7 +863,11 @@ def variableStarCheck(refx, refy, hdulWCS):
 
     #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
-    starName = simbad_result['MAIN_ID'][0].decode("utf-8")
+    try:
+        starName = simbad_result['MAIN_ID'][0].decode("utf-8")
+    except:
+        print("Your star cannot be resolved in SIMBAD. Proceed with caution.")
+        return False
     identifiers = Simbad.query_objectids(starName)
     for currName in identifiers:
         if "V*" in currName[0]:
@@ -1646,9 +1635,9 @@ if __name__ == "__main__":
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
 
-        ld0, ld1, ld2, ld3, filterName = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
-                                                      pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
-                                                      pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+        ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
+                                                              pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
+                                                              pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
         if fitsortext == 1:
             print('\n**************************')
@@ -1836,7 +1825,7 @@ if __name__ == "__main__":
             # exit()
             # fit centroids for first image to determine priors to be used later
             for compCounter in range(0, len(compStarList)):
-                print('\n***************************************************************')
+                print('\n\n***************************************************************')
                 print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
                 print('***************************************************************')
 
@@ -2430,18 +2419,32 @@ if __name__ == "__main__":
         # NESTED SAMPLING FITTING
         ##########################
 
-        prior = {
-            'rprs':pDict['rprs'],    # Rp/Rs
-            'ars':pDict['aRs'],      # a/Rs
-            'per':pDict['pPer'],     # Period [day]
-            'inc':pDict['inc'],      # Inclination [deg]
-            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
-            'ecc': pDict['ecc'],     # Eccentricity
-            'omega':0,          # Arg of periastron
-            'tmid':pDict['midT'],    # time of mid transit [day]
-            'a1': bestlmfit.parameters['a1'], #mid Flux
-            'a2': bestlmfit.parameters['a2'], #Flux lower bound
-        }
+        try:
+            prior = {
+                'rprs':pDict['rprs'],    # Rp/Rs
+                'ars':pDict['aRs'],      # a/Rs
+                'per':pDict['pPer'],     # Period [day]
+                'inc':pDict['inc'],      # Inclination [deg]
+                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
+                'ecc': pDict['ecc'],     # Eccentricity
+                'omega':0,          # Arg of periastron
+                'tmid':pDict['midT'],    # time of mid transit [day]
+                'a1': bestlmfit.parameters['a1'], #mid Flux
+                'a2': bestlmfit.parameters['a2'], #Flux lower bound
+            }
+        except:
+            prior = {
+                'rprs':pDict['rprs'],    # Rp/Rs
+                'ars':pDict['aRs'],      # a/Rs
+                'per':pDict['pPer'],     # Period [day]
+                'inc':pDict['inc'],      # Inclination [deg]
+                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
+                'ecc': pDict['ecc'],     # Eccentricity
+                'omega':0,          # Arg of periastron
+                'tmid':pDict['midT'],    # time of mid transit [day]
+                'a1': goodFluxes.mean(), #max() - arrayFinalFlux.min(), #mid Flux
+                'a2': 0,             #Flux lower bound
+            }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
@@ -2454,14 +2457,23 @@ if __name__ == "__main__":
             print('  end:', goodTimes.max())
             print('prior:', prior['tmid'])
 
-        mybounds = {
-            'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
-            'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
-            'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+        try:
+            mybounds = {
+                'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
+                'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-            'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
-            'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
-        }
+                'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
+                'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
+            }
+        except:
+            mybounds = {
+                'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
+                'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+                'a1':[0, 3*np.nanmax(goodFluxes)],
+                'a2':[-3,3],
+            }
 
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

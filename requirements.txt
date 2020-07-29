@@ -5,7 +5,6 @@ barycorrpy==0.3.2
 matplotlib==3.2.1
 numpy==1.18.5
 photutils==0.7.2
-pymc3==3.8
 python_dateutil==2.8.1
 scipy==1.4.1
 theano==1.0.4

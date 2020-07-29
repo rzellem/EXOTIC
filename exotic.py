@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.13.0"
+versionid = "0.13.1"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -844,7 +844,11 @@ def variableStarCheck(refx, refy, hdulWCS):
 
     #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
-    starName = simbad_result['MAIN_ID'][0].decode("utf-8")
+    try:
+        starName = simbad_result['MAIN_ID'][0].decode("utf-8")
+    except:
+        print("Your star cannot be resolved in SIMBAD. Proceed with caution.")
+        return False
     identifiers = Simbad.query_objectids(starName)
     for currName in identifiers:
         if "V*" in currName[0]:

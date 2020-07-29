@@ -1453,13 +1453,9 @@ if __name__ == "__main__":
 
         print("\nLooking up ", userpDict['pName'], "- please wait.")
         done = False
-        #t = threading.Thread(target=animate, daemon=True)
-        #t.start()
-        # check to make sure the target can be found in the exoplanet archive right after they enter its name
 
-        # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
-        if not os.path.exists("eaConf.json") or time.time() - os.path.getmtime('eaConf.json') > 604800:
-            new_scrape(filename="eaConf.json", target=userpDict['pName'])
+        # check to make sure the target can be found in the exoplanet archive right after they enter its name
+        new_scrape(filename="eaConf.json", target=userpDict['pName'])
         targetName = userpDict['pName']
 
         CandidatePlanetBool = False
@@ -1470,7 +1466,7 @@ if __name__ == "__main__":
             if targetName.lower().replace(' ', '').replace('-', '') not in planets:
                 while targetName.lower().replace(' ', '').replace('-', '') not in planets:
                     done = True
-                    print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or file: eaConf.json.")
+                    print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or delete the file: eaConf.json.")
                     targetName = input("If this is a planet candidate, type candidate or re-enter the planet's name: ")
                     if targetName.replace(' ', '') == 'candidate':
                         CandidatePlanetBool = True

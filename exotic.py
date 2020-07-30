@@ -186,6 +186,8 @@ def new_scrape(filename="eaConf.json"):
                      "pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,"
                      "pl_orbper,pl_orbpererr1,pl_orbeccen,"
                      "pl_orblper,pl_tranmid,pl_tranmiderr1,"
+                     "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
+                     "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec",
         "from"     : "ps",  # Table name
@@ -236,12 +238,20 @@ def new_scrape(filename="eaConf.json"):
 
 def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
-    rp = data['pl_radj']*rjup
-    rperr = data['pl_radjerr1']*rjup
-    rs = data['st_rad']*rsun
-    rserr = data['st_raderr1']*rsun
-    rprserr = ((rperr/rs)**2 + (-rp*rserr/rs**2)**2 )**0.5
-
+    try:
+        rprs = np.sqrt(data['pl_trandep']/100.)
+        rprserr = np.sqrt(np.abs((data['pl_trandeperr1']/100.)*(data['pl_trandeperr2']/100.)))/(2.*rprs)
+    except KeyError:
+        try:
+            rprs = data['pl_ratror']
+            rprserr = np.sqrt(np.abs(data['pl_ratrorerr1']*data['pl_ratrorerr2']))
+        except KeyError:
+            rp = data['pl_radj']*rjup
+            rperr = data['pl_radjerr1']*rjup
+            rs = data['st_rad']*rsun
+            rserr = data['st_raderr1']*rsun
+            rprserr = ((rperr/rs)**2 + (-rp*rserr/rs**2)**2 )**0.5
+            rprs = rp/rs
     planetDictionary = {
         'ra': data['ra'],
         'dec': data['dec'],
@@ -252,7 +262,7 @@ def new_getParams(data):
 
         'midT': data['pl_tranmid'],
         'midTUnc': data['pl_tranmiderr1'],
-        'rprs': rp/rs,
+        'rprs': rprs,
         'rprsUnc': rprserr,
         'aRs': data['pl_ratdor'],
         'aRsUnc': data['pl_ratdorerr1'],
@@ -424,7 +434,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Planet's Name",
                      "Host Star's Name",
                      "Orbital Period (days)",
-                     "Orbital Period Uncertainty (days) \nKeep in mind that 1.2e-34 is the same as 1.2 x 10^-34",
+                     "Orbital Period Uncertainty (days) \n(Keep in mind that 1.2e-34 is the same as 1.2 x 10^-34)",
                      "Published Mid-Transit Time (BJD_UTC)",
                      "Mid-Transit Time Uncertainty (JD)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs)",

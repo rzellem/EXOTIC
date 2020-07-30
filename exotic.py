@@ -588,7 +588,7 @@ def check_file_extensions(directory, filename):
 
         except FileNotFoundError:
             extaddoption = user_input("\nError: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
-                                      ".\nWould you like to enter in an extension related to .FITS? (y/n): ", type_=str, val1='y', val2='n')
+                                      ".\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ", type_=str, val1='y', val2='n')
             if extaddoption == 'y':
                 file_extensions.append(input('Please enter the extension you want to add (EX: .FITS): '))
             else:
@@ -1341,6 +1341,7 @@ if __name__ == "__main__":
                     initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
                     if initfilename == 'ok':
                         initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
+                    infoDict, userpDict = inits_file(initfilename, infoDict, userpDict)
                     break
                 except FileNotFoundError:
                     print("Error: Initialization file not found. Please try again.")
@@ -1352,8 +1353,6 @@ if __name__ == "__main__":
             #     if line[0] == "#": continue
             #     inits.append(line)
             # initf.close()
-
-            infoDict, userpDict = inits_file(initfilename, infoDict, userpDict)
 
             if infoDict['flatsdir'] == "n":
                 flats = 'n'

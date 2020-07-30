@@ -1818,7 +1818,7 @@ if __name__ == "__main__":
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
-            minAperture = int(2 * max(targsigX, targsigY))
+            minAperture = max(1,int(2 * max(targsigX, targsigY)))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
             maxAnnulus = 5
@@ -1849,16 +1849,15 @@ if __name__ == "__main__":
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
                 aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
-                annulus_min = int(2 * np.nanmax([targsigX, targsigY]))
-                annulus_max = int(4 * np.nanmax([targsigX, targsigY]))
-
+                
                 # Run through only 5 different aperture sizes, all interger pixel values
                 aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
-
-                # Run through only 5 different annulus sizes, all interger pixel values
-                annulus_step = np.nanmax([1, (annulus_max - annulus_min)//5])  # forces step size to be at least 1
-                annulus_sizes = [5] # np.arange(annulus_min, annulus_max, annulus_step) # TODO clean up for issue #40
+                if aperature_min <= 1:
+                    aperture_sizes = np.arange(1, 10, 2)
+                
+                # single annulus size
+                annulus_sizes = [5]
 
                 target_fits = {}
                 ref_fits = {}

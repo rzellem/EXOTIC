@@ -1620,7 +1620,7 @@ if __name__ == "__main__":
             infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-            infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+        #    infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
@@ -1635,6 +1635,8 @@ if __name__ == "__main__":
         ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+
+        exptimes = list()
 
         if fitsortext == 1:
             print('\n**************************')
@@ -1685,8 +1687,25 @@ if __name__ == "__main__":
                     # IMAGES
                     allImageData.append(hdul[0].data)
 
+                    # EXPOSURE_TIME
+                    exptimes.append(imageheader['EXPTIME'])
+
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
+
+                consistent_et = False
+                if len(exptimes) > 0 :
+                    consistent_et = all(elem == exptimes[0] for elem in exptimes)
+
+                exptimes = np.array(exptimes)
+
+                if consistent_et :
+                    #print("All Elements in List are Equal")
+                    infoDict['exposure'] = exptimes[0]
+                else:
+                    #print("All Elements in List are Not Equal")
+                    infoDict['exposure'] = np.median(exptimes)
+                    #print(infoDict['exposure'])
 
                 # Recast list as numpy arrays
                 allImageData = np.array(allImageData)

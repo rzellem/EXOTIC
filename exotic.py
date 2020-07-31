@@ -572,7 +572,7 @@ def check_file_extensions(directory, filename):
                 # Loop until we find something
                 for exti in file_extensions:
                     for file in os.listdir(directory):
-                        if file.lower().endswith(exti.lower()):
+                        if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
                             inputfiles.append(os.path.join(directory, file))
                     # If we find files, then stop the for loop and while loop
                     if inputfiles:
@@ -759,12 +759,18 @@ def plate_solution(fits_file, saveDirectory):
     headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
                'allow_modifications': 'n', 'publicly_visible': 'n'}
 
-    # Uploads the .fits file to nova.astrometry.net
-    r = requests.post(default_url + 'upload', files=files, data=headers)
+    try:
+        # Uploads the .fits file to nova.astrometry.net
+        r = requests.post(default_url + 'upload', files=files, data=headers)
 
-    # Saves submission id for checking on the status of image uploaded
-    sub_id = r.json()['subid']
-    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+        # Saves submission id for checking on the status of image uploaded
+        sub_id = r.json()['subid']
+        submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+    except:
+        print("Hello! Please head over to the Exoplanet Watch Slack Channel and ask for help before going further."
+              "To be added to our Slack Channel, please email exoplanetwatch@jpl.nasa.gov.")
+        import pdb
+        pdb.set_trace()
 
     # Once the image has successfully been plate solved, the following loop will break
     while True:
@@ -815,10 +821,10 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
             # Margins are within 20 arcseconds ~ 0.00556 degrees
-            if expra - 0.00556 >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + 0.00556:
+            if expra - 20*u.arcsec >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + 20*u.arcsec:
                 print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
-            if expdec - 0.00556 >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 0.00556:
+            if expdec - 20*u.arcsec >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 20*u.arcsec:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
             return pixx, pixy
@@ -876,7 +882,8 @@ def image_alignment(imagedata):
     # boollist for discarded images to delete .FITS data from airmass and times.
     for i, image_file in enumerate(imagedata):
         try:
-            print('Aligning image %s of %s' % (str(i+1), str(len(imagedata))))
+            sys.stdout.write('Aligning Image %s of %s\r' % (str(i+1), str(len(imagedata))))
+            sys.stdout.flush()
             imagedata[i], footprint = aa.register(image_file, imagedata[0])
             boollist.append(True)
         except:
@@ -1787,7 +1794,7 @@ if __name__ == "__main__":
                     pass
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
                 convertToFITS.writeto(pathSolve)
-                print('Here is the path to the reference imaging file EXOTIC: \n' + pathSolve)
+                print('\nHere is the path to the reference imaging file EXOTIC: \n' + pathSolve)
                 wcsFile = check_wcs(pathSolve, infoDict['saveplot'])
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
@@ -2062,26 +2069,20 @@ if __name__ == "__main__":
 
                         # NORMALIZE BY REF STAR
                         # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        rawFinalFluxData = np.array(targetFluxVals)
+                        rawFinalFluxData = np.array(targetFluxVals)[boollist]
 
                         # Convert Everything to numpy Arrays
                         arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
-                        arrayTargets = np.array(targetFluxVals)  # finalFluxData
-                        arrayTimes = np.array(timesListed)
-                        arrayPhases = np.array(phasesList)
-                        arrayTargets = np.array(targetFluxVals)
-                        arrayReferences = np.array(referenceFluxVals)
-                        arrayAirmass = np.array(airMassList)
-                        arrayTUnc = np.array(targUncertanties)
-                        arrayRUnc = np.array(refUncertanties)
+                        arrayTargets = np.array(targetFluxVals)[boollist]  # finalFluxData
+                        arrayTimes = np.array(timesListed)[boollist]
+                        arrayPhases = np.array(phasesList)[boollist]
+                        arrayTargets = np.array(targetFluxVals)[boollist]
+                        arrayReferences = np.array(referenceFluxVals)[boollist]
+                        arrayAirmass = np.array(airMassList)[boollist]
+                        arrayTUnc = np.array(targUncertanties)[boollist]
+                        arrayRUnc = np.array(refUncertanties)[boollist]
 
-                        # If unaligned images existed, delete .fits data w/ boollist from airmass and times.
-                        if False in boollist:
-                            arrayTimes = arrayTimes[boollist]
-                            arrayAirmass = arrayAirmass[boollist]
-
-                        normUncertainties = rawFinalFluxData**0.5
-                        arrayNormUnc = np.array(normUncertainties)
+                        arrayNormUnc = rawFinalFluxData**0.5
 
                         # Execute sigma_clip
                         try:
@@ -2148,10 +2149,10 @@ if __name__ == "__main__":
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
-                            finXTargCentArray = np.array(xTargCent)
-                            finYTargCentArray = np.array(yTargCent)
-                            finXRefCentArray = np.array(xRefCent)
-                            finYRefCentArray = np.array(yRefCent)
+                            finXTargCentArray = np.array(xTargCent)[boollist]
+                            finYTargCentArray = np.array(yTargCent)[boollist]
+                            finXRefCentArray = np.array(xRefCent)[boollist]
+                            finYRefCentArray = np.array(yRefCent)[boollist]
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature

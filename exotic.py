@@ -767,7 +767,8 @@ def plate_solution(fits_file, saveDirectory):
         sub_id = r.json()['subid']
         submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
     except:
-        print("Hello! Please head over to the Exoplanet Watch Slack Channel and ask for help before going further.")
+        print("Hello! Please head over to the Exoplanet Watch Slack Channel and ask for help before going further."
+              "To be added to our Slack Channel, please email exoplanetwatch@jpl.nasa.gov.")
         import pdb
         pdb.set_trace()
 

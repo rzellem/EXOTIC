@@ -253,11 +253,11 @@ def new_getParams(data):
     try:
         rprs = np.sqrt(data['pl_trandep']/100.)
         rprserr = np.sqrt(np.abs((data['pl_trandeperr1']/100.)*(data['pl_trandeperr2']/100.)))/(2.*rprs)
-    except KeyError:
+    except (KeyError, ValueError):
         try:
             rprs = data['pl_ratror']
             rprserr = np.sqrt(np.abs(data['pl_ratrorerr1']*data['pl_ratrorerr2']))
-        except KeyError:
+        except (KeyError, ValueError):
             rp = data['pl_radj']*rjup
             rperr = data['pl_radjerr1']*rjup
             rs = data['st_rad']*rsun
@@ -296,6 +296,8 @@ def new_getParams(data):
     return planetDictionary
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
+#Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE
+#Find separate funciton in code that does julian conversion to BJD_TDB
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
@@ -433,6 +435,33 @@ def inits_file(initspath, dictinfo, dictplanet):
 
     return dictinfo, dictplanet
 
+#Convert time units to BJD_TDB if pre-reduced file not in proper units
+def timeConvert(timeList, timeFormat, pDict, infoDict):
+    #if timeFormat is already in BJD_TDB, just do nothing
+    #Perform appropriate conversion for each time format if needed
+    if timeFormat == "JD_UTC":
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        timeList = convertedTimes[0]
+    elif timeFormat == "MJD_UTC":
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        timeList = convertedTimes[0]
+    return timeList
+
+#Convert magnitude units to flux if pre-reduced file not in flux already
+def fluxConvert(fluxList, errorList, fluxFormat):
+    #If units already in flux, do nothing, perform appropriate conversions to flux otherwise
+    if fluxFormat == "magnitude":
+        convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
+        fluxList = 10. ** ((-1. * fluxList) / 2.5)
+    if fluxFormat == "millimagnitude":
+        convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
+        fluxList = 10. ** ((-1. * (fluxList / 1000.) / 2.5))
+    positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
+    negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
+    meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)
+    return fluxList, meanErrorList
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
@@ -476,7 +505,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     radeclist = ['ra', 'dec']
     if not candplanetbool:
         for idx, item in enumerate(radeclist):
-            if pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
+            uncert = 20 / 3600
+            if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
                 print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
@@ -771,18 +801,16 @@ def plate_solution(fits_file, saveDirectory):
     headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
                'allow_modifications': 'n', 'publicly_visible': 'n'}
 
-    try:
-        # Uploads the .fits file to nova.astrometry.net
-        r = requests.post(default_url + 'upload', files=files, data=headers)
+    # Uploads the .fits file to nova.astrometry.net
+    r = requests.post(default_url + 'upload', files=files, data=headers)
+    if r.json()['status'] != 'success':
+        print('Imaging file could not receive a plate solution due to technical difficulties '
+              'from nova.astrometry.net. Please try again later. Data reduction will continue.')
+        return False
 
-        # Saves submission id for checking on the status of image uploaded
-        sub_id = r.json()['subid']
-        submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
-    except:
-        print("Hello! Please head over to the Exoplanet Watch Slack Channel and ask for help before going further."
-              "To be added to our Slack Channel, please email exoplanetwatch@jpl.nasa.gov.")
-        import pdb
-        pdb.set_trace()
+    # Saves submission id for checking on the status of image uploaded
+    sub_id = r.json()['subid']
+    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
 
     # Once the image has successfully been plate solved, the following loop will break
     while True:
@@ -799,19 +827,13 @@ def plate_solution(fits_file, saveDirectory):
     # Checks the job id's status
     while True:
         r = requests.get(job_url)
-
-        # If the new-fits-file is successful and downloadable, the following will execute
         if r.json()['status'] == 'success':
             fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
-
-            # Gets the new-fits-file and downloads it
             r = requests.get(fits_download_url)
             with open(wcs_file, 'wb') as f:
                 f.write(r.content)
             print('\n\nSuccess. ')
             return wcs_file
-
-        # If the new-fits-file failed, inform user and exit
         elif r.json()['status'] == 'failure':
             print('\n\n.FITS file has failed to be given WCS.')
             return False
@@ -824,19 +846,19 @@ def get_radec(hdulWCSrd):
     xaxis = np.arange(hdulWCSrd[0].header['NAXIS1'])
     yaxis = np.arange(hdulWCSrd[0].header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
-    ra, dec = wcsheader.all_pix2world(x, y, 0)
-    return ra, dec
+    return wcsheader.all_pix2world(x, y, 0)
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
-            # Margins are within 20 arcseconds ~ 0.00556 degrees
-            if expra - 20*u.arcsec >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + 20*u.arcsec:
+            uncert = 20 / 3600
+            # Margins are within 20 arcseconds
+            if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
                 print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
-            if expdec - 20*u.arcsec >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 20*u.arcsec:
+            if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
             return pixx, pixy
@@ -1349,8 +1371,7 @@ if __name__ == "__main__":
 
         infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
                     'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None,'elev': None,
-                    'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
-                    'tarcoords': None, 'compstars': None}
+                    'ctype': None, 'pixelbin': None, 'filter': None, 'notes': None, 'tarcoords': None, 'compstars': None}
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                      'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -1433,8 +1454,7 @@ if __name__ == "__main__":
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
                 datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                # datafile = "/Users/rzellem/Downloads/fluxorama.csv"
-
+                # datafile = "/Users/rzellem/Downloads/fluxorama.csv
             try:
                 initf = open(datafile, 'r')
             except FileNotFoundError:
@@ -1644,7 +1664,7 @@ if __name__ == "__main__":
             infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-        #    infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+            # infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
@@ -2429,6 +2449,39 @@ if __name__ == "__main__":
             goodFluxes = np.array(goodFluxes)
             goodNormUnc = np.array(goodNormUnc)
             goodAirmasses = np.array(goodAirmasses)
+
+            #Ask user for time format and convert it if not in BJD_TDB
+            validTimeFormats = ['BJD_TDB', "MJD_UTC", "JD_UTC"]
+            formatEntered = False
+            print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            while not formatEntered:
+                print("Which of the following time formats is your data file stored in? (Type q to quit)")
+                timeFormat = str(input("BJD_TDB / JD_UTC / MJD_UTC: "))
+                if (timeFormat.upper()).strip() == 'Q':
+                    sys.exit()
+                elif (timeFormat.upper()).strip() not in validTimeFormats:
+                    print("\nInvalid entry; please try again.")
+                else:
+                    formatEntered = True
+            timeFormat = (timeFormat.upper()).strip()
+            goodTimes = timeConvert(goodTimes, timeFormat, pDict, infoDict)
+
+            #Ask user for flux units and convert to flux if in magnitude/millimagnitude
+            validFluxFormats = ['flux', "magnitude", "millimagnitude"]
+            formatEntered = False
+            print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            while not formatEntered:
+                print("Which of the following units of flux is your data file stored in? (Type q to quit)")
+                fluxFormat = str(input("flux / magnitude / millimagnitude: "))
+                if (fluxFormat.upper()).strip() == 'Q':
+                    sys.exit()
+                elif (fluxFormat.lower()).strip() not in validFluxFormats:
+                    print("\nInvalid entry; please try again.")
+                else:
+                    formatEntered = True
+            fluxFormat = (fluxFormat.lower()).strip()
+            if fluxFormat != "flux":
+                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, fluxFormat)
 
             bjdMidTOld = goodTimes[0]
             standardDev1 = np.std(goodFluxes)

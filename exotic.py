@@ -2152,7 +2152,10 @@ if __name__ == "__main__":
                         lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
 
                         if np.floor(phase).max()-np.floor(phase).min() == 0:
-                            print('Estimated mid-transit not in observation range (check priors or observation time)')
+                            print("WARNING!")
+                            print("Estimated mid-transit time is not within the observations")
+                            print(" Check Period, Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.
+                            print("  the times in your image headers should be in UTC too")
                             print('start:', arrayTimes[~filtered_data].min())
                             print('  end:', arrayTimes[~filtered_data].max())
                             print('prior:', prior['tmid'])

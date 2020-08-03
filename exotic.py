@@ -414,22 +414,32 @@ def inits_file(initspath, dictinfo, dictplanet):
     return dictinfo, dictplanet
 
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
-#Flux: normalized flux, magnitude, and millimagnitude
-def timeConvert(timeList, datafile, timeFormat):
+def timeConvert(timeList, timeFormat, pDict, infoDict):
     #if timeFormat is already in BJD_TDB, just do nothing
-    if timeFormat == "BJD_TDB":
-        return timeList
-    #Perform appropriate conversion for each time format
+    #Perform appropriate conversion for each time format if needed
     if timeFormat == "JD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=infoDict['elev'])
-        return convertedTimes[0]
-    if timeFormat == "MJD_UTC":
-        for counter in range(0, len(timeList)):
-            timeList[counter] = getJulianTime(datafile)
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=infoDict['elev'])
-        return convertedTimes[0]
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        timeList = convertedTimes[0]
+    elif timeFormat == "MJD_UTC":
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        timeList = convertedTimes[0]
+    return timeList
 
-
+#Convert magnitude units to flux if pre-reduced file not in flux already
+def fluxConvert(fluxList, errorList, fluxFormat):
+    #If units already in flux, do nothing, perform appropriate conversions to flux otherwise
+    if fluxFormat == "magnitude":
+        convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
+        fluxList = 10. ** ((-1. * fluxList) / 2.5)
+    if fluxFormat == "millimagnitude":
+        convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
+        fluxList = 10. ** ((-1. * (fluxList / 1000.) / 2.5))
+    positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
+    negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
+    meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)
+    return fluxList, meanErrorList
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
@@ -1408,8 +1418,7 @@ if __name__ == "__main__":
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
                 datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                # datafile = "/Users/rzellem/Downloads/fluxorama.csv"
-
+                # datafile = "/Users/rzellem/Downloads/fluxorama.csv
             try:
                 initf = open(datafile, 'r')
             except FileNotFoundError:
@@ -2395,17 +2404,37 @@ if __name__ == "__main__":
             goodAirmasses = np.array(goodAirmasses)
 
             #Ask user for time format and convert it if not in BJD_TDB
-            validFormats = ['BJD_TDB', "MJD_UTC", "JD_TDB"]
+            validTimeFormats = ['BJD_TDB', "MJD_UTC", "JD_UTC"]
             formatEntered = False
-            print("NOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
             while not formatEntered:
-                print("Which of the following time formats is your data file stored in?")
-                timeFormat = str(input("BJD_TDB / MJD_UTC / JD_TDB: "))
-                if (timeFormat.upper()).strip() not in validFormats:
-                    print("Invalid entry; please try again.\n")
+                print("Which of the following time formats is your data file stored in? (Type q to quit)")
+                timeFormat = str(input("BJD_TDB / JD_UTC / MJD_UTC: "))
+                if (timeFormat.upper()).strip() == 'Q':
+                    sys.exit()
+                elif (timeFormat.upper()).strip() not in validTimeFormats:
+                    print("\nInvalid entry; please try again.")
                 else:
                     formatEntered = True
-            #goodTimes = timeConvert(goodTimes, processeddata, timeFormat)
+            timeFormat = (timeFormat.upper()).strip()
+            goodTimes = timeConvert(goodTimes, timeFormat, pDict, infoDict)
+
+            #Ask user for flux units and convert to flux if in magnitude/millimagnitude
+            validFluxFormats = ['flux', "magnitude", "millimagnitude"]
+            formatEntered = False
+            print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            while not formatEntered:
+                print("Which of the following units of flux is your data file stored in? (Type q to quit)")
+                fluxFormat = str(input("flux / magnitude / millimagnitude: "))
+                if (fluxFormat.upper()).strip() == 'Q':
+                    sys.exit()
+                elif (fluxFormat.lower()).strip() not in validFluxFormats:
+                    print("\nInvalid entry; please try again.")
+                else:
+                    formatEntered = True
+            fluxFormat = (fluxFormat.lower()).strip()
+            if fluxFormat != "flux":
+                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, fluxFormat)
 
             bjdMidTOld = goodTimes[0]
             standardDev1 = np.std(goodFluxes)

@@ -939,12 +939,15 @@ def gaussian_psf(x,y,x0,y0,a,sigx,sigy,rot, b):
     return a*gausx*gausy + b
 
 
-def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',box=15):
+def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',method='trf',box=15):
     xv,yv = mesh_box(pos, box)
     def fcn2min(pars):
         model = psf_function(xv,yv,*pars)
         return (data[yv,xv]-model).flatten()
-    res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point')
+    if method == 'trf':
+        res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point',method=method)
+    else:
+        res = least_squares(fcn2min,x0=[*pos,*init],loss=lossfn,jac='3-point',method=method)
     return res.x
 
 
@@ -976,12 +979,25 @@ def fit_centroid(data, pos, init=None, box=10):
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
             [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
-            psf_function=gaussian_psf,
+            psf_function=gaussian_psf, method='trf',
             box=box  # only fit a subregion +/- 5 px from centroid
         )
     except:
-        print("bad star at:",wx,wy)
-
+        print("WARNING trouble fitting Gaussian PSF to star at {},{}".format(wx,wy))
+        print("  check location of comparison star in the first few images")
+        print("  fitting parameters are out of bounds")
+        print("  init:",init)
+        print(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
+        print(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
+        
+        # use LM in unbounded optimization
+        pars = fit_psf(
+            data, [wx, wy], init,    
+            [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ],
+            [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ],
+            psf_function=gaussian_psf,
+            box=box, method='lm'
+        )
     return pars
 
 
@@ -1877,7 +1893,7 @@ if __name__ == "__main__":
                 # Run through only 5 different aperture sizes, all interger pixel values
                 aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
-                if aperature_min <= 1:
+                if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
                 
                 # single annulus size
@@ -2142,7 +2158,7 @@ if __name__ == "__main__":
                             print('prior:', prior['tmid'])
 
                         mybounds = {
-                            'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                            'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],
                             'tmid':[max(lower,arrayTimes[~filtered_data].min()),min(arrayTimes[~filtered_data].max(),upper)],
                             'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 

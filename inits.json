@@ -32,6 +32,7 @@
 
             "Camera Type (CCD or DSLR)": "CCD",
             "Pixel Binning": "1x1",
+            "Exposure Time": "60",
             "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",
             "Target Star X & Y Pixel": [424, 286],

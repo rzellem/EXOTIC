@@ -1333,8 +1333,7 @@ if __name__ == "__main__":
 
         infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
                     'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None,'elev': None,
-                    'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
-                    'tarcoords': None, 'compstars': None}
+                    'ctype': None, 'pixelbin': None, 'filter': None, 'notes': None, 'tarcoords': None, 'compstars': None}
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                      'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -1628,7 +1627,7 @@ if __name__ == "__main__":
             infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-        #    infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+            # infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))

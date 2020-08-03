@@ -436,6 +436,7 @@ def fluxConvert(fluxList, errorList, fluxFormat):
         convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
         fluxList = 10. ** ((-1. * (fluxList / 1000.) / 2.5))
+    #Use distance from mean of upper/lower error bounds to calculate new sigma values
     positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
     negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
     meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)

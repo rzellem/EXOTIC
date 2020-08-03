@@ -771,18 +771,18 @@ def plate_solution(fits_file, saveDirectory):
     headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
                'allow_modifications': 'n', 'publicly_visible': 'n'}
 
-    try:
+    while True:
         # Uploads the .fits file to nova.astrometry.net
         r = requests.post(default_url + 'upload', files=files, data=headers)
-
-        # Saves submission id for checking on the status of image uploaded
-        sub_id = r.json()['subid']
-        submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
-    except:
-        print("Hello! Please head over to the Exoplanet Watch Slack Channel and ask for help before going further."
-              "To be added to our Slack Channel, please email exoplanetwatch@jpl.nasa.gov.")
-        import pdb
-        pdb.set_trace()
+        if r.json()['status'] == 'success':
+            # Saves submission id for checking on the status of image uploaded
+            sub_id = r.json()['subid']
+            submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+            break
+        elif r.json['status'] == 'failure':
+            print('Imaging file could not receive a plate solution due to technical difficulties '
+                  'from nova.astrometry.net. Please try again later. Data reduction will continue.')
+            return False
 
     # Once the image has successfully been plate solved, the following loop will break
     while True:
@@ -799,19 +799,13 @@ def plate_solution(fits_file, saveDirectory):
     # Checks the job id's status
     while True:
         r = requests.get(job_url)
-
-        # If the new-fits-file is successful and downloadable, the following will execute
         if r.json()['status'] == 'success':
             fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
-
-            # Gets the new-fits-file and downloads it
             r = requests.get(fits_download_url)
             with open(wcs_file, 'wb') as f:
                 f.write(r.content)
             print('\n\nSuccess. ')
             return wcs_file
-
-        # If the new-fits-file failed, inform user and exit
         elif r.json()['status'] == 'failure':
             print('\n\n.FITS file has failed to be given WCS.')
             return False

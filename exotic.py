@@ -476,7 +476,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     radeclist = ['ra', 'dec']
     if not candplanetbool:
         for idx, item in enumerate(radeclist):
-            if pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
+            uncert = 20 / 3600
+            if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
                 print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
@@ -771,18 +772,16 @@ def plate_solution(fits_file, saveDirectory):
     headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
                'allow_modifications': 'n', 'publicly_visible': 'n'}
 
-    while True:
-        # Uploads the .fits file to nova.astrometry.net
-        r = requests.post(default_url + 'upload', files=files, data=headers)
-        if r.json()['status'] == 'success':
-            # Saves submission id for checking on the status of image uploaded
-            sub_id = r.json()['subid']
-            submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
-            break
-        elif r.json['status'] == 'failure':
-            print('Imaging file could not receive a plate solution due to technical difficulties '
-                  'from nova.astrometry.net. Please try again later. Data reduction will continue.')
-            return False
+    # Uploads the .fits file to nova.astrometry.net
+    r = requests.post(default_url + 'upload', files=files, data=headers)
+    if r.json()['status'] != 'success':
+        print('Imaging file could not receive a plate solution due to technical difficulties '
+              'from nova.astrometry.net. Please try again later. Data reduction will continue.')
+        return False
+
+    # Saves submission id for checking on the status of image uploaded
+    sub_id = r.json()['subid']
+    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
 
     # Once the image has successfully been plate solved, the following loop will break
     while True:
@@ -818,19 +817,19 @@ def get_radec(hdulWCSrd):
     xaxis = np.arange(hdulWCSrd[0].header['NAXIS1'])
     yaxis = np.arange(hdulWCSrd[0].header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
-    ra, dec = wcsheader.all_pix2world(x, y, 0)
-    return ra, dec
+    return wcsheader.all_pix2world(x, y, 0)
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
-            # Margins are within 20 arcseconds ~ 0.00556 degrees
-            if expra - 20*u.arcsec >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + 20*u.arcsec:
+            uncert = 20 / 3600
+            # Margins are within 20 arcseconds
+            if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
                 print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
-            if expdec - 20*u.arcsec >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 20*u.arcsec:
+            if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
             return pixx, pixy

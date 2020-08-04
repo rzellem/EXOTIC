@@ -253,11 +253,11 @@ def new_getParams(data):
     try:
         rprs = np.sqrt(data['pl_trandep']/100.)
         rprserr = np.sqrt(np.abs((data['pl_trandeperr1']/100.)*(data['pl_trandeperr2']/100.)))/(2.*rprs)
-    except (KeyError, ValueError):
+    except (KeyError, TypeError):
         try:
             rprs = data['pl_ratror']
             rprserr = np.sqrt(np.abs(data['pl_ratrorerr1']*data['pl_ratrorerr2']))
-        except (KeyError, ValueError):
+        except (KeyError, TypeError):
             rp = data['pl_radj']*rjup
             rperr = data['pl_radjerr1']*rjup
             rs = data['st_rad']*rsun

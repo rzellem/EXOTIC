@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.13.3"
+versionid = "0.14.0"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -176,7 +176,7 @@ def tap_query(base_url, query, dataframe=True):
         return response.text
 
 
-def new_scrape(filename="eaConf.json"):
+def new_scrape(filename="eaConf.json", target=None):
 
     # scrape_new()
     uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
@@ -196,10 +196,17 @@ def new_scrape(filename="eaConf.json"):
         "format"   : "csv"
     }
 
+    if target:
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
     # fill in missing columns
     uri_ipac_query['where'] = 'tran_flag=1'
+
+    if target:
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
     # for each planet
@@ -232,8 +239,13 @@ def new_scrape(filename="eaConf.json"):
                         default.loc[default.pl_name == i, k] = 0
                     elif k == "st_met":  # [Fe/H]
                         default.loc[default.pl_name == i, k] = 0
-
-    dataframe_to_jsonfile(default, filename)
+    
+    if len(default)==0:
+        print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
+        target = str(input("\n Enter the Planet Name: "))
+        new_scrape("eaConf.json", target)
+    else:
+        dataframe_to_jsonfile(default, filename)
 
 
 def new_getParams(data):
@@ -241,11 +253,11 @@ def new_getParams(data):
     try:
         rprs = np.sqrt(data['pl_trandep']/100.)
         rprserr = np.sqrt(np.abs((data['pl_trandeperr1']/100.)*(data['pl_trandeperr2']/100.)))/(2.*rprs)
-    except KeyError:
+    except (KeyError, TypeError):
         try:
             rprs = data['pl_ratror']
             rprserr = np.sqrt(np.abs(data['pl_ratrorerr1']*data['pl_ratrorerr2']))
-        except KeyError:
+        except (KeyError, TypeError):
             rp = data['pl_radj']*rjup
             rperr = data['pl_radjerr1']*rjup
             rs = data['st_rad']*rsun
@@ -284,6 +296,8 @@ def new_getParams(data):
     return planetDictionary
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
+#Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE
+#Find separate funciton in code that does julian conversion to BJD_TDB
 
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
@@ -386,7 +400,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
                 print("Sorry, your response was not valid.")
             else:
                 return option
-        elif type_ == int or type_ == float or type_ == str:
+        else:
             return option
 
 
@@ -421,6 +435,33 @@ def inits_file(initspath, dictinfo, dictplanet):
 
     return dictinfo, dictplanet
 
+#Convert time units to BJD_TDB if pre-reduced file not in proper units
+def timeConvert(timeList, timeFormat, pDict, infoDict):
+    #if timeFormat is already in BJD_TDB, just do nothing
+    #Perform appropriate conversion for each time format if needed
+    if timeFormat == "JD_UTC":
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        timeList = convertedTimes[0]
+    elif timeFormat == "MJD_UTC":
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        timeList = convertedTimes[0]
+    return timeList
+
+#Convert magnitude units to flux if pre-reduced file not in flux already
+def fluxConvert(fluxList, errorList, fluxFormat):
+    #If units already in flux, do nothing, perform appropriate conversions to flux otherwise
+    if fluxFormat == "magnitude":
+        convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
+        fluxList = 10. ** ((-1. * fluxList) / 2.5)
+    if fluxFormat == "millimagnitude":
+        convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
+        fluxList = 10. ** ((-1. * (fluxList / 1000.) / 2.5))
+    positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
+    negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
+    meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)
+    return fluxList, meanErrorList
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
@@ -464,7 +505,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     radeclist = ['ra', 'dec']
     if not candplanetbool:
         for idx, item in enumerate(radeclist):
-            if pdict[item] - 0.00556 <= userpdict[item] <= pdict[item] + 0.00556:
+            uncert = 20 / 3600
+            if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
                 print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
@@ -512,7 +554,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                     continue
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
-            # Did not use initialization file
+            # Did not use initialization file or null
             else:
                 print('\n' + pdict['pName'] + ' ' + planet_params[i] + ': ' + str(pdict[key]))
                 agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
@@ -572,7 +614,7 @@ def check_file_extensions(directory, filename):
                 # Loop until we find something
                 for exti in file_extensions:
                     for file in os.listdir(directory):
-                        if file.lower().endswith(exti.lower()):
+                        if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
                             inputfiles.append(os.path.join(directory, file))
                     # If we find files, then stop the for loop and while loop
                     if inputfiles:
@@ -588,7 +630,7 @@ def check_file_extensions(directory, filename):
 
         except FileNotFoundError:
             extaddoption = user_input("\nError: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
-                                      ".\nWould you like to enter in an extension related to .FITS? (y/n): ", type_=str, val1='y', val2='n')
+                                      ".\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ", type_=str, val1='y', val2='n')
             if extaddoption == 'y':
                 file_extensions.append(input('Please enter the extension you want to add (EX: .FITS): '))
             else:
@@ -761,6 +803,10 @@ def plate_solution(fits_file, saveDirectory):
 
     # Uploads the .fits file to nova.astrometry.net
     r = requests.post(default_url + 'upload', files=files, data=headers)
+    if r.json()['status'] != 'success':
+        print('Imaging file could not receive a plate solution due to technical difficulties '
+              'from nova.astrometry.net. Please try again later. Data reduction will continue.')
+        return False
 
     # Saves submission id for checking on the status of image uploaded
     sub_id = r.json()['subid']
@@ -781,19 +827,13 @@ def plate_solution(fits_file, saveDirectory):
     # Checks the job id's status
     while True:
         r = requests.get(job_url)
-
-        # If the new-fits-file is successful and downloadable, the following will execute
         if r.json()['status'] == 'success':
             fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
-
-            # Gets the new-fits-file and downloads it
             r = requests.get(fits_download_url)
             with open(wcs_file, 'wb') as f:
                 f.write(r.content)
             print('\n\nSuccess. ')
             return wcs_file
-
-        # If the new-fits-file failed, inform user and exit
         elif r.json()['status'] == 'failure':
             print('\n\n.FITS file has failed to be given WCS.')
             return False
@@ -806,19 +846,19 @@ def get_radec(hdulWCSrd):
     xaxis = np.arange(hdulWCSrd[0].header['NAXIS1'])
     yaxis = np.arange(hdulWCSrd[0].header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
-    ra, dec = wcsheader.all_pix2world(x, y, 0)
-    return ra, dec
+    return wcsheader.all_pix2world(x, y, 0)
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
-            # Margins are within 20 arcseconds ~ 0.00556 degrees
-            if expra - 0.00556 >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + 0.00556:
+            uncert = 20 / 3600
+            # Margins are within 20 arcseconds
+            if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
                 print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
-            if expdec - 0.00556 >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + 0.00556:
+            if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
             return pixx, pixy
@@ -876,7 +916,8 @@ def image_alignment(imagedata):
     # boollist for discarded images to delete .FITS data from airmass and times.
     for i, image_file in enumerate(imagedata):
         try:
-            print('Aligning image %s of %s' % (str(i+1), str(len(imagedata))))
+            sys.stdout.write('Aligning Image %s of %s\r' % (str(i+1), str(len(imagedata))))
+            sys.stdout.flush()
             imagedata[i], footprint = aa.register(image_file, imagedata[0])
             boollist.append(True)
         except:
@@ -920,12 +961,15 @@ def gaussian_psf(x,y,x0,y0,a,sigx,sigy,rot, b):
     return a*gausx*gausy + b
 
 
-def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',box=15):
+def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',method='trf',box=15):
     xv,yv = mesh_box(pos, box)
     def fcn2min(pars):
         model = psf_function(xv,yv,*pars)
         return (data[yv,xv]-model).flatten()
-    res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point')
+    if method == 'trf':
+        res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point',method=method)
+    else:
+        res = least_squares(fcn2min,x0=[*pos,*init],loss=lossfn,jac='3-point',method=method)
     return res.x
 
 
@@ -957,12 +1001,25 @@ def fit_centroid(data, pos, init=None, box=10):
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
             [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
-            psf_function=gaussian_psf,
+            psf_function=gaussian_psf, method='trf',
             box=box  # only fit a subregion +/- 5 px from centroid
         )
     except:
-        print("bad star at:",wx,wy)
-
+        print("WARNING trouble fitting Gaussian PSF to star at {},{}".format(wx,wy))
+        print("  check location of comparison star in the first few images")
+        print("  fitting parameters are out of bounds")
+        print("  init:",init)
+        print(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
+        print(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
+        
+        # use LM in unbounded optimization
+        pars = fit_psf(
+            data, [wx, wy], init,    
+            [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ],
+            [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ],
+            psf_function=gaussian_psf,
+            box=box, method='lm'
+        )
     return pars
 
 
@@ -1314,8 +1371,7 @@ if __name__ == "__main__":
 
         infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
                     'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None,'elev': None,
-                    'ctype': None, 'pixelbin': None, 'exposure': None, 'filter': None, 'notes': None,
-                    'tarcoords': None, 'compstars': None}
+                    'ctype': None, 'pixelbin': None, 'filter': None, 'notes': None, 'tarcoords': None, 'compstars': None}
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                      'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -1341,6 +1397,7 @@ if __name__ == "__main__":
                     initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
                     if initfilename == 'ok':
                         initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
+                    infoDict, userpDict = inits_file(initfilename, infoDict, userpDict)
                     break
                 except FileNotFoundError:
                     print("Error: Initialization file not found. Please try again.")
@@ -1352,8 +1409,6 @@ if __name__ == "__main__":
             #     if line[0] == "#": continue
             #     inits.append(line)
             # initf.close()
-
-            infoDict, userpDict = inits_file(initfilename, infoDict, userpDict)
 
             if infoDict['flatsdir'] == "n":
                 flats = 'n'
@@ -1399,8 +1454,7 @@ if __name__ == "__main__":
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
                 datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                # datafile = "/Users/rzellem/Downloads/fluxorama.csv"
-
+                # datafile = "/Users/rzellem/Downloads/fluxorama.csv
             try:
                 initf = open(datafile, 'r')
             except FileNotFoundError:
@@ -1440,13 +1494,9 @@ if __name__ == "__main__":
 
         print("\nLooking up ", userpDict['pName'], "- please wait.")
         done = False
-        t = threading.Thread(target=animate, daemon=True)
-        t.start()
-        # check to make sure the target can be found in the exoplanet archive right after they enter its name
 
-        # Checks to see if the file exists or is over one week old to scrape/rescrape parameters (units in seconds)
-        if not os.path.exists("eaConf.json") or time.time() - os.path.getmtime('eaConf.json') > 604800:
-            new_scrape(filename="eaConf.json")
+        # check to make sure the target can be found in the exoplanet archive right after they enter its name
+        new_scrape(filename="eaConf.json", target=userpDict['pName'])
         targetName = userpDict['pName']
 
         CandidatePlanetBool = False
@@ -1457,7 +1507,7 @@ if __name__ == "__main__":
             if targetName.lower().replace(' ', '').replace('-', '') not in planets:
                 while targetName.lower().replace(' ', '').replace('-', '') not in planets:
                     done = True
-                    print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or file: eaConf.json.")
+                    print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or delete the file: eaConf.json.")
                     targetName = input("If this is a planet candidate, type candidate or re-enter the planet's name: ")
                     if targetName.replace(' ', '') == 'candidate':
                         CandidatePlanetBool = True
@@ -1614,7 +1664,7 @@ if __name__ == "__main__":
             infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
             infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
             infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
-            infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+            # infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
             infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
@@ -1629,6 +1679,8 @@ if __name__ == "__main__":
         ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+
+        exptimes = list()
 
         if fitsortext == 1:
             print('\n**************************')
@@ -1679,8 +1731,25 @@ if __name__ == "__main__":
                     # IMAGES
                     allImageData.append(hdul[0].data)
 
+                    # EXPOSURE_TIME
+                    exptimes.append(imageheader['EXPTIME'])
+
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
+
+                consistent_et = False
+                if len(exptimes) > 0 :
+                    consistent_et = all(elem == exptimes[0] for elem in exptimes)
+
+                exptimes = np.array(exptimes)
+
+                if consistent_et :
+                    #print("All Elements in List are Equal")
+                    infoDict['exposure'] = exptimes[0]
+                else:
+                    #print("All Elements in List are Not Equal")
+                    infoDict['exposure'] = np.median(exptimes)
+                    #print(infoDict['exposure'])
 
                 # Recast list as numpy arrays
                 allImageData = np.array(allImageData)
@@ -1787,7 +1856,7 @@ if __name__ == "__main__":
                     pass
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
                 convertToFITS.writeto(pathSolve)
-                print('Here is the path to the reference imaging file EXOTIC: \n' + pathSolve)
+                print('\nHere is the path to the reference imaging file EXOTIC: \n' + pathSolve)
                 wcsFile = check_wcs(pathSolve, infoDict['saveplot'])
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
@@ -1809,7 +1878,7 @@ if __name__ == "__main__":
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
-            minAperture = int(2 * max(targsigX, targsigY))
+            minAperture = max(1,int(2 * max(targsigX, targsigY)))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
             maxAnnulus = 5
@@ -1840,16 +1909,15 @@ if __name__ == "__main__":
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
                 aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
-                annulus_min = int(2 * np.nanmax([targsigX, targsigY]))
-                annulus_max = int(4 * np.nanmax([targsigX, targsigY]))
-
+                
                 # Run through only 5 different aperture sizes, all interger pixel values
                 aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
-
-                # Run through only 5 different annulus sizes, all interger pixel values
-                annulus_step = np.nanmax([1, (annulus_max - annulus_min)//5])  # forces step size to be at least 1
-                annulus_sizes = [5] # np.arange(annulus_min, annulus_max, annulus_step) # TODO clean up for issue #40
+                if aperture_min <= 1:
+                    aperture_sizes = np.arange(1, 10, 2)
+                
+                # single annulus size
+                annulus_sizes = [5]
 
                 target_fits = {}
                 ref_fits = {}
@@ -2062,26 +2130,20 @@ if __name__ == "__main__":
 
                         # NORMALIZE BY REF STAR
                         # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        rawFinalFluxData = np.array(targetFluxVals)
+                        rawFinalFluxData = np.array(targetFluxVals)[boollist]
 
                         # Convert Everything to numpy Arrays
                         arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
-                        arrayTargets = np.array(targetFluxVals)  # finalFluxData
-                        arrayTimes = np.array(timesListed)
-                        arrayPhases = np.array(phasesList)
-                        arrayTargets = np.array(targetFluxVals)
-                        arrayReferences = np.array(referenceFluxVals)
-                        arrayAirmass = np.array(airMassList)
-                        arrayTUnc = np.array(targUncertanties)
-                        arrayRUnc = np.array(refUncertanties)
+                        arrayTargets = np.array(targetFluxVals)[boollist]  # finalFluxData
+                        arrayTimes = np.array(timesListed)[boollist]
+                        arrayPhases = np.array(phasesList)[boollist]
+                        arrayTargets = np.array(targetFluxVals)[boollist]
+                        arrayReferences = np.array(referenceFluxVals)[boollist]
+                        arrayAirmass = np.array(airMassList)[boollist]
+                        arrayTUnc = np.array(targUncertanties)[boollist]
+                        arrayRUnc = np.array(refUncertanties)[boollist]
 
-                        # If unaligned images existed, delete .fits data w/ boollist from airmass and times.
-                        if False in boollist:
-                            arrayTimes = arrayTimes[boollist]
-                            arrayAirmass = arrayAirmass[boollist]
-
-                        normUncertainties = rawFinalFluxData**0.5
-                        arrayNormUnc = np.array(normUncertainties)
+                        arrayNormUnc = rawFinalFluxData**0.5
 
                         # Execute sigma_clip
                         try:
@@ -2110,13 +2172,16 @@ if __name__ == "__main__":
                         lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
 
                         if np.floor(phase).max()-np.floor(phase).min() == 0:
-                            print('Estimated mid-transit not in observation range (check priors or observation time)')
+                            print("WARNING!")
+                            print("Estimated mid-transit time is not within the observations")
+                            print(" Check Period, Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                            print("  the times in your image headers should be in UTC too")
                             print('start:', arrayTimes[~filtered_data].min())
                             print('  end:', arrayTimes[~filtered_data].max())
                             print('prior:', prior['tmid'])
 
                         mybounds = {
-                            'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                            'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],
                             'tmid':[max(lower,arrayTimes[~filtered_data].min()),min(arrayTimes[~filtered_data].max(),upper)],
                             'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
@@ -2148,10 +2213,10 @@ if __name__ == "__main__":
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
-                            finXTargCentArray = np.array(xTargCent)
-                            finYTargCentArray = np.array(yTargCent)
-                            finXRefCentArray = np.array(xRefCent)
-                            finYRefCentArray = np.array(yRefCent)
+                            finXTargCentArray = np.array(xTargCent)[boollist]
+                            finYTargCentArray = np.array(yTargCent)[boollist]
+                            finXRefCentArray = np.array(xRefCent)[boollist]
+                            finYRefCentArray = np.array(yRefCent)[boollist]
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
@@ -2384,6 +2449,39 @@ if __name__ == "__main__":
             goodFluxes = np.array(goodFluxes)
             goodNormUnc = np.array(goodNormUnc)
             goodAirmasses = np.array(goodAirmasses)
+
+            #Ask user for time format and convert it if not in BJD_TDB
+            validTimeFormats = ['BJD_TDB', "MJD_UTC", "JD_UTC"]
+            formatEntered = False
+            print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            while not formatEntered:
+                print("Which of the following time formats is your data file stored in? (Type q to quit)")
+                timeFormat = str(input("BJD_TDB / JD_UTC / MJD_UTC: "))
+                if (timeFormat.upper()).strip() == 'Q':
+                    sys.exit()
+                elif (timeFormat.upper()).strip() not in validTimeFormats:
+                    print("\nInvalid entry; please try again.")
+                else:
+                    formatEntered = True
+            timeFormat = (timeFormat.upper()).strip()
+            goodTimes = timeConvert(goodTimes, timeFormat, pDict, infoDict)
+
+            #Ask user for flux units and convert to flux if in magnitude/millimagnitude
+            validFluxFormats = ['flux', "magnitude", "millimagnitude"]
+            formatEntered = False
+            print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
+            while not formatEntered:
+                print("Which of the following units of flux is your data file stored in? (Type q to quit)")
+                fluxFormat = str(input("flux / magnitude / millimagnitude: "))
+                if (fluxFormat.upper()).strip() == 'Q':
+                    sys.exit()
+                elif (fluxFormat.lower()).strip() not in validFluxFormats:
+                    print("\nInvalid entry; please try again.")
+                else:
+                    formatEntered = True
+            fluxFormat = (fluxFormat.lower()).strip()
+            if fluxFormat != "flux":
+                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, fluxFormat)
 
             bjdMidTOld = goodTimes[0]
             standardDev1 = np.std(goodFluxes)

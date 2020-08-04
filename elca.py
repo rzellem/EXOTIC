@@ -205,7 +205,6 @@ def time_bin(time, flux, dt):
     zmask = (bflux==0) | (btime==0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask]
 
-
 # Function that bins an array
 def binner(arr, n, err=''):
     if len(err) == 0:
@@ -248,9 +247,17 @@ class lc_fitter(object):
             model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
             return ((self.data-model)/self.dataerr)**2 
 
-        res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], 
-            bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
-        
+        try:
+            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], 
+                bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
+        except:
+            print("bounded  light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
+            print("lower:",boundarray[:,0])
+            print("upper:",boundarray[:,1])
+            print("   x0:",[self.prior[k] for k in freekeys])
+            print("removing bounds and trying again...")
+            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], method='lm', jac='3-point', loss='linear')
+
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
 
@@ -269,6 +276,7 @@ class lc_fitter(object):
         self.detrendederr = self.dataerr / self.airmass_model
         self.residuals = self.data - self.model
         self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
+        self.bic = len(self.bounds) * np.log(len(self.time)) - 2*np.log(self.chi2)
 
     def fit_nested(self):
         freekeys = list(self.bounds.keys())

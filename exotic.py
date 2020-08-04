@@ -400,7 +400,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
                 print("Sorry, your response was not valid.")
             else:
                 return option
-        elif type_ == int or type_ == float or type_ == str:
+        else:
             return option
 
 
@@ -554,7 +554,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                     continue
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
-            # Did not use initialization file
+            # Did not use initialization file or null
             else:
                 print('\n' + pdict['pName'] + ' ' + planet_params[i] + ': ' + str(pdict[key]))
                 agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')

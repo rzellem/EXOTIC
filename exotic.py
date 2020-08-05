@@ -197,7 +197,7 @@ def new_scrape(filename="eaConf.json", target=None):
     }
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target[:-2])
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -205,7 +205,7 @@ def new_scrape(filename="eaConf.json", target=None):
     uri_ipac_query['where'] = 'tran_flag=1'
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target[:-2])
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 

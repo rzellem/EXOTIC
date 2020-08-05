@@ -302,17 +302,23 @@ def new_getParams(data):
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
     exptime_offset = 0
+    imageheader = hdul[0].header
+
+    exp = imageheader.get('EXPTIME')  #checking for variation in .fits header format
+    if !exp:
+        exp = imageheader.get('EXPOSURE')
+
     # Grab the BJD first
     if 'BJD_TDB' in hdul[0].header:
         julianTime = float(hdul[0].header['BJD_TDB'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['BJD_TDB']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     elif 'BJD' in hdul[0].header:
         julianTime = float(hdul[0].header['BJD'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['BJD']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # then the DATE-OBS
     elif "UT-OBS" in hdul[0].header:
         gDateTime = hdul[0].header['UT-OBS']  # gets the gregorian date and time from the fits file header
@@ -321,19 +327,19 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['UT-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then Julian Date
     elif 'JULIAN' in hdul[0].header:
         julianTime = float(hdul[0].header['JULIAN'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['JULIAN']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
     elif "MJD-OBS" in hdul[0].header:
         julianTime = float(hdul[0].header["MJD-OBS"]) + 2400000.5
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['MJD-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     else:
         gDateTime = hdul[0].header['DATE-OBS']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
@@ -341,7 +347,7 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['DATE-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
 
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     return julianTime + exptime_offset

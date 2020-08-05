@@ -900,7 +900,7 @@ def variableStarCheck(refx, refy, hdulWCS):
     dec = world[0][1]
     sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
     import pdb; pdb.set_trace()
-    
+
     #Query GAIA first for variability
     radius = u.Quantity(20.0, u.arcsec)
     gaiaQuery = Gaia.cone_search_async(sample, radius)
@@ -1919,6 +1919,7 @@ if __name__ == "__main__":
 
                 #If plate solution was generated, use it to check if the comparison stars selected are variable
                 #If yes, skip determining optimal aperture and annulus for that comparison star
+                wcsFile = "mnt/c/Users/aaron/Documents/EXOTIC/EXOTIC/sample-data/newfits.fits"
                 if wcsFile:
                     print("Checking for variability in current comparison star... ")
                     if variableStarCheck(refx, refy, hdulWCS):

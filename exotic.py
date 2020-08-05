@@ -305,7 +305,9 @@ def getJulianTime(hdul):
     imageheader = hdul[0].header
 
     exp = imageheader.get('EXPTIME')  #checking for variation in .fits header format
-    if not exp:
+    if exp:
+        exp = exp
+    else:
         exp = imageheader.get('EXPOSURE')
 
     # Grab the BJD first

@@ -104,6 +104,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 from astroquery.simbad import Simbad
+from astroquery.gaia import Gaia
 
 # Image alignment import
 import astroalign as aa
@@ -239,7 +240,7 @@ def new_scrape(filename="eaConf.json", target=None):
                         default.loc[default.pl_name == i, k] = 0
                     elif k == "st_met":  # [Fe/H]
                         default.loc[default.pl_name == i, k] = 0
-    
+
     if len(default)==0:
         print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
         target = str(input("\n Enter the Planet Name: "))
@@ -892,6 +893,13 @@ def variableStarCheck(refx, refy, hdulWCS):
     ra = world[0][0]
     dec = world[0][1]
     sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
+    import pdb; pdb.set_trace()
+    
+    #Query GAIA first for variability
+    radius = u.Quantity(20.0, u.arcsec)
+    gaiaQuery = Gaia.cone_search_async(sample, radius)
+    gaiaResult = gaiaQuery.get_results()
+    gaiaResult.pprint()
 
     #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
@@ -1012,10 +1020,10 @@ def fit_centroid(data, pos, init=None, box=10):
         print("  init:",init)
         print(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
         print(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
-        
+
         # use LM in unbounded optimization
         pars = fit_psf(
-            data, [wx, wy], init,    
+            data, [wx, wy], init,
             [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ],
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ],
             psf_function=gaussian_psf,
@@ -1910,13 +1918,13 @@ if __name__ == "__main__":
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
                 aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
-                
+
                 # Run through only 5 different aperture sizes, all interger pixel values
                 aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
-                
+
                 # single annulus size
                 annulus_sizes = [5]
 

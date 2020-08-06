@@ -660,10 +660,8 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                      'Sloan u': (321.80, 386.80), 'Sloan g': (402.50, 551.50), 'Sloan r': (553.10, 693.10), 'Sloan i': (697.50, 827.50), 'Sloan z': (841.20, 978.20),
 
                      # Stromgren
-                     'STU': (336.30, 367.70), 'STV': (401.50, 418.50), 'STB': (459.55, 478.05), 'STY': (536.70, 559.30),
-                     'Stromgren u': (336.30, 367.70), 'Stromgren v': (401.50, 418.50), 'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30),
-                     'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
-                     'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
+                     'STB': (459.55, 478.05), 'STY': (536.70, 559.30), 'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
+                     'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30), 'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
 
                      # Johnson
                      'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
@@ -691,7 +689,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
         if standcustomopt == 1:
             while True:
                 try:
-                    filtername = input('\nPlease enter in the filter type (EX: Johnson U, U, Stromgren u, STU): ')
+                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, Stromgren b, STB): ')
                     if filtername not in minmaxwavelen:
                         raise KeyError
                     break
@@ -1168,7 +1166,7 @@ def realTimeReduce(i):
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
 
     # sorts the times for later plotting use
-    sortedTimeList = sorted(timeList)
+    # sortedTimeList = sorted(timeList)
 
     # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
@@ -1523,9 +1521,9 @@ if __name__ == "__main__":
             if not CandidatePlanetBool:
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
-                print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+                print('\nSuccessfully found ' + targetName + ' in the NASA Exoplanet Archive!')
 
-        if targetName.replace(' ','') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
+        if targetName.replace(' ', '') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
             userpDict['pName'] = targetName
 
         done = True
@@ -1782,7 +1780,7 @@ if __name__ == "__main__":
                 sortedallImageData = allImageData[np.argsort(timeList)]
                 timesListed = timesListed[np.argsort(timeList)]
                 airMassList = airMassList[np.argsort(timeList)]
-                sortedTimeList = sorted(timeList)
+                # sortedTimeList = sorted(timeList)
 
                 # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
                 # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
@@ -1842,7 +1840,7 @@ if __name__ == "__main__":
                 sortedallImageData = sortedallImageData[firstimagecounter:]
                 timesListed = timesListed[firstimagecounter:]
                 airMassList = airMassList[firstimagecounter:]
-                sortedTimeList = sortedTimeList[firstimagecounter:]
+                # sortedTimeList = sortedTimeList[firstimagecounter:]
 
                 # apply cals correction if applicable
                 if darksBool:
@@ -1889,6 +1887,9 @@ if __name__ == "__main__":
 
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
+
+            timesListed = timesListed[boollist]
+            airMassList = airMassList[boollist]
 
             minAperture = max(1,int(2 * max(targsigX, targsigY)))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
@@ -2134,7 +2135,7 @@ if __name__ == "__main__":
                                 # ALL IMAGES
                                 sortedallImageData = sortedallImageData[:fileNumber]
 
-                                boollist = boollist[:fileNumber]
+                                # boollist = boollist[:fileNumber]
 
                                 break
 
@@ -2142,20 +2143,18 @@ if __name__ == "__main__":
 
                         # NORMALIZE BY REF STAR
                         # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        rawFinalFluxData = np.array(targetFluxVals)[boollist]
+                        # rawFinalFluxData = np.array(targetFluxVals)
 
                         # Convert Everything to numpy Arrays
-                        arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
-                        arrayTargets = np.array(targetFluxVals)[boollist]  # finalFluxData
-                        arrayTimes = np.array(timesListed)[boollist]
-                        arrayPhases = np.array(phasesList)[boollist]
-                        arrayTargets = np.array(targetFluxVals)[boollist]
-                        arrayReferences = np.array(referenceFluxVals)[boollist]
-                        arrayAirmass = np.array(airMassList)[boollist]
-                        arrayTUnc = np.array(targUncertanties)[boollist]
-                        arrayRUnc = np.array(refUncertanties)[boollist]
+                        arrayFinalFlux = np.array(targetFluxVals)  # finalFluxData
+                        arrayTimes = np.array(timesListed)
+                        arrayPhases = np.array(phasesList)
+                        arrayReferences = np.array(referenceFluxVals)
+                        arrayAirmass = np.array(airMassList)
+                        arrayTUnc = np.array(targUncertanties)
+                        arrayRUnc = np.array(refUncertanties)
 
-                        arrayNormUnc = rawFinalFluxData**0.5
+                        arrayNormUnc = arrayFinalFlux**0.5
 
                         # Execute sigma_clip
                         try:
@@ -2225,10 +2224,10 @@ if __name__ == "__main__":
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
-                            finXTargCentArray = np.array(xTargCent)[boollist]
-                            finYTargCentArray = np.array(yTargCent)[boollist]
-                            finXRefCentArray = np.array(xRefCent)[boollist]
-                            finYRefCentArray = np.array(yRefCent)[boollist]
+                            finXTargCentArray = np.array(xTargCent)
+                            finYTargCentArray = np.array(yTargCent)
+                            finXRefCentArray = np.array(xRefCent)
+                            finYRefCentArray = np.array(yRefCent)
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
@@ -2241,7 +2240,7 @@ if __name__ == "__main__":
                             nonBJDTimes = arrayTimes[~filtered_data]
                             nonBJDPhases = arrayPhases[~filtered_data]
                             goodAirmasses = arrayAirmass[~filtered_data]
-                            goodTargets = arrayTargets[~filtered_data]
+                            goodTargets = arrayFinalFlux[~filtered_data]
                             goodReferences = arrayReferences[~filtered_data]
                             goodTUnc = arrayTUnc[~filtered_data]
                             goodRUnc = arrayRUnc[~filtered_data]

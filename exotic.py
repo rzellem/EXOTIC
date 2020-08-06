@@ -1933,8 +1933,6 @@ if __name__ == "__main__":
 
                 #If plate solution was generated, use it to check if the comparison stars selected are variable
                 #If yes, skip determining optimal aperture and annulus for that comparison star Comparison X: 464 Comparison Y: 182
-                #wcsFile = "sample-data/newfits.fits"
-                #hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
                 if wcsFile:
                     print("Checking for variability in current comparison star... ")
                     if variableStarCheck(refx, refy, hdulWCS):

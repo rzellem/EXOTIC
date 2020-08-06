@@ -241,7 +241,8 @@ def new_scrape(filename="eaConf.json", target=None):
                         default.loc[default.pl_name == i, k] = 0
     
     if len(default)==0:
-        print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
+        print("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity by going to:\n"
+              "https://exoplanetarchive.ipac.caltech.edu".format(target))
         target = str(input("\n Enter the Planet Name: "))
         new_scrape("eaConf.json", target)
     else:
@@ -1515,7 +1516,7 @@ if __name__ == "__main__":
             if not CandidatePlanetBool:
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
-                print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+                print('\nSuccessfully found ' + targetName + ' in the NASA Exoplanet Archive!')
 
         if targetName.replace(' ','') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
             userpDict['pName'] = targetName

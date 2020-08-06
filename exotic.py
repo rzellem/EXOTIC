@@ -901,15 +901,27 @@ def variableStarCheck(refx, refy, hdulWCS):
     ra = world[0][0]
     dec = world[0][1]
     sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
-    import pdb; pdb.set_trace()
 
-    #Query GAIA first for variability
+    #Query GAIA first to check for variability using the phot_variable_flag trait
     radius = u.Quantity(20.0, u.arcsec)
     gaiaQuery = Gaia.cone_search_async(sample, radius)
     gaiaResult = gaiaQuery.get_results()
-    gaiaResult.pprint()
+
+    #Individually go through the phot_variable_flag indicator for each star to see if variable or not
+    variableFlagList = gaiaResult.columns["phot_variable_flag"]
+    constantCounter = 0
+    for currFlag in variableFlagList:
+        if currFlag == "VARIABLE":
+            return True
+        elif currFlag == "NOT_AVAILABLE":
+            continue
+        elif currFlag == "CONSTANT":
+            constantCounter += 1
+    if constantCounter == len(variableFlagList):
+        return False
 
     #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    #This is a secondary check if GAIA query returns inconclusive results
     simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
     try:
         starName = simbad_result['MAIN_ID'][0].decode("utf-8")
@@ -1920,12 +1932,13 @@ if __name__ == "__main__":
                 print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
 
                 #If plate solution was generated, use it to check if the comparison stars selected are variable
-                #If yes, skip determining optimal aperture and annulus for that comparison star
-                wcsFile = "mnt/c/Users/aaron/Documents/EXOTIC/EXOTIC/sample-data/newfits.fits"
+                #If yes, skip determining optimal aperture and annulus for that comparison star Comparison X: 464 Comparison Y: 182
+                #wcsFile = "sample-data/newfits.fits"
+                #hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)
                 if wcsFile:
                     print("Checking for variability in current comparison star... ")
                     if variableStarCheck(refx, refy, hdulWCS):
-                        print("Current comparison star is variable, proceeding to next star...")
+                        print("Current comparison star is variable, proceeding to next star.")
                         continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit

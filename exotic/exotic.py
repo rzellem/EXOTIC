@@ -93,7 +93,7 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca import lc_fitter, binner
+from api.elca import lc_fitter, binner
 import dynesty
 
 # astropy imports
@@ -109,7 +109,7 @@ from astroquery.simbad import Simbad
 import astroalign as aa
 
 # Nonlinear Limb Darkening Calculations import
-from gaelLDNL import createldgrid
+from api.gaelLDNL import createldgrid
 
 # photometry
 from photutils import CircularAperture

@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.13.3"
+versionid = "0.14.4"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -197,7 +197,7 @@ def new_scrape(filename="eaConf.json", target=None):
     }
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target[:-2])
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -205,7 +205,7 @@ def new_scrape(filename="eaConf.json", target=None):
     uri_ipac_query['where'] = 'tran_flag=1'
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+        uri_ipac_query["where"] += " and hostname = '{}'".format(target[:-2])
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -239,7 +239,7 @@ def new_scrape(filename="eaConf.json", target=None):
                         default.loc[default.pl_name == i, k] = 0
                     elif k == "st_met":  # [Fe/H]
                         default.loc[default.pl_name == i, k] = 0
-    
+
     if len(default)==0:
         print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
         target = str(input("\n Enter the Planet Name: "))
@@ -253,11 +253,11 @@ def new_getParams(data):
     try:
         rprs = np.sqrt(data['pl_trandep']/100.)
         rprserr = np.sqrt(np.abs((data['pl_trandeperr1']/100.)*(data['pl_trandeperr2']/100.)))/(2.*rprs)
-    except (KeyError, ValueError):
+    except (KeyError, TypeError):
         try:
             rprs = data['pl_ratror']
             rprserr = np.sqrt(np.abs(data['pl_ratrorerr1']*data['pl_ratrorerr2']))
-        except (KeyError, ValueError):
+        except (KeyError, TypeError):
             rp = data['pl_radj']*rjup
             rperr = data['pl_radjerr1']*rjup
             rs = data['st_rad']*rsun
@@ -302,17 +302,25 @@ def new_getParams(data):
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
     exptime_offset = 0
+    imageheader = hdul[0].header
+
+    exp = imageheader.get('EXPTIME')  #checking for variation in .fits header format
+    if exp:
+        exp = exp
+    else:
+        exp = imageheader.get('EXPOSURE')
+
     # Grab the BJD first
     if 'BJD_TDB' in hdul[0].header:
         julianTime = float(hdul[0].header['BJD_TDB'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['BJD_TDB']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     elif 'BJD' in hdul[0].header:
         julianTime = float(hdul[0].header['BJD'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['BJD']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # then the DATE-OBS
     elif "UT-OBS" in hdul[0].header:
         gDateTime = hdul[0].header['UT-OBS']  # gets the gregorian date and time from the fits file header
@@ -321,19 +329,19 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['UT-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then Julian Date
     elif 'JULIAN' in hdul[0].header:
         julianTime = float(hdul[0].header['JULIAN'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['JULIAN']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
     elif "MJD-OBS" in hdul[0].header:
         julianTime = float(hdul[0].header["MJD-OBS"]) + 2400000.5
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['MJD-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     else:
         gDateTime = hdul[0].header['DATE-OBS']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
@@ -341,7 +349,7 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['DATE-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
 
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     return julianTime + exptime_offset
@@ -400,7 +408,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
                 print("Sorry, your response was not valid.")
             else:
                 return option
-        elif type_ == int or type_ == float or type_ == str:
+        else:
             return option
 
 
@@ -554,7 +562,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                     continue
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
-            # Did not use initialization file
+            # Did not use initialization file or null
             else:
                 print('\n' + pdict['pName'] + ' ' + planet_params[i] + ': ' + str(pdict[key]))
                 agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
@@ -652,10 +660,8 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                      'Sloan u': (321.80, 386.80), 'Sloan g': (402.50, 551.50), 'Sloan r': (553.10, 693.10), 'Sloan i': (697.50, 827.50), 'Sloan z': (841.20, 978.20),
 
                      # Stromgren
-                     'STU': (336.30, 367.70), 'STV': (401.50, 418.50), 'STB': (459.55, 478.05), 'STY': (536.70, 559.30),
-                     'Stromgren u': (336.30, 367.70), 'Stromgren v': (401.50, 418.50), 'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30),
-                     'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
-                     'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
+                     'STB': (459.55, 478.05), 'STY': (536.70, 559.30), 'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
+                     'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30), 'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
 
                      # Johnson
                      'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
@@ -683,7 +689,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
         if standcustomopt == 1:
             while True:
                 try:
-                    filtername = input('\nPlease enter in the filter type (EX: Johnson U, U, Stromgren u, STU): ')
+                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, Stromgren b, STB): ')
                     if filtername not in minmaxwavelen:
                         raise KeyError
                     break
@@ -1011,10 +1017,10 @@ def fit_centroid(data, pos, init=None, box=10):
         print("  init:",init)
         print(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
         print(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
-        
+
         # use LM in unbounded optimization
         pars = fit_psf(
-            data, [wx, wy], init,    
+            data, [wx, wy], init,
             [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ],
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ],
             psf_function=gaussian_psf,
@@ -1160,7 +1166,7 @@ def realTimeReduce(i):
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
 
     # sorts the times for later plotting use
-    sortedTimeList = sorted(timeList)
+    # sortedTimeList = sorted(timeList)
 
     # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
@@ -1515,9 +1521,9 @@ if __name__ == "__main__":
             if not CandidatePlanetBool:
                 idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
                 pDict = new_getParams(data[idx])
-                print('\nSuccessfuly found ' + targetName + ' in the NASA Exoplanet Archive!')
+                print('\nSuccessfully found ' + targetName + ' in the NASA Exoplanet Archive!')
 
-        if targetName.replace(' ','') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
+        if targetName.replace(' ', '') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
             userpDict['pName'] = targetName
 
         done = True
@@ -1732,7 +1738,11 @@ if __name__ == "__main__":
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
-                    exptimes.append(imageheader['EXPTIME'])
+                    exp = imageheader.get('EXPTIME')  #checking for variation in .fits header format
+                    if exp:
+                        exptimes.append(imageheader['EXPTIME'])
+                    else:
+                        exptimes.append(imageheader['EXPOSURE'])
 
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
@@ -1770,7 +1780,7 @@ if __name__ == "__main__":
                 sortedallImageData = allImageData[np.argsort(timeList)]
                 timesListed = timesListed[np.argsort(timeList)]
                 airMassList = airMassList[np.argsort(timeList)]
-                sortedTimeList = sorted(timeList)
+                # sortedTimeList = sorted(timeList)
 
                 # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
                 # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
@@ -1830,7 +1840,7 @@ if __name__ == "__main__":
                 sortedallImageData = sortedallImageData[firstimagecounter:]
                 timesListed = timesListed[firstimagecounter:]
                 airMassList = airMassList[firstimagecounter:]
-                sortedTimeList = sortedTimeList[firstimagecounter:]
+                # sortedTimeList = sortedTimeList[firstimagecounter:]
 
                 # apply cals correction if applicable
                 if darksBool:
@@ -1878,6 +1888,9 @@ if __name__ == "__main__":
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
+            timesListed = timesListed[boollist]
+            airMassList = airMassList[boollist]
+
             minAperture = max(1,int(2 * max(targsigX, targsigY)))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
@@ -1909,13 +1922,13 @@ if __name__ == "__main__":
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
                 aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
-                
+
                 # Run through only 5 different aperture sizes, all interger pixel values
                 aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
-                
+
                 # single annulus size
                 annulus_sizes = [5]
 
@@ -2122,7 +2135,7 @@ if __name__ == "__main__":
                                 # ALL IMAGES
                                 sortedallImageData = sortedallImageData[:fileNumber]
 
-                                boollist = boollist[:fileNumber]
+                                # boollist = boollist[:fileNumber]
 
                                 break
 
@@ -2130,20 +2143,18 @@ if __name__ == "__main__":
 
                         # NORMALIZE BY REF STAR
                         # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        rawFinalFluxData = np.array(targetFluxVals)[boollist]
+                        # rawFinalFluxData = np.array(targetFluxVals)
 
                         # Convert Everything to numpy Arrays
-                        arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
-                        arrayTargets = np.array(targetFluxVals)[boollist]  # finalFluxData
-                        arrayTimes = np.array(timesListed)[boollist]
-                        arrayPhases = np.array(phasesList)[boollist]
-                        arrayTargets = np.array(targetFluxVals)[boollist]
-                        arrayReferences = np.array(referenceFluxVals)[boollist]
-                        arrayAirmass = np.array(airMassList)[boollist]
-                        arrayTUnc = np.array(targUncertanties)[boollist]
-                        arrayRUnc = np.array(refUncertanties)[boollist]
+                        arrayFinalFlux = np.array(targetFluxVals)  # finalFluxData
+                        arrayTimes = np.array(timesListed)
+                        arrayPhases = np.array(phasesList)
+                        arrayReferences = np.array(referenceFluxVals)
+                        arrayAirmass = np.array(airMassList)
+                        arrayTUnc = np.array(targUncertanties)
+                        arrayRUnc = np.array(refUncertanties)
 
-                        arrayNormUnc = rawFinalFluxData**0.5
+                        arrayNormUnc = arrayFinalFlux**0.5
 
                         # Execute sigma_clip
                         try:
@@ -2213,10 +2224,10 @@ if __name__ == "__main__":
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
-                            finXTargCentArray = np.array(xTargCent)[boollist]
-                            finYTargCentArray = np.array(yTargCent)[boollist]
-                            finXRefCentArray = np.array(xRefCent)[boollist]
-                            finYRefCentArray = np.array(yRefCent)[boollist]
+                            finXTargCentArray = np.array(xTargCent)
+                            finYTargCentArray = np.array(yTargCent)
+                            finXRefCentArray = np.array(xRefCent)
+                            finYRefCentArray = np.array(yRefCent)
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
@@ -2229,7 +2240,7 @@ if __name__ == "__main__":
                             nonBJDTimes = arrayTimes[~filtered_data]
                             nonBJDPhases = arrayPhases[~filtered_data]
                             goodAirmasses = arrayAirmass[~filtered_data]
-                            goodTargets = arrayTargets[~filtered_data]
+                            goodTargets = arrayFinalFlux[~filtered_data]
                             goodReferences = arrayReferences[~filtered_data]
                             goodTUnc = arrayTUnc[~filtered_data]
                             goodRUnc = arrayRUnc[~filtered_data]

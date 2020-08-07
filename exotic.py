@@ -593,6 +593,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     return userpdict
 
 
+# Conversion of Right Ascension and Declination: hours -> degrees
 def radec_hours_to_degree(ra, dec):
     while True:
         try:
@@ -606,32 +607,25 @@ def radec_hours_to_degree(ra, dec):
             dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
 
-# Check if user's directory contains imaging files that are able to be reduced
-def check_file_extensions(directory, filename):
-    # Find fits files
+# Check if user's directory contains imaging FITS files that are able to be reduced
+def check_imaging_files(directory, filename):
     file_extensions = ['.fits', '.fit', '.fts']
     inputfiles = []
 
     while True:
         try:
-            if os.path.isdir(os.path.join(directory, '')):
-                # Loop until we find something
+            directory = os.path.join(directory, '')
+            if os.path.isdir(directory):
                 for exti in file_extensions:
                     for file in os.listdir(directory):
                         if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
                             inputfiles.append(os.path.join(directory, file))
-                    # If we find files, then stop the for loop and while loop
                     if inputfiles:
                         return directory, inputfiles
-
-                # If we don't find any files, then we need the user to check their directory and loop over again
                 if not inputfiles:
                     raise FileNotFoundError
-
-            # If the directory does not exist
             else:
                 raise OSError
-
         except FileNotFoundError:
             extaddoption = user_input("\nError: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
                                       ".\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ", type_=str, val1='y', val2='n')
@@ -1328,7 +1322,7 @@ if __name__ == "__main__":
         directToWatch = str(input("Enter the Directory Path of imaging files: "))
         directoryP = ""
         directoryP = directToWatch
-        directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
+        directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
 
         targetName = str(input("Enter the Planet Name: "))
 
@@ -1451,7 +1445,7 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 infoDict['fitsdir'] = str(input("\nEnter the Directory of imaging files: "))
 
-            infoDict['fitsdir'], inputfiles = check_file_extensions(infoDict['fitsdir'], 'imaging')
+            infoDict['fitsdir'], inputfiles = check_imaging_files(infoDict['fitsdir'], 'imaging')
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
@@ -1471,11 +1465,12 @@ if __name__ == "__main__":
         # Check to see if the save directory exists
         while True:
             try:
+                infoDict['saveplot'] = os.path.join(infoDict['saveplot'], '')
                 if infoDict['saveplot'] == 'new':
                     infoDict['saveplot'] = create_directory()
                     break
                 # In case the user forgets the trailing / for the folder
-                if os.path.isdir(os.path.join(infoDict['saveplot'], '')):
+                if os.path.isdir(infoDict['saveplot']):
                     break
                 raise OSError
             except OSError:
@@ -1602,7 +1597,7 @@ if __name__ == "__main__":
                         flatsBool = False
 
                     if flatsBool:
-                        infoDict['flatsdir'], inputflats = check_file_extensions(infoDict['flatsdir'], 'flats')
+                        infoDict['flatsdir'], inputflats = check_imaging_files(infoDict['flatsdir'], 'flats')
                         flatsImgList = []
                         for flatFile in inputflats:
                             flatData = fits.getdata(flatFile, ext=0)
@@ -1626,7 +1621,7 @@ if __name__ == "__main__":
 
                 # Only do the dark correction if user selects this option
                 if darksBool:
-                    infoDict['darksdir'], inputdarks = check_file_extensions(infoDict['darksdir'], 'darks')
+                    infoDict['darksdir'], inputdarks = check_imaging_files(infoDict['darksdir'], 'darks')
                     darksImgList = []
                     for darkFile in inputdarks:
                         darkData = fits.getdata(darkFile, ext=0)
@@ -1644,7 +1639,7 @@ if __name__ == "__main__":
 
                 if biasesBool:
                     # Add / to end of directory if user does not input it
-                    infoDict['biasesdir'], inputbiases = check_file_extensions(infoDict['biasesdir'], 'biases')
+                    infoDict['biasesdir'], inputbiases = check_imaging_files(infoDict['biasesdir'], 'biases')
                     biasesImgList = []
                     for biasFile in inputbiases:
                         biasData = fits.getdata(biasFile, ext=0)

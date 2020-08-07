@@ -614,11 +614,7 @@ def check_file_extensions(directory, filename):
 
     while True:
         try:
-            # Add / to end of directory if user does not input it
-            if directory[-1] != "/":
-                directory += "/"
-
-            if os.path.isdir(directory):
+            if os.path.isdir(os.path.join(directory, '')):
                 # Loop until we find something
                 for exti in file_extensions:
                     for file in os.listdir(directory):
@@ -644,7 +640,7 @@ def check_file_extensions(directory, filename):
             else:
                 directory = input("Enter the directory path where " + filename + " files are located: ")
         except OSError:
-            print("Error: No such directory exists when searching for FITS files. Please try again.")
+            print("\nError: No such directory exists when searching for FITS files. Please try again.")
             directory = input("Enter the directory path where " + filename + " files are located: ")
 
 

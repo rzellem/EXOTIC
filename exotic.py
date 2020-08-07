@@ -1475,9 +1475,7 @@ if __name__ == "__main__":
                     infoDict['saveplot'] = create_directory()
                     break
                 # In case the user forgets the trailing / for the folder
-                if infoDict['saveplot'][-1] != "/":
-                    infoDict['saveplot'] += "/"
-                if os.path.isdir(infoDict['saveplot']):
+                if os.path.isdir(os.path.join(infoDict['saveplot'], '')):
                     break
                 raise OSError
             except OSError:

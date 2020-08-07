@@ -104,6 +104,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 from astroquery.simbad import Simbad
+from astroquery.gaia import Gaia
 
 # Image alignment import
 import astroalign as aa
@@ -466,6 +467,7 @@ def fluxConvert(fluxList, errorList, fluxFormat):
         convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
         fluxList = 10. ** ((-1. * (fluxList / 1000.) / 2.5))
+    #Use distance from mean of upper/lower error bounds to calculate new sigma values
     positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
     negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
     meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)
@@ -898,7 +900,26 @@ def variableStarCheck(refx, refy, hdulWCS):
     dec = world[0][1]
     sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
 
+    #Query GAIA first to check for variability using the phot_variable_flag trait
+    radius = u.Quantity(20.0, u.arcsec)
+    gaiaQuery = Gaia.cone_search_async(sample, radius)
+    gaiaResult = gaiaQuery.get_results()
+
+    #Individually go through the phot_variable_flag indicator for each star to see if variable or not
+    variableFlagList = gaiaResult.columns["phot_variable_flag"]
+    constantCounter = 0
+    for currFlag in variableFlagList:
+        if currFlag == "VARIABLE":
+            return True
+        elif currFlag == "NOT_AVAILABLE":
+            continue
+        elif currFlag == "CONSTANT":
+            constantCounter += 1
+    if constantCounter == len(variableFlagList):
+        return False
+
     #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    #This is a secondary check if GAIA query returns inconclusive results
     simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
     try:
         starName = simbad_result['MAIN_ID'][0].decode("utf-8")
@@ -1916,7 +1937,7 @@ if __name__ == "__main__":
                 if wcsFile:
                     print("Checking for variability in current comparison star... ")
                     if variableStarCheck(refx, refy, hdulWCS):
-                        print("Current comparison star is variable, proceeding to next star...")
+                        print("Current comparison star is variable, proceeding to next star.")
                         continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit

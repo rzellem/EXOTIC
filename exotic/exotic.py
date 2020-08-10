@@ -21,6 +21,9 @@
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
 
+# --IMPORTS -----------------------------------------------------------
+print("Importing Python Packages - please wait.")
+
 # EXOTIC version number
 # Now adhering to the Semantic Versioning 2.0.0
 # Given a version number MAJOR.MINOR.PATCH, increment the:
@@ -28,12 +31,9 @@
 # MINOR version when you add functionality in a backwards compatible manner, and
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
-# https://semver.org
-__version__ = "0.14.4"
-
-
-# --IMPORTS -----------------------------------------------------------
-print("Importing Python Packages - please wait.")
+# https://semver.org, e.g. __version__ = "0.14.4" from the version import
+import version
+__version__ = version.__version__
 
 import itertools
 import threading

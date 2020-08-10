@@ -1,10 +1,12 @@
 import importlib_metadata as metadata
 
-from .api.version import version_read
+try:  # module import
+    from .api.version import version_read
+except ImportError:  # package import
+    from api.version import version_read
 
 ignore = True
 
-__version__ = "0.1.0"  # placeholder for error in reporting true version
 try:
     __version__ = metadata.version(__name__)
 except metadata.PackageNotFoundError:

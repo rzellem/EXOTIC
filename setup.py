@@ -1,16 +1,18 @@
 #! /usr/bin/env python3
-# python3 setup.py sdist bdist_wheel  # upload
 # python3 setup.py --version
+# FOR RELEASE:
+# manually update exotic/version.py
+# git add exotic/version.py && git commit -m "#<ticket>:Updated version for release" && git push
+# python3 setup.py sdist bdist_wheel  # upload
+# LOCAL TESTING:
 # pip install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/
 # rm -r dist && pip uninstall exotic
 
-from pathlib import Path
 import re
-import setuptools
 import time
+from pathlib import Path
 
-from exotic.api import version
-
+import setuptools
 
 # Package meta-data sane defaults
 AUTHOR = "Exoplanet Watch at NASA JPL"
@@ -66,9 +68,10 @@ def requirements_read():
 
 
 setuptools.setup(name=NAME,
-                 # version=version_read(),
-                 # use_scm_version=False,
-                 use_scm_version=True,
+                 use_scm_version={
+                     'write_to': 'exotic/version.py',
+                     'write_to_template': '__version__ = "{version}"'
+                 },
                  description=DESCRIPTION,
                  long_description=description_read(),
                  long_description_content_type='text/markdown',

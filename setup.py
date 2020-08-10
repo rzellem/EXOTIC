@@ -1,24 +1,37 @@
 #! /usr/bin/env python3
-# python3 setup.py sdist bdist_wheel upload
+# python3 setup.py sdist bdist_wheel  # upload
+# python3 setup.py --version
+# pip install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/
+# rm -r dist && pip uninstall exotic
 
 from pathlib import Path
 import re
 import setuptools
 import time
 
+from exotic.api import version
 
-# Package meta-data.
-VERSION_SEMANTIC_FALLBACK = "0.1.0"
-VERSION = VERSION_SEMANTIC_FALLBACK
+
+# Package meta-data sane defaults
 AUTHOR = "Exoplanet Watch at NASA JPL"
-AUTHOR_EMAIL = "jengelke@jpl.nasa.gov"
+AUTHOR_EMAIL = "rzellem@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
-NAME = "EXOTIC"
+NAME = "exotic"
 PYTHON_REQUIREMENTS = ">=3.7.0"
 URL = "https://github.com/rzellem/EXOTIC"
 
 REQUIREMENTS_SETUP = ['setuptools_scm',
-                      'importlib-metadata ~= 1.0 ; python_version >= "3.7"']
+                      'importlib-metadata ~= 1.7 ; python_version >= "3.7"']
+
+
+def description_read():
+    description_long = ""
+    description_path = Path("README.md")
+    if not description_path.exists():
+        return description_long
+    with description_path.open('r') as f:
+        description_long = f.read()
+    return description_long
 
 
 def license_read():
@@ -38,16 +51,6 @@ def license_read():
     return lic
 
 
-def description_read():
-    description_long = ""
-    description_path = Path("README.md")
-    if not description_path.exists():
-        return description_long
-    with description_path.open('r') as f:
-        description_long = f.read()
-    return description_long
-
-
 def requirements_read():
     requirements = []
     requirements_path = Path("requirements.txt")
@@ -62,8 +65,9 @@ def requirements_read():
     return requirements
 
 
-# TODO: Add scripts, console_scripts or entry_points to execute exotic
 setuptools.setup(name=NAME,
+                 # version=version_read(),
+                 # use_scm_version=False,
                  use_scm_version=True,
                  description=DESCRIPTION,
                  long_description=description_read(),
@@ -97,5 +101,10 @@ setuptools.setup(name=NAME,
                  zip_safe=False,
                  install_requires=requirements_read(),
                  python_requires=PYTHON_REQUIREMENTS,
-                 setup_requires=REQUIREMENTS_SETUP
+                 setup_requires=REQUIREMENTS_SETUP,
+                 entry_points={
+                     'console_scripts': [
+                         'exotic = exotic.exotic:main',
+                     ],
+                 }
                  )

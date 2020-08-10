@@ -1,4 +1,4 @@
-# Copyright (c) 2002-2019, California Institute of Technology.
+# Copyright (c) 2019-2020, California Institute of Technology.
 # All rights reserved.  Based on Government Sponsored Research under contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
 
 # Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -29,7 +29,7 @@
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org
-versionid = "0.14.4"
+__version__ = "0.14.4"
 
 
 # --IMPORTS -----------------------------------------------------------
@@ -45,6 +45,7 @@ print('Python Version: %s' % sys.version)
 # To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+
 
 # here is the animation
 def animate():
@@ -93,8 +94,11 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from api.elca import lc_fitter, binner
 import dynesty
+try:  # module import
+    from .api.elca import lc_fitter, binner
+except ImportError:  # package import
+    from api.elca import lc_fitter, binner
 
 # astropy imports
 import astropy.time
@@ -110,7 +114,10 @@ from astroquery.gaia import Gaia
 import astroalign as aa
 
 # Nonlinear Limb Darkening Calculations import
-from api.gaelLDNL import createldgrid
+try:  # module import
+    from .api.gaelLDNL import createldgrid
+except ImportError:  # package import
+    from api.gaelLDNL import createldgrid
 
 # photometry
 from photutils import CircularAperture
@@ -1318,7 +1325,7 @@ def main():
     print('\n')
     print('*************************************************************')
     print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
-    print("Version ", versionid)
+    print("Version ", __version__)
     print('*************************************************************\n')
 
     # ---INITIALIZATION-------------------------------------------------------
@@ -2714,7 +2721,7 @@ def main():
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
         outParamsFile.write('#OBSCODE=' + infoDict['aavsonum'] + '\n')  # UI
         outParamsFile.write('#SECONDARYOBSCODE=' + infoDict['secondobs'] + '\n')  # UI
-        outParamsFile.write('#SOFTWARE=EXOTIC v' + versionid + '\n')  # fixed
+        outParamsFile.write('#SOFTWARE=EXOTIC v' + __version__ + '\n')  # fixed
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
         outParamsFile.write('#OBSTYPE=' + infoDict['ctype'] + '\n')

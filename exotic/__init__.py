@@ -1,9 +1,9 @@
 import importlib_metadata as metadata
 
 try:  # module import
-    from .api.version import version_read
+    from .api.versioning import version_read
 except ImportError:  # package import
-    from api.version import version_read
+    from api.versioning import version_read
 
 ignore = True
 

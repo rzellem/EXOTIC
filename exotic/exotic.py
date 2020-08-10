@@ -32,8 +32,10 @@ print("Importing Python Packages - please wait.")
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org, e.g. __version__ = "0.14.4" from the version import
-import version
-__version__ = version.__version__
+try:  # module import
+    from .version import __version__
+except ImportError:  # package import
+    from version import __version__
 
 import itertools
 import threading

@@ -2195,12 +2195,24 @@ if __name__ == "__main__":
 
                         if np.floor(phase).max()-np.floor(phase).min() == 0:
                             print("WARNING!")
-                            print("Estimated mid-transit time is not within the observations")
-                            print(" Check Period, Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-                            print("  the times in your image headers should be in UTC too")
-                            print('start:', arrayTimes[~filtered_data].min())
-                            print('  end:', arrayTimes[~filtered_data].max())
-                            print('prior:', prior['tmid'])
+                            print(" Estimated mid-transit time is not within the observations")
+                            print(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                            print('  obs start:', arrayTimes[~filtered_data].min())
+                            print('    obs end:', arrayTimes[~filtered_data].max())
+                            print(' tmid prior:', prior['tmid'])
+
+                        # check for Nans + Zeros
+                        for k in pDict:
+                            if "Unc" in k:
+                                if not pDict[k]:
+                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    pDict[k] = 1
+                                elif pDict[k] == 0 or np.isnan(pDict[k]):
+                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    pDict[k] = 1
+                            elif not pDict[k]:
+                                print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
+                                pDict[k] = 0
 
                         mybounds = {
                             'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],

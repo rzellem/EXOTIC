@@ -211,7 +211,7 @@ def new_scrape(filename="eaConf.json", target=None):
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
     # replaces NEA default with most recent publication
-    default = extra.iloc[0]
+    default.iloc[0] = extra.iloc[0]
 
     # for each planet
     for i in default.pl_name:

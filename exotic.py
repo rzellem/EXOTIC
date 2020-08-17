@@ -190,15 +190,15 @@ def new_scrape(filename="eaConf.json", target=None):
                      "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                      "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
-                     "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec",
+                     "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
         "from"     : "ps",  # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
-        "order by" : "pl_name",
+        "order by" : "pl_pubdate desc",
         "format"   : "csv"
     }
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target[:-2])
+        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -206,9 +206,12 @@ def new_scrape(filename="eaConf.json", target=None):
     uri_ipac_query['where'] = 'tran_flag=1'
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target[:-2])
+        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
+
+    # replaces NEA default with most recent publication
+    default.iloc[0] = extra.iloc[0]
 
     # for each planet
     for i in default.pl_name:
@@ -2195,12 +2198,24 @@ if __name__ == "__main__":
 
                         if np.floor(phase).max()-np.floor(phase).min() == 0:
                             print("WARNING!")
-                            print("Estimated mid-transit time is not within the observations")
-                            print(" Check Period, Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-                            print("  the times in your image headers should be in UTC too")
-                            print('start:', arrayTimes[~filtered_data].min())
-                            print('  end:', arrayTimes[~filtered_data].max())
-                            print('prior:', prior['tmid'])
+                            print(" Estimated mid-transit time is not within the observations")
+                            print(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                            print('  obs start:', arrayTimes[~filtered_data].min())
+                            print('    obs end:', arrayTimes[~filtered_data].max())
+                            print(' tmid prior:', prior['tmid'])
+
+                        # check for Nans + Zeros
+                        for k in pDict:
+                            if "Unc" in k:
+                                if not pDict[k]:
+                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    pDict[k] = 1
+                                elif pDict[k] == 0 or np.isnan(pDict[k]):
+                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    pDict[k] = 1
+                            elif not pDict[k]:
+                                print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
+                                pDict[k] = 0
 
                         mybounds = {
                             'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],

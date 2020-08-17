@@ -835,7 +835,7 @@ def plate_solution(fits_file, saveDirectory):
     # Checks the job id's status for parameters
     job_id = r.json()['jobs']
     job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
-    wcs_file = saveDirectory + 'newfits.fits'
+    wcs_file = os.path.join(saveDirectory, 'newfits.fits')
 
     # Checks the job id's status
     while True:
@@ -1888,18 +1888,19 @@ def main():
                     print("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                # Plate Solution
-                pathSolve = infoDict['saveplot'] + 'ref_file_%s_%s' % (str(firstimagecounter), fileNameStr[firstimagecounter].split('/')[-1])
+                # Reference File
+                refFile = os.path.join(infoDict['saveplot'], 'ref_file_%s_%s'
+                                       % (firstimagecounter, os.path.split(fileNameStr[firstimagecounter])[-1]))
 
-                # Removes existing file of first_fits.fits
+                # Removes existing file of reference file
                 try:
-                    os.remove(pathSolve)
+                    os.remove(refFile)
                 except OSError:
                     pass
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
-                convertToFITS.writeto(pathSolve)
-                print('\nHere is the path to the reference imaging file EXOTIC: \n' + pathSolve)
-                wcsFile = check_wcs(pathSolve, infoDict['saveplot'])
+                convertToFITS.writeto(refFile)
+                print('\nHere is the path to the reference imaging file EXOTIC: \n' + refFile)
+                wcsFile = check_wcs(refFile, infoDict['saveplot'])
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:

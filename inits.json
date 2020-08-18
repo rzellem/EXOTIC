@@ -16,8 +16,8 @@
     ],
     "user_info": [
         {
-            "Directory with FITS files": "./sample-data/HatP32Dec202017",
-            "Directory to Save Plots": "./sample-data",
+            "Directory with FITS files": "../sample-data/HatP32Dec202017",
+            "Directory to Save Plots": "../sample-data",
             "Directory of Flats": "n",
             "Directory of Darks": "n",
             "Directory of Biases": "n",

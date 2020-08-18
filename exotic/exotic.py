@@ -1502,6 +1502,13 @@ def main():
             except FileNotFoundError:
                 print("Data file not found. Please try again.")
                 sys.exit()
+            try:
+                infoDict['exposure'] = str(input("Please enter your image exposure time in seconds: "))
+            except:
+                # Create the dictionary if it does not exist just in cases
+                infoDict = {}
+                infoDict['exposure'] = str(input("Please enter your image exposure time in seconds: "))
+
 
             processeddata = initf.readlines()
 

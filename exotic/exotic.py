@@ -1432,6 +1432,7 @@ def main():
             print("\nYour current working directory is: ", os.getcwd())
             print("\nPotential initialization files I've found in " + os.getcwd() + " are: ")
             [print(i) for i in g.glob(os.getcwd() + "/*.json")]
+            [print(i) for i in g.glob(os.getcwd()+"/exotic" + "/*.json")]
 
             # Parse input file
             while True:

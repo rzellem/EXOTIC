@@ -2380,7 +2380,7 @@ def main():
             target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture+minAnnulus, color='lime', fill=False, ls='--', lw=.5)
             ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
             ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
-            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None)  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
+            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.log10(np.nanmin(sortedallImageData[0][sortedallImageData[0] > 0])), vmax=np.log10(np.nanmax(sortedallImageData[0][sortedallImageData[0] > 0])))  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
             plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)

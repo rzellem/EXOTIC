@@ -216,7 +216,7 @@ def new_scrape(filename="eaConf.json", target=None):
         target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
                        "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
         if target.strip().lower() == 'candidate':
-            target = input("\nPlease enter candidate planet's name:")
+            target = input("\nPlease enter candidate planet's name: ")
             return target, True
         else:
             return new_scrape(filename="eaConf.json", target=target)
@@ -1721,12 +1721,8 @@ if __name__ == "__main__":
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-        # Get the planetary parameters non-candidate exoplanets
-        if not CandidatePlanetBool:
-            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
-        # Candidate planetary parameters for exoplanets
-        else:
-            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
+
+        pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
         ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],

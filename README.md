@@ -23,7 +23,7 @@ The easiest way to install exotic is with pip:
 
 ## Running exotic
 
-For a text interface use: `python exotic/exotic.py`
+`python exotic/exotic.py`
 
 FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required. Download a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
 
@@ -99,7 +99,17 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ## Features/ Pipeline Architecture
 
-For more information on the core functionality of EXOTIC: [link](Documentation/English/How-EXOTIC-Works.pdf)
+- Automated Plate Solution from http://nova.astrometry.net
+
+- Aperture Photometry + PSF Fitting
+
+- Optimal comparison star + aperture size choice 
+
+![](Documentation/Images/centroids.png)
+
+- Transit Parameter Optimization with [Nested Sampling](https://dynesty.readthedocs.io/en/latest/index.html)
+
+![](Documentation/Images/posterior_sample.png)
 
 ## Contributing to EXOTIC
 

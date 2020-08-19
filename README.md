@@ -1,7 +1,7 @@
 # EXOTIC (EXOplanet Transit Interpretation Code)
+
 A python 3 package for reducing photometric data of transiting exoplanets into lightcurves, and retrieving transit epochs and planetary radii.
 
-## Overview
 The EXOplanet Transit Interpretation Code relies upon the transit method for exoplanet detection. This method detects exoplanets by measuring the dimming of a star as an orbiting planet transits, which is when it passes between its host star and the Earth. If we record the host star’s emitted light, known as the flux, and observe how it changes as a function of time, we should observe a small dip in the brightness when a transit event occurs. A graph of host star flux vs. time is known as a lightcurve, and it holds the key to determining how large the planet is, and how long it will be until it transits again.
 
 ![](Documentation/Images/transitsimple.jpg)
@@ -10,8 +10,7 @@ The objective of this pipeline is to help you reduce your images of your transit
 
 ## Installation (instalação)
 
-Language / Lengua / língua 
-- [English](Documentation/Brazilian_Portuguese)
+- [English](Documentation/English)
 
 - [Português do Brasil](Documentation/Brazilian_Portuguese)
 
@@ -20,39 +19,95 @@ The easiest way to install exotic is with pip:
 
 `pip install exotic`
 
-**Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip then you can try to install from this git repo: 
-
-```
-git clone https://github.com/rzellem/EXOTIC.git
-cd exotic
-python setup.py install
-```
-
-For additional installation instructions including setting up dependencies please see the following documents for [Mac](Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
+**Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation instructions including setting up dependencies for [Mac](Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
 
 ## Running exotic
 
-To demonstrate how to use the data reduction pipeline, the linked document above will walk through a sample reduction of a dataset taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The corresponding explanation of the science behind the reduction mechanism can be found in the How it Works section. 
+For a text interface use: `python exotic/exotic.py`
 
-The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
+FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required. Download a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
 
-![Sample Data](sample-data)
+[Sample Data](https://github.com/rzellem/EXOTIC_sampledata)
 
 A resulting lightcurve from the sample dataset is shown below:
 
 ![](Documentation/Images/HAT-P-32bExample.png)
 
-## How it Works
+## Initializaton File
+
+Get EXOTIC up and running faster with a json file. Please see the included file ([inits.json](inits.json)) meant for the [sample data](https://github.com/rzellem/EXOTIC_sampledata). The initialization file has the following fields: 
+
+```json
+{
+    "user_info": [
+        {
+            "Directory with FITS files": "../sample-data/HatP32Dec202017",
+            "Directory to Save Plots": "../output",
+            "Directory of Flats": "n",
+            "Directory of Darks": "n",
+            "Directory of Biases": "n",
+
+            "AAVSO Observer Code (N/A if none)": "RTZ",
+            "Secondary Observer Codes (N/A if none)": "N/A",
+
+            "Observation date": "December 17, 2017",
+            "Obs. Latitude": "+31.68",
+            "Obs. Longitude": "-110.88",
+            "Obs. Elevation (meters)": 2616,
+
+            "Camera Type (CCD or DSLR)": "CCD",
+            "Pixel Binning": "1x1",
+            "Filter Name (aavso.org/filters)": "V",
+            "Observing Notes": "Weather, seeing was nice.",
+            "Target Star X & Y Pixel": [424, 286],
+            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
+        }
+    ],
+    "planetary_parameters": [
+        {
+            "Target Star RA (hh:mm:ss)": "02:04:10",
+            "Target Star Dec (+/-hh:mm:ss)": "+46:41:23",
+            "Planet's Name": "HAT-P-32 b",
+            "Host Star's Name": "HAT-P-32",
+            "Orbital Period (days)": 2.1500082,
+            "Orbital Period Uncertainty": 1.3e-07,
+            "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
+            "Mid-Transit Time Uncertainty": 4.9e-05,
+            "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14856104152345367,
+            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.004688608636917226,
+            "Ratio of Distance to Stellar Radius (a/Rs)": 5.344,
+            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.04,
+            "Orbital Inclination (deg)": 88.98,
+            "Orbital Inclination (deg) Uncertainity": 0.68,
+            "Orbital Eccentricity (0 if null)": 0.159,
+            "Star Effective Temperature (K)": 6001.0,
+            "Star Effective Temperature (+) Uncertainty": 88.0,
+            "Star Effective Temperature (-) Uncertainty": -88.0,
+            "Star Metallicity ([FE/H])": -0.16,
+            "Star Metallicity (+) Uncertainty": 0.08,
+            "Star Metallicity (-) Uncertainty": -0.08,
+            "Star Surface Gravity (log(g))": 4.22,
+            "Star Surface Gravity (+) Uncertainty": 0.04,
+            "Star Surface Gravity (-) Uncertainty": -0.04
+        }
+    ]
+}
+```
 
 
-For more information on the core functionality of EXOTIC: [link](Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf)
 
 
+## Features/ Pipeline Architecture
 
+For more information on the core functionality of EXOTIC: [link](Documentation/English/How-EXOTIC-Works.pdf)
 
-## Contributing to EXOTIC / Reporting a bug
+## Contributing to EXOTIC
 
-Please create an issue on GitHub and a track the changes with a new branch that has the same name as the issue number. 
+Please create an issue and track the changes with a new branch that has the same name as the issue number
 
 ## Citation
 If you use any of these algorithms in your work, please cite our 2020 paper: [Zellem, Pearson, Blaser, et al. 2020](https://ui.adsabs.harvard.edu/abs/2020arXiv200309046Z/abstract) 
+
+![https://exoplanets.nasa.gov/exoplanet-watch/about-exoplanet-watch/](Documentation/Images/ExoplanetWatch.png)
+
+Contribute to [Exoplanet Watch](https://exoplanets.nasa.gov/exoplanet-watch/about-exoplanet-watch/), a citizen science project that improves the properties of exoplanets and their orbits using observations processed with EXOTIC. Register with [AAVSO](https://www.aavso.org/exoplanet-section) and input your Observer Code to help track your contributions allowing for proper credit on future publications using those measurements. Ask about our Exoplanet Watch Slack Channel!

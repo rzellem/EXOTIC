@@ -8,7 +8,13 @@ The EXOplanet Transit Interpretation Code relies upon the transit method for exo
 
 The objective of this pipeline is to help you reduce your images of your transiting exoplanet into a lightcurve, and fit a model to your data to extract planetary information that is crucial to increasing the efficiency of larger observational platforms, and futhering our astronomical knowledge.
 
-## Installation Instructions
+## Installation (instalação)
+
+Language / Lengua / língua 
+- [English](Documentation/Brazilian_Portuguese)
+
+- [Português do Brasil](Documentation/Brazilian_Portuguese)
+
 
 The easiest way to install exotic is with pip: 
 

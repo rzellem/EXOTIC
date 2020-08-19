@@ -720,7 +720,8 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
     print('Limb Darkening Coefficients')
     print('***************************')
 
-    print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
+    print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
+          '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
     for key, value in minmaxwavelen.items():
         print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
 
@@ -1508,31 +1509,19 @@ def main():
                 except IsADirectoryError:
                     print('Error: Entered a directory. Please try again.')
 
-            # inits = []
-            # for line in initf:
-            #     if line[0] == "#": continue
-            #     inits.append(line)
-            # initf.close()
-
             if infoDict['flatsdir'] == "n":
-                flats = 'n'
                 flatsBool = False
             else:
-                flats = 'y'
                 flatsBool = True
 
             if infoDict['darksdir'] == "n":
-                darks = 'n'
                 darksBool = False
             else:
-                darks = 'y'
                 darksBool = True
 
             if infoDict['biasesdir'] == "n":
-                biases = 'n'
                 biasesBool = False
             else:
-                biases = 'y'
                 biasesBool = True
 
             if flatsBool + darksBool + biasesBool:
@@ -1565,17 +1554,17 @@ def main():
                 print("Data file not found. Please try again.")
                 sys.exit()
             try:
-                infoDict['exposure'] = str(input("Please enter your image exposure time in seconds: "))
+                infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
             except:
                 # Create the dictionary if it does not exist just in cases
                 infoDict = {}
-                infoDict['exposure'] = str(input("Please enter your image exposure time in seconds: "))
+                infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
 
 
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            infoDict['saveplot'] = str(input("Enter the Directory to Save Plots into or type new to create one: "))
+            infoDict['saveplot'] = str(input("Enter the directory to save plots into or type new to create one: "))
 
         # Check to see if the save directory exists
         while True:
@@ -1589,8 +1578,8 @@ def main():
                     break
                 raise OSError
             except OSError:
-                print('Error: the directory entered does not exist. Please try again.')
-                infoDict['saveplot'] = input("Enter the Directory to Save Plots into or type new to create one: ")
+                print('Error: the entered save directory does not exist. Please try again.')
+                infoDict['saveplot'] = input("Enter the directory to save plots into or type new to create one: ")
 
         # Make a temp directory of helpful files
         try:
@@ -1758,7 +1747,7 @@ def main():
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
-        check_file_corruption(inputfiles)
+        # check_file_corruption(inputfiles)
 
         exptimes = list()
 

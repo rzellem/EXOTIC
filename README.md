@@ -33,6 +33,24 @@ A resulting lightcurve from the sample dataset is shown below:
 
 ![](Documentation/Images/HAT-P-32bExample.png)
 
+For the full output of EXOTIC please see the [example output](Documentation/English/example_output.txt)
+
+```
+*********************************************************
+FINAL PLANETARY PARAMETERS
+
+              Mid-Transit Time [BJD]: 2458107.714007 +- 0.000856 
+  Radius Ratio (Planet/Star) [Rp/Rs]: 0.1503 +- 0.0009 
+ Semi Major Axis/ Star Radius [a/Rs]: 5.146 +- 0.059 
+               Airmass coefficient 1: 7397.280 +- 19.7116 
+               Airmass coefficient 2: -0.1161 +- 0.0021 
+The scatter in the residuals of the lightcurve fit is: 0.5414 %
+
+*********************************************************
+```
+
+
+
 ## Initializaton File
 
 Get EXOTIC up and running faster with a json file. Please see the included file ([inits.json](inits.json)) meant for the [sample data](https://github.com/rzellem/EXOTIC_sampledata). The initialization file has the following fields: 
@@ -109,9 +127,13 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 - Multiple comparison star + aperture size choice optimization
 
+- Non-linear 4 parameter limb darkening with [LDTK](https://github.com/hpparvi/ldtk)
+
 - Light curve parameter optimization with [Nested Sampling](https://dynesty.readthedocs.io/en/latest/index.html)
 
 ![](Documentation/Images/posterior_sample.png)
+
+
 
 ## Contributing to EXOTIC
 

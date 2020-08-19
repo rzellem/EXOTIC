@@ -711,10 +711,10 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                      ('MObs CV', 'CV'): (350.00, 850.00),
 
                      # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ("LCO SDSS u'", 'N/A'): (325.50, 382.50),
-                     ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
-                     ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
+                     ('LCO Bessell B', 'O'): (391.60, 480.60), ('LCO Bessell V', 'O'): (502.80, 586.80),
+                     ('LCO Pan-STARRS w', 'O'): (404.20, 845.80), ("LCO SDSS u'", 'O'): (325.50, 382.50),
+                     ("LCO SDSS g'", 'O'): (402.00, 552.00), ("LCO SDSS r'", 'O'): (552.00, 691.00),
+                     ("LCO SDSS i'", 'O'): (690.00, 819.00)}
 
     print('\n***************************')
     print('Limb Darkening Coefficients')
@@ -739,7 +739,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                 try:
                     filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
                     for key, value in minmaxwavelen.items():
-                        if filtername in (key[0], key[1]) and filtername != 'N/A':
+                        if filtername in (key[0], key[1]) and filtername != 'O':
                             filtername = (key[0], key[1])
                             break
                     else:
@@ -754,9 +754,9 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
 
         # Custom filters calculating limb darkening parameters
         else:
-            filtername = input('\nPlease enter in your custom filter name: ')
             wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
             wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
+            filtername = 'O'
 
 
         priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
@@ -1553,13 +1553,8 @@ def main():
             except FileNotFoundError:
                 print("Data file not found. Please try again.")
                 sys.exit()
-            try:
-                infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
-            except:
-                # Create the dictionary if it does not exist just in cases
-                infoDict = {}
-                infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
 
+            infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
 
             processeddata = initf.readlines()
 
@@ -2709,12 +2704,12 @@ def main():
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(targetName, infoDict['date']))
+        fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], infoDict['date']))
 
 
         # write output to text file
-        outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + targetName + infoDict['date'] + '.csv', 'w+')
-        outParamsFile.write('# FINAL TIMESERIES OF ' + targetName + '\n')
+        outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + '.csv', 'w+')
+        outParamsFile.write('# FINAL TIMESERIES OF ' + pDict['pName'] + '\n')
         outParamsFile.write('# BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 
         phase = (myfit.time - myfit.parameters['tmid'] + 0.5*pDict['pPer'])/pDict['pPer'] % 1

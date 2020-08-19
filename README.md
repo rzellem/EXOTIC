@@ -99,15 +99,17 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ## Features/ Pipeline Architecture
 
-- Automated Plate Solution from http://nova.astrometry.net
+- Automatic Plate Solution from http://nova.astrometry.net
 
-- Aperture Photometry + PSF Fitting
+- Resolve targets with [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu/) + retrieve light curve priors
 
-- Optimal comparison star + aperture size choice 
+- Aperture Photometry with PSF centroiding (2D Gaussian + rotation)
 
 ![](Documentation/Images/centroids.png)
 
-- Transit Parameter Optimization with [Nested Sampling](https://dynesty.readthedocs.io/en/latest/index.html)
+- Multiple comparison star + aperture size choice optimization
+
+- Light curve parameter optimization with [Nested Sampling](https://dynesty.readthedocs.io/en/latest/index.html)
 
 ![](Documentation/Images/posterior_sample.png)
 

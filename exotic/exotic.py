@@ -1,4 +1,4 @@
-# Copyright (c) 2002-2019, California Institute of Technology.
+# Copyright (c) 2019-2020, California Institute of Technology.
 # All rights reserved.  Based on Government Sponsored Research under contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
 
 # Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -21,6 +21,9 @@
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
 
+# --IMPORTS -----------------------------------------------------------
+print("Importing Python Packages - please wait.")
+
 # EXOTIC version number
 # Now adhering to the Semantic Versioning 2.0.0
 # Given a version number MAJOR.MINOR.PATCH, increment the:
@@ -28,12 +31,11 @@
 # MINOR version when you add functionality in a backwards compatible manner, and
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
-# https://semver.org
-versionid = "0.15.1"
-
-
-# --IMPORTS -----------------------------------------------------------
-print("Importing Python Packages - please wait.")
+# https://semver.org, e.g. __version__ = "0.14.4" from the version import
+try:  # module import
+    from .version import __version__
+except ImportError:  # package import
+    from version import __version__
 
 import itertools
 import threading
@@ -45,6 +47,7 @@ print('Python Version: %s' % sys.version)
 # To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+
 
 # here is the animation
 def animate():
@@ -94,8 +97,11 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca import lc_fitter, binner
 import dynesty
+try:  # module import
+    from .api.elca import lc_fitter, binner
+except ImportError:  # package import
+    from api.elca import lc_fitter, binner
 
 # astropy imports
 import astropy.time
@@ -112,7 +118,10 @@ from astropy.utils.exceptions import AstropyWarning
 import astroalign as aa
 
 # Nonlinear Limb Darkening Calculations import
-from gaelLDNL import createldgrid
+try:  # module import
+    from .api.gaelLDNL import createldgrid
+except ImportError:  # package import
+    from api.gaelLDNL import createldgrid
 
 # photometry
 from photutils import CircularAperture
@@ -126,6 +135,12 @@ from skimage.registration import phase_cross_correlation
 done = True
 
 # ################### START PROPERTIES ########################################
+# GLOBALS (set in main before method calls)
+infoDict = dict()
+UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY = 0, 0, 0, 0
+distFC = 0
+ax1 = plt.figure()  # placeholder
+
 # CONFIGURATIONS
 requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
@@ -473,14 +488,14 @@ def get_planet_name(targetname):
     return targetname, candidateplanet, planetdict
 
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
-def timeConvert(timeList, timeFormat, pDict, infoDict):
+def timeConvert(timeList, timeFormat, pDict, info_dict):
     #if timeFormat is already in BJD_TDB, just do nothing
     #Perform appropriate conversion for each time format if needed
     if timeFormat == "JD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
         timeList = convertedTimes[0]
     elif timeFormat == "MJD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
         timeList = convertedTimes[0]
     return timeList
 
@@ -1044,9 +1059,11 @@ def gaussian_psf(x,y,x0,y0,a,sigx,sigy,rot, b):
 
 def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',method='trf',box=15):
     xv,yv = mesh_box(pos, box)
+
     def fcn2min(pars):
         model = psf_function(xv,yv,*pars)
         return (data[yv,xv]-model).flatten()
+
     if method == 'trf':
         res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point',method=method)
     else:
@@ -1202,7 +1219,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
-def realTimeReduce(i):
+def realTimeReduce(i, target_name):
     targetFluxVals = []
     referenceFluxVals = []
     normalizedFluxVals = []
@@ -1352,7 +1369,7 @@ def realTimeReduce(i):
     # EXIT THE FILE LOOP
 
     ax1.clear()
-    ax1.set_title(targetName)
+    ax1.set_title(target_name)
     ax1.set_ylabel('Normalized Flux')
     ax1.set_xlabel('Time (jd)')
     ax1.plot(timesListed, normalizedFluxVals, 'bo')
@@ -1368,16 +1385,21 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main():
     # TODO use text based interface if no command line arguments
 
     print('\n')
     print('*************************************************************')
     print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
-    print("Version ", versionid)
+    print("Version ", __version__)
     print('*************************************************************\n')
 
     # ---INITIALIZATION-------------------------------------------------------
+    global infoDict
+    global UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY
+    global distFC
+    global ax1
+
     targetFluxVals, referenceFluxVals, normalizedFluxVals, targUncertanties, refUncertanties, timeList, phasesList, airMassList = (
         [] for l in range(8))
 
@@ -1434,7 +1456,7 @@ if __name__ == "__main__":
         ax1.set_ylabel('Normalized Flux')
         ax1.set_xlabel('Time (jd)')
 
-        anim = FuncAnimation(fig, realTimeReduce, interval=15000)  # refresh every 15 seconds
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(targetName), interval=15000)  # refresh every 15 seconds
         plt.show()
 
     ###########################
@@ -1471,6 +1493,7 @@ if __name__ == "__main__":
             print("\nYour current working directory is: ", os.getcwd())
             print("\nPotential initialization files I've found in " + os.getcwd() + " are: ")
             [print(i) for i in g.glob(os.getcwd() + "/*.json")]
+            [print(i) for i in g.glob(os.getcwd()+"/exotic" + "/*.json")]
 
             # Parse input file
             while True:
@@ -1541,6 +1564,13 @@ if __name__ == "__main__":
             except FileNotFoundError:
                 print("Data file not found. Please try again.")
                 sys.exit()
+            try:
+                infoDict['exposure'] = str(input("Please enter your image exposure time in seconds: "))
+            except:
+                # Create the dictionary if it does not exist just in cases
+                infoDict = {}
+                infoDict['exposure'] = str(input("Please enter your image exposure time in seconds: "))
+
 
             processeddata = initf.readlines()
 
@@ -2381,7 +2411,7 @@ if __name__ == "__main__":
             target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture+minAnnulus, color='lime', fill=False, ls='--', lw=.5)
             ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
             ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
-            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None)  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
+            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.log10(np.nanmin(sortedallImageData[0][sortedallImageData[0] > 0])), vmax=np.log10(np.nanmax(sortedallImageData[0][sortedallImageData[0] > 0])))  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
             plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
@@ -2748,7 +2778,7 @@ if __name__ == "__main__":
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
         outParamsFile.write('#OBSCODE=' + infoDict['aavsonum'] + '\n')  # UI
         outParamsFile.write('#SECONDARYOBSCODE=' + infoDict['secondobs'] + '\n')  # UI
-        outParamsFile.write('#SOFTWARE=EXOTIC v' + versionid + '\n')  # fixed
+        outParamsFile.write('#SOFTWARE=EXOTIC v' + __version__ + '\n')  # fixed
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
         outParamsFile.write('#OBSTYPE=' + infoDict['ctype'] + '\n')
@@ -2790,3 +2820,7 @@ if __name__ == "__main__":
         print('\n************************')
         print('End of Reduction Process')
         print('************************')
+
+
+if __name__ == "__main__":
+    main()

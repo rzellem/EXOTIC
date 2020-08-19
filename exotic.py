@@ -66,6 +66,7 @@ import os
 import json
 import logging
 import platform
+import warnings
 import argparse
 import glob as g
 from io import StringIO
@@ -105,6 +106,7 @@ from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
+from astropy.utils.exceptions import AstropyWarning
 
 # Image alignment import
 import astroalign as aa
@@ -210,46 +212,51 @@ def new_scrape(filename="eaConf.json", target=None):
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
-    # replaces NEA default with most recent publication
-    default.iloc[0] = extra.iloc[0]
-
-    # for each planet
-    for i in default.pl_name:
-
-        # extract rows for each planet
-        ddata = default.loc[default.pl_name == i]
-        edata = extra.loc[extra.pl_name == i]
-
-        # for each nan column in default
-        nans = ddata.isna()
-        for k in ddata.keys():
-            if nans[k].bool():  # if col value is nan
-                if not edata[k].isna().all():  # if replacement data exists
-                    # replace with first index
-                    default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                    # TODO could use mean for some variables (not mid-transit)
-                    # print(i,k,edata[k][edata[k].notna()].values[0])
-                else:
-                    # permanent nans - require manual entry
-                    if k == 'pl_orblper':  # omega
-                        default.loc[default.pl_name == i, k] = 0
-                    elif k == 'pl_ratdor':  # a/R*
-                        # Kepler's 3rd law
-                        semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                        default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
-                    elif k == 'pl_orbincl':  # inclination
-                        default.loc[default.pl_name == i, k] = 90
-                    elif k == "pl_orbeccen":  # eccentricity
-                        default.loc[default.pl_name == i, k] = 0
-                    elif k == "st_met":  # [Fe/H]
-                        default.loc[default.pl_name == i, k] = 0
-
-    if len(default)==0:
-        print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
-        target = str(input("\n Enter the Planet Name: "))
-        new_scrape("eaConf.json", target)
+    if len(default) == 0:
+        target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
+                       "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
+        if target.strip().lower() == 'candidate':
+            target = input("\nPlease enter candidate planet's name:")
+            return target, True
+        else:
+            return new_scrape(filename="eaConf.json", target=target)
     else:
+        # replaces NEA default with most recent publication
+        default.iloc[0] = extra.iloc[0]
+
+        # for each planet
+        for i in default.pl_name:
+
+            # extract rows for each planet
+            ddata = default.loc[default.pl_name == i]
+            edata = extra.loc[extra.pl_name == i]
+
+            # for each nan column in default
+            nans = ddata.isna()
+            for k in ddata.keys():
+                if nans[k].bool():  # if col value is nan
+                    if not edata[k].isna().all():  # if replacement data exists
+                        # replace with first index
+                        default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
+                        # TODO could use mean for some variables (not mid-transit)
+                        # print(i,k,edata[k][edata[k].notna()].values[0])
+                    else:
+                        # permanent nans - require manual entry
+                        if k == 'pl_orblper':  # omega
+                            default.loc[default.pl_name == i, k] = 0
+                        elif k == 'pl_ratdor':  # a/R*
+                            # Kepler's 3rd law
+                            semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                            default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
+                        elif k == 'pl_orbincl':  # inclination
+                            default.loc[default.pl_name == i, k] = 90
+                        elif k == "pl_orbeccen":  # eccentricity
+                            default.loc[default.pl_name == i, k] = 0
+                        elif k == "st_met":  # [Fe/H]
+                            default.loc[default.pl_name == i, k] = 0
+
         dataframe_to_jsonfile(default, filename)
+        return target, False
 
 
 def new_getParams(data):
@@ -446,6 +453,24 @@ def inits_file(initspath, dictinfo, dictplanet):
         dictplanet[key] = initdictplanet[0][key2]
 
     return dictinfo, dictplanet
+
+
+# Get planet parameters from NEA if not a candidate
+def get_planet_name(targetname):
+
+    planetdict = None
+    print("\nLooking up {}- please wait.".format(targetname))
+    # check to make sure the target can be found in the exoplanet archive right after they enter its name
+    targetname, candidateplanet = new_scrape(filename="eaConf.json", target=targetname)
+    if not candidateplanet:
+        with open("eaConf.json", "r") as confirmedFile:
+            data = json.load(confirmedFile)
+            planets = [data[i]['pl_name'] for i in range(len(data))]
+            idx = planets.index(targetname)
+            planetdict = new_getParams(data[idx])
+            print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(targetname))
+
+    return targetname, candidateplanet, planetdict
 
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
 def timeConvert(timeList, timeFormat, pDict, infoDict):
@@ -647,52 +672,69 @@ def check_imaging_files(directory, filename):
 def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
                      # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
-    minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
-                     'J NIR 1.2micron': (1040.00, 1360.00), 'H NIR 1.6micron': (1420.00, 1780.00), 'K NIR 2.2micron': (2015.00, 2385.00),
+    minmaxwavelen = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
+                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
 
                      # Sloan
-                     'SU': (321.80, 386.80), 'SG': (402.50, 551.50), 'SR': (553.10, 693.10), 'SI': (697.50, 827.50), 'SZ': (841.20, 978.20),
-                     'Sloan u': (321.80, 386.80), 'Sloan g': (402.50, 551.50), 'Sloan r': (553.10, 693.10), 'Sloan i': (697.50, 827.50), 'Sloan z': (841.20, 978.20),
+                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
+                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
+                     ('Sloan z', 'SZ'): (841.20, 978.20),
 
                      # Stromgren
-                     'STB': (459.55, 478.05), 'STY': (536.70, 559.30), 'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
-                     'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30), 'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
+                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
+                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
 
                      # Johnson
-                     'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
-                     'Johnson U': (333.80, 398.80), 'Johnson B': (391.60, 480.60), 'Johnson V': (502.80, 586.80), 'Johnson R': (590.00, 810.00), 'Johnson I': (780, 1020),
+                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
+                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
+                     ('Johnson I', 'IJ'): (780.00, 1020.00),
 
                      # Cousins
-                     'R': (561.70, 719.70), 'I': (721.00, 875.00),
-                     'Cousins R': (561.70, 719.70), 'Cousins I': (721.00, 875.00)}
+                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
+
+                     # MObs Clear Filter, Source: Martin Fowler
+                     ('MObs CV', 'CV'): (350.00, 850.00),
+
+                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
+                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
+                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ("LCO SDSS u'", 'N/A'): (325.50, 382.50),
+                     ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
+                     ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
     print('\n***************************')
     print('Limb Darkening Coefficients')
     print('***************************')
 
-    print('\n\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
+    print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
     for key, value in minmaxwavelen.items():
-        print('\t%s: %s-%s nm' % (key, value[0], value[1]))
+        print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
 
-    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
+    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ',
+                       type_=str, val1='y', val2='n')
 
     # User decides to allow EXOTIC to calculate limb darkening parameters
     if ldopt == 'y':
-        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int, val1=1, val2=2)
+        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
+                                    type_=int, val1=1, val2=2)
 
         # Standard filters calculating limb darkening parameters
         if standcustomopt == 1:
             while True:
                 try:
-                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, Stromgren b, STB): ')
-                    if filtername not in minmaxwavelen:
+                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
+                    for key, value in minmaxwavelen.items():
+                        if filtername in (key[0], key[1]) and filtername != 'N/A':
+                            filtername = (key[0], key[1])
+                            break
+                    else:
                         raise KeyError
                     break
                 except KeyError:
-                    print('Error: The entered filter is not a part of the standard ones.')
+                    print('Error: The entered filter is not in the provided list of standard filters.')
 
             wlmin = [minmaxwavelen[filtername][0] / 1000]
             wlmax = [minmaxwavelen[filtername][1] / 1000]
+            filtername = filtername[1]
 
         # Custom filters calculating limb darkening parameters
         else:
@@ -728,9 +770,28 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
     return nlld0, nlld1, nlld2, nlld3, filtername
 
 
+# Checks for corrupted FITS files
+def check_file_corruption(files):
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', category=AstropyWarning)
+        for file in files:
+            if file.endswith('.fits'):
+                hdul = None
+                try:
+                    hdul = fits.open(file, checksum=True)
+                except (AstropyWarning, OSError):
+                    print('Removing corrupted file: {}'.format(file))
+                    os.remove(file)
+                finally:
+                    if getattr(hdul, "close", None) and callable(hdul.close):
+                        hdul.close()
+                    del hdul
+
+
 # Check for WCS in the user's imaging data and possibly plate solves.
 def check_wcs(fits_file, saveDirectory):
-    hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+    hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
     header = hdulist[0].header
     hdulist.close()  # close stream
     del hdulist
@@ -1168,7 +1229,7 @@ def realTimeReduce(i):
 
     fileNumber = 1
     for fileName in g.glob(directoryP):  # Loop through all the fits files and time sorts
-        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
+        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
         # TIME
         timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
         timeList.append(timeVal)  # adds to time value list
@@ -1196,7 +1257,7 @@ def realTimeReduce(i):
 
     for imageFile in timeSortedNames:
 
-        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
         currTime = getJulianTime(hdul)
         imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
@@ -1511,35 +1572,7 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             userpDict['pName'] = str(input("\nEnter the Planet Name: "))
 
-        print("\nLooking up ", userpDict['pName'], "- please wait.")
-        done = False
-
-        # check to make sure the target can be found in the exoplanet archive right after they enter its name
-        new_scrape(filename="eaConf.json", target=userpDict['pName'])
-        targetName = userpDict['pName']
-
-        CandidatePlanetBool = False
-        with open("eaConf.json", "r") as confirmedFile:
-            data = json.load(confirmedFile)
-            planets = [data[i]['pl_name'].lower().replace(' ', '').replace('-', '') for i in range(len(data))]
-            #stars = [data[i]['hostname'] for i in range(len(data))]
-            if targetName.lower().replace(' ', '').replace('-', '') not in planets:
-                while targetName.lower().replace(' ', '').replace('-', '') not in planets:
-                    done = True
-                    print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or delete the file: eaConf.json.")
-                    targetName = input("If this is a planet candidate, type candidate or re-enter the planet's name: ")
-                    if targetName.replace(' ', '') == 'candidate':
-                        CandidatePlanetBool = True
-                        break
-            if not CandidatePlanetBool:
-                idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
-                pDict = new_getParams(data[idx])
-                print('\nSuccessfully found ' + targetName + ' in the NASA Exoplanet Archive!')
-
-        if targetName.replace(' ', '') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
-            userpDict['pName'] = targetName
-
-        done = True
+        userpDict['pName'], CandidatePlanetBool, pDict = get_planet_name(userpDict['pName'])
 
         # observation date
         if fileorcommandline == 1:
@@ -1699,6 +1732,8 @@ if __name__ == "__main__":
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
+        check_file_corruption(inputfiles)
+
         exptimes = list()
 
         if fitsortext == 1:
@@ -1732,7 +1767,7 @@ if __name__ == "__main__":
                     # Keeps a list of file names
                     fileNameStr.append(fileName)
 
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
                     imageheader = hdul[0].header
                     # TIME
                     timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
@@ -1886,7 +1921,7 @@ if __name__ == "__main__":
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
                     print('Here is the path to your plate solution: \n' + wcsFile)
-                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
                     rafile, decfile = get_radec(hdulWCS)
 
                     # Save previously entered x and y pixel coordinates before checking against plate solution

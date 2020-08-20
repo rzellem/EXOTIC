@@ -1,4 +1,4 @@
-# Copyright (c) 2002-2019, California Institute of Technology.
+# Copyright (c) 2019-2020, California Institute of Technology.
 # All rights reserved.  Based on Government Sponsored Research under contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
 
 # Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -21,6 +21,9 @@
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
 ####################################################################
 
+# --IMPORTS -----------------------------------------------------------
+print("Importing Python Packages - please wait.")
+
 # EXOTIC version number
 # Now adhering to the Semantic Versioning 2.0.0
 # Given a version number MAJOR.MINOR.PATCH, increment the:
@@ -28,12 +31,11 @@
 # MINOR version when you add functionality in a backwards compatible manner, and
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
-# https://semver.org
-versionid = "0.14.0"
-
-
-# --IMPORTS -----------------------------------------------------------
-print("Importing Python Packages - please wait.")
+# https://semver.org, e.g. __version__ = "0.14.4" from the version import
+try:  # module import
+    from .version import __version__
+except ImportError:  # package import
+    from version import __version__
 
 import itertools
 import threading
@@ -45,6 +47,7 @@ print('Python Version: %s' % sys.version)
 # To increase memory allocation for EXOTIC; allows for more fits files
 # import resource
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+
 
 # here is the animation
 def animate():
@@ -66,6 +69,7 @@ import os
 import json
 import logging
 import platform
+import warnings
 import argparse
 import glob as g
 from io import StringIO
@@ -93,8 +97,11 @@ from matplotlib.animation import FuncAnimation
 plt.style.use(astropy_mpl_style)
 
 # Nested Sampling imports
-from elca import lc_fitter, binner
 import dynesty
+try:  # module import
+    from .api.elca import lc_fitter, binner
+except ImportError:  # package import
+    from api.elca import lc_fitter, binner
 
 # astropy imports
 import astropy.time
@@ -104,12 +111,17 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS
 from astroquery.simbad import Simbad
+from astroquery.gaia import Gaia
+from astropy.utils.exceptions import AstropyWarning
 
 # Image alignment import
 import astroalign as aa
 
 # Nonlinear Limb Darkening Calculations import
-from gaelLDNL import createldgrid
+try:  # module import
+    from .api.gaelLDNL import createldgrid
+except ImportError:  # package import
+    from api.gaelLDNL import createldgrid
 
 # photometry
 from photutils import CircularAperture
@@ -123,6 +135,12 @@ from skimage.registration import phase_cross_correlation
 done = True
 
 # ################### START PROPERTIES ########################################
+# GLOBALS (set in main before method calls)
+infoDict = dict()
+UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY = 0, 0, 0, 0
+distFC = 0
+ax1 = plt.figure()  # placeholder
+
 # CONFIGURATIONS
 requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
@@ -189,15 +207,15 @@ def new_scrape(filename="eaConf.json", target=None):
                      "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                      "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
-                     "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec",
+                     "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
         "from"     : "ps",  # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
-        "order by" : "pl_name",
+        "order by" : "pl_pubdate desc",
         "format"   : "csv"
     }
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -205,48 +223,55 @@ def new_scrape(filename="eaConf.json", target=None):
     uri_ipac_query['where'] = 'tran_flag=1'
 
     if target:
-        uri_ipac_query["where"] += " and hostname = '{}'".format(target.split(' ')[0])
+        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
-    # for each planet
-    for i in default.pl_name:
-
-        # extract rows for each planet
-        ddata = default.loc[default.pl_name == i]
-        edata = extra.loc[extra.pl_name == i]
-
-        # for each nan column in default
-        nans = ddata.isna()
-        for k in ddata.keys():
-            if nans[k].bool():  # if col value is nan
-                if not edata[k].isna().all():  # if replacement data exists
-                    # replace with first index
-                    default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                    # TODO could use mean for some variables (not mid-transit)
-                    # print(i,k,edata[k][edata[k].notna()].values[0])
-                else:
-                    # permanent nans - require manual entry
-                    if k == 'pl_orblper':  # omega
-                        default.loc[default.pl_name == i, k] = 0
-                    elif k == 'pl_ratdor':  # a/R*
-                        # Kepler's 3rd law
-                        semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                        default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
-                    elif k == 'pl_orbincl':  # inclination
-                        default.loc[default.pl_name == i, k] = 90
-                    elif k == "pl_orbeccen":  # eccentricity
-                        default.loc[default.pl_name == i, k] = 0
-                    elif k == "st_met":  # [Fe/H]
-                        default.loc[default.pl_name == i, k] = 0
-    
-    if len(default)==0:
-        print("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity by going to:\n"
-              "https://exoplanetarchive.ipac.caltech.edu".format(target))
-        target = str(input("\n Enter the Planet Name: "))
-        new_scrape("eaConf.json", target)
+    if len(default) == 0:
+        target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
+                       "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
+        if target.strip().lower() == 'candidate':
+            target = input("\nPlease enter candidate planet's name: ")
+            return target, True
+        else:
+            return new_scrape(filename="eaConf.json", target=target)
     else:
+        # replaces NEA default with most recent publication
+        default.iloc[0] = extra.iloc[0]
+
+        # for each planet
+        for i in default.pl_name:
+
+            # extract rows for each planet
+            ddata = default.loc[default.pl_name == i]
+            edata = extra.loc[extra.pl_name == i]
+
+            # for each nan column in default
+            nans = ddata.isna()
+            for k in ddata.keys():
+                if nans[k].bool():  # if col value is nan
+                    if not edata[k].isna().all():  # if replacement data exists
+                        # replace with first index
+                        default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
+                        # TODO could use mean for some variables (not mid-transit)
+                        # print(i,k,edata[k][edata[k].notna()].values[0])
+                    else:
+                        # permanent nans - require manual entry
+                        if k == 'pl_orblper':  # omega
+                            default.loc[default.pl_name == i, k] = 0
+                        elif k == 'pl_ratdor':  # a/R*
+                            # Kepler's 3rd law
+                            semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                            default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
+                        elif k == 'pl_orbincl':  # inclination
+                            default.loc[default.pl_name == i, k] = 90
+                        elif k == "pl_orbeccen":  # eccentricity
+                            default.loc[default.pl_name == i, k] = 0
+                        elif k == "st_met":  # [Fe/H]
+                            default.loc[default.pl_name == i, k] = 0
+
         dataframe_to_jsonfile(default, filename)
+        return target, False
 
 
 def new_getParams(data):
@@ -303,17 +328,25 @@ def new_getParams(data):
 # Method that gets and returns the julian time of the observation
 def getJulianTime(hdul):
     exptime_offset = 0
+    imageheader = hdul[0].header
+
+    exp = imageheader.get('EXPTIME')  #checking for variation in .fits header format
+    if exp:
+        exp = exp
+    else:
+        exp = imageheader.get('EXPOSURE')
+
     # Grab the BJD first
     if 'BJD_TDB' in hdul[0].header:
         julianTime = float(hdul[0].header['BJD_TDB'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['BJD_TDB']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     elif 'BJD' in hdul[0].header:
         julianTime = float(hdul[0].header['BJD'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['BJD']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # then the DATE-OBS
     elif "UT-OBS" in hdul[0].header:
         gDateTime = hdul[0].header['UT-OBS']  # gets the gregorian date and time from the fits file header
@@ -322,19 +355,19 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['UT-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then Julian Date
     elif 'JULIAN' in hdul[0].header:
         julianTime = float(hdul[0].header['JULIAN'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['JULIAN']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
     elif "MJD-OBS" in hdul[0].header:
         julianTime = float(hdul[0].header["MJD-OBS"]) + 2400000.5
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['MJD-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     else:
         gDateTime = hdul[0].header['DATE-OBS']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
@@ -342,7 +375,7 @@ def getJulianTime(hdul):
         julianTime = time.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in hdul[0].header.comments['DATE-OBS']:
-            exptime_offset = hdul[0].header['EXPTIME'] / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
 
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     return julianTime + exptime_offset
@@ -436,15 +469,33 @@ def inits_file(initspath, dictinfo, dictplanet):
 
     return dictinfo, dictplanet
 
+
+# Get planet parameters from NEA if not a candidate
+def get_planet_name(targetname):
+
+    planetdict = None
+    print("\nLooking up {}- please wait.".format(targetname))
+    # check to make sure the target can be found in the exoplanet archive right after they enter its name
+    targetname, candidateplanet = new_scrape(filename="eaConf.json", target=targetname)
+    if not candidateplanet:
+        with open("eaConf.json", "r") as confirmedFile:
+            data = json.load(confirmedFile)
+            planets = [data[i]['pl_name'] for i in range(len(data))]
+            idx = planets.index(targetname)
+            planetdict = new_getParams(data[idx])
+            print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(targetname))
+
+    return targetname, candidateplanet, planetdict
+
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
-def timeConvert(timeList, timeFormat, pDict, infoDict):
+def timeConvert(timeList, timeFormat, pDict, info_dict):
     #if timeFormat is already in BJD_TDB, just do nothing
     #Perform appropriate conversion for each time format if needed
     if timeFormat == "JD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
         timeList = convertedTimes[0]
     elif timeFormat == "MJD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=infoDict['lat'], longi=infoDict['long'], alt=infoDict['elev'])
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
         timeList = convertedTimes[0]
     return timeList
 
@@ -459,6 +510,7 @@ def fluxConvert(fluxList, errorList, fluxFormat):
         convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
         fluxList = 10. ** ((-1. * (fluxList / 1000.) / 2.5))
+    #Use distance from mean of upper/lower error bounds to calculate new sigma values
     positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
     negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
     meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)
@@ -586,6 +638,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     return userpdict
 
 
+# Conversion of Right Ascension and Declination: hours -> degrees
 def radec_hours_to_degree(ra, dec):
     while True:
         try:
@@ -599,36 +652,25 @@ def radec_hours_to_degree(ra, dec):
             dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
 
-# Check if user's directory contains imaging files that are able to be reduced
-def check_file_extensions(directory, filename):
-    # Find fits files
+# Check if user's directory contains imaging FITS files that are able to be reduced
+def check_imaging_files(directory, filename):
     file_extensions = ['.fits', '.fit', '.fts']
     inputfiles = []
 
     while True:
         try:
-            # Add / to end of directory if user does not input it
-            if directory[-1] != "/":
-                directory += "/"
-
+            directory = os.path.join(directory, '')
             if os.path.isdir(directory):
-                # Loop until we find something
                 for exti in file_extensions:
                     for file in os.listdir(directory):
                         if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
                             inputfiles.append(os.path.join(directory, file))
-                    # If we find files, then stop the for loop and while loop
                     if inputfiles:
                         return directory, inputfiles
-
-                # If we don't find any files, then we need the user to check their directory and loop over again
                 if not inputfiles:
                     raise FileNotFoundError
-
-            # If the directory does not exist
             else:
                 raise OSError
-
         except FileNotFoundError:
             extaddoption = user_input("\nError: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
                                       ".\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ", type_=str, val1='y', val2='n')
@@ -637,7 +679,7 @@ def check_file_extensions(directory, filename):
             else:
                 directory = input("Enter the directory path where " + filename + " files are located: ")
         except OSError:
-            print("Error: No such directory exists when searching for FITS files. Please try again.")
+            print("\nError: No such directory exists when searching for FITS files. Please try again.")
             directory = input("Enter the directory path where " + filename + " files are located: ")
 
 
@@ -645,60 +687,76 @@ def check_file_extensions(directory, filename):
 def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
                      # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
-    minmaxwavelen = {'J': (1040.00, 1360.00), 'H': (1420.00, 1780.00), 'K': (2015.00, 2385.00),
-                     'J NIR 1.2micron': (1040.00, 1360.00), 'H NIR 1.6micron': (1420.00, 1780.00), 'K NIR 2.2micron': (2015.00, 2385.00),
+    minmaxwavelen = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
+                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
 
                      # Sloan
-                     'SU': (321.80, 386.80), 'SG': (402.50, 551.50), 'SR': (553.10, 693.10), 'SI': (697.50, 827.50), 'SZ': (841.20, 978.20),
-                     'Sloan u': (321.80, 386.80), 'Sloan g': (402.50, 551.50), 'Sloan r': (553.10, 693.10), 'Sloan i': (697.50, 827.50), 'Sloan z': (841.20, 978.20),
+                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
+                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
+                     ('Sloan z', 'SZ'): (841.20, 978.20),
 
                      # Stromgren
-                     'STU': (336.30, 367.70), 'STV': (401.50, 418.50), 'STB': (459.55, 478.05), 'STY': (536.70, 559.30),
-                     'Stromgren u': (336.30, 367.70), 'Stromgren v': (401.50, 418.50), 'Stromgren b': (459.55, 478.05), 'Stromgren y': (536.70, 559.30),
-                     'STHBW': (481.50, 496.50), 'STHBN': (487.50, 484.50),
-                     'Stromgren Hbw': (481.50, 496.50), 'Stromgren Hbn': (487.50, 484.50),
+                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
+                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
 
                      # Johnson
-                     'U': (333.80, 398.80), 'B': (391.60, 480.60), 'V': (502.80, 586.80), 'RJ': (590.00, 810.00), 'IJ': (780, 1020),
-                     'Johnson U': (333.80, 398.80), 'Johnson B': (391.60, 480.60), 'Johnson V': (502.80, 586.80), 'Johnson R': (590.00, 810.00), 'Johnson I': (780, 1020),
+                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
+                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
+                     ('Johnson I', 'IJ'): (780.00, 1020.00),
 
                      # Cousins
-                     'R': (561.70, 719.70), 'I': (721.00, 875.00),
-                     'Cousins R': (561.70, 719.70), 'Cousins I': (721.00, 875.00)}
+                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
+
+                     # MObs Clear Filter, Source: Martin Fowler
+                     ('MObs CV', 'CV'): (350.00, 850.00),
+
+                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
+                     ('LCO Bessell B', 'O'): (391.60, 480.60), ('LCO Bessell V', 'O'): (502.80, 586.80),
+                     ('LCO Pan-STARRS w', 'O'): (404.20, 845.80), ("LCO SDSS u'", 'O'): (325.50, 382.50),
+                     ("LCO SDSS g'", 'O'): (402.00, 552.00), ("LCO SDSS r'", 'O'): (552.00, 691.00),
+                     ("LCO SDSS i'", 'O'): (690.00, 819.00)}
 
     print('\n***************************')
     print('Limb Darkening Coefficients')
     print('***************************')
 
-    print('\n\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):')
+    print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
+          '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
     for key, value in minmaxwavelen.items():
-        print('\t%s: %s-%s nm' % (key, value[0], value[1]))
+        print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
 
-    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
+    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ',
+                       type_=str, val1='y', val2='n')
 
     # User decides to allow EXOTIC to calculate limb darkening parameters
     if ldopt == 'y':
-        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int, val1=1, val2=2)
+        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
+                                    type_=int, val1=1, val2=2)
 
         # Standard filters calculating limb darkening parameters
         if standcustomopt == 1:
             while True:
                 try:
-                    filtername = input('\nPlease enter in the filter type (EX: Johnson U, U, Stromgren u, STU): ')
-                    if filtername not in minmaxwavelen:
+                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
+                    for key, value in minmaxwavelen.items():
+                        if filtername in (key[0], key[1]) and filtername != 'O':
+                            filtername = (key[0], key[1])
+                            break
+                    else:
                         raise KeyError
                     break
                 except KeyError:
-                    print('Error: The entered filter is not a part of the standard ones.')
+                    print('Error: The entered filter is not in the provided list of standard filters.')
 
             wlmin = [minmaxwavelen[filtername][0] / 1000]
             wlmax = [minmaxwavelen[filtername][1] / 1000]
+            filtername = filtername[1]
 
         # Custom filters calculating limb darkening parameters
         else:
-            filtername = input('\nPlease enter in your custom filter name: ')
             wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
             wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
+            filtername = 'O'
 
 
         priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
@@ -728,9 +786,28 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
     return nlld0, nlld1, nlld2, nlld3, filtername
 
 
+# Checks for corrupted FITS files
+def check_file_corruption(files):
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', category=AstropyWarning)
+        for file in files:
+            if file.endswith('.fits'):
+                hdul = None
+                try:
+                    hdul = fits.open(file, checksum=True)
+                except (AstropyWarning, OSError):
+                    print('Removing corrupted file: {}'.format(file))
+                    os.remove(file)
+                finally:
+                    if getattr(hdul, "close", None) and callable(hdul.close):
+                        hdul.close()
+                    del hdul
+
+
 # Check for WCS in the user's imaging data and possibly plate solves.
 def check_wcs(fits_file, saveDirectory):
-    hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+    hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
     header = hdulist[0].header
     hdulist.close()  # close stream
     del hdulist
@@ -823,7 +900,7 @@ def plate_solution(fits_file, saveDirectory):
     # Checks the job id's status for parameters
     job_id = r.json()['jobs']
     job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
-    wcs_file = saveDirectory + 'newfits.fits'
+    wcs_file = os.path.join(saveDirectory, 'newfits.fits')
 
     # Checks the job id's status
     while True:
@@ -893,7 +970,26 @@ def variableStarCheck(refx, refy, hdulWCS):
     dec = world[0][1]
     sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
 
+    #Query GAIA first to check for variability using the phot_variable_flag trait
+    radius = u.Quantity(20.0, u.arcsec)
+    gaiaQuery = Gaia.cone_search_async(sample, radius)
+    gaiaResult = gaiaQuery.get_results()
+
+    #Individually go through the phot_variable_flag indicator for each star to see if variable or not
+    variableFlagList = gaiaResult.columns["phot_variable_flag"]
+    constantCounter = 0
+    for currFlag in variableFlagList:
+        if currFlag == "VARIABLE":
+            return True
+        elif currFlag == "NOT_AVAILABLE":
+            continue
+        elif currFlag == "CONSTANT":
+            constantCounter += 1
+    if constantCounter == len(variableFlagList):
+        return False
+
     #query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    #This is a secondary check if GAIA query returns inconclusive results
     simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
     try:
         starName = simbad_result['MAIN_ID'][0].decode("utf-8")
@@ -964,9 +1060,11 @@ def gaussian_psf(x,y,x0,y0,a,sigx,sigy,rot, b):
 
 def fit_psf(data,pos,init,lo,up,psf_function=gaussian_psf,lossfn='linear',method='trf',box=15):
     xv,yv = mesh_box(pos, box)
+
     def fcn2min(pars):
         model = psf_function(xv,yv,*pars)
         return (data[yv,xv]-model).flatten()
+
     if method == 'trf':
         res = least_squares(fcn2min,x0=[*pos,*init],bounds=[lo,up],loss=lossfn,jac='3-point',method=method)
     else:
@@ -1012,10 +1110,10 @@ def fit_centroid(data, pos, init=None, box=10):
         print("  init:",init)
         print(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
         print(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
-        
+
         # use LM in unbounded optimization
         pars = fit_psf(
-            data, [wx, wy], init,    
+            data, [wx, wy], init,
             [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ],
             [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ],
             psf_function=gaussian_psf,
@@ -1122,7 +1220,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
-def realTimeReduce(i):
+def realTimeReduce(i, target_name):
     targetFluxVals = []
     referenceFluxVals = []
     normalizedFluxVals = []
@@ -1149,7 +1247,7 @@ def realTimeReduce(i):
 
     fileNumber = 1
     for fileName in g.glob(directoryP):  # Loop through all the fits files and time sorts
-        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
+        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
         # TIME
         timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
         timeList.append(timeVal)  # adds to time value list
@@ -1161,7 +1259,7 @@ def realTimeReduce(i):
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
 
     # sorts the times for later plotting use
-    sortedTimeList = sorted(timeList)
+    # sortedTimeList = sorted(timeList)
 
     # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
@@ -1177,7 +1275,7 @@ def realTimeReduce(i):
 
     for imageFile in timeSortedNames:
 
-        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
         currTime = getJulianTime(hdul)
         imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
@@ -1272,7 +1370,7 @@ def realTimeReduce(i):
     # EXIT THE FILE LOOP
 
     ax1.clear()
-    ax1.set_title(targetName)
+    ax1.set_title(target_name)
     ax1.set_ylabel('Normalized Flux')
     ax1.set_xlabel('Time (jd)')
     ax1.plot(timesListed, normalizedFluxVals, 'bo')
@@ -1288,16 +1386,21 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main():
     # TODO use text based interface if no command line arguments
 
     print('\n')
     print('*************************************************************')
     print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
-    print("Version ", versionid)
+    print("Version ", __version__)
     print('*************************************************************\n')
 
     # ---INITIALIZATION-------------------------------------------------------
+    global infoDict
+    global UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY
+    global distFC
+    global ax1
+
     targetFluxVals, referenceFluxVals, normalizedFluxVals, targUncertanties, refUncertanties, timeList, phasesList, airMassList = (
         [] for l in range(8))
 
@@ -1327,7 +1430,7 @@ if __name__ == "__main__":
         directToWatch = str(input("Enter the Directory Path of imaging files: "))
         directoryP = ""
         directoryP = directToWatch
-        directToWatch, inputfiles = check_file_extensions(directToWatch, 'imaging')
+        directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
 
         targetName = str(input("Enter the Planet Name: "))
 
@@ -1354,7 +1457,7 @@ if __name__ == "__main__":
         ax1.set_ylabel('Normalized Flux')
         ax1.set_xlabel('Time (jd)')
 
-        anim = FuncAnimation(fig, realTimeReduce, interval=15000)  # refresh every 15 seconds
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(targetName), interval=15000)  # refresh every 15 seconds
         plt.show()
 
     ###########################
@@ -1391,6 +1494,7 @@ if __name__ == "__main__":
             print("\nYour current working directory is: ", os.getcwd())
             print("\nPotential initialization files I've found in " + os.getcwd() + " are: ")
             [print(i) for i in g.glob(os.getcwd() + "/*.json")]
+            [print(i) for i in g.glob(os.getcwd()+"/exotic" + "/*.json")]
 
             # Parse input file
             while True:
@@ -1405,31 +1509,19 @@ if __name__ == "__main__":
                 except IsADirectoryError:
                     print('Error: Entered a directory. Please try again.')
 
-            # inits = []
-            # for line in initf:
-            #     if line[0] == "#": continue
-            #     inits.append(line)
-            # initf.close()
-
             if infoDict['flatsdir'] == "n":
-                flats = 'n'
                 flatsBool = False
             else:
-                flats = 'y'
                 flatsBool = True
 
             if infoDict['darksdir'] == "n":
-                darks = 'n'
                 darksBool = False
             else:
-                darks = 'y'
                 darksBool = True
 
             if infoDict['biasesdir'] == "n":
-                biases = 'n'
                 biasesBool = False
             else:
-                biases = 'y'
                 biasesBool = True
 
             if flatsBool + darksBool + biasesBool:
@@ -1450,7 +1542,7 @@ if __name__ == "__main__":
             if fileorcommandline == 1:
                 infoDict['fitsdir'] = str(input("\nEnter the Directory of imaging files: "))
 
-            infoDict['fitsdir'], inputfiles = check_file_extensions(infoDict['fitsdir'], 'imaging')
+            infoDict['fitsdir'], inputfiles = check_imaging_files(infoDict['fitsdir'], 'imaging')
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             if datafile == 'ok':
@@ -1462,26 +1554,27 @@ if __name__ == "__main__":
                 print("Data file not found. Please try again.")
                 sys.exit()
 
+            infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
+
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            infoDict['saveplot'] = str(input("Enter the Directory to Save Plots into or type new to create one: "))
+            infoDict['saveplot'] = str(input("Enter the directory to save plots into or type new to create one: "))
 
         # Check to see if the save directory exists
         while True:
             try:
+                infoDict['saveplot'] = os.path.join(infoDict['saveplot'], '')
                 if infoDict['saveplot'] == 'new':
                     infoDict['saveplot'] = create_directory()
                     break
                 # In case the user forgets the trailing / for the folder
-                if infoDict['saveplot'][-1] != "/":
-                    infoDict['saveplot'] += "/"
                 if os.path.isdir(infoDict['saveplot']):
                     break
                 raise OSError
             except OSError:
-                print('Error: the directory entered does not exist. Please try again.')
-                infoDict['saveplot'] = input("Enter the Directory to Save Plots into or type new to create one: ")
+                print('Error: the entered save directory does not exist. Please try again.')
+                infoDict['saveplot'] = input("Enter the directory to save plots into or type new to create one: ")
 
         # Make a temp directory of helpful files
         try:
@@ -1493,35 +1586,7 @@ if __name__ == "__main__":
         if fileorcommandline == 1:
             userpDict['pName'] = str(input("\nEnter the Planet Name: "))
 
-        print("\nLooking up ", userpDict['pName'], "- please wait.")
-        done = False
-
-        # check to make sure the target can be found in the exoplanet archive right after they enter its name
-        new_scrape(filename="eaConf.json", target=userpDict['pName'])
-        targetName = userpDict['pName']
-
-        CandidatePlanetBool = False
-        with open("eaConf.json", "r") as confirmedFile:
-            data = json.load(confirmedFile)
-            planets = [data[i]['pl_name'].lower().replace(' ', '').replace('-', '') for i in range(len(data))]
-            #stars = [data[i]['hostname'] for i in range(len(data))]
-            if targetName.lower().replace(' ', '').replace('-', '') not in planets:
-                while targetName.lower().replace(' ', '').replace('-', '') not in planets:
-                    done = True
-                    print("\nCannot find " + userpDict['pName'] + " in the NASA Exoplanet Archive. Check spelling or delete the file: eaConf.json.")
-                    targetName = input("If this is a planet candidate, type candidate or re-enter the planet's name: ")
-                    if targetName.replace(' ', '') == 'candidate':
-                        CandidatePlanetBool = True
-                        break
-            if not CandidatePlanetBool:
-                idx = planets.index(targetName.lower().replace(' ', '').replace('-', ''))
-                pDict = new_getParams(data[idx])
-                print('\nSuccessfully found ' + targetName + ' in the NASA Exoplanet Archive!')
-
-        if targetName.replace(' ','') != 'candidate' and targetName.replace(' ', '') != userpDict['pName']:
-            userpDict['pName'] = targetName
-
-        done = True
+        userpDict['pName'], CandidatePlanetBool, pDict = get_planet_name(userpDict['pName'])
 
         # observation date
         if fileorcommandline == 1:
@@ -1603,7 +1668,7 @@ if __name__ == "__main__":
                         flatsBool = False
 
                     if flatsBool:
-                        infoDict['flatsdir'], inputflats = check_file_extensions(infoDict['flatsdir'], 'flats')
+                        infoDict['flatsdir'], inputflats = check_imaging_files(infoDict['flatsdir'], 'flats')
                         flatsImgList = []
                         for flatFile in inputflats:
                             flatData = fits.getdata(flatFile, ext=0)
@@ -1627,7 +1692,7 @@ if __name__ == "__main__":
 
                 # Only do the dark correction if user selects this option
                 if darksBool:
-                    infoDict['darksdir'], inputdarks = check_file_extensions(infoDict['darksdir'], 'darks')
+                    infoDict['darksdir'], inputdarks = check_imaging_files(infoDict['darksdir'], 'darks')
                     darksImgList = []
                     for darkFile in inputdarks:
                         darkData = fits.getdata(darkFile, ext=0)
@@ -1645,7 +1710,7 @@ if __name__ == "__main__":
 
                 if biasesBool:
                     # Add / to end of directory if user does not input it
-                    infoDict['biasesdir'], inputbiases = check_file_extensions(infoDict['biasesdir'], 'biases')
+                    infoDict['biasesdir'], inputbiases = check_imaging_files(infoDict['biasesdir'], 'biases')
                     biasesImgList = []
                     for biasFile in inputbiases:
                         biasData = fits.getdata(biasFile, ext=0)
@@ -1670,16 +1735,14 @@ if __name__ == "__main__":
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-        # Get the planetary parameters non-candidate exoplanets
-        if not CandidatePlanetBool:
-            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
-        # Candidate planetary parameters for exoplanets
-        else:
-            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict)
+
+        pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
         ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+
+        # check_file_corruption(inputfiles)
 
         exptimes = list()
 
@@ -1714,7 +1777,7 @@ if __name__ == "__main__":
                     # Keeps a list of file names
                     fileNameStr.append(fileName)
 
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
                     imageheader = hdul[0].header
                     # TIME
                     timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
@@ -1733,7 +1796,11 @@ if __name__ == "__main__":
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
-                    exptimes.append(imageheader['EXPTIME'])
+                    exp = imageheader.get('EXPTIME')  #checking for variation in .fits header format
+                    if exp:
+                        exptimes.append(imageheader['EXPTIME'])
+                    else:
+                        exptimes.append(imageheader['EXPOSURE'])
 
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
@@ -1771,7 +1838,7 @@ if __name__ == "__main__":
                 sortedallImageData = allImageData[np.argsort(timeList)]
                 timesListed = timesListed[np.argsort(timeList)]
                 airMassList = airMassList[np.argsort(timeList)]
-                sortedTimeList = sorted(timeList)
+                # sortedTimeList = sorted(timeList)
 
                 # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
                 # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
@@ -1831,7 +1898,7 @@ if __name__ == "__main__":
                 sortedallImageData = sortedallImageData[firstimagecounter:]
                 timesListed = timesListed[firstimagecounter:]
                 airMassList = airMassList[firstimagecounter:]
-                sortedTimeList = sortedTimeList[firstimagecounter:]
+                # sortedTimeList = sortedTimeList[firstimagecounter:]
 
                 # apply cals correction if applicable
                 if darksBool:
@@ -1847,23 +1914,24 @@ if __name__ == "__main__":
                     print("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                # Plate Solution
-                pathSolve = infoDict['saveplot'] + 'ref_file_%s_%s' % (str(firstimagecounter), fileNameStr[firstimagecounter].split('/')[-1])
+                # Reference File
+                refFile = os.path.join(infoDict['saveplot'], 'ref_file_%s_%s'
+                                       % (firstimagecounter, os.path.split(fileNameStr[firstimagecounter])[-1]))
 
-                # Removes existing file of first_fits.fits
+                # Removes existing file of reference file
                 try:
-                    os.remove(pathSolve)
+                    os.remove(refFile)
                 except OSError:
                     pass
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
-                convertToFITS.writeto(pathSolve)
-                print('\nHere is the path to the reference imaging file EXOTIC: \n' + pathSolve)
-                wcsFile = check_wcs(pathSolve, infoDict['saveplot'])
+                convertToFITS.writeto(refFile)
+                print('\nHere is the path to the reference imaging file EXOTIC: \n' + refFile)
+                wcsFile = check_wcs(refFile, infoDict['saveplot'])
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
                     print('Here is the path to your plate solution: \n' + wcsFile)
-                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                    hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
                     rafile, decfile = get_radec(hdulWCS)
 
                     # Save previously entered x and y pixel coordinates before checking against plate solution
@@ -1878,6 +1946,9 @@ if __name__ == "__main__":
 
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
+
+            timesListed = timesListed[boollist]
+            airMassList = airMassList[boollist]
 
             minAperture = max(1,int(2 * max(targsigX, targsigY)))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
@@ -1904,19 +1975,19 @@ if __name__ == "__main__":
                 if wcsFile:
                     print("Checking for variability in current comparison star... ")
                     if variableStarCheck(refx, refy, hdulWCS):
-                        print("Current comparison star is variable, proceeding to next star...")
+                        print("Current comparison star is variable, proceeding to next star.")
                         continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
                 aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
-                
+
                 # Run through only 5 different aperture sizes, all interger pixel values
                 aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
-                
+
                 # single annulus size
                 annulus_sizes = [5]
 
@@ -2123,7 +2194,7 @@ if __name__ == "__main__":
                                 # ALL IMAGES
                                 sortedallImageData = sortedallImageData[:fileNumber]
 
-                                boollist = boollist[:fileNumber]
+                                # boollist = boollist[:fileNumber]
 
                                 break
 
@@ -2131,20 +2202,18 @@ if __name__ == "__main__":
 
                         # NORMALIZE BY REF STAR
                         # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        rawFinalFluxData = np.array(targetFluxVals)[boollist]
+                        # rawFinalFluxData = np.array(targetFluxVals)
 
                         # Convert Everything to numpy Arrays
-                        arrayFinalFlux = np.array(rawFinalFluxData)  # finalFluxData
-                        arrayTargets = np.array(targetFluxVals)[boollist]  # finalFluxData
-                        arrayTimes = np.array(timesListed)[boollist]
-                        arrayPhases = np.array(phasesList)[boollist]
-                        arrayTargets = np.array(targetFluxVals)[boollist]
-                        arrayReferences = np.array(referenceFluxVals)[boollist]
-                        arrayAirmass = np.array(airMassList)[boollist]
-                        arrayTUnc = np.array(targUncertanties)[boollist]
-                        arrayRUnc = np.array(refUncertanties)[boollist]
+                        arrayFinalFlux = np.array(targetFluxVals)  # finalFluxData
+                        arrayTimes = np.array(timesListed)
+                        arrayPhases = np.array(phasesList)
+                        arrayReferences = np.array(referenceFluxVals)
+                        arrayAirmass = np.array(airMassList)
+                        arrayTUnc = np.array(targUncertanties)
+                        arrayRUnc = np.array(refUncertanties)
 
-                        arrayNormUnc = rawFinalFluxData**0.5
+                        arrayNormUnc = arrayFinalFlux**0.5
 
                         # Execute sigma_clip
                         try:
@@ -2174,12 +2243,24 @@ if __name__ == "__main__":
 
                         if np.floor(phase).max()-np.floor(phase).min() == 0:
                             print("WARNING!")
-                            print("Estimated mid-transit time is not within the observations")
-                            print(" Check Period, Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-                            print("  the times in your image headers should be in UTC too")
-                            print('start:', arrayTimes[~filtered_data].min())
-                            print('  end:', arrayTimes[~filtered_data].max())
-                            print('prior:', prior['tmid'])
+                            print(" Estimated mid-transit time is not within the observations")
+                            print(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                            print('  obs start:', arrayTimes[~filtered_data].min())
+                            print('    obs end:', arrayTimes[~filtered_data].max())
+                            print(' tmid prior:', prior['tmid'])
+
+                        # check for Nans + Zeros
+                        for k in pDict:
+                            if "Unc" in k:
+                                if not pDict[k]:
+                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    pDict[k] = 1
+                                elif pDict[k] == 0 or np.isnan(pDict[k]):
+                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    pDict[k] = 1
+                            elif not pDict[k]:
+                                print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
+                                pDict[k] = 0
 
                         mybounds = {
                             'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],
@@ -2214,10 +2295,10 @@ if __name__ == "__main__":
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
                             # gets the centroid trace plots to ensure tracking is working
-                            finXTargCentArray = np.array(xTargCent)[boollist]
-                            finYTargCentArray = np.array(yTargCent)[boollist]
-                            finXRefCentArray = np.array(xRefCent)[boollist]
-                            finYRefCentArray = np.array(yRefCent)[boollist]
+                            finXTargCentArray = np.array(xTargCent)
+                            finYTargCentArray = np.array(yTargCent)
+                            finXRefCentArray = np.array(xRefCent)
+                            finYRefCentArray = np.array(yRefCent)
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
@@ -2230,7 +2311,7 @@ if __name__ == "__main__":
                             nonBJDTimes = arrayTimes[~filtered_data]
                             nonBJDPhases = arrayPhases[~filtered_data]
                             goodAirmasses = arrayAirmass[~filtered_data]
-                            goodTargets = arrayTargets[~filtered_data]
+                            goodTargets = arrayFinalFlux[~filtered_data]
                             goodReferences = arrayReferences[~filtered_data]
                             goodTUnc = arrayTUnc[~filtered_data]
                             goodRUnc = arrayRUnc[~filtered_data]
@@ -2314,7 +2395,7 @@ if __name__ == "__main__":
             target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture+minAnnulus, color='lime', fill=False, ls='--', lw=.5)
             ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
             ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
-            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None)  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
+            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.log10(np.nanmin(sortedallImageData[0][sortedallImageData[0] > 0])), vmax=np.log10(np.nanmax(sortedallImageData[0][sortedallImageData[0] > 0])))  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
             plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
@@ -2623,12 +2704,12 @@ if __name__ == "__main__":
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(targetName, infoDict['date']))
+        fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], infoDict['date']))
 
 
         # write output to text file
-        outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + targetName + infoDict['date'] + '.csv', 'w+')
-        outParamsFile.write('# FINAL TIMESERIES OF ' + targetName + '\n')
+        outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + '.csv', 'w+')
+        outParamsFile.write('# FINAL TIMESERIES OF ' + pDict['pName'] + '\n')
         outParamsFile.write('# BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
 
         phase = (myfit.time - myfit.parameters['tmid'] + 0.5*pDict['pPer'])/pDict['pPer'] % 1
@@ -2681,7 +2762,7 @@ if __name__ == "__main__":
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
         outParamsFile.write('#OBSCODE=' + infoDict['aavsonum'] + '\n')  # UI
         outParamsFile.write('#SECONDARYOBSCODE=' + infoDict['secondobs'] + '\n')  # UI
-        outParamsFile.write('#SOFTWARE=EXOTIC v' + versionid + '\n')  # fixed
+        outParamsFile.write('#SOFTWARE=EXOTIC v' + __version__ + '\n')  # fixed
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
         outParamsFile.write('#OBSTYPE=' + infoDict['ctype'] + '\n')
@@ -2723,3 +2804,7 @@ if __name__ == "__main__":
         print('\n************************')
         print('End of Reduction Process')
         print('************************')
+
+
+if __name__ == "__main__":
+    main()

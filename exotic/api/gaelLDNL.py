@@ -165,7 +165,7 @@ def lnldx(params, x, data=None, weights=None):
     G. ROUDIER: Linear law
     '''
     gamma1=params['gamma1'].value
-    model=LinearModel.evaluate(x, [gamma1])
+    model=LinearModel.evaluate(x, np.array(gamma1))
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights
@@ -177,7 +177,7 @@ def qdldx(params, x, data=None, weights=None):
     '''
     gamma1 = params['gamma2'].value
     gamma2 = params['gamma4'].value
-    model = QuadraticModel.evaluate(x, [gamma1, gamma2])
+    model = QuadraticModel.evaluate(x, np.array((gamma1, gamma2)))
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights
@@ -191,7 +191,7 @@ def nlldx(params, x, data=None, weights=None):
     gamma2 = params['gamma2'].value
     gamma3 = params['gamma3'].value
     gamma4 = params['gamma4'].value
-    model = NonlinearModel.evaluate(x, [gamma1, gamma2, gamma3, gamma4])
+    model = NonlinearModel.evaluate(x, np.array((gamma1, gamma2, gamma3, gamma4)))
     if data is None: return model
     if weights is None: return data - model
     return (data - model)/weights

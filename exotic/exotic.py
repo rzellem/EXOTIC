@@ -439,12 +439,11 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
 
 
 # Create a save directory within the current working directory
-def create_directory():
+def create_directory(directory):
     while True:
         try:
             directoryname = input('Enter the name for your new directory: ')
-            newdirectoryPath = os.getcwd()
-            savedirectory = newdirectoryPath + '/' + directoryname + '/'
+            savedirectory = os.path.join(directory + directoryname, '')
             os.mkdir(savedirectory)
         except OSError:
             print("Creation of the directory %s failed" % savedirectory)
@@ -1489,12 +1488,13 @@ def main():
         fileorcommandline = user_input('How would you like to input your initial parameters? '
                                        'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
+        cwd = os.path.join(os.path.split(os.getcwd())[0], '')
+
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            print("\nYour current working directory is: ", os.getcwd())
-            print("\nPotential initialization files I've found in " + os.getcwd() + " are: ")
-            [print(i) for i in g.glob(os.getcwd() + "/*.json")]
-            [print(i) for i in g.glob(os.getcwd()+"/exotic" + "/*.json")]
+            print("\nYour current working directory is: ", cwd)
+            print("\nPotential initialization files I've found in {} are: ".format(cwd))
+            [print(i) for i in g.glob(cwd + "/*.json")]
 
             # Parse input file
             while True:
@@ -1564,10 +1564,10 @@ def main():
         # Check to see if the save directory exists
         while True:
             try:
-                infoDict['saveplot'] = os.path.join(infoDict['saveplot'], '')
                 if infoDict['saveplot'] == 'new':
-                    infoDict['saveplot'] = create_directory()
+                    infoDict['saveplot'] = create_directory(cwd)
                     break
+                infoDict['saveplot'] = os.path.join(infoDict['saveplot'], '')
                 # In case the user forgets the trailing / for the folder
                 if os.path.isdir(infoDict['saveplot']):
                     break

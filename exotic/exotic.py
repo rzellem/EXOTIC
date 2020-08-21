@@ -662,7 +662,7 @@ def check_imaging_files(directory, filename):
             if os.path.isdir(directory):
                 for exti in file_extensions:
                     for file in os.listdir(directory):
-                        if os.path.exists(file.lower().endswith(exti.lower())) and file[0:2] not in ('ref', 'new'):
+                        if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
                             inputfiles.append(os.path.join(directory, file))
                     if inputfiles:
                         return directory, inputfiles

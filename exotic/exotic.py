@@ -662,7 +662,7 @@ def check_imaging_files(directory, filename):
             if os.path.isdir(directory):
                 for exti in file_extensions:
                     for file in os.listdir(directory):
-                        if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
+                        if os.path.exists(file.lower().endswith(exti.lower())) and file[0:2] not in ('ref', 'new'):
                             inputfiles.append(os.path.join(directory, file))
                     if inputfiles:
                         return directory, inputfiles
@@ -710,10 +710,10 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                      ('MObs CV', 'CV'): (350.00, 850.00),
 
                      # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'O'): (391.60, 480.60), ('LCO Bessell V', 'O'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'O'): (404.20, 845.80), ("LCO SDSS u'", 'O'): (325.50, 382.50),
-                     ("LCO SDSS g'", 'O'): (402.00, 552.00), ("LCO SDSS r'", 'O'): (552.00, 691.00),
-                     ("LCO SDSS i'", 'O'): (690.00, 819.00)}
+                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
+                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ("LCO SDSS u'", 'N/A'): (325.50, 382.50),
+                     ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
+                     ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
     print('\n***************************')
     print('Limb Darkening Coefficients')
@@ -738,7 +738,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                 try:
                     filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
                     for key, value in minmaxwavelen.items():
-                        if filtername in (key[0], key[1]) and filtername != 'O':
+                        if filtername in (key[0], key[1]) and filtername != 'N/A':
                             filtername = (key[0], key[1])
                             break
                     else:
@@ -755,7 +755,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
         else:
             wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
             wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
-            filtername = 'O'
+            filtername = 'N/A'
 
 
         priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
@@ -791,17 +791,14 @@ def check_file_corruption(files):
     with warnings.catch_warnings():
         warnings.simplefilter('error', category=AstropyWarning)
         for file in files:
-            if file.endswith('.fits'):
-                hdul = None
-                try:
-                    hdul = fits.open(file, checksum=True)
-                except (AstropyWarning, OSError):
-                    print('Removing corrupted file: {}'.format(file))
-                    os.remove(file)
-                finally:
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
+            try:
+                with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
+                    pass
+            except (AstropyWarning, OSError):
+                print('Found corrupted file and removing from reduction: {}'.format(file))
+                del hdul[0].data
+                files.remove(file)
+        return files
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -1742,7 +1739,7 @@ def main():
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
-        # check_file_corruption(inputfiles)
+        inputfiles = check_file_corruption(inputfiles)
 
         exptimes = list()
 

@@ -383,11 +383,7 @@ def getJulianTime(hdul):
 
 # Method that gets and returns the current phase of the target
 def getPhase(curTime, pPeriod, tMid):
-    phase = ((curTime - tMid) / pPeriod) % 1
-    if phase >= .5:
-        return -1 * (1 - phase)
-    else:
-        return phase
+    return ((curTime - tMid + 0.5*pPeriod) / pPeriod) % 1
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)

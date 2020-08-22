@@ -192,20 +192,45 @@ def tap_query(base_url, query, dataframe=True):
         return response.text
 
 
-def new_scrape(filename="eaConf.json", target=None):
+
+def tmid_scrape(filename="eaConf.json", target=None):
 
     # scrape_new()
     uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
     uri_ipac_query = {
         # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
-        "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
+        "select"   : "pl_name,pl_tranmid,pl_tranmiderr1,pl_trandep,pl_trandeperr1,pl_trandeperr2,pl_refname",
+        "from"     : "ps",  # Table name
+        "where"    : "tran_flag = 1",
+        "order by" : "pl_pubdate desc",
+        "format"   : "csv"
+    }
+
+    if target:
+        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+
+    default = tap_query(uri_ipac_base, uri_ipac_query)
+
+    if filename:
+        dataframe_to_jsonfile(default, filename)
+    else:
+        return default
+
+def NEA_scrape(filename="eaConf.json", target=None):
+
+    # scrape_new()
+    uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+    uri_ipac_query = {
+        # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+        "select"   : "pl_name,hostname,tran_flag,pl_radj,pl_radjerr1,pl_refname,"
                      "pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,"
-                     "pl_orbper,pl_orbpererr1,pl_orbeccen,"
-                     "pl_orblper,pl_tranmid,pl_tranmiderr1,"
+                     "pl_orbper,pl_orbpererr1,pl_orbeccen,pl_orbeccenerr1,"
+                     "pl_orblper,pl_orblpererr1,pl_tranmid,pl_tranmiderr1,"
                      "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                      "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
+                     #"pl_orbper_reflink, pl_orblper_reflink, pl_ratdor_reflink, pl_tranmid_reflink",
         "from"     : "ps",  # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
         "order by" : "pl_pubdate desc",
@@ -242,7 +267,11 @@ def new_scrape(filename="eaConf.json", target=None):
                 if not edata[k].isna().all():  # if replacement data exists
                     # replace with first index
                     default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                    # TODO could use mean for some variables (not mid-transit)
+
+                    # add reference 
+                    newkey = k+"_reflink"
+                    default[newkey] = edata["pl_refname"][edata[k].notna()].values[0]
+
                     # print(i,k,edata[k][edata[k].notna()].values[0])
                 else:
                     # permanent nans - require manual entry
@@ -259,13 +288,14 @@ def new_scrape(filename="eaConf.json", target=None):
                     elif k == "st_met":  # [Fe/H]
                         default.loc[default.pl_name == i, k] = 0
 
-    if len(default)==0:
-        print("Cannot find target ({}) in NASA exoplanet archive, check case sensitivity".format(target))
-        target = str(input("\n Enter the Planet Name: "))
-        new_scrape("eaConf.json", target)
-    else:
-        dataframe_to_jsonfile(default, filename)
+                    if k in ["pl_orblper", "pl_ratdor", "pl_orbincl", "pl_orbeccen", "st_met"]:
+                        newkey = k+"_reflink"
+                        default[newkey] = "Estimated"
 
+    if filename:
+        dataframe_to_jsonfile(default, filename)
+    else:
+        return default
 
 def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
@@ -1545,7 +1575,7 @@ def main():
         done = False
 
         # check to make sure the target can be found in the exoplanet archive right after they enter its name
-        new_scrape(filename="eaConf.json", target=userpDict['pName'])
+        NEA_scrape(filename="eaConf.json", target=userpDict['pName'])
         targetName = userpDict['pName']
 
         CandidatePlanetBool = False
@@ -2248,9 +2278,9 @@ def main():
                                 pDict[k] = 0
 
                         mybounds = {
-                            'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],
+                            'rprs':[0, pDict['rprs']+25*pDict['rprsUnc']],
                             'tmid':[max(lower,arrayTimes[~filtered_data].min()),min(arrayTimes[~filtered_data].max(),upper)],
-                            'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+                            'ars':[pDict['aRs']-25*pDict['aRsUnc'], pDict['aRs']+25*pDict['aRsUnc']],
 
                             'a1':[0, 3*max(arrayFinalFlux[~filtered_data])],
                             'a2':[-3,3],

@@ -187,7 +187,7 @@ def transit(time, values):
 
 
 def getPhase(curTime, pPeriod, tMid):
-    phase = ((curTime - tMid) / pPeriod) % 1
+    return ((curTime - tMid + 0.5*pPeriod) / pPeriod) % 1
     mask = phase >= 0.5
     phase[mask] = -1 * (1-phase[mask])
     return phase

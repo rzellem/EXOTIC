@@ -195,7 +195,7 @@ def tap_query(base_url, query, dataframe=True):
 
 
 
-def tmid_scrape(filename="eaConf.json", target=None):
+def tmid_scrape(filename=None, target=None):
 
     # scrape_new()
     uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
@@ -213,7 +213,7 @@ def tmid_scrape(filename="eaConf.json", target=None):
 
     default = tap_query(uri_ipac_base, uri_ipac_query)
 
-    if filename:
+    if isinstance(filename,str):
         dataframe_to_jsonfile(default, filename)
     else:
         return default
@@ -252,53 +252,41 @@ def NEA_scrape(filename="eaConf.json", target=None):
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
-    if len(default) == 0:
-        target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
-                       "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
-        if target.strip().lower() == 'candidate':
-            target = input("\nPlease enter candidate planet's name: ")
-            return target, True
-        else:
-            return new_scrape(filename="eaConf.json", target=target)
-    else:
-        # replaces NEA default with most recent publication
-        default.iloc[0] = extra.iloc[0]
+    # replaces NEA default with most recent publication
+    default.iloc[0] = extra.iloc[0]
 
-        # for each planet
-        for i in default.pl_name:
+    # for each planet
+    for i in default.pl_name:
 
-            # extract rows for each planet
-            ddata = default.loc[default.pl_name == i]
-            edata = extra.loc[extra.pl_name == i]
+        # extract rows for each planet
+        ddata = default.loc[default.pl_name == i]
+        edata = extra.loc[extra.pl_name == i]
 
-            # for each nan column in default
-            nans = ddata.isna()
-            for k in ddata.keys():
-                if nans[k].bool():  # if col value is nan
-                    if not edata[k].isna().all():  # if replacement data exists
-                        # replace with first index
-                        default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                        # TODO could use mean for some variables (not mid-transit)
-                        # print(i,k,edata[k][edata[k].notna()].values[0])
-                    else:
-                        # permanent nans - require manual entry
-                        if k == 'pl_orblper':  # omega
-                            default.loc[default.pl_name == i, k] = 0
-                        elif k == 'pl_ratdor':  # a/R*
-                            # Kepler's 3rd law
-                            semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                            default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
-                        elif k == 'pl_orbincl':  # inclination
-                            default.loc[default.pl_name == i, k] = 90
-                        elif k == "pl_orbeccen":  # eccentricity
-                            default.loc[default.pl_name == i, k] = 0
-                        elif k == "st_met":  # [Fe/H]
-                            default.loc[default.pl_name == i, k] = 0
+        # for each nan column in default
+        nans = ddata.isna()
+        for k in ddata.keys():
+            if nans[k].bool():  # if col value is nan
+                if not edata[k].isna().all():  # if replacement data exists
+                    # replace with first index
+                    default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
+                    # TODO could use mean for some variables (not mid-transit)
+                    # print(i,k,edata[k][edata[k].notna()].values[0])
+                else:
+                    # permanent nans - require manual entry
+                    if k == 'pl_orblper':  # omega
+                        default.loc[default.pl_name == i, k] = 0
+                    elif k == 'pl_ratdor':  # a/R*
+                        # Kepler's 3rd law
+                        semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                        default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
+                    elif k == 'pl_orbincl':  # inclination
+                        default.loc[default.pl_name == i, k] = 90
+                    elif k == "pl_orbeccen":  # eccentricity
+                        default.loc[default.pl_name == i, k] = 0
+                    elif k == "st_met":  # [Fe/H]
+                        default.loc[default.pl_name == i, k] = 0
 
-        dataframe_to_jsonfile(default, filename)
-        return target, False
-
-    if filename:
+    if isinstance(filename,str):
         dataframe_to_jsonfile(default, filename)
     else:
         return default

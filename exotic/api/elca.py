@@ -188,9 +188,6 @@ def transit(time, values):
 
 def getPhase(curTime, pPeriod, tMid):
     return ((curTime - tMid + 0.5*pPeriod) / pPeriod) % 1
-    mask = phase >= 0.5
-    phase[mask] = -1 * (1-phase[mask])
-    return phase
 
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):
@@ -245,10 +242,10 @@ class lc_fitter(object):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
             model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
-            return ((self.data-model)/self.dataerr)**2 
+            return ((self.data-model)/self.dataerr)**2
 
         try:
-            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], 
+            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
                 bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
         except:
             print("bounded  light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
@@ -409,7 +406,7 @@ class lc_fitter(object):
         return f,axs
 
     def plot_triangle(self):
-        # TO DO 
+        # TO DO
         fig,axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         return fig, axs

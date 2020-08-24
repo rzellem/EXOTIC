@@ -486,9 +486,13 @@ def inits_file(initspath, dictinfo, dictplanet):
 def get_planet_name(targetname):
 
     planetdict = None
-    print("\nLooking up {}- please wait.".format(targetname))
+    print("\nLooking up {} please wait.".format(targetname))
     # check to make sure the target can be found in the exoplanet archive right after they enter its name
-    targetname, candidateplanet = new_scrape(filename="eaConf.json", target=targetname)
+    try:
+        NEA_scrape(filename="eaConf.json", target=targetname)
+    except:
+        
+        
     if not candidateplanet:
         with open("eaConf.json", "r") as confirmedFile:
             data = json.load(confirmedFile)
@@ -1498,7 +1502,7 @@ def main():
         fileorcommandline = user_input('How would you like to input your initial parameters? '
                                        'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
-        cwd = os.path.join(os.path.split(os.getcwd())[0], '')
+        cwd = os.getcwd() #os.path.join(os.path.split(), '')
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:

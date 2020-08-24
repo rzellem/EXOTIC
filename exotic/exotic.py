@@ -491,8 +491,8 @@ def get_planet_name(targetname):
     try:
         NEA_scrape(filename="eaConf.json", target=targetname)
     except:
-        
-        
+        pass
+
     if not candidateplanet:
         with open("eaConf.json", "r") as confirmedFile:
             data = json.load(confirmedFile)

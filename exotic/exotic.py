@@ -2703,7 +2703,7 @@ def main():
         # write output to text file
         outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + '.csv', 'w+')
         outParamsFile.write('# FINAL TIMESERIES OF ' + pDict['pName'] + '\n')
-        outParamsFile.write('# BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
+        outParamsFile.write('# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n')
 
         phase = (myfit.time - myfit.parameters['tmid'] + 0.5*pDict['pPer'])/pDict['pPer'] % 1
 

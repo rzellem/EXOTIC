@@ -194,45 +194,20 @@ def tap_query(base_url, query, dataframe=True):
         return response.text
 
 
-
-def tmid_scrape(filename=None, target=None):
-
-    # scrape_new()
-    uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
-    uri_ipac_query = {
-        # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
-        "select"   : "pl_name,pl_tranmid,pl_tranmiderr1,pl_trandep,pl_trandeperr1,pl_trandeperr2,pl_refname",
-        "from"     : "ps",  # Table name
-        "where"    : "tran_flag = 1",
-        "order by" : "pl_pubdate desc",
-        "format"   : "csv"
-    }
-
-    if target:
-        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
-
-    default = tap_query(uri_ipac_base, uri_ipac_query)
-
-    if isinstance(filename,str):
-        dataframe_to_jsonfile(default, filename)
-    else:
-        return default
-
-def NEA_scrape(filename="eaConf.json", target=None):
+def new_scrape(filename="eaConf.json", target=None):
 
     # scrape_new()
     uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
     uri_ipac_query = {
         # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
-        "select"   : "pl_name,hostname,tran_flag,pl_radj,pl_radjerr1,pl_refname,"
+        "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
                      "pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,"
-                     "pl_orbper,pl_orbpererr1,pl_orbeccen,pl_orbeccenerr1,"
-                     "pl_orblper,pl_orblpererr1,pl_tranmid,pl_tranmiderr1,"
+                     "pl_orbper,pl_orbpererr1,pl_orbeccen,"
+                     "pl_orblper,pl_tranmid,pl_tranmiderr1,"
                      "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                      "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
-                     #"pl_orbper_reflink, pl_orblper_reflink, pl_ratdor_reflink, pl_tranmid_reflink",
         "from"     : "ps",  # Table name
         "where"    : "tran_flag = 1 and default_flag = 1",
         "order by" : "pl_pubdate desc",
@@ -252,44 +227,52 @@ def NEA_scrape(filename="eaConf.json", target=None):
 
     extra = tap_query(uri_ipac_base, uri_ipac_query)
 
-    # replaces NEA default with most recent publication
-    default.iloc[0] = extra.iloc[0]
-
-    # for each planet
-    for i in default.pl_name:
-
-        # extract rows for each planet
-        ddata = default.loc[default.pl_name == i]
-        edata = extra.loc[extra.pl_name == i]
-
-        # for each nan column in default
-        nans = ddata.isna()
-        for k in ddata.keys():
-            if nans[k].bool():  # if col value is nan
-                if not edata[k].isna().all():  # if replacement data exists
-                    # replace with first index
-                    default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                    # TODO could use mean for some variables (not mid-transit)
-                    # print(i,k,edata[k][edata[k].notna()].values[0])
-                else:
-                    # permanent nans - require manual entry
-                    if k == 'pl_orblper':  # omega
-                        default.loc[default.pl_name == i, k] = 0
-                    elif k == 'pl_ratdor':  # a/R*
-                        # Kepler's 3rd law
-                        semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                        default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
-                    elif k == 'pl_orbincl':  # inclination
-                        default.loc[default.pl_name == i, k] = 90
-                    elif k == "pl_orbeccen":  # eccentricity
-                        default.loc[default.pl_name == i, k] = 0
-                    elif k == "st_met":  # [Fe/H]
-                        default.loc[default.pl_name == i, k] = 0
-
-    if isinstance(filename,str):
-        dataframe_to_jsonfile(default, filename)
+    if len(default) == 0:
+        target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
+                       "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
+        if target.strip().lower() == 'candidate':
+            target = input("\nPlease enter candidate planet's name: ")
+            return target, True
+        else:
+            return new_scrape(filename="eaConf.json", target=target)
     else:
-        return default
+        # replaces NEA default with most recent publication
+        default.iloc[0] = extra.iloc[0]
+
+        # for each planet
+        for i in default.pl_name:
+
+            # extract rows for each planet
+            ddata = default.loc[default.pl_name == i]
+            edata = extra.loc[extra.pl_name == i]
+
+            # for each nan column in default
+            nans = ddata.isna()
+            for k in ddata.keys():
+                if nans[k].bool():  # if col value is nan
+                    if not edata[k].isna().all():  # if replacement data exists
+                        # replace with first index
+                        default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
+                        # TODO could use mean for some variables (not mid-transit)
+                        # print(i,k,edata[k][edata[k].notna()].values[0])
+                    else:
+                        # permanent nans - require manual entry
+                        if k == 'pl_orblper':  # omega
+                            default.loc[default.pl_name == i, k] = 0
+                        elif k == 'pl_ratdor':  # a/R*
+                            # Kepler's 3rd law
+                            semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                            default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
+                        elif k == 'pl_orbincl':  # inclination
+                            default.loc[default.pl_name == i, k] = 90
+                        elif k == "pl_orbeccen":  # eccentricity
+                            default.loc[default.pl_name == i, k] = 0
+                        elif k == "st_met":  # [Fe/H]
+                            default.loc[default.pl_name == i, k] = 0
+
+        dataframe_to_jsonfile(default, filename)
+        return target, False
+
 
 def new_getParams(data):
     # translate data from Archive keys to Ethan Keys
@@ -486,13 +469,9 @@ def inits_file(initspath, dictinfo, dictplanet):
 def get_planet_name(targetname):
 
     planetdict = None
-    print("\nLooking up {} please wait.".format(targetname))
+    print("\nLooking up {}- please wait.".format(targetname))
     # check to make sure the target can be found in the exoplanet archive right after they enter its name
-    try:
-        NEA_scrape(filename="eaConf.json", target=targetname)
-    except:
-        pass
-
+    targetname, candidateplanet = new_scrape(filename="eaConf.json", target=targetname)
     if not candidateplanet:
         with open("eaConf.json", "r") as confirmedFile:
             data = json.load(confirmedFile)
@@ -1502,7 +1481,7 @@ def main():
         fileorcommandline = user_input('How would you like to input your initial parameters? '
                                        'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
-        cwd = os.getcwd() #os.path.join(os.path.split(), '')
+        cwd = os.path.join(os.path.split(os.getcwd())[0], '')
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
@@ -2277,9 +2256,9 @@ def main():
                                 pDict[k] = 0
 
                         mybounds = {
-                            'rprs':[0, pDict['rprs']+25*pDict['rprsUnc']],
+                            'rprs':[0, pDict['rprs']+3*pDict['rprsUnc']],
                             'tmid':[max(lower,arrayTimes[~filtered_data].min()),min(arrayTimes[~filtered_data].max(),upper)],
-                            'ars':[pDict['aRs']-25*pDict['aRsUnc'], pDict['aRs']+25*pDict['aRsUnc']],
+                            'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
                             'a1':[0, 3*max(arrayFinalFlux[~filtered_data])],
                             'a2':[-3,3],

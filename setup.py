@@ -20,7 +20,6 @@ import setuptools
 AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "rzellem@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
-LICENSE = "Proprietary -- Copyright (c) 2019-2020, California Institute of Technology."
 NAME = "exotic"
 PYTHON_REQUIREMENTS = ">=3.7.0"
 URL = "https://github.com/rzellem/EXOTIC"
@@ -42,7 +41,7 @@ def description_read():
 def license_read():
     annum = time.gmtime().tm_year
     # provide one-line summary per LICENSE spec
-    lic = f"Copyright (c) 2019-{annum}, California Institute of Technology." 
+    lic = f"Proprietary -- Copyright (c) 2019-{annum}, California Institute of Technology." 
     return lic
 
 
@@ -71,7 +70,7 @@ setuptools.setup(name=NAME,
                  url=URL,
                  author=AUTHOR,
                  author_email=AUTHOR_EMAIL,
-                 license=LICENSE,
+                 license=license_read(),
                  classifiers=[
                      # Trove classifiers
                      # Full list: https://pypi.python.org/pypi?%3Aaction=list_classifiers

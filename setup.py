@@ -18,7 +18,7 @@ import setuptools
 
 # Package meta-data sane defaults
 AUTHOR = "Exoplanet Watch at NASA JPL"
-AUTHOR_EMAIL = "rzellem@jpl.nasa.gov"
+AUTHOR_EMAIL = "exoplanetwatch@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
 NAME = "exotic"
 PYTHON_REQUIREMENTS = ">=3.7.0"

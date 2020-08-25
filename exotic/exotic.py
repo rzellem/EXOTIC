@@ -646,6 +646,17 @@ def radec_hours_to_degree(ra, dec):
             ra = input('Input the right ascension of target (HH:MM:SS): ')
             dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
+def round_to_2(*args):
+    x = args[0]
+    if len(args) == 1:
+        y = args[0]
+    else:
+        y = args[1]
+    if np.floor(y) >= 1.:
+        roundval = 2
+    else:
+        roundval = -int(np.floor(np.log10(abs(y))))+1
+    return round(x, roundval)
 
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
@@ -2736,13 +2747,13 @@ def main():
         outParamsFile = open(infoDict['saveplot'] + 'FinalParams' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
-        outParamsFile.write(' Mid-Transit Time: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)\n')
-        outParamsFile.write(' Ratio of Planet to Stellar Radius: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
-            myfit.errors['rprs']) + ' (Rp/Rs)\n')
-        outParamsFile.write(' transit depth uncertainty: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
-        outParamsFile.write(' airmass coefficient 1: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
-        outParamsFile.write(' airmass coefficient 2: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
+        outParamsFile.write(' Mid-Transit Time: ' + str(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid'])) + ' +/- ' + str(round_to_2(myfit.errors['tmid'])) + ' (BJD)\n')
+        outParamsFile.write(' Ratio of Planet to Stellar Radius: ' + str(round_to_2(myfit.parameters['rprs'],myfit.errors['rprs'])) + ' +/- ' + str(
+            round_to_2(myfit.errors['rprs'])) + ' (Rp/Rs)\n')
+        outParamsFile.write(' transit depth uncertainty: ' + str(round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])) + ' (%)\n')
+        outParamsFile.write(' airmass coefficient 1: ' + str(round_to_2(myfit.parameters['a1'],myfit.errors['a1'])) + ' +/- ' + str(round_to_2(myfit.errors['a1'])) + '\n')
+        outParamsFile.write(' airmass coefficient 2: ' + str(round_to_2(myfit.parameters['a2'],myfit.errors['a2'])) + ' +/- ' + str(round_to_2(myfit.errors['a2'])) + '\n')
+        outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '
               + pDict['pName'] + infoDict['date'] + '.txt' + '\n')

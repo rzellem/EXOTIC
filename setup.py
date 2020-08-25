@@ -75,13 +75,15 @@ setuptools.setup(name=NAME,
                      # Trove classifiers
                      # Full list: https://pypi.python.org/pypi?%3Aaction=list_classifiers
                      'Development Status :: 4 - Beta',
+                     'Intended Audience :: End Users/Desktop',
+                     'Intended Audience :: Science/Research',
                      'License :: Other/Proprietary License',
                      'Programming Language :: Python',
                      'Programming Language :: Python :: 3',
                      'Programming Language :: Python :: 3.7',
                      'Programming Language :: Python :: Implementation :: CPython',
                      'Programming Language :: Python :: Implementation :: PyPy',
-                     'Scientific/Engineering :: Astronomy'
+                     'Topic :: Scientific/Engineering :: Astronomy'
                  ],
                  keywords='nasa jpl exoplanet transit citizen science astronomy bayesian nested-sampler',
                  project_urls={

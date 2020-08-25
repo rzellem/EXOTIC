@@ -1746,7 +1746,9 @@ def main():
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
-        inputfiles = check_file_corruption(inputfiles)
+        # If fits files are used, check that they are not corrupted
+        if fitsortext == 1: 
+            inputfiles = check_file_corruption(inputfiles)
 
         exptimes = list()
 

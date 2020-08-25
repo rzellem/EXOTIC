@@ -35,7 +35,7 @@ from scipy.stats import gaussian_kde
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     '''
-G. ROUDIER: Light curve model
+    G. ROUDIER: Light curve model
     '''
     ldlc = np.zeros(z.size)
     xin = z.copy() - rprs
@@ -67,7 +67,7 @@ G. ROUDIER: Light curve model
 
 def vecistar(xrs, g1, g2, g3, g4):
     '''
-G. ROUDIER: Stellar surface extinction model
+    G. ROUDIER: Stellar surface extinction model
     '''
     ldnorm = (-g1/10e0 - g2/6e0 - 3e0*g3/14e0 - g4/4e0 + 5e-1)*2e0*np.pi
     select = xrs < 1e0
@@ -83,7 +83,7 @@ G. ROUDIER: Stellar surface extinction model
 
 def vecoccs(z, xrs, rprs):
     '''
-G. ROUDIER: Stellar surface occulation model
+    G. ROUDIER: Stellar surface occulation model
     '''
     out = np.zeros(xrs.shape)
     vecxrs = xrs.copy()
@@ -187,12 +187,9 @@ def transit(time, values):
 
 
 def getPhase(curTime, pPeriod, tMid):
-    phase = ((curTime - tMid) / pPeriod) % 1
-    mask = phase >= 0.5
-    phase[mask] = -1 * (1-phase[mask])
-    return phase
+    return ((curTime - tMid + 0.5*pPeriod) / pPeriod) % 1
 
-# Creates binned data points for Final Light Curve
+# average data into bins of dt from start to finish
 def time_bin(time, flux, dt):
     bins = int(np.floor((max(time) - min(time))/dt))
     bflux = np.zeros(bins)
@@ -245,10 +242,10 @@ class lc_fitter(object):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
             model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
-            return ((self.data-model)/self.dataerr)**2 
+            return ((self.data-model)/self.dataerr)**2
 
         try:
-            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], 
+            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
                 bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
         except:
             print("bounded  light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
@@ -409,7 +406,7 @@ class lc_fitter(object):
         return f,axs
 
     def plot_triangle(self):
-        # TO DO 
+        # TO DO
         fig,axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         return fig, axs

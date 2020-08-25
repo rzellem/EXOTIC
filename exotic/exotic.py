@@ -383,11 +383,7 @@ def getJulianTime(hdul):
 
 # Method that gets and returns the current phase of the target
 def getPhase(curTime, pPeriod, tMid):
-    phase = ((curTime - tMid) / pPeriod) % 1
-    if phase >= .5:
-        return -1 * (1 - phase)
-    else:
-        return phase
+    return ((curTime - tMid + 0.5*pPeriod) / pPeriod) % 1
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
@@ -650,6 +646,17 @@ def radec_hours_to_degree(ra, dec):
             ra = input('Input the right ascension of target (HH:MM:SS): ')
             dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
+def round_to_2(*args):
+    x = args[0]
+    if len(args) == 1:
+        y = args[0]
+    else:
+        y = args[1]
+    if np.floor(y) >= 1.:
+        roundval = 2
+    else:
+        roundval = -int(np.floor(np.log10(abs(y))))+1
+    return round(x, roundval)
 
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
@@ -710,10 +717,10 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                      ('MObs CV', 'CV'): (350.00, 850.00),
 
                      # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'O'): (391.60, 480.60), ('LCO Bessell V', 'O'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'O'): (404.20, 845.80), ("LCO SDSS u'", 'O'): (325.50, 382.50),
-                     ("LCO SDSS g'", 'O'): (402.00, 552.00), ("LCO SDSS r'", 'O'): (552.00, 691.00),
-                     ("LCO SDSS i'", 'O'): (690.00, 819.00)}
+                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
+                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ("LCO SDSS u'", 'N/A'): (325.50, 382.50),
+                     ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
+                     ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
     print('\n***************************')
     print('Limb Darkening Coefficients')
@@ -738,7 +745,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                 try:
                     filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
                     for key, value in minmaxwavelen.items():
-                        if filtername in (key[0], key[1]) and filtername != 'O':
+                        if filtername in (key[0], key[1]) and filtername != 'N/A':
                             filtername = (key[0], key[1])
                             break
                     else:
@@ -755,7 +762,7 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
         else:
             wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
             wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
-            filtername = 'O'
+            filtername = 'N/A'
 
 
         priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
@@ -791,17 +798,14 @@ def check_file_corruption(files):
     with warnings.catch_warnings():
         warnings.simplefilter('error', category=AstropyWarning)
         for file in files:
-            if file.endswith('.fits'):
-                hdul = None
-                try:
-                    hdul = fits.open(file, checksum=True)
-                except (AstropyWarning, OSError):
-                    print('Removing corrupted file: {}'.format(file))
-                    os.remove(file)
-                finally:
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
+            try:
+                with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
+                    pass
+            except (AstropyWarning, OSError):
+                print('Found corrupted file and removing from reduction: {}'.format(file))
+                del hdul[0].data
+                files.remove(file)
+        return files
 
 
 # Check for WCS in the user's imaging data and possibly plate solves.
@@ -1742,7 +1746,7 @@ def main():
                                                               pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
                                                               pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
 
-        # check_file_corruption(inputfiles)
+        inputfiles = check_file_corruption(inputfiles)
 
         exptimes = list()
 
@@ -2710,7 +2714,7 @@ def main():
         # write output to text file
         outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + '.csv', 'w+')
         outParamsFile.write('# FINAL TIMESERIES OF ' + pDict['pName'] + '\n')
-        outParamsFile.write('# BJD_TDB,Orbital Phase,Model,Flux,Uncertainty\n')
+        outParamsFile.write('# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n')
 
         phase = (myfit.time - myfit.parameters['tmid'] + 0.5*pDict['pPer'])/pDict['pPer'] % 1
 
@@ -2726,12 +2730,12 @@ def main():
 
         print('*********************************************************')
         print('FINAL PLANETARY PARAMETERS\n')
-        print('              Mid-Transit Time [BJD]: {:.6f} +- {:.6f} '.format(myfit.parameters['tmid'], myfit.errors['tmid']))
-        print('  Radius Ratio (Planet/Star) [Rp/Rs]: {:.4f} +- {:.4f} '.format(myfit.parameters['rprs'], myfit.errors['rprs']))
-        print(' Semi Major Axis/ Star Radius [a/Rs]: {:.3f} +- {:.3f} '.format(myfit.parameters['ars'], myfit.errors['ars']))
-        print('               Airmass coefficient 1: {:.3f} +- {:.4f} '.format(myfit.parameters['a1'], myfit.errors['a1']))
-        print('               Airmass coefficient 2: {:.4f} +- {:.4f} '.format(myfit.parameters['a2'], myfit.errors['a2']))
-        print('The scatter in the residuals of the lightcurve fit is: {:.4f} %'.format(100*np.std(myfit.residuals/np.median(myfit.data))))
+        print('              Mid-Transit Time [BJD]: {} +- {} '.format(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid']), round_to_2(myfit.errors['tmid'])))
+        print('  Radius Ratio (Planet/Star) [Rp/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['rprs'],myfit.errors['rprs']), round_to_2(myfit.errors['rprs'])))
+        print(' Semi Major Axis/ Star Radius [a/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['ars'],myfit.errors['ars']), round_to_2(myfit.errors['ars'])))
+        print('               Airmass coefficient 1: {} +- {} '.format(round_to_2(myfit.parameters['a1'],myfit.errors['a1']), round_to_2(myfit.errors['a1'])))
+        print('               Airmass coefficient 2: {} +- {} '.format(round_to_2(myfit.parameters['a2'],myfit.errors['a2']), round_to_2(myfit.errors['a2'])))
+        print('The scatter in the residuals of the lightcurve fit is: {} %'.format(round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))))
         print('\n*********************************************************')
 
         ##########
@@ -2743,13 +2747,13 @@ def main():
         outParamsFile = open(infoDict['saveplot'] + 'FinalParams' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
-        outParamsFile.write(' Mid-Transit Time: ' + str(myfit.parameters['tmid']) + ' +/- ' + str(myfit.errors['tmid']) + ' (BJD)\n')
-        outParamsFile.write(' Ratio of Planet to Stellar Radius: ' + str(myfit.parameters['rprs']) + ' +/- ' + str(
-            myfit.errors['rprs']) + ' (Rp/Rs)\n')
-        outParamsFile.write(' transit depth uncertainty: ' + str(100 * 2 * myfit.parameters['rprs'] * myfit.errors['rprs']) + ' (%)\n')
-        outParamsFile.write(' airmass coefficient 1: ' + str(myfit.parameters['a1']) + ' +/- ' + str(myfit.errors['a1']) + '\n')
-        outParamsFile.write(' airmass coefficient 2: ' + str(myfit.parameters['a2']) + ' +/- ' + str(myfit.errors['a2']) + '\n')
-        outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( np.std(myfit.residuals/np.median(myfit.data))) + '%\n')
+        outParamsFile.write(' Mid-Transit Time: ' + str(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid'])) + ' +/- ' + str(round_to_2(myfit.errors['tmid'])) + ' (BJD)\n')
+        outParamsFile.write(' Ratio of Planet to Stellar Radius: ' + str(round_to_2(myfit.parameters['rprs'],myfit.errors['rprs'])) + ' +/- ' + str(
+            round_to_2(myfit.errors['rprs'])) + ' (Rp/Rs)\n')
+        outParamsFile.write(' transit depth uncertainty: ' + str(round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])) + ' (%)\n')
+        outParamsFile.write(' airmass coefficient 1: ' + str(round_to_2(myfit.parameters['a1'],myfit.errors['a1'])) + ' +/- ' + str(round_to_2(myfit.errors['a1'])) + '\n')
+        outParamsFile.write(' airmass coefficient 2: ' + str(round_to_2(myfit.parameters['a2'],myfit.errors['a2'])) + ' +/- ' + str(round_to_2(myfit.errors['a2'])) + '\n')
+        outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))) + '%\n')
         outParamsFile.close()
         print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '
               + pDict['pName'] + infoDict['date'] + '.txt' + '\n')

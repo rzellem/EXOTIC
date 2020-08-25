@@ -2730,12 +2730,12 @@ def main():
 
         print('*********************************************************')
         print('FINAL PLANETARY PARAMETERS\n')
-        print('              Mid-Transit Time [BJD]: {:.6f} +- {:.6f} '.format(myfit.parameters['tmid'], myfit.errors['tmid']))
-        print('  Radius Ratio (Planet/Star) [Rp/Rs]: {:.4f} +- {:.4f} '.format(myfit.parameters['rprs'], myfit.errors['rprs']))
-        print(' Semi Major Axis/ Star Radius [a/Rs]: {:.3f} +- {:.3f} '.format(myfit.parameters['ars'], myfit.errors['ars']))
-        print('               Airmass coefficient 1: {:.3f} +- {:.4f} '.format(myfit.parameters['a1'], myfit.errors['a1']))
-        print('               Airmass coefficient 2: {:.4f} +- {:.4f} '.format(myfit.parameters['a2'], myfit.errors['a2']))
-        print('The scatter in the residuals of the lightcurve fit is: {:.4f} %'.format(100*np.std(myfit.residuals/np.median(myfit.data))))
+        print('              Mid-Transit Time [BJD]: {} +- {} '.format(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid']), round_to_2(myfit.errors['tmid'])))
+        print('  Radius Ratio (Planet/Star) [Rp/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['rprs'],myfit.errors['rprs']), round_to_2(myfit.errors['rprs'])))
+        print(' Semi Major Axis/ Star Radius [a/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['ars'],myfit.errors['ars']), round_to_2(myfit.errors['ars'])))
+        print('               Airmass coefficient 1: {} +- {} '.format(round_to_2(myfit.parameters['a1'],myfit.errors['a1']), round_to_2(myfit.errors['a1'])))
+        print('               Airmass coefficient 2: {} +- {} '.format(round_to_2(myfit.parameters['a2'],myfit.errors['a2']), round_to_2(myfit.errors['a2'])))
+        print('The scatter in the residuals of the lightcurve fit is: {} %'.format(round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))))
         print('\n*********************************************************')
 
         ##########

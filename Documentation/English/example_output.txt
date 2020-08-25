@@ -1,0 +1,264 @@
+Importing Python Packages - please wait.
+Python Version: 3.8.3 (default, Jul  2 2020, 11:26:31) 
+[Clang 10.0.0 ]
+Thinking -Created TAP+ (v1.2.1) - Connection:
+        Host: gea.esac.esa.int
+        Use HTTPS: True
+        Port: 443
+        SSL Port: 443
+Created TAP+ (v1.2.1) - Connection:
+        Host: geadata.esac.esa.int
+        Use HTTPS: True
+        Port: 443
+        SSL Port: 443
+Thinking /
+
+*************************************************************
+Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)
+Version  0.15.2.dev13+gb197f09.d20200817
+*************************************************************
+
+Enter "1" for Real Time Reduction or "2" for for Complete Reduction: 2
+
+**************************
+Complete Reduction Routine
+**************************
+
+Enter "1" to perform aperture photometry on fits files or "2" to start with pre-reduced data in a .txt format: 1
+How would you like to input your initial parameters? Enter "1" to use the Command Line or "2" to use an input file: 2
+
+Your current working directory is:  /Users/kpearson/Programs/exoplanets/EXOTIC
+
+Potential initialization files I've found in /Users/kpearson/Programs/exoplanets/EXOTIC are: 
+/Users/kpearson/Programs/exoplanets/EXOTIC/eaConf.json
+/Users/kpearson/Programs/exoplanets/EXOTIC/inits.json
+
+Please enter the Directory and Filename of your Initialization File: /Users/kpearson/Programs/exoplanets/EXOTIC/inits.json
+
+Looking up  HAT-P-32 b - please wait.
+https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,pl_orbper,pl_orbpererr1,pl_orbeccen,pl_orblper,pl_tranmid,pl_tranmiderr1,pl_trandep,pl_trandeperr1,pl_trandeperr2,pl_ratror,pl_ratrorerr1,pl_ratrorerr2,st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate+from+ps+where+tran_flag+=+1+and+default_flag+=+1+and+pl_name+=+'HAT-P-32+b'+order+by+pl_pubdate+desc&format=csv
+https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,pl_orbper,pl_orbpererr1,pl_orbeccen,pl_orblper,pl_tranmid,pl_tranmiderr1,pl_trandep,pl_trandeperr1,pl_trandeperr2,pl_ratror,pl_ratrorerr1,pl_ratrorerr2,st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate+from+ps+where+tran_flag=1+and+pl_name+=+'HAT-P-32+b'+order+by+pl_pubdate+desc&format=csv
+
+Successfully found HAT-P-32 b in the NASA Exoplanet Archive!
+
+***************************************
+
+*******************************************
+Planetary Parameters for Lightcurve Fitting
+
+
+
+*** Here are the values scraped from the NASA Exoplanet Archive for HAT-P-32 b that were not set (or set to null) in your initialization file. ***
+For each planetary parameter, enter "y" if you agree and "n" if you disagree.
+
+
+*** WARNING: HAT-P-32 b initialization file's Ratio of Planet to Stellar Radius (Rp/Rs) does not match the NASA Exoplanet Archive. ***
+
+        NASA Exoplanet Archive value: 0.14886235252742716
+        Initialization file value: 0.14856104152345367
+
+Would you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.
+Which option do you choose? (1/2/3): 1
+
+
+*** WARNING: HAT-P-32 b initialization file's Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty does not match the NASA Exoplanet Archive. ***
+
+        NASA Exoplanet Archive value: 0.0005539487393037134
+        Initialization file value: 0.004688608636917226
+
+Would you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.
+Which option do you choose? (1/2/3): 1
+
+***************************
+Limb Darkening Coefficients
+***************************
+
+
+Standard bands available to filter for limb darkening parameters (https://www.aavso.org/filters):
+        J: 1040.0-1360.0 nm
+        H: 1420.0-1780.0 nm
+        K: 2015.0-2385.0 nm
+        J NIR 1.2micron: 1040.0-1360.0 nm
+        H NIR 1.6micron: 1420.0-1780.0 nm
+        K NIR 2.2micron: 2015.0-2385.0 nm
+        SU: 321.8-386.8 nm
+        SG: 402.5-551.5 nm
+        SR: 553.1-693.1 nm
+        SI: 697.5-827.5 nm
+        SZ: 841.2-978.2 nm
+        Sloan u: 321.8-386.8 nm
+        Sloan g: 402.5-551.5 nm
+        Sloan r: 553.1-693.1 nm
+        Sloan i: 697.5-827.5 nm
+        Sloan z: 841.2-978.2 nm
+        STB: 459.55-478.05 nm
+        STY: 536.7-559.3 nm
+        STHBW: 481.5-496.5 nm
+        STHBN: 487.5-484.5 nm
+        Stromgren b: 459.55-478.05 nm
+        Stromgren y: 536.7-559.3 nm
+        Stromgren Hbw: 481.5-496.5 nm
+        Stromgren Hbn: 487.5-484.5 nm
+        U: 333.8-398.8 nm
+        B: 391.6-480.6 nm
+        V: 502.8-586.8 nm
+        RJ: 590.0-810.0 nm
+        IJ: 780-1020 nm
+        Johnson U: 333.8-398.8 nm
+        Johnson B: 391.6-480.6 nm
+        Johnson V: 502.8-586.8 nm
+        Johnson R: 590.0-810.0 nm
+        Johnson I: 780-1020 nm
+        R: 561.7-719.7 nm
+        I: 721.0-875.0 nm
+        Cousins R: 561.7-719.7 nm
+        Cousins I: 721.0-875.0 nm
+
+Would you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): y
+Please enter 1 to use a standard filter or 2 for a customized filter: 1
+
+Please enter in the filter type (EX: Johnson V, V, Stromgren b, STB): V
+>-- Temperature: 6001.0 +/- 88.0
+>-- Metallicity: -0.16 +/- 0.08
+>-- Surface Gravity: 4.22 +/- 0.04
+>-- LD0: 1.8779385948693894 +/- 0.045686017261012846
+>-- LD1: -3.3152368129374588 +/- 0.18456833471672593
+>-- LD2: 3.9158336921277983 +/- 0.2404195381839506
+>-- LD3: -1.4785354740597287 +/- 0.10152927491721858
+
+**************************
+Starting Reduction Process
+**************************
+
+Here is the path to the reference imaging file EXOTIC: 
+sample-data/temp/ref_file_0_HATP-32171220041512.FITS
+
+Would you like to upload the your image for a plate solution?
+DISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net. (y/n): n
+
+Aligning your images from FITS files. Please wait.
+Aligning Image 142 of 142
+
+***************************************************************
+Determining Optimal Aperture and Annulus Size for Comp Star #1
+***************************************************************
+Target X: 423.0 Target Y: 286.0
+Comparison X: 464.0 Comparison Y: 182.0
+
+Testing Comparison Star #1 with a 3 pixel aperture and a 5 pixel annulus.
+  rprs: 0.150516
+  tmid: 2458107.712837
+  ars: 5.144003
+  a1: 7288.983697
+  a2: -0.124900
+The Residual Standard Deviation is: %1.09597
+The Mean Squared Error is: 733945.411887
+
+Testing Comparison Star #1 with a 4 pixel aperture and a 5 pixel annulus.
+  rprs: 0.149620
+  tmid: 2458107.709608
+  ars: 5.144132
+  a1: 7416.036333
+  a2: -0.118315
+The Residual Standard Deviation is: %0.541568
+The Mean Squared Error is: 165111.610805
+
+Testing Comparison Star #1 with a 5 pixel aperture and a 5 pixel annulus.
+  rprs: 0.150524
+  tmid: 2458107.710005
+  ars: 5.144000
+  a1: 7513.967183
+  a2: -0.119461
+The Residual Standard Deviation is: %0.604672
+The Mean Squared Error is: 214743.475123
+
+Testing Comparison Star #1 with a 6 pixel aperture and a 5 pixel annulus.
+  rprs: 0.149318
+  tmid: 2458107.708984
+  ars: 5.229929
+  a1: 7556.577824
+  a2: -0.115424
+The Residual Standard Deviation is: %0.650105
+The Mean Squared Error is: 255492.129362
+
+
+
+***************************************************************
+Determining Optimal Aperture and Annulus Size for Comp Star #2
+***************************************************************
+Target X: 423.0 Target Y: 286.0
+Comparison X: 513.0 Comparison Y: 261.0
+
+Testing Comparison Star #2 with a 3 pixel aperture and a 5 pixel annulus.
+  rprs: 0.150518
+  tmid: 2458107.712893
+  ars: 5.144001
+  a1: 7288.718106
+  a2: -0.124849
+The Residual Standard Deviation is: %1.094563
+The Mean Squared Error is: 731645.768627
+
+Testing Comparison Star #2 with a 4 pixel aperture and a 5 pixel annulus.
+  rprs: 0.149625
+  tmid: 2458107.709608
+  ars: 5.144133
+  a1: 7415.931757
+  a2: -0.118301
+The Residual Standard Deviation is: %0.541379
+The Mean Squared Error is: 164996.456647
+
+Testing Comparison Star #2 with a 5 pixel aperture and a 5 pixel annulus.
+  rprs: 0.150524
+  tmid: 2458107.710005
+  ars: 5.144000
+  a1: 7513.937912
+  a2: -0.119458
+The Residual Standard Deviation is: %0.604685
+The Mean Squared Error is: 214752.519347
+
+Testing Comparison Star #2 with a 6 pixel aperture and a 5 pixel annulus.
+  rprs: 0.149336
+  tmid: 2458107.708982
+  ars: 5.229556
+  a1: 7556.806274
+  a2: -0.115443
+The Residual Standard Deviation is: %0.650272
+The Mean Squared Error is: 255638.858211
+
+
+*********************************************
+Best Comparison Star: #2
+Minimum Residual Scatter: 0.5414%
+Optimal Aperture: 4
+Optimal Annulus: 5
+********************************************
+
+No BJDs in Image Headers. Converting all JDs to BJD_TDBs.
+Please be patient- this step can take a few minutes.
+
+Output File Saved
+
+****************************************
+Fitting a Light Curve Model to Your Data
+****************************************
+
+22387it [05:15, 71.01it/s, batch: 8 | bound: 93 | nc: 4 | ncall: 89072 | eff(%): 25.134 | loglstar: -76.318 < -69.224 < -70.567 | logz: -82.892 +/-  0.207 | stop:  0.964]               
+*********************************************************
+FINAL PLANETARY PARAMETERS
+
+              Mid-Transit Time [BJD]: 2458107.714007 +- 0.000856 
+  Radius Ratio (Planet/Star) [Rp/Rs]: 0.1503 +- 0.0009 
+ Semi Major Axis/ Star Radius [a/Rs]: 5.146 +- 0.059 
+               Airmass coefficient 1: 7397.280 +- 19.7116 
+               Airmass coefficient 2: -0.1161 +- 0.0021 
+The scatter in the residuals of the lightcurve fit is: 0.5414 %
+
+*********************************************************
+
+Final Planetary Parameters have been saved in sample-data/temp/ as HAT-P-32 bDecember 17, 2017.txt
+
+Output File Saved
+
+************************
+End of Reduction Process
+************************

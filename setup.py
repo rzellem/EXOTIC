@@ -3,7 +3,9 @@
 # FOR RELEASE:
 # manually update exotic/version.py
 # git add exotic/version.py && git commit -m "#<ticket>:Updated version for release" && git push
-# python3 setup.py sdist bdist_wheel  # upload
+# git checkout exotic/version.py && python3 setup.py sdist bdist_wheel --universal  # upload
+# pip3 install twine  # https://twine.readthedocs.io/en/latest/
+# twine check dist/* && twine upload dist/*
 # LOCAL TESTING:
 # pip install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/
 # rm -r dist && pip uninstall exotic
@@ -18,6 +20,7 @@ import setuptools
 AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "rzellem@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
+LICENSE = "Proprietary -- Copyright (c) 2019-2020, California Institute of Technology."
 NAME = "exotic"
 PYTHON_REQUIREMENTS = ">=3.7.0"
 URL = "https://github.com/rzellem/EXOTIC"
@@ -38,18 +41,8 @@ def description_read():
 
 def license_read():
     annum = time.gmtime().tm_year
-    # provide basic default in case LICENSE file missing
-    lic = f"""
-**      Copyright (c) 2019-{annum}, California Institute of Technology. 
-**    All rights reserved.  Based on Government Sponsored Research under 
-**    contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001. 
-"""
-    lic_path = Path("LICENSE")
-    if not lic_path.exists():
-        return lic
-    with lic_path.open('r') as f:
-        lic = f.read()
-    lic = re.sub(r"\s*-\s*\d{4}\s*,", f"-{annum},", lic, 0, re.MULTILINE)
+    # provide one-line summary per LICENSE spec
+    lic = f"Copyright (c) 2019-{annum}, California Institute of Technology." 
     return lic
 
 
@@ -78,7 +71,7 @@ setuptools.setup(name=NAME,
                  url=URL,
                  author=AUTHOR,
                  author_email=AUTHOR_EMAIL,
-                 license=license_read(),
+                 license=LICENSE,
                  classifiers=[
                      # Trove classifiers
                      # Full list: https://pypi.python.org/pypi?%3Aaction=list_classifiers

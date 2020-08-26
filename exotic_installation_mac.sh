@@ -7,4 +7,4 @@ brew install python
 pip3 install --upgrade keyrings.alt
 pip3 install -r requirements.txt
 
-chmod 755 exotic.py && python3 exotic.py || python exotic.py
+chmod 755 exotic.py && python3 exotic/exotic.py || python exotic/exotic.py

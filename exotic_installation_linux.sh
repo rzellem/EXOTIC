@@ -12,4 +12,4 @@ pip3 install --upgrade pip
 pip3 install -r requirements.txt
 pip3 install --upgrade keyrings.alt
 
-chmod 755 exotic.py && python3 exotic/exotic.py || python exotic/exotic.py
+chmod 755 exotic/exotic.py && python3 exotic/exotic.py || python exotic/exotic.py

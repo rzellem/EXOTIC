@@ -130,6 +130,10 @@ from photutils import aperture_photometry
 # cross corrolation imports
 from skimage.registration import phase_cross_correlation
 
+# error handling for scraper
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
+    wait_exponential, wait_random
+
 # long process here
 # time.sleep(10)
 done = True
@@ -193,7 +197,10 @@ def tap_query(base_url, query, dataframe=True):
     else:
         return response.text
 
-
+@retry(stop=stop_after_attempt(3),
+       wait=wait_exponential(multiplier=1, min=17, max=1024),
+       retry=(retry_if_exception_type(requests.exceptions.RequestException) |
+       retry_if_exception_type(ConnectionError)))
 def new_scrape(filename="eaConf.json", target=None):
 
     # scrape_new()
@@ -801,9 +808,8 @@ def check_file_corruption(files):
             try:
                 with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
                     pass
-            except (AstropyWarning, OSError):
-                print('Found corrupted file and removing from reduction: {}'.format(file))
-                del hdul[0].data
+            except (AstropyWarning, OSError) as e:
+                print('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
                 files.remove(file)
         return files
 
@@ -1492,7 +1498,7 @@ def main():
         fileorcommandline = user_input('How would you like to input your initial parameters? '
                                        'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
-        cwd = os.path.join(os.path.split(os.getcwd())[0], '')
+        cwd = os.getcwd() # os.path.join(os.path.split(os.getcwd())[0], '')
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:

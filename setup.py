@@ -3,12 +3,14 @@
 # FOR RELEASE:
 # manually update exotic/version.py
 # git add exotic/version.py && git commit -m "#<ticket>:Updated version for release" && git push
+# release/tag
 # git checkout exotic/version.py && python3 setup.py sdist bdist_wheel --universal  # upload
 # pip3 install twine  # https://twine.readthedocs.io/en/latest/
 # twine check dist/* && twine upload dist/*
 # LOCAL TESTING:
-# pip install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/
-# rm -r dist && pip uninstall exotic
+# pip3 install --exists-action w --progress-bar ascii --use-feature=2020-resolver -r requirements.txt
+# pip3 install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/
+# rm -r dist && pip3 uninstall exotic
 
 import re
 import time

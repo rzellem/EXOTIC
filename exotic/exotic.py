@@ -88,6 +88,7 @@ from barycorrpy import utc_tdb
 # Curve fitting imports
 from scipy.optimize import least_squares
 from scipy.ndimage import median_filter
+from scipy.stats import mode
 
 # Pyplot imports
 import matplotlib.pyplot as plt
@@ -129,6 +130,10 @@ from photutils import aperture_photometry
 
 # cross corrolation imports
 from skimage.registration import phase_cross_correlation
+
+# error handling for scraper
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
+    wait_exponential, wait_random
 
 # long process here
 # time.sleep(10)
@@ -193,7 +198,10 @@ def tap_query(base_url, query, dataframe=True):
     else:
         return response.text
 
-
+@retry(stop=stop_after_attempt(3),
+       wait=wait_exponential(multiplier=1, min=17, max=1024),
+       retry=(retry_if_exception_type(requests.exceptions.RequestException) |
+       retry_if_exception_type(ConnectionError)))
 def new_scrape(filename="eaConf.json", target=None):
 
     # scrape_new()
@@ -801,9 +809,8 @@ def check_file_corruption(files):
             try:
                 with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
                     pass
-            except (AstropyWarning, OSError):
-                print('Found corrupted file and removing from reduction: {}'.format(file))
-                del hdul[0].data
+            except (AstropyWarning, OSError) as e:
+                print('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
                 files.remove(file)
         return files
 
@@ -1133,25 +1140,23 @@ def getFlux(data, xc, yc, r=5, dr=5):
     else:
         bgflux = 0
     positions = [(xc, yc)]
-    data = data-bgflux
-    data[data < 0] = 0
+    bdata = data-bgflux
+    bdata[bdata < 0] = 0
 
     apertures = CircularAperture(positions, r=r)
-    phot_table = aperture_photometry(data, apertures, method='exact')
+    phot_table = aperture_photometry(bdata, apertures, method='exact')
 
     return float(phot_table['aperture_sum']), bgflux
 
-
-def skybg_phot(data, xc, yc, r=10, dr=5):
+def skybg_phot(data, xc, yc, r=10, dr=5, ptol=75):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
     mask = (rv > r) & (rv < (r+dr))
-    cutoff = np.percentile(data[yv, xv][mask], 50)
-    dat = np.copy(data)
-    dat[dat > cutoff] = cutoff # ignore bright pixels like stars
-    return min(np.mean(dat[yv, xv][mask]), np.median(dat[yv, xv][mask]))
-
+    cutoff = np.percentile(data[yv, xv][mask], ptol)
+    dat = np.array(data[yv,xv],dtype=float)
+    dat[dat > cutoff] = np.nan # ignore pixels brighter than percntile 
+    return min(np.nanmedian(dat), mode(dat.flatten(), nan_policy='omit').mode[0])
 
 # Mid-Transit Time Prior Helper Functions
 def numberOfTransitsAway(timeData, period, originalT):
@@ -1281,6 +1286,7 @@ def realTimeReduce(i, target_name):
         hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
         currTime = getJulianTime(hdul)
+        hdul[0].data.scale('float32')
         imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
         header = hdul[0].header  # fits.getheader(imageFile)
 
@@ -1331,6 +1337,7 @@ def realTimeReduce(i, target_name):
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
         tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
+        tpsfFlux = 2*np.pi*tamplitude*tsigX*tsigY
         currTPX = tx
         currTPY = ty
 
@@ -1338,6 +1345,7 @@ def realTimeReduce(i, target_name):
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
         rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
+        rpsfFlux = 2*np.pi*ramplitude*rsigX*rsigY
         currRPX = rx
         currRPY = ry
 
@@ -1492,7 +1500,7 @@ def main():
         fileorcommandline = user_input('How would you like to input your initial parameters? '
                                        'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
 
-        cwd = os.path.join(os.path.split(os.getcwd())[0], '')
+        cwd = os.getcwd() # os.path.join(os.path.split(os.getcwd())[0], '')
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
@@ -1799,6 +1807,7 @@ def main():
                     airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                     # IMAGES
+                    hdul[0].scale('float32')
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
@@ -1993,9 +2002,11 @@ def main():
                 aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
-
+                aperture_sizes = np.append(aperture_sizes, -1*aperture_sizes) # no comparison star
+                aperture_sizes = np.append(aperture_sizes, 0) # PSF fit
+ 
                 # single annulus size
-                annulus_sizes = [5]
+                annulus_sizes = [5,7,10]
 
                 target_fits = {}
                 ref_fits = {}
@@ -2003,14 +2014,24 @@ def main():
 
                 for apertureR in aperture_sizes:  # aperture loop
                     for annulusR in annulus_sizes:  # annulus loop # no need
-                        # fileNumber = 1
-                        print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
+                        # don't reprocess 
+                        if apertureR < 0 and compCounter > 0:
+                            continue 
+                        
+                        # only do PSF fit in first annulus for loop
+                        if apertureR == 0 and annulusR != annulus_sizes[0]:
+                            continue
+
+                        if apertureR == 0:
+                            print('Testing Comparison Star #' + str(compCounter+1) + ' with a PSF photometry.')
+                        elif apertureR < 0 and compCounter == 0:
+                            print('Testing NO Comparison Star with a '+str(apertureR)+' pixel aperture and a '+str(abs(annulusR))+' pixel annulus.')
+                        else:
+                            print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
+
                         for fileNumber, imageData in enumerate(sortedallImageData):
-
-                            # hDul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
-                            # imageData = fits.getdata(imageFile, ext=0)  # Extracts data from the image file
-
-                            # header = fits.getheader(imageFile)
+                            if apertureR == 0: # psf fit
+                                continue
 
                             # Find the target star in the image and get its pixel coordinates if it is the first file
                             if fileNumber == 0:
@@ -2144,17 +2165,13 @@ def main():
                                     # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
 
                                     # gets the flux value of the target star and subtracts the background light
-                                    tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
-                                    # FIXME centroid position is way off from user input for star
-
+                                    tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, abs(apertureR), annulusR)                                    
                                     targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
                                     targUncertanties.append(np.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
 
                                     # gets the flux value of the reference star and subracts the background light
-                                    rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
-
-                                    referenceFluxVals.append(
-                                        rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
+                                    rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, abs(apertureR), annulusR)
+                                    referenceFluxVals.append(rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
                                     refUncertanties.append(np.sqrt(rFluxVal))
 
                                     # # TIME
@@ -2206,20 +2223,40 @@ def main():
 
                         # EXIT THE FILE LOOP
 
-                        # NORMALIZE BY REF STAR
-                        # Convert the raw flux values to arrays and then divide them to get the normalized flux data
-                        # rawFinalFluxData = np.array(targetFluxVals)
-
                         # Convert Everything to numpy Arrays
-                        arrayFinalFlux = np.array(targetFluxVals)  # finalFluxData
                         arrayTimes = np.array(timesListed)
                         arrayPhases = np.array(phasesList)
-                        arrayReferences = np.array(referenceFluxVals)
                         arrayAirmass = np.array(airMassList)
-                        arrayTUnc = np.array(targUncertanties)
-                        arrayRUnc = np.array(refUncertanties)
+                        
+                        if apertureR == 0: # psf fit
+                            tpsfflux = []
+                            rpsfflux = []
+                            for k in target_fits.keys():
+                                xc,yc,amp,sigx,sigy,off = target_fits[k]
+                                tpsfflux.append(2*np.pi*sigx*sigy*amp)
+                                xc,yc,amp,sigx,sigy,off = ref_fits[k]
+                                rpsfflux.append(2*np.pi*sigx*sigy*amp)
+                            arrayReferences = np.array(rpsfflux)
+                            arrayTUnc = arrayFinalFlux**0.5
+                            arrayRUnc = arrayReferences**0.5
 
-                        arrayNormUnc = arrayFinalFlux**0.5
+                            arrayFinalFlux = np.array(tpsfflux) / arrayReferences
+                            arrayNormUnc = arrayTUnc / arrayReferences
+                        elif apertureR < 0: # no comp star
+                            arrayReferences = np.array(referenceFluxVals)
+                            arrayTUnc = np.array(targUncertanties)
+                            arrayRUnc = np.array(refUncertanties)
+
+                            arrayFinalFlux = np.array(targetFluxVals) 
+                            arrayNormUnc = np.array(targUncertanties)
+                        else:
+                             # aperture phot
+                            arrayReferences = np.array(referenceFluxVals)
+                            arrayTUnc = np.array(targUncertanties)
+                            arrayRUnc = np.array(refUncertanties)
+
+                            arrayFinalFlux = np.array(targetFluxVals) / arrayReferences
+                            arrayNormUnc = arrayTUnc / arrayReferences
 
                         # Execute sigma_clip
                         try:
@@ -2291,11 +2328,12 @@ def main():
                         for k in myfit.bounds.keys():
                             print("  {}: {:.6f}".format(k, myfit.parameters[k])) #, myfit.errors[k]))
 
-                        print('The Residual Standard Deviation is: %' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6)))
+                        print('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
                         print('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
-                        if minSTD > myfit.residuals.std():  # If the standard deviation is less than the previous min
+                        resstd = myfit.residuals.std()/np.median(myfit.data)
+                        if minSTD > resstd:  # If the standard deviation is less than the previous min
                             bestCompStar = compCounter + 1
-                            minSTD = myfit.residuals.std()  # set the minimum standard deviation to that
+                            minSTD = resstd  # set the minimum standard deviation to that
 
                             arrayNormUnc = arrayNormUnc * np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
@@ -2342,12 +2380,27 @@ def main():
                     # Exit aperture loop
                 # Exit annulus loop
             # Exit the Comp Stars Loop
-            print('\n*********************************************')
-            print('Best Comparison Star: #' + str(bestCompStar))
-            print('Minimum Residual Scatter: ' + str(round(minSTD/np.median(goodFluxes) * 100, 4)) + '%')
-            print('Optimal Aperture: ' + str(minAperture))
-            print('Optimal Annulus: ' + str(minAnnulus))
-            print('********************************************\n')
+
+            if minAperture == 0: # psf
+                print('\n*********************************************')
+                print('Best Comparison Star: #' + str(bestCompStar))
+                print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                print('Optimal Method: PSF photometry')
+                print('********************************************\n')
+            elif minAperture < 0: # no comp star
+                print('\n*********************************************')
+                print('Best Comparison Star: None')
+                print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                print('Optimal Aperture: ' + str(abs(minAperture)))
+                print('Optimal Annulus: ' + str(minAnnulus))
+                print('********************************************\n')
+            else:
+                print('\n*********************************************')
+                print('Best Comparison Star: #' + str(bestCompStar))
+                print('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                print('Optimal Aperture: ' + str(minAperture))
+                print('Optimal Annulus: ' + str(minAnnulus))
+                print('********************************************\n')
 
             # # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             # # Save a text file of the RA and DEC of the target and comp

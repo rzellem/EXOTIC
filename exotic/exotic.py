@@ -2000,14 +2000,21 @@ def main():
                 # run through apertures based on PSF shape
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
+<<<<<<< HEAD
                 else:
                     aperture_sizes = np.round(np.linspace(aperture_min, aperture_max, 10),2)
 
+=======
+>>>>>>> 45e57ddab38c84788de2d9b568cad96f64471974
                 aperture_sizes = np.append(aperture_sizes, -1*aperture_sizes) # no comparison star
                 aperture_sizes = np.append(aperture_sizes, 0) # PSF fit
  
                 # single annulus size
+<<<<<<< HEAD
                 annulus_sizes = [10,12,15]
+=======
+                annulus_sizes = [5,7,10]
+>>>>>>> 45e57ddab38c84788de2d9b568cad96f64471974
 
                 target_fits = {}
                 ref_fits = {}

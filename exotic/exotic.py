@@ -1136,7 +1136,7 @@ def fit_centroid(data, pos, init=None, box=10):
 def getFlux(data, xc, yc, r=5, dr=5):
 
     if dr > 0:
-        bgflux = skybg_phot(data, xc, yc, r, dr)
+        bgflux = skybg_phot(data, xc, yc, r+2, dr)
     else:
         bgflux = 0
     positions = [(xc, yc)]
@@ -2006,7 +2006,7 @@ def main():
                 aperture_sizes = np.append(aperture_sizes, 0) # PSF fit
  
                 # single annulus size
-                annulus_sizes = [5,7,10]
+                annulus_sizes = [5,10,15]
 
                 target_fits = {}
                 ref_fits = {}

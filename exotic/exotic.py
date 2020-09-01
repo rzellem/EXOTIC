@@ -1286,6 +1286,7 @@ def realTimeReduce(i, target_name):
         hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
         # Extracts data from the image file and puts it in a 2D numpy array: imageData
         currTime = getJulianTime(hdul)
+        hdul[0].data.scale('float32')
         imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
         header = hdul[0].header  # fits.getheader(imageFile)
 
@@ -1806,6 +1807,7 @@ def main():
                     airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                     # IMAGES
+                    hdul[0].scale('float32')
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
@@ -2326,7 +2328,7 @@ def main():
                         for k in myfit.bounds.keys():
                             print("  {}: {:.6f}".format(k, myfit.parameters[k])) #, myfit.errors[k]))
 
-                        print('The Residual Standard Deviation is: %' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6)))
+                        print('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
                         print('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
                         resstd = myfit.residuals.std()/np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min

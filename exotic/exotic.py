@@ -1136,7 +1136,7 @@ def fit_centroid(data, pos, init=None, box=10):
 def getFlux(data, xc, yc, r=5, dr=5):
 
     if dr > 0:
-        bgflux = skybg_phot(data, xc, yc, r, dr)
+        bgflux = skybg_phot(data, xc, yc, r+2, dr)
     else:
         bgflux = 0
     positions = [(xc, yc)]
@@ -1997,16 +1997,17 @@ def main():
                 aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
                 aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
 
-                # Run through only 5 different aperture sizes, all interger pixel values
-                aperture_step = np.nanmax([1, (aperture_max + 1 - aperture_min)//5])  # forces step size to be at least 1
-                aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
+                # run through apertures based on PSF shape
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
+                else:
+                    aperture_sizes = np.round(np.linspace(aperture_min, aperture_max, 10),2)
+
                 aperture_sizes = np.append(aperture_sizes, -1*aperture_sizes) # no comparison star
                 aperture_sizes = np.append(aperture_sizes, 0) # PSF fit
  
                 # single annulus size
-                annulus_sizes = [5,7,10]
+                annulus_sizes = [10,12,15]
 
                 target_fits = {}
                 ref_fits = {}
@@ -2025,7 +2026,7 @@ def main():
                         if apertureR == 0:
                             print('Testing Comparison Star #' + str(compCounter+1) + ' with a PSF photometry.')
                         elif apertureR < 0 and compCounter == 0:
-                            print('Testing NO Comparison Star with a '+str(apertureR)+' pixel aperture and a '+str(abs(annulusR))+' pixel annulus.')
+                            print('Testing NO Comparison Star with a '+str(abs(apertureR))+' pixel aperture and a '+str(abs(annulusR))+' pixel annulus.')
                         else:
                             print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
 

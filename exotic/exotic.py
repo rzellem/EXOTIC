@@ -2452,15 +2452,17 @@ def main():
             fig, ax = plt.subplots()
             target_circle = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
             target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture+minAnnulus, color='lime', fill=False, ls='--', lw=.5)
-            ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
-            ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
+            if minAperture >= 0:
+                ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
+                ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
             plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.log10(np.nanmin(sortedallImageData[0][sortedallImageData[0] > 0])), vmax=np.log10(np.nanmax(sortedallImageData[0][sortedallImageData[0] > 0])))  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
             plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
-            ax.add_artist(ref_circle)
-            ax.add_artist(ref_circle_sky)
-            plt.plot(finXRefCent[0], finYRefCent[0], '+r')
+            if minAperture >= 0:
+                ax.add_artist(ref_circle)
+                ax.add_artist(ref_circle_sky)
+                plt.plot(finXRefCent[0], finYRefCent[0], '+r')
             plt.xlabel("x-axis [pixel]")
             plt.ylabel("y-axis [pixel]")
             plt.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
@@ -2468,12 +2470,15 @@ def main():
             plt.ylim(plty[0], plty[1])
             ax.grid(False)
             plt.plot(0, 0, color='lime', ls='-', label='Target')
-            plt.plot(0, 0, color='r', ls='-.', label='Comp')
+            if minAperture >= 0:
+                plt.plot(0, 0, color='r', ls='-.', label='Comp')
             l = plt.legend(frameon=None, framealpha=0)
             for text in l.get_texts():
                 text.set_color("white")
             plt.savefig(infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf", bbox_inches='tight')
             plt.close()
+
+            print("\nFOV file saved as: "+infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf\n")
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in imageheader:

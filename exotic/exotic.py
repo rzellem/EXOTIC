@@ -2280,7 +2280,8 @@ def main():
                             'a2': 0,             #Flux lower bound
                         }
 
-                        phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
+                        # phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
+                        phase = getPhase(arrayTimes[~filtered_data], prior['per'], prior['tmid'])
                         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
                         upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
                         lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
@@ -2564,13 +2565,13 @@ def main():
 
             # Plots final reduced light curve (after the 3 sigma clip)
             plt.figure()
-            plt.errorbar(goodPhases, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
-            plt.xlabel('Phase')
+            plt.errorbar(goodTimes, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
+            plt.xlabel('Time (BJD)')
             plt.ylabel('Normalized Flux')
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
-            plt.title(pDict['pName'] + ' Normalized Flux vs. Phase ' + infoDict['date'])
-            plt.savefig(infoDict['saveplot'] + 'NormalizedFluxPhase' + pDict['pName'] + infoDict['date'] + '.png')
+            plt.title(pDict['pName'] + ' Normalized Flux vs. Time ' + infoDict['date'])
+            plt.savefig(infoDict['saveplot'] + 'NormalizedFluxTime' + pDict['pName'] + infoDict['date'] + '.png')
             plt.close()
 
             # Save normalized flux to text file prior to MCMC
@@ -2670,6 +2671,7 @@ def main():
             }
 
         phase = (goodTimes-prior['tmid'])/prior['per']
+        # phase = getPhase(goodTimes, prior['per'], prior['tmid'])
         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
         upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
         lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
@@ -2777,7 +2779,7 @@ def main():
         outParamsFile.write('# FINAL TIMESERIES OF ' + pDict['pName'] + '\n')
         outParamsFile.write('# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n')
 
-        phase = (myfit.time - myfit.parameters['tmid'] + 0.5*pDict['pPer'])/pDict['pPer'] % 1
+        phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
 
         for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip( myfit.time, phase, myfit.detrended, myfit.dataerr/myfit.airmass_model, myfit.transit, myfit.airmass_model):
 

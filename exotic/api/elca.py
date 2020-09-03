@@ -187,7 +187,8 @@ def transit(time, values):
 
 
 def getPhase(curTime, pPeriod, tMid):
-    return ((curTime - tMid + 0.5*pPeriod) / pPeriod) % 1
+    phase = (curTime - tMid) / pPeriod
+    return phase - int(np.nanmin(phase))
 
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):

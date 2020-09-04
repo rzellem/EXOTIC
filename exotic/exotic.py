@@ -85,10 +85,11 @@ import dateutil.parser as dup
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 
-# Curve fitting imports
+# scipy imports
 from scipy.optimize import least_squares
-from scipy.ndimage import median_filter
+from scipy.ndimage import binary_erosion, binary_dilation, binary_closing, label, median_filter
 from scipy.stats import mode
+from scipy.signal import savgol_filter
 
 # Pyplot imports
 import matplotlib.pyplot as plt
@@ -162,8 +163,9 @@ sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
 # ################### END PROPERTIES ##########################################
 
 
-def sigma_clip(ogdata, sigma=3, dt=20):
-    mdata = median_filter(ogdata, dt)
+def sigma_clip(ogdata, sigma=3, dt=21):
+    #mdata = median_filter(ogdata, dt)
+    mdata = savgol_filter(ogdata, dt, 2)
     res = ogdata - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res,50)) for i in range(100)])
     #std = np.nanstd(res) # biased from large outliers
@@ -391,8 +393,8 @@ def getJulianTime(hdul):
 
 # Method that gets and returns the current phase of the target
 def getPhase(curTime, pPeriod, tMid):
-    phase = (curTime - tMid) / pPeriod
-    return phase - int(np.nanmin(phase))
+    phase = (curTime - tMid -0.5*pPeriod) / pPeriod % 1
+    return phase - 0.5
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
 def getAirMass(hdul, ra, dec, lati, longit, elevation):
@@ -809,7 +811,7 @@ def check_file_corruption(files):
             try:
                 with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
                     pass
-            except (AstropyWarning, OSError) as e:
+            except OSError as e:
                 print('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
                 files.remove(file)
         return files
@@ -1141,21 +1143,49 @@ def getFlux(data, xc, yc, r=5, dr=5):
         bgflux = 0
     positions = [(xc, yc)]
     bdata = data-bgflux
-    bdata[bdata < 0] = 0
 
     apertures = CircularAperture(positions, r=r)
     phot_table = aperture_photometry(bdata, apertures, method='exact')
 
     return float(phot_table['aperture_sum']), bgflux
 
-def skybg_phot(data, xc, yc, r=10, dr=5, ptol=75):
+def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
     mask = (rv > r) & (rv < (r+dr))
     cutoff = np.percentile(data[yv, xv][mask], ptol)
     dat = np.array(data[yv,xv],dtype=float)
-    dat[dat > cutoff] = np.nan # ignore pixels brighter than percntile 
+    dat[dat > cutoff] = np.nan # ignore pixels brighter than percntile
+    # debugging bg estimate
+    # minb = data[yv,xv][mask].min()
+    # maxb = data[yv,xv][mask].mean() + 3 * data[yv,xv][mask].std()
+    # nanmask = np.nan*np.zeros(mask.shape)
+    # nanmask[mask] = 1
+    # bgsky = data[yv,xv]*nanmask
+    # cmode = mode(dat.flatten(), nan_policy='omit').mode[0]
+    # amode = mode(bgsky.flatten(), nan_policy='omit').mode[0] 
+
+    # fig,ax = plt.subplots(2,2,figsize=(9,9))
+    # im = ax[0,0].imshow(data[yv,xv],vmin=minb,vmax=maxb,cmap='inferno')
+    # ax[0,0].set_title("Original Data")
+    # divider = make_axes_locatable(ax[0,0])
+    # cax = divider.append_axes('right', size='5%', pad=0.05)
+    # fig.colorbar(im,cax=cax, orientation='vertical')
+    
+    # ax[1,0].hist(bgsky.flatten(),label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky),amode),alpha=0.5,bins=np.arange(minb,maxb))
+    # ax[1,0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat),cmode), alpha=0.5,bins=np.arange(minb,maxb))
+    # ax[1,0].legend(loc='best')
+    # ax[1,0].set_title("HAT-P-32 Sky Background")
+    # ax[1,0].set_xlabel("Pixel Value")
+    
+    # ax[1,1].imshow(dat,vmin=minb,vmax=maxb,cmap='inferno')
+    # ax[1,1].set_title("Clipped Sky Background")
+    
+    # ax[0,1].imshow(bgsky,vmin=minb,vmax=maxb,cmap='inferno')
+    # ax[0,1].set_title("Sky Annulus")
+    # plt.tight_layout()
+    # plt.show()
     return min(np.nanmedian(dat), mode(dat.flatten(), nan_policy='omit').mode[0])
 
 # Mid-Transit Time Prior Helper Functions
@@ -1165,7 +1195,6 @@ def numberOfTransitsAway(timeData, period, originalT):
 def nearestTransitTime(timeData, period, originalT):
     nearT = ((numberOfTransitsAway(timeData, period, originalT) * period) + originalT)
     return nearT
-
 
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
@@ -1959,6 +1988,54 @@ def main():
                 else:
                     break
 
+            
+            # TODO move to a function
+            # remove hot pixels
+            for ii in range(len(sortedallImageData)):
+                # bg = median_filter(sortedallImageData[ii],(4,4))
+                # kernel = Gaussian2DKernel(x_stddev=1)
+                # bg2 = convolve(sortedallImageData[ii],kernel)
+                # res = sortedallImageData[ii] - bg2
+                # mask = np.abs(res) > 3*np.std(res)
+                # std = np.nanmedian([np.nanstd(np.random.choice(res.flatten(),1000)) for i in range(250)])                
+                # smask = np.abs(res) > 3*std # removes portions of the psf
+
+                # computationally expensive
+                # std = generic_filter(sortedallImageData[ii], np.std, (5,5))
+                # mask = np.abs(sortedallImageData[ii] - bg) > 3*std
+                # bgimg = np.copy(sortedallImageData[ii])
+                # bgimg[mask] = bg[mask]
+
+                # diagnostic debug
+                # ogdata = np.copy(sortedallImageData[ii])
+                
+                # find and remove all single pixel blocks brighter than 98th percentile 
+                bmask = binary_closing(sortedallImageData[ii] > np.percentile(sortedallImageData[ii], 98))
+                bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
+                hotmask = np.logical_xor(bmask,bmask1)
+                labels, nlabel = label(hotmask)
+                bg = median_filter(sortedallImageData[ii],(4,4))
+                sortedallImageData[ii][hotmask] = bg[hotmask]
+
+                # kinda slow
+                # replace hot pixels with average of neighboring pixels
+                # for j in range(1,nlabel+1):
+                #     mmask = labels==j  # mini mask
+                #     smask = binary_dilation(mmask)  # dilated mask
+                #     bmask = np.logical_xor(smask,mmask)  # bounding pixels
+                #     sortedallImageData[ii][mmask] = np.mean(sortedallImageData[ii][bmask])  # replace
+
+                # diagnostic
+                # f,ax = plt.subplots(1,3,figsize=(18,8))
+                # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                # ax[0].set_title("Original Data")
+                # ax[1].imshow(hotmask,cmap='binary_r')
+                # ax[1].set_title("Hot Mask")
+                # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                # ax[2].set_title("Corrected Image")
+                # plt.tight_layout()
+                # plt.show()
+
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
@@ -2280,8 +2357,7 @@ def main():
                             'a2': 0,             #Flux lower bound
                         }
 
-                        # phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
-                        phase = getPhase(arrayTimes[~filtered_data], prior['per'], prior['tmid'])
+                        phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
                         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
                         upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
                         lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
@@ -2303,7 +2379,7 @@ def main():
                                 elif pDict[k] == 0 or np.isnan(pDict[k]):
                                     print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
                                     pDict[k] = 1
-                            elif not pDict[k]:
+                            elif pDict[k] == None:
                                 print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
                                 pDict[k] = 0
 
@@ -2340,11 +2416,20 @@ def main():
                             arrayNormUnc = arrayNormUnc * np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
                             minAnnulus = annulusR  # then set min aperature and annulus to those values
                             minAperture = apertureR
-                            # gets the centroid trace plots to ensure tracking is working
-                            finXTargCentArray = np.array(xTargCent)
-                            finYTargCentArray = np.array(yTargCent)
-                            finXRefCentArray = np.array(xRefCent)
-                            finYRefCentArray = np.array(yRefCent)
+
+                            if len(xTargCent) > 0:
+                                # gets the centroid trace plots to ensure tracking is working
+                                finXTargCentArray = np.array(xTargCent)
+                                finYTargCentArray = np.array(yTargCent)
+                                finXRefCentArray = np.array(xRefCent)
+                                finYRefCentArray = np.array(yRefCent)
+                            else:
+                                # PSF fit usually 
+                                finXTargCentArray = np.array([target_fits[k][0] for k in target_fits])
+                                finYTargCentArray = np.array([target_fits[k][1] for k in target_fits])
+                                finYRefCentArray = np.array([ref_fits[k][1] for k in ref_fits])
+                                finXRefCentArray = np.array([ref_fits[k][0] for k in ref_fits])
+                                arrayPhases = getPhase(arrayTimes, pDict['pPer'], myfit.parameters['tmid'])
 
                             # APPLY DATA FILTER
                             # apply data filter sets the lists we want to print to correspond to the optimal aperature
@@ -2352,6 +2437,7 @@ def main():
                             finYTargCent = finYTargCentArray[~filtered_data]
                             finXRefCent = finXRefCentArray[~filtered_data]
                             finYRefCent = finYRefCentArray[~filtered_data]
+                            
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = arrayFinalFlux[~filtered_data]
                             nonBJDTimes = arrayTimes[~filtered_data]
@@ -2457,7 +2543,9 @@ def main():
             if minAperture >= 0:
                 ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
                 ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
-            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.log10(np.nanmin(sortedallImageData[0][sortedallImageData[0] > 0])), vmax=np.log10(np.nanmax(sortedallImageData[0][sortedallImageData[0] > 0])))  #,vmax=np.nanmax([arrayTargets[0],arrayReferences[0]]))
+
+            med_img = median_filter(sortedallImageData[0],(4,4))
+            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(np.log10(med_img),5), vmax=np.percentile(np.log10(med_img),99))
             plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
@@ -2670,8 +2758,8 @@ def main():
                 'a2': 0,             #Flux lower bound
             }
 
+        
         phase = (goodTimes-prior['tmid'])/prior['per']
-        # phase = getPhase(goodTimes, prior['per'], prior['tmid'])
         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
         upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
         lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])

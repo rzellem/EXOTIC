@@ -2860,6 +2860,7 @@ def main():
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], infoDict['date']))
+        plt.close()
 
 
         # write output to text file

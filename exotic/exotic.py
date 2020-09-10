@@ -907,37 +907,37 @@ class PlateSolution:
         self.directory = directory
 
     def plate_solution(self):
-        session = self.login()
+        session = self._login()
         if not session:
             return login_fail()
 
-        sub_id = self.upload(session)
+        sub_id = self._upload(session)
         if not sub_id:
             return upload_fail()
 
-        sub_url = self.get_url('submissions/%s' % sub_id)
-        job_id = self.sub_status(sub_url)
+        sub_url = self._get_url('submissions/%s' % sub_id)
+        job_id = self._sub_status(sub_url)
         if not job_id:
             return sub_fail()
 
-        job_url = self.get_url('jobs/%s' % job_id)
+        job_url = self._get_url('jobs/%s' % job_id)
         download_url = self.apiurl.replace('/api/', '/new_fits_file/%s/' % job_id)
         wcs_file = os.path.join(self.directory, 'wcs_image.fits')
-        wcs_file = self.job_status(job_url, wcs_file, download_url)
+        wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
             return job_fail()
         else:
             print('\n\nSuccess. ')
             return wcs_file
 
-    def get_url(self, service):
+    def _get_url(self, service):
         return self.apiurl + service
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
                   retry_if_exception_type(requests.exceptions.RequestException)))
-    def login(self):
-        r = requests.post(self.get_url('login'), data={'request-json': json.dumps(self.apikey)})
+    def _login(self):
+        r = requests.post(self._get_url('login'), data={'request-json': json.dumps(self.apikey)})
         if r.json()['status'] == 'success':
             return r.json()['session']
         return False
@@ -945,7 +945,7 @@ class PlateSolution:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
                   retry_if_exception_type(requests.exceptions.RequestException)))
-    def upload(self, session):
+    def _upload(self, session):
         files = {'file': open(self.file, 'rb')}
         headers = {'request-json': json.dumps({"session": session}), 'allow_commercial_use': 'n',
                    'allow_modifications': 'n', 'publicly_visible': 'n'}
@@ -959,7 +959,7 @@ class PlateSolution:
     @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
                   retry_if_exception_type(requests.exceptions.RequestException)))
-    def sub_status(self, sub_url):
+    def _sub_status(self, sub_url):
         r = requests.get(sub_url)
         if r.json()['job_calibrations']:
             return r.json()['jobs'][0]
@@ -968,7 +968,7 @@ class PlateSolution:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
                   retry_if_exception_type(requests.exceptions.RequestException)))
-    def job_status(self, job_url, wcs_file, download_url):
+    def _job_status(self, job_url, wcs_file, download_url):
         r = requests.get(job_url)
         if r.json()['status'] == 'success':
             r = requests.get(download_url)

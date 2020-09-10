@@ -872,14 +872,18 @@ def is_false(value):
     return value is False
 
 
+def result_if_max_retry_count(retry_state):
+    pass
+
+
 def login_fail():
-    print('\n\nAfter multiple attempts, EXOTIC could not Login to nova.astrometry.net. EXOTIC will continue reducing'
+    print('\n\nAfter multiple attempts, EXOTIC could not Login to nova.astrometry.net. EXOTIC will continue reducing '
           'data without a plate solution.')
     return False
 
 
 def upload_fail():
-    print('\n\nAfter multiple attempts, EXOTIC could not Upload to nova.astrometry.net. EXOTIC will continue reducing'
+    print('\n\nAfter multiple attempts, EXOTIC could not Upload to nova.astrometry.net. EXOTIC will continue reducing '
           'data without a plate solution.')
     return False
 
@@ -935,7 +939,8 @@ class PlateSolution:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)))
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
     def _login(self):
         r = requests.post(self._get_url('login'), data={'request-json': json.dumps(self.apikey)})
         if r.json()['status'] == 'success':
@@ -944,7 +949,8 @@ class PlateSolution:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)))
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
         files = {'file': open(self.file, 'rb')}
         headers = {'request-json': json.dumps({"session": session}), 'allow_commercial_use': 'n',
@@ -956,9 +962,10 @@ class PlateSolution:
             return r.json()['subid']
         return False
 
-    @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)))
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
         r = requests.get(sub_url)
         if r.json()['job_calibrations']:
@@ -967,7 +974,8 @@ class PlateSolution:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)))
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):
         r = requests.get(job_url)
         if r.json()['status'] == 'success':

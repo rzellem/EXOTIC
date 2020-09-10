@@ -656,6 +656,7 @@ def radec_hours_to_degree(ra, dec):
             ra = input('Input the right ascension of target (HH:MM:SS): ')
             dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
+
 def round_to_2(*args):
     x = args[0]
     if len(args) == 1:
@@ -667,6 +668,7 @@ def round_to_2(*args):
     else:
         roundval = -int(np.floor(np.log10(abs(y))))+1
     return round(x, roundval)
+
 
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
@@ -700,10 +702,17 @@ def check_imaging_files(directory, filename):
 
 
 # Calculating Limb Darkening Parameters using LDTK
-def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
-                     # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
+class LimbDarkening:
+
+    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
+                 logg=None, loggpos=None, loggneg=None):
+        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
+                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
+                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+
+        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
-    minmaxwavelen = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
+        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
                      ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
 
                      # Sloan
@@ -732,74 +741,77 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
                      ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
                      ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
-    print('\n***************************')
-    print('Limb Darkening Coefficients')
-    print('***************************')
+    def nonlinear_ld(self):
+        self._standard_list()
+        option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? '
+                            '(y/n): ', type_=str, val1='y', val2='n')
 
-    print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
-          '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
-    for key, value in minmaxwavelen.items():
-        print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
-
-    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ',
-                       type_=str, val1='y', val2='n')
-
-    # User decides to allow EXOTIC to calculate limb darkening parameters
-    if ldopt == 'y':
-        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
-                                    type_=int, val1=1, val2=2)
-
-        # Standard filters calculating limb darkening parameters
-        if standcustomopt == 1:
-            while True:
-                try:
-                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
-                    for key, value in minmaxwavelen.items():
-                        if filtername in (key[0], key[1]) and filtername != 'N/A':
-                            filtername = (key[0], key[1])
-                            break
-                    else:
-                        raise KeyError
-                    break
-                except KeyError:
-                    print('Error: The entered filter is not in the provided list of standard filters.')
-
-            wlmin = [minmaxwavelen[filtername][0] / 1000]
-            wlmax = [minmaxwavelen[filtername][1] / 1000]
-            filtername = filtername[1]
-
-        # Custom filters calculating limb darkening parameters
+        if option == 'y':
+            opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int,
+                             val1=1, val2=2)
+            if opt == 1:
+                return self._standard()
+            elif opt == 2:
+                return self._custom()
         else:
-            wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
-            wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
-            filtername = 'N/A'
+            return self._user_entered()
 
+    def _standard_list(self):
+        print('\n***************************')
+        print('Limb Darkening Coefficients')
+        print('***************************')
+        print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
+              '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
+        for key, value in self.fwhm.items():
+            print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
 
-        priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
-                  'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
-                  'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+    def _standard(self):
+        while True:
+            try:
+                filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
+                for key, value in self.fwhm.items():
+                    if filtername in (key[0], key[1]) and filtername != 'N/A':
+                        filtername = (key[0], key[1])
+                        break
+                else:
+                    raise KeyError
+                break
+            except KeyError:
+                print('Error: The entered filter is not in the provided list of standard filters.')
 
-        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), priors)
+        wlmin = self.fwhm[filtername][0]
+        wlmax = self.fwhm[filtername][1]
+        filtername = filtername[1]
+        return self._calculate_ld(wlmin, wlmax, filtername)
 
-        nlld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
-        nlld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
-        nlld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
-        nlld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
+    def _custom(self):
+        filtername = 'N/A'
+        wlmin = float(input('FWHM Minimum wavelength (nm): '))
+        wlmax = float(input('FWHM Maximum wavelength (nm): '))
+        return self._calculate_ld(wlmin, wlmax, filtername)
 
-    # User enters in their own limb darkening parameters with uncertainties
-    else:
+    def _user_entered(self):
         filtername = input('\nEnter in your filter name: ')
-        nlld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
-        nlld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
-        nlld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
-        nlld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
-        nlld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
-        nlld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
-        nlld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
-        nlld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
-        nlld0, nlld1, nlld2, nlld3 = (nlld0, nlld0unc), (nlld1, nlld1unc), (nlld2, nlld2unc), (nlld3, nlld3unc)
+        ld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
+        ld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
+        ld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
+        ld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
+        ld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
+        ld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
+        ld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
+        ld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
+        ld0, ld1, ld2, ld3 = (ld0, ld0unc), (ld1, ld1unc), (ld2, ld2unc), (ld3, ld3unc)
+        return ld0, ld1, ld2, ld3, filtername
 
-    return nlld0, nlld1, nlld2, nlld3, filtername
+    def _calculate_ld(self, wlmin, wlmax, filtername):
+        wlmin = [wlmin / 1000]
+        wlmax = [wlmax / 1000]
+        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), self.priors)
+        ld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
+        ld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
+        ld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
+        ld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
+        return ld0, ld1, ld2, ld3, filtername
 
 
 # Checks for corrupted FITS files
@@ -1776,12 +1788,12 @@ def main():
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-
         pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
-        ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
-                                                              pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
-                                                              pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+        ldobj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
+                              met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
+                              logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'])
+        ld0, ld1, ld2, ld3, infoDict['filter'] = ldobj.nonlinear_ld()
 
         # If fits files are used, check that they are not corrupted
         if fitsortext == 1: 

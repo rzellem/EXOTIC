@@ -133,8 +133,8 @@ from photutils import aperture_photometry
 from skimage.registration import phase_cross_correlation
 
 # error handling for scraper
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
-    wait_exponential, wait_random
+from tenacity import retry, retry_if_exception_type, retry_if_result, \
+    stop_after_attempt, wait_exponential
 
 # long process here
 # time.sleep(10)
@@ -728,9 +728,10 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
 
                      # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
                      ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ("LCO SDSS u'", 'N/A'): (325.50, 382.50),
-                     ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
-                     ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
+                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
+                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
+                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
+
 
     print('\n***************************')
     print('Limb Darkening Coefficients')
@@ -852,12 +853,12 @@ def check_wcs(fits_file, saveDirectory):
             t.start()
 
             # Plate solves the first imaging file
-            imagingFile = fits_file
-            wcsFile = plate_solution(imagingFile, saveDirectory)
+            wcsobject = PlateSolution(file=fits_file, directory=saveDirectory)
+            wcsfile = wcsobject.plate_solution()
             done = True
 
             # Return plate solution from nova.astrometry.net
-            return wcsFile
+            return wcsfile
         else:
             # User either did not want a plate solution or had one in file header and decided not to use it,
             # therefore return nothing
@@ -867,67 +868,122 @@ def check_wcs(fits_file, saveDirectory):
         return fits_file
 
 
-# Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
-def plate_solution(fits_file, saveDirectory):
+def is_false(value):
+    return value is False
+
+
+def result_if_max_retry_count(retry_state):
+    pass
+
+
+def login_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could not Login to nova.astrometry.net. EXOTIC will continue reducing '
+          'data without a plate solution.')
+    return False
+
+
+def upload_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could not Upload to nova.astrometry.net. EXOTIC will continue reducing '
+          'data without a plate solution.')
+    return False
+
+
+def sub_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. EXOTIC '
+          'will continue reducing data without a plate solution.')
+    return False
+
+
+def job_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. EXOTIC '
+          'will continue reducing data without a plate solution.')
+    return False
+
+
+class PlateSolution:
     default_url = 'http://nova.astrometry.net/api/'
+    default_apikey = {'apikey': 'vfsyxlmdxfryhprq'}
 
-    # Login to Exoplanet Watch's profile w/ API key. If session fails, allow 5 attempts of
-    # rejoining before returning False and informing user of technical failure.
-    for i in range(5):
-        try:
-            r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
-            sess = r.json()['session']
-            break
-        except Exception:
-            if i == 4:
-                print('Imaging file could not receive a plate solution due to technical difficulties '
-                      'from nova.astrometry.net. Please try again later. Data reduction will continue.')
-                return False
-            time.sleep(5)
-            continue
+    def __init__(self, apiurl=default_url, apikey=default_apikey, file=None, directory=None):
+        self.apiurl = apiurl
+        self.apikey = apikey
+        self.file = file
+        self.directory = directory
 
-    # Saves session number to upload imaging file
-    files = {'file': open(fits_file, 'rb')}
-    headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
-               'allow_modifications': 'n', 'publicly_visible': 'n'}
+    def plate_solution(self):
+        session = self._login()
+        if not session:
+            return login_fail()
 
-    # Uploads the .fits file to nova.astrometry.net
-    r = requests.post(default_url + 'upload', files=files, data=headers)
-    if r.json()['status'] != 'success':
-        print('Imaging file could not receive a plate solution due to technical difficulties '
-              'from nova.astrometry.net. Please try again later. Data reduction will continue.')
-        return False
+        sub_id = self._upload(session)
+        if not sub_id:
+            return upload_fail()
 
-    # Saves submission id for checking on the status of image uploaded
-    sub_id = r.json()['subid']
-    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+        sub_url = self._get_url('submissions/%s' % sub_id)
+        job_id = self._sub_status(sub_url)
+        if not job_id:
+            return sub_fail()
 
-    # Once the image has successfully been plate solved, the following loop will break
-    while True:
-        r = requests.get(submissions_url)
-        if r.json()['job_calibrations']:
-            break
-        time.sleep(5)
-
-    # Checks the job id's status for parameters
-    job_id = r.json()['jobs']
-    job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
-    wcs_file = os.path.join(saveDirectory, 'newfits.fits')
-
-    # Checks the job id's status
-    while True:
-        r = requests.get(job_url)
-        if r.json()['status'] == 'success':
-            fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
-            r = requests.get(fits_download_url)
-            with open(wcs_file, 'wb') as f:
-                f.write(r.content)
+        job_url = self._get_url('jobs/%s' % job_id)
+        download_url = self.apiurl.replace('/api/', '/new_fits_file/%s/' % job_id)
+        wcs_file = os.path.join(self.directory, 'wcs_image.fits')
+        wcs_file = self._job_status(job_url, wcs_file, download_url)
+        if not wcs_file:
+            return job_fail()
+        else:
             print('\n\nSuccess. ')
             return wcs_file
-        elif r.json()['status'] == 'failure':
-            print('\n\n.FITS file has failed to be given WCS.')
-            return False
-        time.sleep(5)
+
+    def _get_url(self, service):
+        return self.apiurl + service
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _login(self):
+        r = requests.post(self._get_url('login'), data={'request-json': json.dumps(self.apikey)})
+        if r.json()['status'] == 'success':
+            return r.json()['session']
+        return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _upload(self, session):
+        files = {'file': open(self.file, 'rb')}
+        headers = {'request-json': json.dumps({"session": session}), 'allow_commercial_use': 'n',
+                   'allow_modifications': 'n', 'publicly_visible': 'n'}
+
+        r = requests.post(self.apiurl + 'upload', files=files, data=headers)
+
+        if r.json()['status'] == 'success':
+            return r.json()['subid']
+        return False
+
+    @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _sub_status(self, sub_url):
+        r = requests.get(sub_url)
+        if r.json()['job_calibrations']:
+            return r.json()['jobs'][0]
+        return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _job_status(self, job_url, wcs_file, download_url):
+        r = requests.get(job_url)
+        if r.json()['status'] == 'success':
+            r = requests.get(download_url)
+            with open(wcs_file, 'wb') as f:
+                f.write(r.content)
+            return wcs_file
+        return False
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution

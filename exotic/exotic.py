@@ -567,7 +567,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
-                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+                print("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
                 print("\tNASA Exoplanet Archive value: %s" % pdict[item])
                 print("\tInitialization file value: %s" % userpdict[item])
                 print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
@@ -601,7 +601,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             # Initialization planetary parameters don't match NASA Exoplanet Archive
             if userpdict[key] is not None:
-                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
+                print("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
                 print("\tNASA Exoplanet Archive value: %s" % pdict[key])
                 print("\tInitialization file value: %s" % userpdict[key])
                 print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")

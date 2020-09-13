@@ -133,8 +133,8 @@ from photutils import aperture_photometry
 from skimage.registration import phase_cross_correlation
 
 # error handling for scraper
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
-    wait_exponential, wait_random
+from tenacity import retry, retry_if_exception_type, retry_if_result, \
+    stop_after_attempt, wait_exponential
 
 # long process here
 # time.sleep(10)
@@ -568,7 +568,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
-                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+                print("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
                 print("\tNASA Exoplanet Archive value: %s" % pdict[item])
                 print("\tInitialization file value: %s" % userpdict[item])
                 print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
@@ -602,7 +602,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             # Initialization planetary parameters don't match NASA Exoplanet Archive
             if userpdict[key] is not None:
-                print("\n\n*** WARNING: %s initialization file's %s does not match the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
+                print("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
                 print("\tNASA Exoplanet Archive value: %s" % pdict[key])
                 print("\tInitialization file value: %s" % userpdict[key])
                 print("\nWould you like to: (1) use NASA Exoplanet Archive value, (2) use initialization file value, or (3) enter in a new value.")
@@ -657,6 +657,7 @@ def radec_hours_to_degree(ra, dec):
             ra = input('Input the right ascension of target (HH:MM:SS): ')
             dec = input('Input the declination of target (<sign>DD:MM:SS): ')
 
+
 def round_to_2(*args):
     x = args[0]
     if len(args) == 1:
@@ -668,6 +669,7 @@ def round_to_2(*args):
     else:
         roundval = -int(np.floor(np.log10(abs(y))))+1
     return round(x, roundval)
+
 
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
@@ -701,10 +703,17 @@ def check_imaging_files(directory, filename):
 
 
 # Calculating Limb Darkening Parameters using LDTK
-def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, loggneg):
-                     # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
+class LimbDarkening:
+
+    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
+                 logg=None, loggpos=None, loggneg=None):
+        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
+                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
+                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+
+        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
-    minmaxwavelen = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
+        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
                      ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
 
                      # Sloan
@@ -729,78 +738,82 @@ def ld_nonlinear(teff, teffpos, teffneg, met, metpos, metneg, logg, loggpos, log
 
                      # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
                      ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ("LCO SDSS u'", 'N/A'): (325.50, 382.50),
-                     ("LCO SDSS g'", 'N/A'): (402.00, 552.00), ("LCO SDSS r'", 'N/A'): (552.00, 691.00),
-                     ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
+                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
+                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
+                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
-    print('\n***************************')
-    print('Limb Darkening Coefficients')
-    print('***************************')
 
-    print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
-          '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
-    for key, value in minmaxwavelen.items():
-        print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
+    def nonlinear_ld(self):
+        self._standard_list()
+        option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? '
+                            '(y/n): ', type_=str, val1='y', val2='n')
 
-    ldopt = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? (y/n): ',
-                       type_=str, val1='y', val2='n')
-
-    # User decides to allow EXOTIC to calculate limb darkening parameters
-    if ldopt == 'y':
-        standcustomopt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
-                                    type_=int, val1=1, val2=2)
-
-        # Standard filters calculating limb darkening parameters
-        if standcustomopt == 1:
-            while True:
-                try:
-                    filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
-                    for key, value in minmaxwavelen.items():
-                        if filtername in (key[0], key[1]) and filtername != 'N/A':
-                            filtername = (key[0], key[1])
-                            break
-                    else:
-                        raise KeyError
-                    break
-                except KeyError:
-                    print('Error: The entered filter is not in the provided list of standard filters.')
-
-            wlmin = [minmaxwavelen[filtername][0] / 1000]
-            wlmax = [minmaxwavelen[filtername][1] / 1000]
-            filtername = filtername[1]
-
-        # Custom filters calculating limb darkening parameters
+        if option == 'y':
+            opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int,
+                             val1=1, val2=2)
+            if opt == 1:
+                return self._standard()
+            elif opt == 2:
+                return self._custom()
         else:
-            wlmin = [float(input('FWHM Minimum wavelength (nm): ')) / 1000]
-            wlmax = [float(input('FWHM Maximum wavelength (nm): ')) / 1000]
-            filtername = 'N/A'
+            return self._user_entered()
 
+    def _standard_list(self):
+        print('\n***************************')
+        print('Limb Darkening Coefficients')
+        print('***************************')
+        print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
+              '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
+        for key, value in self.fwhm.items():
+            print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
 
-        priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
-                  'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
-                  'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+    def _standard(self):
+        while True:
+            try:
+                filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
+                for key, value in self.fwhm.items():
+                    if filtername in (key[0], key[1]) and filtername != 'N/A':
+                        filtername = (key[0], key[1])
+                        break
+                else:
+                    raise KeyError
+                break
+            except KeyError:
+                print('Error: The entered filter is not in the provided list of standard filters.')
 
-        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), priors)
+        wlmin = self.fwhm[filtername][0]
+        wlmax = self.fwhm[filtername][1]
+        filtername = filtername[1]
+        return self._calculate_ld(wlmin, wlmax, filtername)
 
-        nlld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
-        nlld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
-        nlld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
-        nlld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
+    def _custom(self):
+        filtername = 'N/A'
+        wlmin = float(input('FWHM Minimum wavelength (nm): '))
+        wlmax = float(input('FWHM Maximum wavelength (nm): '))
+        return self._calculate_ld(wlmin, wlmax, filtername)
 
-    # User enters in their own limb darkening parameters with uncertainties
-    else:
+    def _user_entered(self):
         filtername = input('\nEnter in your filter name: ')
-        nlld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
-        nlld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
-        nlld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
-        nlld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
-        nlld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
-        nlld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
-        nlld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
-        nlld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
-        nlld0, nlld1, nlld2, nlld3 = (nlld0, nlld0unc), (nlld1, nlld1unc), (nlld2, nlld2unc), (nlld3, nlld3unc)
+        ld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
+        ld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
+        ld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
+        ld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
+        ld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
+        ld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
+        ld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
+        ld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
+        ld0, ld1, ld2, ld3 = (ld0, ld0unc), (ld1, ld1unc), (ld2, ld2unc), (ld3, ld3unc)
+        return ld0, ld1, ld2, ld3, filtername
 
-    return nlld0, nlld1, nlld2, nlld3, filtername
+    def _calculate_ld(self, wlmin, wlmax, filtername):
+        wlmin = [wlmin / 1000]
+        wlmax = [wlmax / 1000]
+        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), self.priors)
+        ld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
+        ld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
+        ld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
+        ld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
+        return ld0, ld1, ld2, ld3, filtername
 
 
 # Checks for corrupted FITS files
@@ -853,12 +866,12 @@ def check_wcs(fits_file, saveDirectory):
             t.start()
 
             # Plate solves the first imaging file
-            imagingFile = fits_file
-            wcsFile = plate_solution(imagingFile, saveDirectory)
+            wcsobject = PlateSolution(file=fits_file, directory=saveDirectory)
+            wcsfile = wcsobject.plate_solution()
             done = True
 
             # Return plate solution from nova.astrometry.net
-            return wcsFile
+            return wcsfile
         else:
             # User either did not want a plate solution or had one in file header and decided not to use it,
             # therefore return nothing
@@ -868,67 +881,122 @@ def check_wcs(fits_file, saveDirectory):
         return fits_file
 
 
-# Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
-def plate_solution(fits_file, saveDirectory):
+def is_false(value):
+    return value is False
+
+
+def result_if_max_retry_count(retry_state):
+    pass
+
+
+def login_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could not Login to nova.astrometry.net. EXOTIC will continue reducing '
+          'data without a plate solution.')
+    return False
+
+
+def upload_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could not Upload to nova.astrometry.net. EXOTIC will continue reducing '
+          'data without a plate solution.')
+    return False
+
+
+def sub_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. EXOTIC '
+          'will continue reducing data without a plate solution.')
+    return False
+
+
+def job_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. EXOTIC '
+          'will continue reducing data without a plate solution.')
+    return False
+
+
+class PlateSolution:
     default_url = 'http://nova.astrometry.net/api/'
+    default_apikey = {'apikey': 'vfsyxlmdxfryhprq'}
 
-    # Login to Exoplanet Watch's profile w/ API key. If session fails, allow 5 attempts of
-    # rejoining before returning False and informing user of technical failure.
-    for i in range(5):
-        try:
-            r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
-            sess = r.json()['session']
-            break
-        except Exception:
-            if i == 4:
-                print('Imaging file could not receive a plate solution due to technical difficulties '
-                      'from nova.astrometry.net. Please try again later. Data reduction will continue.')
-                return False
-            time.sleep(5)
-            continue
+    def __init__(self, apiurl=default_url, apikey=default_apikey, file=None, directory=None):
+        self.apiurl = apiurl
+        self.apikey = apikey
+        self.file = file
+        self.directory = directory
 
-    # Saves session number to upload imaging file
-    files = {'file': open(fits_file, 'rb')}
-    headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
-               'allow_modifications': 'n', 'publicly_visible': 'n'}
+    def plate_solution(self):
+        session = self._login()
+        if not session:
+            return login_fail()
 
-    # Uploads the .fits file to nova.astrometry.net
-    r = requests.post(default_url + 'upload', files=files, data=headers)
-    if r.json()['status'] != 'success':
-        print('Imaging file could not receive a plate solution due to technical difficulties '
-              'from nova.astrometry.net. Please try again later. Data reduction will continue.')
-        return False
+        sub_id = self._upload(session)
+        if not sub_id:
+            return upload_fail()
 
-    # Saves submission id for checking on the status of image uploaded
-    sub_id = r.json()['subid']
-    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+        sub_url = self._get_url('submissions/%s' % sub_id)
+        job_id = self._sub_status(sub_url)
+        if not job_id:
+            return sub_fail()
 
-    # Once the image has successfully been plate solved, the following loop will break
-    while True:
-        r = requests.get(submissions_url)
-        if r.json()['job_calibrations']:
-            break
-        time.sleep(5)
-
-    # Checks the job id's status for parameters
-    job_id = r.json()['jobs']
-    job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
-    wcs_file = os.path.join(saveDirectory, 'newfits.fits')
-
-    # Checks the job id's status
-    while True:
-        r = requests.get(job_url)
-        if r.json()['status'] == 'success':
-            fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
-            r = requests.get(fits_download_url)
-            with open(wcs_file, 'wb') as f:
-                f.write(r.content)
+        job_url = self._get_url('jobs/%s' % job_id)
+        download_url = self.apiurl.replace('/api/', '/new_fits_file/%s/' % job_id)
+        wcs_file = os.path.join(self.directory, 'wcs_image.fits')
+        wcs_file = self._job_status(job_url, wcs_file, download_url)
+        if not wcs_file:
+            return job_fail()
+        else:
             print('\n\nSuccess. ')
             return wcs_file
-        elif r.json()['status'] == 'failure':
-            print('\n\n.FITS file has failed to be given WCS.')
-            return False
-        time.sleep(5)
+
+    def _get_url(self, service):
+        return self.apiurl + service
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _login(self):
+        r = requests.post(self._get_url('login'), data={'request-json': json.dumps(self.apikey)})
+        if r.json()['status'] == 'success':
+            return r.json()['session']
+        return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _upload(self, session):
+        files = {'file': open(self.file, 'rb')}
+        headers = {'request-json': json.dumps({"session": session}), 'allow_commercial_use': 'n',
+                   'allow_modifications': 'n', 'publicly_visible': 'n'}
+
+        r = requests.post(self.apiurl + 'upload', files=files, data=headers)
+
+        if r.json()['status'] == 'success':
+            return r.json()['subid']
+        return False
+
+    @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _sub_status(self, sub_url):
+        r = requests.get(sub_url)
+        if r.json()['job_calibrations']:
+            return r.json()['jobs'][0]
+        return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _job_status(self, job_url, wcs_file, download_url):
+        r = requests.get(job_url)
+        if r.json()['status'] == 'success':
+            r = requests.get(download_url)
+            with open(wcs_file, 'wb') as f:
+                f.write(r.content)
+            return wcs_file
+        return False
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
@@ -1778,12 +1846,12 @@ def main():
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-
         pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
-        ld0, ld1, ld2, ld3, infoDict['filter'] = ld_nonlinear(pDict['teff'], pDict['teffUncPos'], pDict['teffUncNeg'],
-                                                              pDict['met'], pDict['metUncNeg'], pDict['metUncPos'],
-                                                              pDict['logg'], pDict['loggUncPos'], pDict['loggUncNeg'])
+        ldobj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
+                              met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
+                              logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'])
+        ld0, ld1, ld2, ld3, infoDict['filter'] = ldobj.nonlinear_ld()
 
         # If fits files are used, check that they are not corrupted
         if fitsortext == 1: 
@@ -2868,6 +2936,7 @@ def main():
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], infoDict['date']))
+        plt.close()
 
 
         # write output to text file

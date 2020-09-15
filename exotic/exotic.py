@@ -111,7 +111,7 @@ import astropy.coordinates
 from astropy.io import fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
-from astropy.wcs import WCS
+from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
 from astropy.utils.exceptions import AstropyWarning
@@ -133,8 +133,8 @@ from photutils import aperture_photometry
 from skimage.registration import phase_cross_correlation
 
 # error handling for scraper
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
-    wait_exponential, wait_random
+from tenacity import retry, retry_if_exception_type, retry_if_result, \
+    stop_after_attempt, wait_exponential
 
 # long process here
 # time.sleep(10)
@@ -146,20 +146,6 @@ infoDict = dict()
 UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY = 0, 0, 0, 0
 distFC = 0
 ax1 = plt.figure()  # placeholder
-
-# CONFIGURATIONS
-requests_timeout = 16, 512  # connection timeout, response timeout in secs.
-
-# SHARED CONSTANTS
-pi = 3.14159
-au = 1.496e11  # m
-rsun = 6.955e8  # m
-rjup = 7.1492e7  # m
-G = 0.00029591220828559104  # day, AU, Msun
-
-# SHARED LAMBDAS
-# keplerian semi-major axis (au)
-sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
 # ################### END PROPERTIES ##########################################
 
 
@@ -173,164 +159,196 @@ def sigma_clip(ogdata, sigma=3, dt=21):
 
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
-def dataframe_to_jsonfile(dataframe, filename):
-    jsondata = json.loads(dataframe.to_json(orient='table', index=False))
-    with open(filename, "w") as f:
-        f.write(json.dumps(jsondata['data'], indent=4))
+class NASAExoplanetArchive:
 
+    def __init__(self, planet=None, candidate=False):
+        self.planet = planet
+        # self.candidate = candidate
+        self.pl_dict = None
 
-def tap_query(base_url, query, dataframe=True):
-    # table access protocol query
+        # CONFIGURATIONS
+        self.requests_timeout = 16, 512 # connection timeout, response timeout in secs.
 
-    # build url
-    uri_full = base_url
-    for k in query:
-        if k != "format":
-            uri_full += "{} {} ".format(k, query[k])
+        # SHARED CONSTANTS
+        self.pi = 3.14159
+        self.au = 1.496e11 # m
+        self.rsun = 6.955e8 # m
+        self.rjup = 7.1492e7 # m
+        self.G = 0.00029591220828559104 # day, AU, Msun
 
-    uri_full = uri_full[:-1] + "&format={}".format(query.get("format", "csv"))
-    uri_full = uri_full.replace(' ', '+')
-    print(uri_full)
+        # SHARED LAMBDAS
+        # keplerian semi-major axis (au)
+        self.sa = lambda m, P: (self.G * m * P ** 2 / (4 * self.pi ** 2)) ** (1. / 3)
 
-    response = requests.get(uri_full, timeout=requests_timeout)
-    # TODO check status_code?
+    def planet_info(self):
+        print("\nLooking up {}- please wait.".format(self.planet))
+        self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
-    if dataframe:
-        return pandas.read_csv(StringIO(response.text))
-    else:
-        return response.text
+        if not candidate:
+            with open("eaConf.json", "r") as confirmed:
+                data = json.load(confirmed)
+                planets = [data[i]['pl_name'] for i in range(len(data))]
+                idx = planets.index(self.planet)
+                self._get_params(data[idx])
+                print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
+        return self.planet, candidate, self.pl_dict
 
-@retry(stop=stop_after_attempt(3),
-       wait=wait_exponential(multiplier=1, min=17, max=1024),
-       retry=(retry_if_exception_type(requests.exceptions.RequestException) |
-       retry_if_exception_type(ConnectionError)))
-def new_scrape(filename="eaConf.json", target=None):
+    def _dataframe_to_jsonfile(self, dataframe, filename):
+        jsondata = json.loads(dataframe.to_json(orient='table', index=False))
+        with open(filename, "w") as f:
+            f.write(json.dumps(jsondata['data'], indent=4))
 
-    # scrape_new()
-    uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
-    uri_ipac_query = {
-        # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
-        "select"   : "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
-                     "pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,"
-                     "pl_orbper,pl_orbpererr1,pl_orbeccen,"
-                     "pl_orblper,pl_tranmid,pl_tranmiderr1,"
-                     "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
-                     "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
-                     "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
-                     "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
-        "from"     : "ps",  # Table name
-        "where"    : "tran_flag = 1 and default_flag = 1",
-        "order by" : "pl_pubdate desc",
-        "format"   : "csv"
-    }
+    def _tap_query(self, base_url, query, dataframe=True):
+        # table access protocol query
 
-    if target:
-        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+        # build url
+        uri_full = base_url
+        for k in query:
+            if k != "format":
+                uri_full += "{} {} ".format(k, query[k])
 
-    default = tap_query(uri_ipac_base, uri_ipac_query)
+        uri_full = uri_full[:-1] + "&format={}".format(query.get("format", "csv"))
+        uri_full = uri_full.replace(' ', '+')
+        print(uri_full)
 
-    # fill in missing columns
-    uri_ipac_query['where'] = 'tran_flag=1'
+        response = requests.get(uri_full, timeout=self.requests_timeout)
+        # TODO check status_code?
 
-    if target:
-        uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
-
-    extra = tap_query(uri_ipac_base, uri_ipac_query)
-
-    if len(default) == 0:
-        target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
-                       "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
-        if target.strip().lower() == 'candidate':
-            target = input("\nPlease enter candidate planet's name: ")
-            return target, True
+        if dataframe:
+            return pandas.read_csv(StringIO(response.text))
         else:
-            return new_scrape(filename="eaConf.json", target=target)
-    else:
-        # replaces NEA default with most recent publication
-        default.iloc[0] = extra.iloc[0]
+            return response.text
 
-        # for each planet
-        for i in default.pl_name:
+    @retry(stop=stop_after_attempt(3),
+           wait=wait_exponential(multiplier=1, min=17, max=1024),
+           retry=(retry_if_exception_type(requests.exceptions.RequestException) |
+                  retry_if_exception_type(ConnectionError)))
+    def _new_scrape(self, filename="eaConf.json", target=None):
 
-            # extract rows for each planet
-            ddata = default.loc[default.pl_name == i]
-            edata = extra.loc[extra.pl_name == i]
+        # scrape_new()
+        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+        uri_ipac_query = {
+            # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+            "select": "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
+                      "pl_ratdor,pl_ratdorerr1,pl_orbincl,pl_orbinclerr1,"
+                      "pl_orbper,pl_orbpererr1,pl_orbeccen,"
+                      "pl_orblper,pl_tranmid,pl_tranmiderr1,"
+                      "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
+                      "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
+                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
+                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
+            "from": "ps",  # Table name
+            "where": "tran_flag = 1 and default_flag = 1",
+            "order by": "pl_pubdate desc",
+            "format": "csv"
+        }
 
-            # for each nan column in default
-            nans = ddata.isna()
-            for k in ddata.keys():
-                if nans[k].bool():  # if col value is nan
-                    if not edata[k].isna().all():  # if replacement data exists
-                        # replace with first index
-                        default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                        # TODO could use mean for some variables (not mid-transit)
-                        # print(i,k,edata[k][edata[k].notna()].values[0])
-                    else:
-                        # permanent nans - require manual entry
-                        if k == 'pl_orblper':  # omega
-                            default.loc[default.pl_name == i, k] = 0
-                        elif k == 'pl_ratdor':  # a/R*
-                            # Kepler's 3rd law
-                            semi = sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                            default.loc[default.pl_name == i, k] = semi*au / (ddata.st_rad.values[0]*rsun)
-                        elif k == 'pl_orbincl':  # inclination
-                            default.loc[default.pl_name == i, k] = 90
-                        elif k == "pl_orbeccen":  # eccentricity
-                            default.loc[default.pl_name == i, k] = 0
-                        elif k == "st_met":  # [Fe/H]
-                            default.loc[default.pl_name == i, k] = 0
+        if target:
+            uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
 
-        dataframe_to_jsonfile(default, filename)
-        return target, False
+        default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
+        # fill in missing columns
+        uri_ipac_query['where'] = 'tran_flag=1'
 
-def new_getParams(data):
-    # translate data from Archive keys to Ethan Keys
-    try:
-        rprs = np.sqrt(data['pl_trandep']/100.)
-        rprserr = np.sqrt(np.abs((data['pl_trandeperr1']/100.)*(data['pl_trandeperr2']/100.)))/(2.*rprs)
-    except (KeyError, TypeError):
+        if target:
+            uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+
+        extra = self._tap_query(uri_ipac_base, uri_ipac_query)
+
+        if len(default) == 0:
+            target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
+                           "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
+            if target.strip().lower() == 'candidate':
+                target = input("\nPlease enter candidate planet's name: ")
+                return target, True
+            else:
+                return self._new_scrape(filename="eaConf.json", target=target)
+        else:
+            # replaces NEA default with most recent publication
+            default.iloc[0] = extra.iloc[0]
+
+            # for each planet
+            for i in default.pl_name:
+
+                # extract rows for each planet
+                ddata = default.loc[default.pl_name == i]
+                edata = extra.loc[extra.pl_name == i]
+
+                # for each nan column in default
+                nans = ddata.isna()
+                for k in ddata.keys():
+                    if nans[k].bool():  # if col value is nan
+                        if not edata[k].isna().all():  # if replacement data exists
+                            # replace with first index
+                            default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
+                            # TODO could use mean for some variables (not mid-transit)
+                            # print(i,k,edata[k][edata[k].notna()].values[0])
+                        else:
+                            # permanent nans - require manual entry
+                            if k == 'pl_orblper':  # omega
+                                default.loc[default.pl_name == i, k] = 0
+                            elif k == 'pl_ratdor':  # a/R*
+                                # Kepler's 3rd law
+                                semi = self.sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                                default.loc[default.pl_name == i, k] = semi * self.au / (
+                                            ddata.st_rad.values[0] * self.rsun)
+                            elif k == 'pl_orbincl':  # inclination
+                                default.loc[default.pl_name == i, k] = 90
+                            elif k == "pl_orbeccen":  # eccentricity
+                                default.loc[default.pl_name == i, k] = 0
+                            elif k == "st_met":  # [Fe/H]
+                                default.loc[default.pl_name == i, k] = 0
+
+            self._dataframe_to_jsonfile(default, filename)
+            return target, False
+
+    def _get_params(self, data):
+        # translate data from Archive keys to Ethan Keys
         try:
-            rprs = data['pl_ratror']
-            rprserr = np.sqrt(np.abs(data['pl_ratrorerr1']*data['pl_ratrorerr2']))
+            rprs = np.sqrt(data['pl_trandep'] / 100.)
+            rprserr = np.sqrt(np.abs((data['pl_trandeperr1'] / 100.) * (data['pl_trandeperr2'] / 100.))) / (2. * rprs)
         except (KeyError, TypeError):
-            rp = data['pl_radj']*rjup
-            rperr = data['pl_radjerr1']*rjup
-            rs = data['st_rad']*rsun
-            rserr = data['st_raderr1']*rsun
-            rprserr = ((rperr/rs)**2 + (-rp*rserr/rs**2)**2 )**0.5
-            rprs = rp/rs
-    planetDictionary = {
-        'ra': data['ra'],
-        'dec': data['dec'],
-        'pName': data['pl_name'],
-        'sName': data['hostname'],
-        'pPer': data['pl_orbper'],
-        'pPerUnc': data['pl_orbpererr1'],
+            try:
+                rprs = data['pl_ratror']
+                rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
+            except (KeyError, TypeError):
+                rp = data['pl_radj'] * self.rjup
+                rperr = data['pl_radjerr1'] * self.rjup
+                rs = data['st_rad'] * self.rsun
+                rserr = data['st_raderr1'] * self.rsun
+                rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
+                rprs = rp / rs
+        self.pl_dict = {
+            'ra': data['ra'],
+            'dec': data['dec'],
+            'pName': data['pl_name'],
+            'sName': data['hostname'],
+            'pPer': data['pl_orbper'],
+            'pPerUnc': data['pl_orbpererr1'],
 
-        'midT': data['pl_tranmid'],
-        'midTUnc': data['pl_tranmiderr1'],
-        'rprs': rprs,
-        'rprsUnc': rprserr,
-        'aRs': data['pl_ratdor'],
-        'aRsUnc': data['pl_ratdorerr1'],
-        'inc': data['pl_orbincl'],
-        'incUnc': data['pl_orbinclerr1'],
+            'midT': data['pl_tranmid'],
+            'midTUnc': data['pl_tranmiderr1'],
+            'rprs': rprs,
+            'rprsUnc': rprserr,
+            'aRs': data['pl_ratdor'],
+            'aRsUnc': data['pl_ratdorerr1'],
+            'inc': data['pl_orbincl'],
+            'incUnc': data['pl_orbinclerr1'],
 
-        'ecc': data.get('pl_orbeccen', 0),
-        'teff': data['st_teff'],
-        'teffUncPos': data['st_tefferr1'],
-        'teffUncNeg': data['st_tefferr2'],
-        'met': data['st_met'],
-        'metUncPos': data['st_meterr1'],
-        'metUncNeg': data['st_meterr2'],
-        'logg': data['st_logg'],
-        'loggUncPos': data['st_loggerr1'],
-        'loggUncNeg': data['st_loggerr2']
-    }
-
-    return planetDictionary
+            'ecc': data.get('pl_orbeccen', 0),
+            'teff': data['st_teff'],
+            'teffUncPos': data['st_tefferr1'],
+            'teffUncNeg': data['st_tefferr2'],
+            'met': data['st_met'],
+            'metUncPos': data['st_meterr1'],
+            'metUncNeg': data['st_meterr2'],
+            'logg': data['st_logg'],
+            'loggUncPos': data['st_loggerr1'],
+            'loggUncNeg': data['st_loggerr2']
+        }
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
+
 
 #Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE
 #Find separate funciton in code that does julian conversion to BJD_TDB
@@ -444,53 +462,204 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             return option
 
 
-# Create a save directory within the current working directory
-def create_directory(directory):
+def get_save_directory(save_directory):
     while True:
         try:
-            directoryname = input('Enter the name for your new directory: ')
-            savedirectory = os.path.join(directory + directoryname, '')
-            os.mkdir(savedirectory)
+            if save_directory == 'new':
+                save_directory = create_directory()
+            else:
+                save_directory = os.path.join(save_directory, '')
+                if not os.path.isdir(save_directory):
+                    raise OSError
+            return save_directory
         except OSError:
-            print("Creation of the directory %s failed" % savedirectory)
+            print('Error: the directory entered does not exist. Please try again.')
+            save_directory = input("Enter the Directory to Save Plots into or type new to create one: ")
+
+
+# Create a save directory within the current working directory
+def create_directory():
+    while True:
+        try:
+            directory_name = input('Enter the name for your new directory: ')
+            save_path = os.path.join(os.getcwd() + directory_name, '')
+            os.mkdir(save_path)
+        except OSError:
+            print('Creation of the directory {} failed'.format(save_path))
         else:
-            print("Successfully created the directory %s " % savedirectory)
-            return savedirectory
+            print('Successfully created the directory {}'.format(save_path))
+            return save_path
 
 
 # Check user's inits.json for user information and planetary parameters
-def inits_file(initspath, dictinfo, dictplanet):
-    with open(initspath) as json_file:
+def inits_file(inits_path, dict_info, dict_params):
+    with open(inits_path) as json_file:
         data = json.load(json_file)
 
-    initdictinfo = data['user_info']
-    initdictplanet = data['planetary_parameters']
+    comparison_info = {'fitsdir': 'Directory with FITS files',
+                       'saveplot': 'Directory to Save Plots',
+                       'flatsdir': 'Directory of Flats',
+                       'darksdir': 'Directory of Darks',
+                       'biasesdir': 'Directory of Biases',
+                       'aavsonum': 'AAVSO Observer Code (N/A if none)',
+                       'secondobs': 'Secondary Observer Codes (N/A if none)',
+                       'date': 'Observation date',
+                       'lat': 'Obs. Latitude',
+                       'long': 'Obs. Longitude',
+                       'elev': 'Obs. Elevation (meters)',
+                       'ctype': 'Camera Type (CCD or DSLR)',
+                       'pixelbin': 'Pixel Binning',
+                       'filter': 'Filter Name (aavso.org/filters)',
+                       'wl_min': 'Filter Minimum Wavelength (nm)',
+                       'wl_max': 'Filter Maximum Wavelength (nm)',
+                       'notes': 'Observing Notes',
+                       'tarcoords': 'Target Star X & Y Pixel',
+                       'compstars': 'Comparison Star(s) X & Y Pixel',
+                       'plate_opt': 'Plate Solution? (y/n)',
+                       'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'}
 
-    for key, key2 in zip(dictinfo, initdictinfo[0]):
-        dictinfo[key] = initdictinfo[0][key2]
+    comparison_parameters = {'ra': 'Target Star RA (hh:mm:ss)',
+                             'dec': 'Target Star Dec (+/-hh:mm:ss)',
+                             'pName': "Planet's Name",
+                             'sName': "Host Star's Name",
+                             'pPer': 'Orbital Period (days)',
+                             'pPerUnc': 'Orbital Period Uncertainty',
+                             'midT': 'Published Mid-Transit Time (BJD-UTC)',
+                             'midTUnc': 'Mid-Transit Time Uncertainty',
+                             'rprs': 'Ratio of Planet to Stellar Radius (Rp/Rs)',
+                             'rprsUnc': 'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty',
+                             'aRs': 'Ratio of Distance to Stellar Radius (a/Rs)',
+                             'aRsUnc': 'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty',
+                             'inc': 'Orbital Inclination (deg)',
+                             'incUnc': 'Orbital Inclination (deg) Uncertainity',
+                             'ecc': 'Orbital Eccentricity (0 if null)',
+                             'teff': 'Star Effective Temperature (K)',
+                             'teffUncPos': 'Star Effective Temperature (+) Uncertainty',
+                             'teffUncNeg': 'Star Effective Temperature (-) Uncertainty',
+                             'met': 'Star Metallicity ([FE/H])',
+                             'metUncPos': 'Star Metallicity (+) Uncertainty',
+                             'metUncNeg': 'Star Metallicity (-) Uncertainty',
+                             'logg': 'Star Surface Gravity (log(g))',
+                             'loggUncPos': 'Star Surface Gravity (+) Uncertainty',
+                             'loggUncNeg': 'Star Surface Gravity (-) Uncertainty'}
 
-    for key, key2 in zip(dictplanet, initdictplanet[0]):
-        dictplanet[key] = initdictplanet[0][key2]
+    dict_info = get_init_params(comparison_info, dict_info, data['user_info'])
+    dict_info = get_init_params(comparison_info, dict_info, data['optional_info'])
+    dict_params = get_init_params(comparison_parameters, dict_params, data['planetary_parameters'])
 
-    return dictinfo, dictplanet
+    return dict_info, dict_params
 
 
-# Get planet parameters from NEA if not a candidate
-def get_planet_name(targetname):
+def get_init_params(comp, dict1, dict2):
+    for key, value in comp.items():
+        try:
+            dict1[key] = dict2[value]
+        except KeyError:
+            pass
+    return dict1
 
-    planetdict = None
-    print("\nLooking up {}- please wait.".format(targetname))
-    # check to make sure the target can be found in the exoplanet archive right after they enter its name
-    targetname, candidateplanet = new_scrape(filename="eaConf.json", target=targetname)
-    if not candidateplanet:
-        with open("eaConf.json", "r") as confirmedFile:
-            data = json.load(confirmedFile)
-            planets = [data[i]['pl_name'] for i in range(len(data))]
-            idx = planets.index(targetname)
-            planetdict = new_getParams(data[idx])
-            print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(targetname))
 
-    return targetname, candidateplanet, planetdict
+# Get inits.json file from user input
+def get_initialization_file(infodict, userpdict):
+    print("\nYour current working directory is: ", os.getcwd())
+    print("\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
+    [print(i) for i in g.glob(os.getcwd() + "/*.json")]
+
+    while True:
+        try:
+            initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
+            if initfilename == 'ok':
+                initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
+            return inits_file(initfilename, infodict, userpdict)
+        except FileNotFoundError:
+            print("Error: Initialization file not found. Please try again.")
+        except IsADirectoryError:
+            print('Error: Entered a directory. Please try again.')
+
+
+class InitializationFile:
+
+    def __init__(self, info, planet_name=None):
+        self.info = info
+        self.planet_name = planet_name
+
+    def get_info(self):
+        if self.info['fitsdir'] is None:
+            self.image_directory()
+        if self.info['saveplot'] is None:
+            self.save_directory()
+        if self.info['aavsonum'] or self.info['secondobs'] or self.info['ctype'] or self.info['pixelbin'] \
+                or self.info['filter'] or self.info['notes'] is None:
+            self.initial()
+        if self.planet_name is None:
+            self.planet()
+        if self.info['lat'] is None:
+            self.latitude()
+        if self.info['long'] is None:
+            self.longitude()
+        if self.info['elev'] is None:
+            self.elevation()
+        if self.info['tarcoords'] is None:
+            self.target_star_coords()
+        if self.info['compstars'] is None:
+            self.comparison_star_coords()
+        return self.info, self.planet_name
+
+    def image_directory(self):
+        self.info['fitsdir'] = input('Please enter the Directory of Imaging Files: ')
+
+    def save_directory(self):
+        self.info['saveplot'] = input('Please enter the directory to save plots into or type new to create one: ')
+
+    def initial(self):
+        notes = ['Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): ',
+                 'Please enter your comma-separated secondary observer codes (type N/A if only 1 observer code): ',
+                 'Please enter the camera type (CCD or DSLR): ',
+                 'Please enter the pixel binning: ',
+                 'Please enter the filter name: ',
+                 'Please enter any observing notes (seeing, weather, etc.): ']
+        i = 0
+
+        for key, value in self.info.items():
+            if key in ('aavsonum', 'secondobs', 'ctype', 'pixelbin', 'filter', 'notes') and value is None:
+                self.info[key] = input(notes[i])
+                i += 1
+
+    def latitude(self):
+        self.info['latitude'] = input("Please enter the longitude of where you observed (deg) "
+                                      "(Don't forget the sign where East is '+' and West is '-'): ")
+
+    def longitude(self):
+        self.info['longitude'] = input("Please enter the longitude of where you observed (deg) "
+                                       "(Don't forget the sign where East is '+' and West is '-'): ")
+
+    def elevation(self):
+        self.info['elev'] = user_input('Please enter the elevation (in meters) of where you observed: ', type_=float)
+
+    def target_star_coords(self, pname):
+        x_pix = user_input('\n{} X Pixel Coordinate: '.format(pname), type_=int)
+        y_pix = user_input('\n{} Y Pixel Coordinate: '.format(pname), type_=int)
+        self.info['tarcoords'] = [x_pix, y_pix]
+
+    def comparison_star_coords(self):
+        num_comp_stars = user_input('How many comparison stars would you like to use? (1-10) ', type_=int)
+        comp_stars = []
+
+        for num in range(num_comp_stars):
+            x_pix = user_input('Comparison Star {} X Pixel Coordinate: '.format(num + 1), type_=int)
+            y_pix = user_input('Comparison Star {} Y Pixel Coordinate: '.format(num + 1), type_=int)
+            comp_stars.append((x_pix, y_pix))
+        self.info['compstars'] = comp_stars
+
+    def exposure(self):
+        self.info['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+
+    def pixel_scale(self):
+        self.info['flatsdir'] = input('Please enter the size of your pixel (Ex: 5 arcsec/pixel): ')
+
+    def planet(self):
+        self.planet_name = input('\nPlease enter the Planet Name: ')
+
 
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
 def timeConvert(timeList, timeFormat, pDict, info_dict):
@@ -520,6 +689,24 @@ def fluxConvert(fluxList, errorList, fluxFormat):
     negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
     meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** (0.5)
     return fluxList, meanErrorList
+
+
+# Check for difference between NEA and initialization file
+def check_parameters(init_parameters, parameters):
+    different = False
+    for key, value in parameters.items():
+        if value != init_parameters[key]:
+            different = True
+            break
+
+    if different:
+        opt = user_input('\nDifference(s) found between initialization file and NASA Exoplanet Archive. '
+                         'Would you like to alter planetary parameters? (y/n)', type_=str, val1='y', val2='n')
+        if opt == 'y':
+            return True
+        else:
+            return False
+
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
@@ -701,14 +888,17 @@ def check_imaging_files(directory, filename):
             directory = input("Enter the directory path where " + filename + " files are located: ")
 
 
-# Calculating Limb Darkening Parameters using LDTK
 class LimbDarkening:
 
     def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
-                 logg=None, loggpos=None, loggneg=None):
+                 logg=None, loggpos=None, loggneg=None, wl_min=None, wl_max=None, filter_type=None):
         self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
                        'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
                        'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+        self.filter_type = filter_type
+        self.wl_min = wl_min
+        self.wl_max = wl_max
+        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
 
         # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
                      # Near-Infrared
@@ -743,21 +933,28 @@ class LimbDarkening:
 
     def nonlinear_ld(self):
         self._standard_list()
-        option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters with uncertainties? '
-                            '(y/n): ', type_=str, val1='y', val2='n')
 
-        if option == 'y':
-            opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ', type_=int,
-                             val1=1, val2=2)
-            if opt == 1:
-                return self._standard()
-            elif opt == 2:
-                return self._custom()
+        if self.filter_type and not (self.wl_min or self.wl_max):
+            self._standard()
+        elif self.wl_min or self.wl_max:
+            self._custom()
         else:
-            return self._user_entered()
+            option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters '
+                                'with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
+
+            if option == 'y':
+                opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
+                                 type_=int, val1=1, val2=2)
+                if opt == 1:
+                    self._standard()
+                elif opt == 2:
+                    self._custom()
+            else:
+                self._user_entered()
+        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type
 
     def _standard_list(self):
-        print('\n***************************')
+        print('\n\n***************************')
         print('Limb Darkening Coefficients')
         print('***************************')
         print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
@@ -768,50 +965,52 @@ class LimbDarkening:
     def _standard(self):
         while True:
             try:
-                filtername = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
+                if not self.filter_type:
+                    self.filter_type = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
                 for key, value in self.fwhm.items():
-                    if filtername in (key[0], key[1]) and filtername != 'N/A':
-                        filtername = (key[0], key[1])
+                    if self.filter_type in (key[0], key[1]) and self.filter_type != 'N/A':
+                        self.filter_type = (key[0], key[1])
                         break
                 else:
                     raise KeyError
                 break
             except KeyError:
-                print('Error: The entered filter is not in the provided list of standard filters.')
+                print('\nError: The entered filter is not in the provided list of standard filters.')
+                self.filter_type = None
 
-        wlmin = self.fwhm[filtername][0]
-        wlmax = self.fwhm[filtername][1]
-        filtername = filtername[1]
-        return self._calculate_ld(wlmin, wlmax, filtername)
+        self.wl_min = self.fwhm[self.filter_type][0]
+        self.wl_max = self.fwhm[self.filter_type][1]
+        self.filter_type = self.filter_type[1]
+        self._calculate_ld()
 
     def _custom(self):
-        filtername = 'N/A'
-        wlmin = float(input('FWHM Minimum wavelength (nm): '))
-        wlmax = float(input('FWHM Maximum wavelength (nm): '))
-        return self._calculate_ld(wlmin, wlmax, filtername)
+        self.filter_type = 'N/A'
+        if not self.wl_min:
+            self.wl_min = float(input('FWHM Minimum wavelength (nm): '))
+        if not self.wl_max:
+            self.wl_max = float(input('FWHM Maximum wavelength (nm): '))
+        self._calculate_ld()
 
     def _user_entered(self):
-        filtername = input('\nEnter in your filter name: ')
-        ld0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
-        ld0unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
-        ld1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
-        ld1unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
-        ld2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
-        ld2unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
-        ld3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
-        ld3unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
-        ld0, ld1, ld2, ld3 = (ld0, ld0unc), (ld1, ld1unc), (ld2, ld2unc), (ld3, ld3unc)
-        return ld0, ld1, ld2, ld3, filtername
+        self.filter_type = input('\nEnter in your filter name: ')
+        ld_0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
+        ld0_unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
+        ld_1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
+        ld1_unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
+        ld_2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
+        ld2_unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
+        ld_3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
+        ld3_unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
+        self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
 
-    def _calculate_ld(self, wlmin, wlmax, filtername):
-        wlmin = [wlmin / 1000]
-        wlmax = [wlmax / 1000]
-        ldparams = createldgrid(np.array(wlmin), np.array(wlmax), self.priors)
-        ld0 = ldparams['LD'][0][0], ldparams['ERR'][0][0]
-        ld1 = ldparams['LD'][1][0], ldparams['ERR'][1][0]
-        ld2 = ldparams['LD'][2][0], ldparams['ERR'][2][0]
-        ld3 = ldparams['LD'][3][0], ldparams['ERR'][3][0]
-        return ld0, ld1, ld2, ld3, filtername
+    def _calculate_ld(self):
+        self.wl_min = [self.wl_min / 1000]
+        self.wl_max = [self.wl_max / 1000]
+        ld_params = createldgrid(np.array(self.wl_min), np.array(self.wl_max), self.priors)
+        self.ld0 = ld_params['LD'][0][0], ld_params['ERR'][0][0]
+        self.ld1 = ld_params['LD'][1][0], ld_params['ERR'][1][0]
+        self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
+        self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
 
 
 # Checks for corrupted FITS files
@@ -829,117 +1028,174 @@ def check_file_corruption(files):
         return files
 
 
-# Check for WCS in the user's imaging data and possibly plate solves.
-def check_wcs(fits_file, saveDirectory):
-    hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-    header = hdulist[0].header
-    hdulist.close()  # close stream
-    del hdulist
+def check_wcs(fits_file, save_directory, plate_opt):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', category=FITSFixedWarning)
+        hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+        header = hdulist[0].header
+        wcsheader = WCS(header)
+        wcs_exists = wcsheader.is_celestial
+        hdulist.close()
+        del hdulist
 
-    # MJD seems sometimes throw off an error. Deleted since not important for plate solving
-    try:
-        del header['MJD-OBS']
-    except:
-        pass
+    if plate_opt == 'y':
+        return get_wcs(fits_file, save_directory)
+    elif plate_opt == 'n':
+        if wcs_exists:
+            trust_wcs = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ',
+                                   type_=str, val1='y', val2='n')
 
-    # Gets the WCS of the header and checks to see if it exists
-    wcsheader = WCS(header)
-    wcsExists = wcsheader.is_celestial
-
-    # If the fits file has WCS info, ask the user if they trust it
-    if wcsExists:
-        trustWCS = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ', type_=str, val1='y', val2='n')
-    else:
-        trustWCS = 'n'
-
-    if trustWCS == 'n':
-        plateSol = user_input("\nWould you like to upload the your image for a plate solution?"
-                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
-        # Plate solve the fits file
-        if plateSol == 'y':
-            print("\nGetting the plate solution for your imaging file. Please wait.")
-            global done
-            done = False
-            t = threading.Thread(target=animate, daemon=True)
-            t.start()
-
-            # Plate solves the first imaging file
-            imagingFile = fits_file
-            wcsFile = plate_solution(imagingFile, saveDirectory)
-            done = True
-
-            # Return plate solution from nova.astrometry.net
-            return wcsFile
-        else:
-            # User either did not want a plate solution or had one in file header and decided not to use it,
-            # therefore return nothing
-            return False
-    else:
-        # User trusted their imaging file header's WCS
-        return fits_file
-
-
-# Gets the WCS of a .fits file for the user from nova.astrometry.net w/ API key
-def plate_solution(fits_file, saveDirectory):
-    default_url = 'http://nova.astrometry.net/api/'
-
-    # Login to Exoplanet Watch's profile w/ API key. If session fails, allow 5 attempts of
-    # rejoining before returning False and informing user of technical failure.
-    for i in range(5):
-        try:
-            r = requests.post(default_url + 'login', data={'request-json': json.dumps({"apikey": "vfsyxlmdxfryhprq"})})
-            sess = r.json()['session']
-            break
-        except Exception:
-            if i == 4:
-                print('Imaging file could not receive a plate solution due to technical difficulties '
-                      'from nova.astrometry.net. Please try again later. Data reduction will continue.')
+            if trust_wcs == 'y':
+                return fits_file
+            else:
                 return False
-            time.sleep(5)
-            continue
+    else:
+        if wcs_exists:
+            trust_wcs = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ',
+                                   type_=str, val1='y', val2='n')
+        else:
+            trust_wcs = 'n'
 
-    # Saves session number to upload imaging file
-    files = {'file': open(fits_file, 'rb')}
-    headers = {'request-json': json.dumps({"session": sess}), 'allow_commercial_use': 'n',
-               'allow_modifications': 'n', 'publicly_visible': 'n'}
+        if trust_wcs == 'n':
+            opt = user_input("\nWould you like to upload the your image for a plate solution?"
+                             "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net."
+                             " (y/n): ", type_=str, val1='y', val2='n')
+            if opt == 'y':
+                return get_wcs(fits_file, save_directory)
+            else:
+                return False
+        else:
+            return fits_file
 
-    # Uploads the .fits file to nova.astrometry.net
-    r = requests.post(default_url + 'upload', files=files, data=headers)
-    if r.json()['status'] != 'success':
-        print('Imaging file could not receive a plate solution due to technical difficulties '
-              'from nova.astrometry.net. Please try again later. Data reduction will continue.')
-        return False
 
-    # Saves submission id for checking on the status of image uploaded
-    sub_id = r.json()['subid']
-    submissions_url = 'http://nova.astrometry.net/api/submissions/%s' % sub_id
+def get_wcs(file, directory):
+    print("\nGetting the plate solution for your imaging file. Please wait.")
+    global done
+    done = False
+    t = threading.Thread(target=animate, daemon=True)
+    t.start()
+    wcs_obj = PlateSolution(file=file, directory=directory)
+    wcs_file = wcs_obj.plate_solution()
+    done = True
+    return wcs_file
 
-    # Once the image has successfully been plate solved, the following loop will break
-    while True:
-        r = requests.get(submissions_url)
-        if r.json()['job_calibrations']:
-            break
-        time.sleep(5)
 
-    # Checks the job id's status for parameters
-    job_id = r.json()['jobs']
-    job_url = 'http://nova.astrometry.net/api/jobs/%s' % job_id[0]
-    wcs_file = os.path.join(saveDirectory, 'newfits.fits')
+def is_false(value):
+    return value is False
 
-    # Checks the job id's status
-    while True:
-        r = requests.get(job_url)
-        if r.json()['status'] == 'success':
-            fits_download_url = 'http://nova.astrometry.net/new_fits_file/%s' % job_id[0]
-            r = requests.get(fits_download_url)
-            with open(wcs_file, 'wb') as f:
-                f.write(r.content)
+
+def result_if_max_retry_count(retry_state):
+    pass
+
+
+def login_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
+          'EXOTIC will continue reducing data without a plate solution.')
+    return False
+
+
+def upload_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
+          'EXOTIC will continue reducing data without a plate solution.')
+    return False
+
+
+def sub_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. '
+          'EXOTIC will continue reducing data without a plate solution.')
+    return False
+
+
+def job_fail():
+    print('\n\nAfter multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. '
+          'EXOTIC will continue reducing data without a plate solution.')
+    return False
+
+
+class PlateSolution:
+    default_url = 'http://nova.astrometry.net/api/'
+    default_apikey = {'apikey': 'vfsyxlmdxfryhprq'}
+
+    def __init__(self, apiurl=default_url, apikey=default_apikey, file=None, directory=None):
+        self.apiurl = apiurl
+        self.apikey = apikey
+        self.file = file
+        self.directory = directory
+
+    def plate_solution(self):
+        session = self._login()
+        if not session:
+            return login_fail()
+
+        sub_id = self._upload(session)
+        if not sub_id:
+            return upload_fail()
+
+        sub_url = self._get_url('submissions/%s' % sub_id)
+        job_id = self._sub_status(sub_url)
+        if not job_id:
+            return sub_fail()
+
+        job_url = self._get_url('jobs/%s' % job_id)
+        download_url = self.apiurl.replace('/api/', '/new_fits_file/%s/' % job_id)
+        wcs_file = os.path.join(self.directory, 'wcs_image.fits')
+        wcs_file = self._job_status(job_url, wcs_file, download_url)
+        if not wcs_file:
+            return job_fail()
+        else:
             print('\n\nSuccess. ')
             return wcs_file
-        elif r.json()['status'] == 'failure':
-            print('\n\n.FITS file has failed to be given WCS.')
-            return False
-        time.sleep(5)
+
+    def _get_url(self, service):
+        return self.apiurl + service
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _login(self):
+        r = requests.post(self._get_url('login'), data={'request-json': json.dumps(self.apikey)})
+        if r.json()['status'] == 'success':
+            return r.json()['session']
+        return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _upload(self, session):
+        files = {'file': open(self.file, 'rb')}
+        headers = {'request-json': json.dumps({"session": session}), 'allow_commercial_use': 'n',
+                   'allow_modifications': 'n', 'publicly_visible': 'n'}
+
+        r = requests.post(self.apiurl + 'upload', files=files, data=headers)
+
+        if r.json()['status'] == 'success':
+            return r.json()['subid']
+        return False
+
+    @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _sub_status(self, sub_url):
+        r = requests.get(sub_url)
+        if r.json()['job_calibrations']:
+            return r.json()['jobs'][0]
+        return False
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
+                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry_error_callback=result_if_max_retry_count)
+    def _job_status(self, job_url, wcs_file, download_url):
+        r = requests.get(job_url)
+        if r.json()['status'] == 'success':
+            r = requests.get(download_url)
+            with open(wcs_file, 'wb') as f:
+                f.write(r.content)
+            return wcs_file
+        return False
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
@@ -984,6 +1240,7 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             else:
                 # User does not want to change coordinates even though they don't match the expected ra and dec
                 return pixx, pixy
+
 
 # Checks if comparison star is variable via querying SIMBAD
 def variableStarCheck(refx, refy, hdulWCS):
@@ -1056,6 +1313,30 @@ def image_alignment(imagedata):
         time.sleep(5)
 
     return imagedata, boollist
+
+
+def get_pixel_scale(hdul, file, header, pixel_init):
+    if file:
+        for i in range(len(hdul[0].header)):
+            if hdul[0].header['COMMENT'][i].split(' ')[0] == 'scale:':
+                imscalen = float(hdul[0].header['COMMENT'][i].split(' ')[1])
+                break
+        imagescale = 'Image scale in arc-secs/pixel: {:.2f}'.format(imscalen)
+    elif "IM_SCALE" in header:
+        imscalen = header['IM_SCALE']
+        imscaleunits = header.comments['IM_SCALE']
+        imagescale = imscaleunits + ": " + str(imscalen)
+    elif "PIXSCALE" in header:
+        imscalen = header['PIXSCALE']
+        imscaleunits = header.comments['PIXSCALE']
+        imagescale = imscaleunits + ": " + str(imscalen)
+    elif pixel_init:
+        imagescale = "Image scale: " + pixel_init
+    else:
+        print("Cannot find the pixel scale in the image header.")
+        imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). ")
+        imagescale = "Image scale: " + imscalen
+    return imagescale
 
 
 # defines the star point spread function as a 2D Gaussian
@@ -1161,6 +1442,7 @@ def getFlux(data, xc, yc, r=5, dr=5):
 
     return float(phot_table['aperture_sum']), bgflux
 
+
 def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
@@ -1200,13 +1482,16 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85):
     # plt.show()
     return min(np.nanmedian(dat), mode(dat.flatten(), nan_policy='omit').mode[0])
 
+
 # Mid-Transit Time Prior Helper Functions
 def numberOfTransitsAway(timeData, period, originalT):
     return int((np.nanmin(timeData) - originalT) / period) + 1
 
+
 def nearestTransitTime(timeData, period, originalT):
     nearT = ((numberOfTransitsAway(timeData, period, originalT) * period) + originalT)
     return nearT
+
 
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
@@ -1526,8 +1811,9 @@ def main():
         compStarList = []
 
         infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
-                    'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None,'elev': None,
-                    'ctype': None, 'pixelbin': None, 'filter': None, 'notes': None, 'tarcoords': None, 'compstars': None}
+                    'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None,
+                    'ctype': None, 'pixelbin': None, 'filter': None, 'wl_min': None, 'wl_max': None, 'notes': None,
+                    'tarcoords': None, 'compstars': None, 'plate_opt': None, 'pixel_scale': None}
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                      'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -1539,40 +1825,28 @@ def main():
                                 'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 
         fileorcommandline = user_input('How would you like to input your initial parameters? '
-                                       'Enter "1" to use the Command Line or "2" to use an input file: ', type_=int, val1=1, val2=2)
+                                       'Enter "1" to use the Command Line or "2" to use an input file: ',
+                                       type_=int, val1=1, val2=2)
 
-        cwd = os.getcwd() # os.path.join(os.path.split(os.getcwd())[0], '')
+        # os.path.join(os.path.split(os.getcwd())[0], '')
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            print("\nYour current working directory is: ", cwd)
-            print("\nPotential initialization files I've found in {} are: ".format(cwd))
-            [print(i) for i in g.glob(cwd + "/*.json")]
+            infoDict, userpDict = get_initialization_file(infoDict, userpDict)
+            init_obj = InitializationFile(infoDict, userpDict['pName'])
+            infoDict, userpDict['pName'] = init_obj.get_info()
 
-            # Parse input file
-            while True:
-                try:
-                    initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
-                    if initfilename == 'ok':
-                        initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
-                    infoDict, userpDict = inits_file(initfilename, infoDict, userpDict)
-                    break
-                except FileNotFoundError:
-                    print("Error: Initialization file not found. Please try again.")
-                except IsADirectoryError:
-                    print('Error: Entered a directory. Please try again.')
-
-            if infoDict['flatsdir'] == "n":
+            if infoDict['flatsdir'] is None:
                 flatsBool = False
             else:
                 flatsBool = True
 
-            if infoDict['darksdir'] == "n":
+            if infoDict['darksdir'] is None:
                 darksBool = False
             else:
                 darksBool = True
 
-            if infoDict['biasesdir'] == "n":
+            if infoDict['biasesdir'] is None:
                 biasesBool = False
             else:
                 biasesBool = True
@@ -1612,22 +1886,9 @@ def main():
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            infoDict['saveplot'] = str(input("Enter the directory to save plots into or type new to create one: "))
+            infoDict['saveplot'] = input("Enter the directory to save plots into or type new to create one: ")
 
-        # Check to see if the save directory exists
-        while True:
-            try:
-                if infoDict['saveplot'] == 'new':
-                    infoDict['saveplot'] = create_directory(cwd)
-                    break
-                infoDict['saveplot'] = os.path.join(infoDict['saveplot'], '')
-                # In case the user forgets the trailing / for the folder
-                if os.path.isdir(infoDict['saveplot']):
-                    break
-                raise OSError
-            except OSError:
-                print('Error: the entered save directory does not exist. Please try again.')
-                infoDict['saveplot'] = input("Enter the directory to save plots into or type new to create one: ")
+        infoDict['saveplot'] = get_save_directory(infoDict['saveplot'])
 
         # Make a temp directory of helpful files
         try:
@@ -1639,7 +1900,8 @@ def main():
         if fileorcommandline == 1:
             userpDict['pName'] = str(input("\nEnter the Planet Name: "))
 
-        userpDict['pName'], CandidatePlanetBool, pDict = get_planet_name(userpDict['pName'])
+        nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
+        userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
 
         # observation date
         if fileorcommandline == 1:
@@ -1788,12 +2050,18 @@ def main():
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-        pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+        if fileorcommandline == 2:
+            diff = check_parameters(userpDict, pDict)
+            if diff:
+                pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+        else:
+            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
-        ldobj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
-                              met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
-                              logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'])
-        ld0, ld1, ld2, ld3, infoDict['filter'] = ldobj.nonlinear_ld()
+        ld_obj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
+                               met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
+                               logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
+                               wl_min=infoDict['wl_min'], wl_max=infoDict['wl_max'], filter_type=infoDict['filter'])
+        ld0, ld1, ld2, ld3, infoDict['filter'] = ld_obj.nonlinear_ld()
 
         # If fits files are used, check that they are not corrupted
         if fitsortext == 1: 
@@ -1982,7 +2250,8 @@ def main():
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
                 convertToFITS.writeto(refFile)
                 print('\nHere is the path to the reference imaging file EXOTIC: \n' + refFile)
-                wcsFile = check_wcs(refFile, infoDict['saveplot'])
+                wcsFile = check_wcs(refFile, infoDict['saveplot'], infoDict['plate_opt'])
+                hdulWCS = None
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
@@ -2514,34 +2783,10 @@ def main():
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            if wcsFile:
-                if hdulWCS[0].header['COMMENT'][135].split(' ')[0] == 'scale:':
-                    imscalen = float(hdulWCS[0].header['COMMENT'][135].split(' ')[1])
-                    imscaleunits = 'Image scale in arc-secs/pixel'
-                    imscale = imscaleunits + ": " + str(round(imscalen, 2))
-                else:
-                    i = 100
-                    while hdulWCS[0].header['COMMENT'][i].split(' ')[0] != 'scale:':
-                        i += 1
-                    imscalen = float(hdulWCS[0].header['COMMENT'][i].split(' ')[1])
-                    imscaleunits = 'Image scale in arc-secs/pixel'
-                    imscale = imscaleunits + ": " + str(round(imscalen, 2))
+            imscale = get_pixel_scale(hdulWCS, wcsFile, imageheader, infoDict['pixel_scale'])
+            if hdulWCS:
                 hdulWCS.close()  # close stream
                 del hdulWCS
-            elif "IM_SCALE" in imageheader:
-                imscalen = imageheader['IM_SCALE']
-                imscaleunits = imageheader.comments['IM_SCALE']
-                imscale = imscaleunits + ": " + str(imscalen)
-            elif "PIXSCALE" in imageheader:
-                imscalen = imageheader['PIXSCALE']
-                imscaleunits = imageheader.comments['PIXSCALE']
-                imscale = imscaleunits + ": " + str(imscalen)
-            else:
-                print("Cannot find the pixel scale in the image header.")
-                # pixscale = input("Do you know the size of your pixels? (y/n) ")
-                # if pixscale == 'y' or pixscale == 'Y' or pixscale == 'yes':
-                imscalen = input("Please enter the size of your pixel (e.g., 5 arcsec/pixel). ")
-                imscale = "Image scale: " + imscalen
             imwidth = np.shape(sortedallImageData[0])[1]
             imheight = np.shape(sortedallImageData[0])[0]
             picframe = 10*(minAperture+minAnnulus)

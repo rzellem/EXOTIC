@@ -87,7 +87,7 @@ from barycorrpy import utc_tdb
 
 # scipy imports
 from scipy.optimize import least_squares
-from scipy.ndimage import binary_erosion, binary_dilation, binary_closing, label, median_filter
+from scipy.ndimage import binary_erosion, binary_dilation, binary_closing, label, median_filter, generic_filter
 from scipy.stats import mode
 from scipy.signal import savgol_filter
 
@@ -164,13 +164,14 @@ sa = lambda m, P: (G*m*P**2/(4*pi**2))**(1./3)
 
 
 def sigma_clip(ogdata, sigma=3, dt=21):
-    #mdata = median_filter(ogdata, dt)
-    mdata = savgol_filter(ogdata, dt, 2)
-    res = ogdata - mdata
+    nanmask = np.isnan(ogdata)
+    mdata = savgol_filter(ogdata[~nanmask], dt, 2)
+    res = ogdata[~nanmask] - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res,50)) for i in range(100)])
     #std = np.nanstd(res) # biased from large outliers
-    return np.abs(res) > sigma*std
-
+    sigmask = np.abs(res) > sigma*std
+    nanmask[~nanmask] = sigmask
+    return nanmask
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 def dataframe_to_jsonfile(dataframe, filename):
@@ -1217,43 +1218,44 @@ def getFlux(data, xc, yc, r=5, dr=5):
 
     return float(phot_table['aperture_sum']), bgflux
 
-def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85):
+def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
     mask = (rv > r) & (rv < (r+dr))
-    cutoff = np.percentile(data[yv, xv][mask], ptol)
+    cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     dat = np.array(data[yv,xv],dtype=float)
-    dat[dat > cutoff] = np.nan # ignore pixels brighter than percntile
-    # debugging bg estimate
-    # minb = data[yv,xv][mask].min()
-    # maxb = data[yv,xv][mask].mean() + 3 * data[yv,xv][mask].std()
-    # nanmask = np.nan*np.zeros(mask.shape)
-    # nanmask[mask] = 1
-    # bgsky = data[yv,xv]*nanmask
-    # cmode = mode(dat.flatten(), nan_policy='omit').mode[0]
-    # amode = mode(bgsky.flatten(), nan_policy='omit').mode[0] 
+    dat[dat > cutoff] = np.nan # ignore pixels brighter than percentile
 
-    # fig,ax = plt.subplots(2,2,figsize=(9,9))
-    # im = ax[0,0].imshow(data[yv,xv],vmin=minb,vmax=maxb,cmap='inferno')
-    # ax[0,0].set_title("Original Data")
-    # divider = make_axes_locatable(ax[0,0])
-    # cax = divider.append_axes('right', size='5%', pad=0.05)
-    # fig.colorbar(im,cax=cax, orientation='vertical')
-    
-    # ax[1,0].hist(bgsky.flatten(),label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky),amode),alpha=0.5,bins=np.arange(minb,maxb))
-    # ax[1,0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat),cmode), alpha=0.5,bins=np.arange(minb,maxb))
-    # ax[1,0].legend(loc='best')
-    # ax[1,0].set_title("HAT-P-32 Sky Background")
-    # ax[1,0].set_xlabel("Pixel Value")
-    
-    # ax[1,1].imshow(dat,vmin=minb,vmax=maxb,cmap='inferno')
-    # ax[1,1].set_title("Clipped Sky Background")
-    
-    # ax[0,1].imshow(bgsky,vmin=minb,vmax=maxb,cmap='inferno')
-    # ax[0,1].set_title("Sky Annulus")
-    # plt.tight_layout()
-    # plt.show()
+    if debug:
+        minb = data[yv,xv][mask].min()
+        maxb = data[yv,xv][mask].mean() + 3 * data[yv,xv][mask].std()
+        nanmask = np.nan*np.zeros(mask.shape)
+        nanmask[mask] = 1
+        bgsky = data[yv,xv]*nanmask
+        cmode = mode(dat.flatten(), nan_policy='omit').mode[0]
+        amode = mode(bgsky.flatten(), nan_policy='omit').mode[0] 
+
+        fig,ax = plt.subplots(2,2,figsize=(9,9))
+        im = ax[0,0].imshow(data[yv,xv],vmin=minb,vmax=maxb,cmap='inferno')
+        ax[0,0].set_title("Original Data")
+        divider = make_axes_locatable(ax[0,0])
+        cax = divider.append_axes('right', size='5%', pad=0.05)
+        fig.colorbar(im,cax=cax, orientation='vertical')
+        
+        ax[1,0].hist(bgsky.flatten(),label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky),amode),alpha=0.5,bins=np.arange(minb,maxb))
+        ax[1,0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat),cmode), alpha=0.5,bins=np.arange(minb,maxb))
+        ax[1,0].legend(loc='best')
+        ax[1,0].set_title("Sky Background")
+        ax[1,0].set_xlabel("Pixel Value")
+        
+        ax[1,1].imshow(dat,vmin=minb,vmax=maxb,cmap='inferno')
+        ax[1,1].set_title("Clipped Sky Background")
+        
+        ax[0,1].imshow(bgsky,vmin=minb,vmax=maxb,cmap='inferno')
+        ax[0,1].set_title("Sky Annulus")
+        plt.tight_layout()
+        plt.show()
     return min(np.nanmedian(dat), mode(dat.flatten(), nan_policy='omit').mode[0])
 
 # Mid-Transit Time Prior Helper Functions
@@ -2055,7 +2057,6 @@ def main():
                         break
                 else:
                     break
-
             
             # TODO move to a function
             # remove hot pixels
@@ -2076,13 +2077,21 @@ def main():
 
                 # diagnostic debug
                 # ogdata = np.copy(sortedallImageData[ii])
+
+                # remove nans
+                nanmask = np.isnan(sortedallImageData[ii])
+                if nanmask.sum() > 0:
+                    bg = generic_filter(sortedallImageData[ii],np.nanmedian,(4,4))
+                else:
+                    # faster
+                    bg = median_filter(sortedallImageData[ii],(4,4))
+                sortedallImageData[ii][nanmask] = bg[nanmask]
                 
                 # find and remove all single pixel blocks brighter than 98th percentile 
                 bmask = binary_closing(sortedallImageData[ii] > np.percentile(sortedallImageData[ii], 98))
                 bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
                 hotmask = np.logical_xor(bmask,bmask1)
                 labels, nlabel = label(hotmask)
-                bg = median_filter(sortedallImageData[ii],(4,4))
                 sortedallImageData[ii][hotmask] = bg[hotmask]
 
                 # kinda slow
@@ -2093,7 +2102,7 @@ def main():
                 #     bmask = np.logical_xor(smask,mmask)  # bounding pixels
                 #     sortedallImageData[ii][mmask] = np.mean(sortedallImageData[ii][bmask])  # replace
 
-                # diagnostic
+                # TODO move to function 
                 # f,ax = plt.subplots(1,3,figsize=(18,8))
                 # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
                 # ax[0].set_title("Original Data")
@@ -2411,7 +2420,6 @@ def main():
                             filtered_data = sigma_clip(arrayFinalFlux, sigma=3)
 
                         # -----LM LIGHTCURVE FIT--------------------------------------
-
                         prior = {
                             'rprs':pDict['rprs'],    # Rp/Rs
                             'ars':pDict['aRs'],      # a/Rs

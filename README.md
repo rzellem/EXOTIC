@@ -121,11 +121,19 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 - Resolve targets with [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu/) + retrieve light curve priors
 
+- Hot Pixel Masking
+
+![](Documentation/Images/Hot_pixel_mask.png)
+
 - Aperture Photometry with PSF centroiding (2D Gaussian + rotation)
 
 ![HAT-P-32 b Centroid Position Graph, X-Pixel versus Time in Julian Date.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/centroids.png)
 
-- Multiple comparison star + aperture size choice optimization
+- Stellar masking in background estimate
+
+![](Documentation/Images/Background_Estimate.png)
+
+- Multiple comparison star + aperture size optimization
 
 - Non-linear 4 parameter limb darkening with [LDTK](https://github.com/hpparvi/ldtk)
 

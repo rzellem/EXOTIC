@@ -14,7 +14,8 @@
             "Plate Solution": "For your image to be given a plate solution, type y.",
             "Plate Solution Disclaimer": "One of your imaging files will be publicly viewable on nova.astrometry.net.",
             "Standard Filter": "To use EXOTIC standard filters, type only the filter name.",
-            "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info."
+            "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info.",
+            "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown."
     },
     "user_info": {
             "Directory with FITS files": "sample-data/HatP32Dec202017",

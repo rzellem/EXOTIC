@@ -1853,9 +1853,10 @@ def main():
                               logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'])
         ld0, ld1, ld2, ld3, infoDict['filter'] = ldobj.nonlinear_ld()
 
+        # TODO: Fix File Corruption Check
         # If fits files are used, check that they are not corrupted
-        if fitsortext == 1: 
-            inputfiles = check_file_corruption(inputfiles)
+        # if fitsortext == 1:
+        #     inputfiles = check_file_corruption(inputfiles)
 
         exptimes = list()
 

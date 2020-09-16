@@ -1,26 +1,29 @@
 {
-    "inits_guide": [
-        {
+    "inits_guide": {
             "Title": "EXOTIC's Initialization File",
             "Comments": "Please answer all the following requirements below by following the format of the given",
             "Comments": "sample dataset HAT-P-32 b. Edit this file as needed to match the data wanting to be reduced.",
             "Comments": "Do not delete areas where there are quotation marks, commas, and brackets.",
             "Comments": "The inits_guide dictionary (these lines of text) does not have to be edited",
             "Comments": "and is only here to serve as a guide. Will be updated per user's advice.",
-            "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in n for none.",
+            "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
             "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
             "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
             "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees.",
-            "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees."
-        }
-    ],
-    "user_info": [
-        {
+            "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees.",
+            "Plate Solution": "For your image to be given a plate solution, type y.",
+            "Plate Solution Disclaimer": "One of your imaging files will be publicly viewable on nova.astrometry.net.",
+            "Standard Filter": "To use EXOTIC standard filters, type only the filter name.",
+            "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info.",
+            "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
+            "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
+    },
+    "user_info": {
             "Directory with FITS files": "sample-data/HatP32Dec202017",
             "Directory to Save Plots": "sample-data/",
-            "Directory of Flats": "n",
-            "Directory of Darks": "n",
-            "Directory of Biases": "n",
+            "Directory of Flats": null,
+            "Directory of Darks": null,
+            "Directory of Biases": null,
 
             "AAVSO Observer Code (N/A if none)": "RTZ",
             "Secondary Observer Codes (N/A if none)": "N/A",
@@ -34,12 +37,13 @@
             "Pixel Binning": "1x1",
             "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",
+
+            "Plate Solution? (y/n)": "n",
+
             "Target Star X & Y Pixel": [424, 286],
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
-        }
-    ],
-    "planetary_parameters": [
-        {
+    },
+    "planetary_parameters": {
             "Target Star RA (hh:mm:ss)": "02:04:10",
             "Target Star Dec (+/-hh:mm:ss)": "+46:41:23",
             "Planet's Name": "HAT-P-32 b",
@@ -64,6 +68,10 @@
             "Star Surface Gravity (log(g))": 4.22,
             "Star Surface Gravity (+) Uncertainty": 0.04,
             "Star Surface Gravity (-) Uncertainty": -0.04
-        }
-    ]
+    },
+    "optional_info": {
+            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
+            "Filter Minimum Wavelength (nm)": null,
+            "Filter Maximum Wavelength (nm)": null
+    }
 }

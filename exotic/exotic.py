@@ -926,6 +926,9 @@ class LimbDarkening:
                      # MObs Clear Filter, Source: Martin Fowler
                      ('MObs CV', 'CV'): (350.00, 850.00),
 
+                     # Astrodon CBB: George Silvis: https://astrodon.com/products/astrodon-exo-planet-filter/
+                     ('Astrodon ExoPlanet-BB', 'CBB'): (500.00, 1000.00),
+
                      # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
                      ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
                      ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),

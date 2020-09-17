@@ -2069,9 +2069,10 @@ def main():
                                wl_min=infoDict['wl_min'], wl_max=infoDict['wl_max'], filter_type=infoDict['filter'])
         ld0, ld1, ld2, ld3, infoDict['filter'] = ld_obj.nonlinear_ld()
 
+        # TODO: Fix File Corruption Check
         # If fits files are used, check that they are not corrupted
-        if fitsortext == 1: 
-            inputfiles = check_file_corruption(inputfiles)
+        # if fitsortext == 1:
+        #     inputfiles = check_file_corruption(inputfiles)
 
         exptimes = list()
 

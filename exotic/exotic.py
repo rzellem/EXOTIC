@@ -701,9 +701,9 @@ def check_parameters(init_parameters, parameters):
             break
 
     if different:
-        opt = user_input('\nDifference(s) found between initialization file and NASA Exoplanet Archive. '
-                         'Would you like to alter planetary parameters? (y/n)', type_=str, val1='y', val2='n')
-        if opt == 'y':
+        opt = user_input('\nDifference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
+                         '\nWould you like 1. EXOTIC to adopt of all of your defined parameters or 2. to review the ones scraped from the Archive that differ? (please enter 1 or 2) ', type_=str, val1='1', val2='2')
+        if opt == '2':
             return True
         else:
             return False
@@ -775,7 +775,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     # Exoplanet confirmed in NASA Exoplanet Archive
     if not candplanetbool:
         print('\n\n*** Here are the values scraped from the NASA Exoplanet Archive for %s that were not set (or set to null) in your initialization file. ***' % pdict['pName'])
-        print('For each planetary parameter, enter "y" if you agree and "n" if you disagree.')
+        # print('For each planetary parameter, enter "y" if you agree and "n" if you disagree.')
         # print('enter "1" to use NASA Exoplanet Archive value, "2" to use initialization file value, or "3" to enter a new value if you ')
         # print('decided to use an initialization file.')
 

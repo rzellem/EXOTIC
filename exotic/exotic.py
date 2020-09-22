@@ -869,7 +869,7 @@ def check_imaging_files(directory, filename):
             if os.path.isdir(directory):
                 for exti in file_extensions:
                     for file in os.listdir(directory):
-                        if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'new'):
+                        if file.lower().endswith(exti.lower()) and file[0:2] not in ('ref', 'wcs'):
                             inputfiles.append(os.path.join(directory, file))
                     if inputfiles:
                         return directory, inputfiles
@@ -2074,8 +2074,6 @@ def main():
         # if fitsortext == 1:
         #     inputfiles = check_file_corruption(inputfiles)
 
-        exptimes = list()
-
         if fitsortext == 1:
             print('\n**************************')
             print('Starting Reduction Process')
@@ -2088,7 +2086,7 @@ def main():
             # Loop placed to check user-entered x and y target coordinates against WCS.
             while True:
                 fileNumber = 1
-                allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr = [], [], [], [], [], []
+                allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes  = [], [], [], [], [], [], []
 
                 # ----TIME SORT THE FILES-------------------------------------------------------------
                 for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -2137,7 +2135,7 @@ def main():
                     del hdul
 
                 consistent_et = False
-                if len(exptimes) > 0 :
+                if len(exptimes) > 0:
                     consistent_et = all(elem == exptimes[0] for elem in exptimes)
 
                 exptimes = np.array(exptimes)

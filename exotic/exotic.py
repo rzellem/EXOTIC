@@ -3185,7 +3185,7 @@ def main():
         outParamsFile = open(infoDict['saveplot'] + 'AAVSO' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
         outParamsFile.write('#OBSCODE=' + infoDict['aavsonum'] + '\n')  # UI
-        outParamsFile.write('#SECONDARYOBSCODE=' + infoDict['secondobs'] + '\n')  # UI
+        outParamsFile.write('#SECONDARY_OBSCODE=' + infoDict['secondobs'] + '\n')  # UI
         outParamsFile.write('#SOFTWARE=EXOTIC v' + __version__ + '\n')  # fixed
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed

@@ -481,8 +481,8 @@ def get_save_directory(save_directory):
                     raise OSError
             return save_directory
         except OSError:
-            print('Error: the directory entered does not exist. Please try again.')
-            save_directory = input("Enter the Directory to Save Plots into or type new to create one: ")
+            print('Error: the directory entered does not exist. Please try again. Make sure to follow this formatting (using whichever directory you choose): /sample-data/results')
+            save_directory = input("Enter the directory to save the results and plots into or type new to create one: ")
 
 
 # Create a save directory within the current working directory
@@ -619,7 +619,7 @@ class InitializationFile:
         self.info['fitsdir'] = input('Please enter the Directory of Imaging Files: ')
 
     def save_directory(self):
-        self.info['saveplot'] = input('Please enter the directory to save plots into or type new to create one: ')
+        self.info['saveplot'] = input('Please enter the directory to save the results and plots into or type new to create one: ')
 
     def initial(self):
         notes = ['Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): ',
@@ -668,7 +668,7 @@ class InitializationFile:
         self.info['flatsdir'] = input('Please enter the size of your pixel (Ex: 5 arcsec/pixel): ')
 
     def planet(self):
-        self.planet_name = input('\nPlease enter the Planet Name: ')
+        self.planet_name = input('\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): ')
 
 
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
@@ -1883,8 +1883,8 @@ def main():
         directoryP = directToWatch
         directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
 
-        targetName = str(input("Enter the Planet Name: "))
-        writelogfile.write("Enter the Planet Name: "+targetName)
+        targetName = str(input("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+        writelogfile.write("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
 
         while True:
             try:
@@ -1998,8 +1998,8 @@ def main():
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                infoDict['fitsdir'] = str(input("\nEnter the Directory of imaging files: "))
-                writelogfile.write("\nEnter the Directory of imaging files: "+str(infoDict['fitsdir']))
+                infoDict['fitsdir'] = str(input("\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "))
+                writelogfile.write("\n\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "+str(infoDict['fitsdir']))
 
             infoDict['fitsdir'], inputfiles = check_imaging_files(infoDict['fitsdir'], 'imaging')
         else:
@@ -2022,8 +2022,8 @@ def main():
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            infoDict['saveplot'] = input("Enter the directory to save output into or type new to create one: ")
-            writelogfile.write("\nEnter the directory to save output into or type new to create one: "+str(infoDict['saveplot']))
+            infoDict['saveplot'] = input("Enter the directory to save the results and plots into or type new to create one: ")
+            writelogfile.write("\nEnter the directory to save the results and plots into or type new to create one: "+str(infoDict['saveplot']))
 
         infoDict['saveplot'] = get_save_directory(infoDict['saveplot'])
 
@@ -2035,30 +2035,30 @@ def main():
             pass
 
         if fileorcommandline == 1:
-            userpDict['pName'] = str(input("\nEnter the Planet Name: "))
-            writelogfile.write("\nEnter the Planet Name: "+userpDict['pName'])
+            userpDict['pName'] = str(input("\nEnter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+            writelogfile.write("\nEnter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+userpDict['pName'])
 
         nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
         userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
 
         # observation date
         if fileorcommandline == 1:
-            infoDict['date'] = str(input("\nEnter the Observation Date: "))
-            writelogfile.write("\nEnter the Observation Date: "+str(infoDict['date']))
+            infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
+            writelogfile.write("\nEnter the Observation Date (MM-DD-YYYY): "+str(infoDict['date']))
 
         # Using a / in your date can screw up the file paths- this will check user's date
         while "/" in infoDict['date']:
             print("Do not use / in your date. Please try again.")
-            infoDict['date'] = str(input("\nEnter the Observation Date: "))
+            infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
             writelogfile("\nDo not use / in your date. Please try again.")
-            writelogfile.write("\nEnter the Observation Date: " + str(infoDict['date']))
+            writelogfile.write("\nEnter the Observation Date (MM-DD-YYYY): " + str(infoDict['date']))
 
         if fitsortext == 1:
             if fileorcommandline == 1:
-                infoDict['lat'] = input("Enter the latitude of where you observed (deg) "
-                                        "(Don't forget the sign where North is '+' and South is '-'): ")
-                writelogfile.write("\nEnter the latitude of where you observed (deg) "+str(infoDict['lat']))
-
+                infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
+                                        "Don't forget the sign where North is '+' and South is '-'! "
+                                        "(Example: +50.4): ")
+                writelogfile.write("\nEnter the latitude of where you observed (deg) " + str(infoDict['lat']))
             # Latitude
             while True:
                 try:
@@ -2072,14 +2072,16 @@ def main():
                 # check to make sure they have a sign
                 except ValueError as err:
                     print(err.args)
-                    infoDict['lat'] = input("Enter the latitude of where you observed (deg) "
-                                            "(Don't forget the sign where North is '+' and South is '-'): ")
-                    writelogfile.write("\nEnter the latitude of where you observed (deg) " + str(infoDict['lat']))
+                    infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
+                                            "Don't forget the sign where North is '+' and South is '-'! "
+                                            "(Example: +50.4): ")
+                    writelogfile.write("\nEnter the latitude (in degrees) of where you observed. " + str(infoDict['lat']))
 
             if fileorcommandline == 1:
-                infoDict['long'] = input("Enter the longitude of where you observed (deg) "
-                                         "(Don't forget the sign where East is '+' and West is '-'): ")
-                writelogfile.write("\nEnter the latitude of where you observed (deg) " + str(infoDict['lat']))
+                infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
+                                         "(Don't forget the sign where East is '+' and West is '-')! "
+                                         "(Example: -32.12): ")
+                writelogfile.write("\nEnter the longitude (in degrees) of where you observed. " + str(infoDict['lat']))
             # Longitude
             while True:
                 try:
@@ -2093,9 +2095,10 @@ def main():
                 # check to make sure they have a sign
                 except ValueError as err:
                     print(err.args)
-                    infoDict['long'] = input("Enter the longitude of where you observed (deg) "
-                                             "(Don't forget the sign where East is '+' and West is '-'): ")
-                    writelogfile.write("\nEnter the longitude of where you observed (deg) " + str(infoDict['long']))
+                    infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
+                                             "(Don't forget the sign where East is '+' and West is '-')! "
+                                             "(Example: -32.12): ")
+                    writelogfile.write("\nEnter the longitude (in degrees) of where you observed. " + str(infoDict['long']))
 
             if fileorcommandline == 1:
                 infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
@@ -2446,7 +2449,7 @@ def main():
                         break
                 else:
                     break
-            
+
             # TODO move to a function
             # remove hot pixels
             for ii in range(len(sortedallImageData)):
@@ -2455,7 +2458,7 @@ def main():
                 # bg2 = convolve(sortedallImageData[ii],kernel)
                 # res = sortedallImageData[ii] - bg2
                 # mask = np.abs(res) > 3*np.std(res)
-                # std = np.nanmedian([np.nanstd(np.random.choice(res.flatten(),1000)) for i in range(250)])                
+                # std = np.nanmedian([np.nanstd(np.random.choice(res.flatten(),1000)) for i in range(250)])
                 # smask = np.abs(res) > 3*std # removes portions of the psf
 
                 # computationally expensive
@@ -2476,7 +2479,7 @@ def main():
                     bg = median_filter(sortedallImageData[ii],(4,4))
                 sortedallImageData[ii][nanmask] = bg[nanmask]
 
-                # find and remove all single pixel blocks brighter than 98th percentile 
+                # find and remove all single pixel blocks brighter than 98th percentile
                 bmask = binary_closing(sortedallImageData[ii] > np.percentile(sortedallImageData[ii], 98))
                 bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
                 hotmask = np.logical_xor(bmask,bmask1)
@@ -2556,7 +2559,7 @@ def main():
 
                 aperture_sizes = np.append(aperture_sizes, -1*aperture_sizes) # no comparison star
                 aperture_sizes = np.append(aperture_sizes, 0) # PSF fit
- 
+
                 # single annulus size
                 annulus_sizes = [10,12,15]
 
@@ -2566,10 +2569,10 @@ def main():
 
                 for apertureR in aperture_sizes:  # aperture loop
                     for annulusR in annulus_sizes:  # annulus loop # no need
-                        # don't reprocess 
+                        # don't reprocess
                         if apertureR < 0 and compCounter > 0:
-                            continue 
-                        
+                            continue
+
                         # only do PSF fit in first annulus for loop
                         if apertureR == 0 and annulusR != annulus_sizes[0]:
                             continue
@@ -2736,7 +2739,7 @@ def main():
                                     # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
 
                                     # gets the flux value of the target star and subtracts the background light
-                                    tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, abs(apertureR), annulusR)                                    
+                                    tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, abs(apertureR), annulusR)
                                     targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
                                     targUncertanties.append(np.sqrt(tFluxVal))  # uncertanty on each point is the sqrt of the total counts
 
@@ -2799,7 +2802,7 @@ def main():
                         arrayTimes = np.array(timesListed)
                         arrayPhases = np.array(phasesList)
                         arrayAirmass = np.array(airMassList)
-                        
+
                         if apertureR == 0: # psf fit
                             tpsfflux = []
                             rpsfflux = []
@@ -2819,7 +2822,7 @@ def main():
                             arrayTUnc = np.array(targUncertanties)
                             arrayRUnc = np.array(refUncertanties)
 
-                            arrayFinalFlux = np.array(targetFluxVals) 
+                            arrayFinalFlux = np.array(targetFluxVals)
                             arrayNormUnc = np.array(targUncertanties)
                         else:
                              # aperture phot
@@ -2935,7 +2938,7 @@ def main():
                                 finXRefCentArray = np.array(xRefCent)
                                 finYRefCentArray = np.array(yRefCent)
                             else:
-                                # PSF fit usually 
+                                # PSF fit usually
                                 finXTargCentArray = np.array([target_fits[k][0] for k in target_fits])
                                 finYTargCentArray = np.array([target_fits[k][1] for k in target_fits])
                                 finYRefCentArray = np.array([ref_fits[k][1] for k in ref_fits])
@@ -2948,7 +2951,7 @@ def main():
                             finYTargCent = finYTargCentArray[~filtered_data]
                             finXRefCent = finXRefCentArray[~filtered_data]
                             finYRefCent = finYRefCentArray[~filtered_data]
-                            
+
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = arrayFinalFlux[~filtered_data]
                             nonBJDTimes = arrayTimes[~filtered_data]
@@ -3281,7 +3284,7 @@ def main():
                 'a2': 0,             #Flux lower bound
             }
 
-        
+
         phase = (goodTimes-prior['tmid'])/prior['per']
         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
         upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])

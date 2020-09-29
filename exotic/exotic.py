@@ -46,7 +46,7 @@ import datetime
 writelogfile = open("logfile.txt", "w")
 
 writelogfile.write("*************************\nEXOTIC reduction log file\n*************************\n\n")
-writelogfile.write(str(datetime.datetime.now()))
+writelogfile.write("Started: "+str(datetime.datetime.now()))
 
 print('Python Version: %s' % sys.version)
 writelogfile.write('\n\nPython Version: %s' % sys.version)
@@ -484,18 +484,25 @@ def get_save_directory(save_directory):
             print('Error: the directory entered does not exist. Please try again. Make sure to follow this formatting (using whichever directory you choose): /sample-data/results')
             save_directory = input("Enter the directory to save the results and plots into or type new to create one: ")
 
+            writelogfile.write(
+                '\nError: the directory entered does not exist. Please try again. Make sure to follow this formatting (using whichever directory you choose): /sample-data/results')
+            writelogfile.write("\nEnter the directory to save the results and plots into or type new to create one: "+save_directory)
+
 
 # Create a save directory within the current working directory
 def create_directory():
     while True:
         try:
             directory_name = input('Enter the name for your new directory: ')
+            writelogfile.write('\nEnter the name for your new directory: '+directory_name)
             save_path = os.path.join(os.getcwd() + directory_name, '')
             os.mkdir(save_path)
         except OSError:
             print('Creation of the directory {} failed'.format(save_path))
+            writelogfile.write('\nCreation of the directory {} failed'.format(save_path))
         else:
             print('Successfully created the directory {}'.format(save_path))
+            writelogfile.write('\nSuccessfully created the directory {}'.format(save_path))
             return save_path
 
 
@@ -573,9 +580,14 @@ def get_initialization_file(infodict, userpdict):
     print("\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
     [print(i) for i in g.glob(os.getcwd() + "/*.json")]
 
+    writelogfile.write("\n\nYour current working directory is: " + os.getcwd())
+    writelogfile.write("\n\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
+    [writelogfile.write("\n\t"+i) for i in g.glob(os.getcwd() + "/*.json")]
+
     while True:
         try:
             initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
+            writelogfile.write("\nPlease enter the Directory and Filename of your Initialization File: "+initfilename)
             if initfilename == 'ok':
                 initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
             return inits_file(initfilename, infodict, userpdict)
@@ -583,8 +595,6 @@ def get_initialization_file(infodict, userpdict):
             print("Error: Initialization file not found. Please try again.")
         except IsADirectoryError:
             print('Error: Entered a directory. Please try again.')
-
-    writelogfile.write("\n\nDirectory and Filename of your Initialization File: %s" % initfilename)
 
 
 class InitializationFile:
@@ -617,9 +627,12 @@ class InitializationFile:
 
     def image_directory(self):
         self.info['fitsdir'] = input('Please enter the Directory of Imaging Files: ')
+        writelogfile.write('\nPlease enter the Directory of Imaging Files: '+self.info['fitsdir'])
 
     def save_directory(self):
         self.info['saveplot'] = input('Please enter the directory to save the results and plots into or type new to create one: ')
+        writelogfile.write(
+            '\nPlease enter the directory to save the results and plots into or type new to create one: '+self.info['saveplot'])
 
     def initial(self):
         notes = ['Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): ',
@@ -638,37 +651,51 @@ class InitializationFile:
     def latitude(self):
         self.info['latitude'] = input("Please enter the longitude of where you observed (deg) "
                                       "(Don't forget the sign where East is '+' and West is '-'): ")
+        writelogfile.write("\nPlease enter the longitude of where you observed (deg) "+self.info['latitude'])
 
     def longitude(self):
         self.info['longitude'] = input("Please enter the longitude of where you observed (deg) "
                                        "(Don't forget the sign where East is '+' and West is '-'): ")
+        writelogfile.write("\nPlease enter the longitude of where you observed (deg) "+self.info['longitude'])
 
     def elevation(self):
         self.info['elev'] = user_input('Please enter the elevation (in meters) of where you observed: ', type_=float)
+        writelogfile.write('\nPlease enter the elevation (in meters) of where you observed: '+str(self.info['elev']))
 
     def target_star_coords(self, pname):
         x_pix = user_input('\n{} X Pixel Coordinate: '.format(pname), type_=int)
         y_pix = user_input('\n{} Y Pixel Coordinate: '.format(pname), type_=int)
+
+        writelogfile.write('\n{} X Pixel Coordinate: {}'.format(pname,x_pix))
+        writelogfile.write('\n{} Y Pixel Coordinate: {}'.format(pname,y_pix))
         self.info['tarcoords'] = [x_pix, y_pix]
 
     def comparison_star_coords(self):
         num_comp_stars = user_input('How many comparison stars would you like to use? (1-10) ', type_=int)
+        writelogfile.write('\nHow many comparison stars would you like to use? (1-10) '+str(num_comp_stars))
         comp_stars = []
 
         for num in range(num_comp_stars):
             x_pix = user_input('Comparison Star {} X Pixel Coordinate: '.format(num + 1), type_=int)
             y_pix = user_input('Comparison Star {} Y Pixel Coordinate: '.format(num + 1), type_=int)
+
+            writelogfile.write('\nComparison Star {} X Pixel Coordinate: {}'.format(num + 1,x_pix))
+            writelogfile.write('\nComparison Star {} Y Pixel Coordinate: {}'.format(num + 1,y_pix))
             comp_stars.append((x_pix, y_pix))
         self.info['compstars'] = comp_stars
 
     def exposure(self):
         self.info['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
+        writelogfile.write('\nPlease enter your exposure time (seconds): '+str(self.info['exposure']))
 
     def pixel_scale(self):
         self.info['flatsdir'] = input('Please enter the size of your pixel (Ex: 5 arcsec/pixel): ')
+        writelogfile.write('\nPlease enter the size of your pixel (Ex: 5 arcsec/pixel): '+str(self.info['flatsdir']))
 
     def planet(self):
         self.planet_name = input('\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): ')
+        writelogfile.write(
+            '\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): '+self.planet_name)
 
 
 #Convert time units to BJD_TDB if pre-reduced file not in proper units
@@ -3516,9 +3543,10 @@ def main():
         writelogfile.write('\nEnd of Reduction Process')
         writelogfile.write('\n************************')
 
+        writelogfile.write("\n\nStopped: " + str(datetime.datetime.now()))
         # close log file
         writelogfile.close()
-        print("Log File Saved")
+        print("\nLog File Saved")
 
 
 if __name__ == "__main__":

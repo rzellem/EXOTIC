@@ -1911,12 +1911,12 @@ def main():
 
         # observation date
         if fileorcommandline == 1:
-            infoDict['date'] = str(input("\nEnter the Observation Date (XX-XX-XXXX): "))
+            infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
 
         # Using a / in your date can screw up the file paths- this will check user's date
         while "/" in infoDict['date']:
             print("Do not use / in your date. Please try again.")
-            infoDict['date'] = str(input("\nEnter the Observation Date (XX-XX-XXXX): "))
+            infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
 
         if fitsortext == 1:
             if fileorcommandline == 1:
@@ -1943,7 +1943,7 @@ def main():
             if fileorcommandline == 1:
                 infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
                                          "(Don't forget the sign where East is '+' and West is '-')! "
-                                         "(Example: -32): ")
+                                         "(Example: -32.12): ")
             # Longitude
             while True:
                 try:
@@ -1959,7 +1959,7 @@ def main():
                     print(err.args)
                     infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
                                              "(Don't forget the sign where East is '+' and West is '-')! "
-                                             "(Example: -32): ")
+                                             "(Example: -32.12): ")
 
             if fileorcommandline == 1:
                 infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)

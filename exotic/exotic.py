@@ -2653,10 +2653,10 @@ def main():
                             'a2': 0,             #Flux lower bound
                         }
 
-                        phase = (arrayTimes[~filtered_data]-prior['tmid'])/prior['per']
+                        phase = (arrayTimes[~filtered_data]-pDict['midT'])/prior['per']
                         prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
-                        upper = pDict['midT']+ 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
-                        lower = pDict['midT']- 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
+                        upper = prior['tmid'] + np.abs(25*pDict['midTUnc'] + np.floor(phase).max()*25*pDict['pPerUnc'])
+                        lower = prior['tmid'] - np.abs(25*pDict['midTUnc'] + np.floor(phase).max()*25*pDict['pPerUnc'])
 
                         if np.floor(phase).max()-np.floor(phase).min() == 0:
                             print("WARNING!")

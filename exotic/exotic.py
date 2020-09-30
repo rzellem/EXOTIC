@@ -116,6 +116,8 @@ from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
 from astropy.utils.exceptions import AstropyWarning
 
+from astroscrappy import detect_cosmics
+
 # Image alignment import
 import astroalign as aa
 
@@ -219,6 +221,28 @@ class NASAExoplanetArchive:
             return pandas.read_csv(StringIO(response.text))
         else:
             return response.text
+
+    def resolve_name(self):
+        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+        uri_ipac_query = {
+            # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+            "select": "pl_name,hostname",
+            "from": "ps",  # Table name
+            "where": "tran_flag = 1",
+            "order by": "pl_pubdate desc",
+            "format": "csv"
+        }
+
+        if self.planet:
+            uri_ipac_query["where"] += " and pl_name = '{}'".format(self.planet)
+
+        default = self._tap_query(uri_ipac_base, uri_ipac_query)
+
+        if len(default) == 0:
+            return False
+        else:
+            return True
+         
 
     @retry(stop=stop_after_attempt(3),
            wait=wait_exponential(multiplier=1, min=17, max=1024),
@@ -1447,7 +1471,6 @@ def getFlux(data, xc, yc, r=5, dr=5):
 
     return float(phot_table['aperture_sum']), bgflux
 
-
 def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r+dr))
@@ -1720,17 +1743,17 @@ def realTimeReduce(i, target_name):
 
 
 def parse_args():
-    # TODO
     parser = argparse.ArgumentParser()
 
-    help_ = "Choose a target to process"
-    parser.add_argument("-t", "--target", help=help_, type=str, default="all")
+    help_ = "choose an inits file"
+    parser.add_argument("-i", "--init", help=help_, type=str, default="")
 
     return parser.parse_args()
 
-
 def main():
-    # TODO use text based interface if no command line arguments
+
+    # command line args
+    args = parse_args()
 
     print('\n')
     print('*************************************************************')
@@ -1758,7 +1781,6 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-
     realTimeAns = user_input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: ', type_=int, val1=1, val2=2)
 
     #############################
@@ -1828,13 +1850,13 @@ def main():
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
         fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start '
-                                'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
+                                    'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 
         fileorcommandline = user_input('How would you like to input your initial parameters? '
-                                       'Enter "1" to use the Command Line or "2" to use an input file: ',
-                                       type_=int, val1=1, val2=2)
+                                        'Enter "1" to use the Command Line or "2" to use an input file: ',
+                                        type_=int, val1=1, val2=2)
 
-        # os.path.join(os.path.split(os.getcwd())[0], '')
+        # TODO parse the input file: args.inits
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
@@ -2275,7 +2297,16 @@ def main():
                     break
             
             # TODO move to a function
+            
             # remove hot pixels
+            mimg = np.median(sortedallImageData,0)
+            bmask = binary_closing(mimg > np.percentile(mimg, 99.9))
+            bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
+            hotmask = np.logical_xor(bmask,bmask1)
+
+            print("before:",np.std(sortedallImageData,0).mean())
+            import pdb; pdb.set_trace()            
+
             for ii in range(len(sortedallImageData)):
                 # bg = median_filter(sortedallImageData[ii],(4,4))
                 # kernel = Gaussian2DKernel(x_stddev=1)
@@ -2295,23 +2326,20 @@ def main():
                 # ogdata = np.copy(sortedallImageData[ii])
 
                 # remove nans
+                
                 nanmask = np.isnan(sortedallImageData[ii])
                 if nanmask.sum() > 0:
-                    bg = generic_filter(sortedallImageData[ii],np.nanmedian,(4,4))
+                    bg = generic_filter(sortedallImageData[ii],np.nanmedian,(3,3))
+                    sortedallImageData[ii][nanmask] = bg[nanmask]
                 else:
-                    # faster
-                    bg = median_filter(sortedallImageData[ii],(4,4))
-                sortedallImageData[ii][nanmask] = bg[nanmask]
+                    bg = median_filter(sortedallImageData[ii],(3,3))
 
-                # find and remove all single pixel blocks brighter than 98th percentile 
-                bmask = binary_closing(sortedallImageData[ii] > np.percentile(sortedallImageData[ii], 98))
-                bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
-                hotmask = np.logical_xor(bmask,bmask1)
-                labels, nlabel = label(hotmask)
+                #_mask, sortedallImageData[ii] = detect_cosmics(sortedallImageData[ii])
                 sortedallImageData[ii][hotmask] = bg[hotmask]
-
+                
                 # kinda slow
                 # replace hot pixels with average of neighboring pixels
+                # labels, nlabel = label(hotmask)
                 # for j in range(1,nlabel+1):
                 #     mmask = labels==j  # mini mask
                 #     smask = binary_dilation(mmask)  # dilated mask
@@ -2328,6 +2356,10 @@ def main():
                 # ax[2].set_title("Corrected Image")
                 # plt.tight_layout()
                 # plt.show()
+
+            # compare std of image stack before and after
+            print("after:",np.std(sortedallImageData,0).mean())
+            
 
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)

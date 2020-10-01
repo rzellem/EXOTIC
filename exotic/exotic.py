@@ -1360,11 +1360,11 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imscaleunits = header.comments['PIXSCALE']
         imagescale = imscaleunits + ": " + str(imscalen)
     elif pixel_init:
-        imagescale = "Image scale: " + pixel_init
+        imagescale = "Image scale: " + str(pixel_init)
     else:
         print("Cannot find the pixel scale in the image header.")
         imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). ")
-        imagescale = "Image scale: " + imscalen
+        imagescale = "Image scale: " + str(imscalen)
     return imagescale
 
 
@@ -2198,30 +2198,45 @@ def main():
                 # else:
                 #     cosmicrayfilter_bool = False
 
-                # The cosmic ray filter isn't really working for now...so let's just turn it off
-                cosmicrayfilter_bool = False
+                # TODO add option to inits file
+                cosmicrayfilter_bool = True
                 if cosmicrayfilter_bool:
                     print("\nFiltering your data for cosmic rays.")
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [UIprevTPX, UIprevTPY], box=10)
+                    psffwhm = 2.355*(targsigX+targsigY)/2
+                    print(" FWHM in 1st image:", np.round(psffwhm,2),'px')
+                    print(" STDEV before:",np.std(sortedallImageData,0).mean())
+                    
+                    # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
                     done = False
                     t = threading.Thread(target=animate, daemon=True)
                     t.start()
-                    # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
-                    # For now, this is a simple median filter...in the future, should use something more smart later
-                    for xi in np.arange(np.shape(sortedallImageData)[-2]):
-                        # print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
-                        for yi in np.arange(np.shape(sortedallImageData)[-1]):
-                            # Simple median filter
-                            idx = np.abs(sortedallImageData[:, xi, yi]-np.nanmedian(sortedallImageData[:, xi, yi])) > 5*np.nanstd(sortedallImageData[:, xi, yi])
-                            sortedallImageData[idx, xi, yi] = np.nanmedian(sortedallImageData[:, xi, yi])
-                            # Filter iteratively until no more 5sigma outliers exist - not currently working, so keep commented out for now
-                            # while sum(idx) > 0:
-                            #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
-                            #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
-                    done = True
+                    
+                    for ii in range(len(sortedallImageData)):
 
-                # if len(sortedTimeList) == 0:
-                #     print("Error: .FITS files not found in " + directoryP)
-                #     sys.exit()
+                        # remove nans                        
+                        nanmask = np.isnan(sortedallImageData[ii])
+                        if nanmask.sum() > 0:
+                            bg = generic_filter(sortedallImageData[ii],np.nanmedian,(3,3))
+                            sortedallImageData[ii][nanmask] = bg[nanmask]
+                        
+                        mask, clean = detect_cosmics(sortedallImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)                        
+                        sortedallImageData[ii] = clean
+                        
+                        # TODO move to function
+                        # if ii == 0:
+                        # f,ax = plt.subplots(1,3,figsize=(18,8))
+                        # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[0].set_title("Original Data")
+                        # ax[1].imshow(mask,cmap='binary_r')
+                        # ax[1].set_title("Cosmic Ray Mask")
+                        # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[2].set_title("Corrected Image")
+                        # plt.tight_layout()
+                        # plt.show()
+
+                    done = True
+                print(" STDEV after:",np.std(sortedallImageData,0).mean())
 
                 # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 
@@ -2296,71 +2311,6 @@ def main():
                 else:
                     break
             
-            # TODO move to a function
-            
-            # remove hot pixels
-            mimg = np.median(sortedallImageData,0)
-            bmask = binary_closing(mimg > np.percentile(mimg, 99.9))
-            bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
-            hotmask = np.logical_xor(bmask,bmask1)
-
-            print("before:",np.std(sortedallImageData,0).mean())
-            import pdb; pdb.set_trace()            
-
-            for ii in range(len(sortedallImageData)):
-                # bg = median_filter(sortedallImageData[ii],(4,4))
-                # kernel = Gaussian2DKernel(x_stddev=1)
-                # bg2 = convolve(sortedallImageData[ii],kernel)
-                # res = sortedallImageData[ii] - bg2
-                # mask = np.abs(res) > 3*np.std(res)
-                # std = np.nanmedian([np.nanstd(np.random.choice(res.flatten(),1000)) for i in range(250)])                
-                # smask = np.abs(res) > 3*std # removes portions of the psf
-
-                # computationally expensive
-                # std = generic_filter(sortedallImageData[ii], np.std, (5,5))
-                # mask = np.abs(sortedallImageData[ii] - bg) > 3*std
-                # bgimg = np.copy(sortedallImageData[ii])
-                # bgimg[mask] = bg[mask]
-
-                # diagnostic debug
-                # ogdata = np.copy(sortedallImageData[ii])
-
-                # remove nans
-                
-                nanmask = np.isnan(sortedallImageData[ii])
-                if nanmask.sum() > 0:
-                    bg = generic_filter(sortedallImageData[ii],np.nanmedian,(3,3))
-                    sortedallImageData[ii][nanmask] = bg[nanmask]
-                else:
-                    bg = median_filter(sortedallImageData[ii],(3,3))
-
-                #_mask, sortedallImageData[ii] = detect_cosmics(sortedallImageData[ii])
-                sortedallImageData[ii][hotmask] = bg[hotmask]
-                
-                # kinda slow
-                # replace hot pixels with average of neighboring pixels
-                # labels, nlabel = label(hotmask)
-                # for j in range(1,nlabel+1):
-                #     mmask = labels==j  # mini mask
-                #     smask = binary_dilation(mmask)  # dilated mask
-                #     bmask = np.logical_xor(smask,mmask)  # bounding pixels
-                #     sortedallImageData[ii][mmask] = np.mean(sortedallImageData[ii][bmask])  # replace
-
-                # TODO move to function
-                # f,ax = plt.subplots(1,3,figsize=(18,8))
-                # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                # ax[0].set_title("Original Data")
-                # ax[1].imshow(hotmask,cmap='binary_r')
-                # ax[1].set_title("Hot Mask")
-                # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                # ax[2].set_title("Corrected Image")
-                # plt.tight_layout()
-                # plt.show()
-
-            # compare std of image stack before and after
-            print("after:",np.std(sortedallImageData,0).mean())
-            
-
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
@@ -2566,7 +2516,7 @@ def main():
 
                                 else:
                                     # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
-
+                                    
                                     # gets the flux value of the target star and subtracts the background light
                                     tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, abs(apertureR), annulusR)                                    
                                     targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
@@ -2821,7 +2771,7 @@ def main():
             # outParamsFile.write('#RA, Dec, Target = 0 / Ref Star = 1, Centroid [pix]\n')
             # outParamsFile.write(raStr+","+decStr+",0,"+str(minAperture)+"\n")
             # outParamsFile.close()
-
+ 
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)

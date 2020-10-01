@@ -129,9 +129,9 @@ import astroalign as aa
 
 # Nonlinear Limb Darkening Calculations import
 try:  # module import
-    from .api.gaelLDNL import createldgrid
+    from .api.gaelLDNL import LimbDarkening
 except ImportError:  # package import
-    from api.gaelLDNL import createldgrid
+    from api.gaelLDNL import LimbDarkening
 
 # photometry
 from photutils import CircularAperture
@@ -983,154 +983,6 @@ def check_imaging_files(directory, filename):
             writelogfile.write("\nError: No such directory exists when searching for FITS files. Please try again.")
             writelogfile.write("\nEnter the directory path where " + filename + " files are located: " + directory)
 
-
-class LimbDarkening:
-
-    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
-                 logg=None, loggpos=None, loggneg=None, wl_min=None, wl_max=None, filter_type=None):
-        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
-                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
-                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
-        self.filter_type = filter_type
-        self.wl_min = wl_min
-        self.wl_max = wl_max
-        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
-
-        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
-                     # Near-Infrared
-        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
-                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
-
-                     # Sloan
-                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
-                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
-                     ('Sloan z', 'SZ'): (841.20, 978.20),
-
-                     # Stromgren
-                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
-                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
-
-                     # Johnson
-                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
-                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
-                     ('Johnson I', 'IJ'): (780.00, 1020.00),
-
-                     # Cousins
-                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
-
-                     # MObs Clear Filter, Source: Martin Fowler
-                     ('MObs CV', 'CV'): (350.00, 850.00),
-
-                     # Astrodon CBB: George Silvis: https://astrodon.com/products/astrodon-exo-planet-filter/
-                     ('Astrodon ExoPlanet-BB', 'CBB'): (500.00, 1000.00),
-
-                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
-                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
-                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
-
-
-    def nonlinear_ld(self):
-        self._standard_list()
-
-        if self.filter_type and not (self.wl_min or self.wl_max):
-            self._standard()
-        elif self.wl_min or self.wl_max:
-            self._custom()
-        else:
-            option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters '
-                                'with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
-            writelogfile.write('\nWould you like EXOTIC to calculate your limb darkening parameters '
-                                'with uncertainties? (y/n): '+str(option))
-
-            if option == 'y':
-                opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
-                                 type_=int, val1=1, val2=2)
-                writelogfile.write('\nPlease enter 1 to use a standard filter or 2 for a customized filter: '+str(opt))
-                if opt == 1:
-                    self._standard()
-                elif opt == 2:
-                    self._custom()
-            else:
-                self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type
-
-    def _standard_list(self):
-        print('\n\n***************************')
-        print('Limb Darkening Coefficients')
-        print('***************************')
-        writelogfile.write('\n\n***************************'
-                            '\nLimb Darkening Coefficients'
-                            '\n***************************')
-        print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
-              '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
-        for key, value in self.fwhm.items():
-            print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
-
-    def _standard(self):
-        while True:
-            try:
-                if not self.filter_type:
-                    self.filter_type = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
-                    writelogfile.write('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): '+str(self.filter_type))
-                for key, value in self.fwhm.items():
-                    if self.filter_type in (key[0], key[1]) and self.filter_type != 'N/A':
-                        self.filter_type = (key[0], key[1])
-                        break
-                else:
-                    raise KeyError
-                break
-            except KeyError:
-                print('\nError: The entered filter is not in the provided list of standard filters.')
-                writelogfile.write('\nError: The entered filter is not in the provided list of standard filters.')
-                self.filter_type = None
-
-        self.wl_min = self.fwhm[self.filter_type][0]
-        self.wl_max = self.fwhm[self.filter_type][1]
-        self.filter_type = self.filter_type[1]
-        self._calculate_ld()
-
-    def _custom(self):
-        self.filter_type = 'N/A'
-        if not self.wl_min:
-            self.wl_min = float(input('FWHM Minimum wavelength (nm): '))
-            writelogfile.write('\nFWHM Minimum wavelength (nm): '+str(self.wl_min))
-        if not self.wl_max:
-            self.wl_max = float(input('FWHM Maximum wavelength (nm): '))
-            writelogfile.write('\nFWHM Maximum wavelength (nm): ' + str(self.wl_max))
-        self._calculate_ld()
-
-    def _user_entered(self):
-        self.filter_type = input('\nEnter in your filter name: ')
-        ld_0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
-        ld0_unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
-        ld_1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
-        ld1_unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
-        ld_2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
-        ld2_unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
-        ld_3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
-        ld3_unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
-        self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
-
-        writelogfile.write('\nFilter name: ' + str(self.filter_type))
-        writelogfile.write("\nUser-defined nonlinear limb-darkening coefficients: {}+/-{}, {}+/-{}, {}+/-{}, {}+/-{}",format(ld_0, ld0_unc, ld_1, ld1_unc, ld_2, ld2_unc, ld_3, ld3_unc))
-
-
-    def _calculate_ld(self):
-        self.wl_min = [self.wl_min / 1000]
-        self.wl_max = [self.wl_max / 1000]
-        ld_params = createldgrid(np.array(self.wl_min), np.array(self.wl_max), self.priors)
-        self.ld0 = ld_params['LD'][0][0], ld_params['ERR'][0][0]
-        self.ld1 = ld_params['LD'][1][0], ld_params['ERR'][1][0]
-        self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
-        self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
-
-        writelogfile.write("\nEXOTIC-calculated nonlinear limb-darkening coefficients: ")
-        writelogfile.write("\n"+str(ld_params['LD'][0][0]) + " +/- " + str(ld_params['ERR'][0][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][1][0]) + " +/- " + str(ld_params['ERR'][1][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][2][0]) + " +/- " + str(ld_params['ERR'][2][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][3][0]) + " +/- " + str(ld_params['ERR'][3][0]))
 
 # Checks for corrupted FITS files
 def check_file_corruption(files):
@@ -2402,8 +2254,8 @@ def main():
                     writelogfile.write("\nFiltering your data for cosmic rays.")
                     targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [UIprevTPX, UIprevTPY], box=10)
                     psffwhm = 2.355*(targsigX+targsigY)/2
-                    writelogfile.write(" FWHM in 1st image:", np.round(psffwhm,2),'px')
-                    writelogfile.write(" STDEV before:",np.std(sortedallImageData,0).mean())
+                    writelogfile.write(" FWHM in 1st image: {:.2f} px".format(np.round(psffwhm,2)))
+                    writelogfile.write(" STDEV before: {:.2f}".format(np.std(sortedallImageData,0).mean()))
                     
                     # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
                     
@@ -2435,7 +2287,7 @@ def main():
                         # plt.show()
 
                     done = True
-                print(" STDEV after:",np.std(sortedallImageData,0).mean())
+                writelogfile.write(" STDEV after: {:.2f}".format(np.std(sortedallImageData,0).mean()))
 
                 # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 

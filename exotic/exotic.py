@@ -125,7 +125,7 @@ try:  # module import
 except ImportError:  # package import
     from api.gaelLDNL import createldgrid
 
-import exotic.constants as exotic_const
+import constants as exotic_const
 
 # photometry
 from photutils import CircularAperture

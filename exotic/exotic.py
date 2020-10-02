@@ -125,6 +125,7 @@ try:  # module import
 except ImportError:  # package import
     from api.gaelLDNL import createldgrid
 
+# Exotic constants.py import
 import constants as exotic_const
 
 # photometry

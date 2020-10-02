@@ -112,9 +112,9 @@ from astropy.io import fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS, FITSFixedWarning
+from astropy.utils.exceptions import AstropyWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astropy.utils.exceptions import AstropyWarning
 
 # Image alignment import
 import astroalign as aa
@@ -124,6 +124,8 @@ try:  # module import
     from .api.gaelLDNL import createldgrid
 except ImportError:  # package import
     from api.gaelLDNL import createldgrid
+
+import exotic.constants as exotic_const
 
 # photometry
 from photutils import CircularAperture
@@ -168,18 +170,7 @@ class NASAExoplanetArchive:
         self.pl_dict = None
 
         # CONFIGURATIONS
-        self.requests_timeout = 16, 512 # connection timeout, response timeout in secs.
-
-        # SHARED CONSTANTS
-        self.pi = 3.14159
-        self.au = 1.496e11 # m
-        self.rsun = 6.955e8 # m
-        self.rjup = 7.1492e7 # m
-        self.G = 0.00029591220828559104 # day, AU, Msun
-
-        # SHARED LAMBDAS
-        # keplerian semi-major axis (au)
-        self.sa = lambda m, P: (self.G * m * P ** 2 / (4 * self.pi ** 2)) ** (1. / 3)
+        self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
     def planet_info(self):
         print("\nLooking up {}- please wait.".format(self.planet))
@@ -194,7 +185,8 @@ class NASAExoplanetArchive:
                 print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
         return self.planet, candidate, self.pl_dict
 
-    def _dataframe_to_jsonfile(self, dataframe, filename):
+    @staticmethod
+    def dataframe_to_jsonfile(dataframe, filename):
         jsondata = json.loads(dataframe.to_json(orient='table', index=False))
         with open(filename, "w") as f:
             f.write(json.dumps(jsondata['data'], indent=4))
@@ -291,9 +283,9 @@ class NASAExoplanetArchive:
                                 default.loc[default.pl_name == i, k] = 0
                             elif k == 'pl_ratdor':  # a/R*
                                 # Kepler's 3rd law
-                                semi = self.sa(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                                default.loc[default.pl_name == i, k] = semi * self.au / (
-                                            ddata.st_rad.values[0] * self.rsun)
+                                semi = exotic_const.SA(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                                default.loc[default.pl_name == i, k] = semi * exotic_const.AU / (
+                                            ddata.st_rad.values[0] * exotic_const.R_SUN)
                             elif k == 'pl_orbincl':  # inclination
                                 default.loc[default.pl_name == i, k] = 90
                             elif k == "pl_orbeccen":  # eccentricity
@@ -301,7 +293,7 @@ class NASAExoplanetArchive:
                             elif k == "st_met":  # [Fe/H]
                                 default.loc[default.pl_name == i, k] = 0
 
-            self._dataframe_to_jsonfile(default, filename)
+            NASAExoplanetArchive.dataframe_to_jsonfile(default, filename)
             return target, False
 
     def _get_params(self, data):
@@ -314,10 +306,10 @@ class NASAExoplanetArchive:
                 rprs = data['pl_ratror']
                 rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
             except (KeyError, TypeError):
-                rp = data['pl_radj'] * self.rjup
-                rperr = data['pl_radjerr1'] * self.rjup
-                rs = data['st_rad'] * self.rsun
-                rserr = data['st_raderr1'] * self.rsun
+                rp = data['pl_radj'] * exotic_const.R_JUP
+                rperr = data['pl_radjerr1'] * exotic_const.R_JUP
+                rs = data['st_rad'] * exotic_const.R_SUN
+                rserr = data['st_raderr1'] * exotic_const.R_SUN
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
         self.pl_dict = {
@@ -422,7 +414,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         am = float(hdul[0].header['AIRMASS'])
     elif 'TELALT' in hdul[0].header:
         alt = float(hdul[0].header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((np.pi / 180) * (90.0 - alt))
+        cosam = np.cos((exotic_const.PI / 180) * (90.0 - alt))
         am = 1 / cosam
     else:
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
@@ -1408,8 +1400,8 @@ def fit_centroid(data, pos, init=None, box=10):
             data,
             [wx, wy], # position estimate
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
-            [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-            [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ], # upper bound
+            [wx-5, wy-5, 0, 0, 0, -exotic_const.PI/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wx+5, wy+5, 1e7, 20, 20, exotic_const.PI/4, np.nanmax(data[yv,xv])+1 ], # upper bound
             psf_function=gaussian_psf, method='trf',
             box=box  # only fit a subregion +/- 5 px from centroid
         )
@@ -1418,14 +1410,14 @@ def fit_centroid(data, pos, init=None, box=10):
         print("  check location of comparison star in the first few images")
         print("  fitting parameters are out of bounds")
         print("  init:",init)
-        print(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
-        print(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
+        print(" lower:",[wx-5, wy-5, 0, 0, 0, -exotic_const.PI/4, np.nanmin(data)-1 ] )
+        print(" upper:",[wx+5, wy+5, 1e7, 20, 20, exotic_const.PI/4, np.nanmax(data[yv,xv])+1 ])
 
         # use LM in unbounded optimization
         pars = fit_psf(
             data, [wx, wy], init,
-            [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ],
-            [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ],
+            [wx-5, wy-5, 0, 0, 0, -exotic_const.PI/4, np.nanmin(data)-1 ],
+            [wx+5, wy+5, 1e7, 20, 20, exotic_const.PI/4, np.nanmax(data[yv,xv])+1 ],
             psf_function=gaussian_psf,
             box=box, method='lm'
         )
@@ -1669,7 +1661,7 @@ def realTimeReduce(i, target_name):
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
         tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
-        tpsfFlux = 2*np.pi*tamplitude*tsigX*tsigY
+        tpsfFlux = 2*exotic_const.PI*tamplitude*tsigX*tsigY
         currTPX = tx
         currTPY = ty
 
@@ -1677,7 +1669,7 @@ def realTimeReduce(i, target_name):
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
         rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
-        rpsfFlux = 2*np.pi*ramplitude*rsigX*rsigY
+        rpsfFlux = 2*exotic_const.PI*ramplitude*rsigX*rsigY
         currRPX = rx
         currRPY = ry
 
@@ -2604,9 +2596,9 @@ def main():
                             rpsfflux = []
                             for k in target_fits.keys():
                                 xc,yc,amp,sigx,sigy,off = target_fits[k]
-                                tpsfflux.append(2*np.pi*sigx*sigy*amp)
+                                tpsfflux.append(2*exotic_const.PI*sigx*sigy*amp)
                                 xc,yc,amp,sigx,sigy,off = ref_fits[k]
-                                rpsfflux.append(2*np.pi*sigx*sigy*amp)
+                                rpsfflux.append(2*exotic_const.PI*sigx*sigy*amp)
                             arrayReferences = np.array(rpsfflux)
                             arrayTUnc = arrayFinalFlux**0.5
                             arrayRUnc = arrayReferences**0.5

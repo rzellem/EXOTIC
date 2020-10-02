@@ -2287,6 +2287,9 @@ def main():
                         print(f'Found corrupted file and removing from reduction: {fileName}, ({e})')
                         writelogfile.write(f'\nFound corrupted file and removing from reduction: {fileName}, ({e})')
                         fileNameStr.remove(fileName)
+                        if getattr(hdul, "close", None) and callable(hdul.close):
+                            hdul.close()
+                        del hdul
                         continue
 
                     imageheader = hdul[0].header

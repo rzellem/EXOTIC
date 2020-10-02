@@ -78,6 +78,7 @@ import platform
 import warnings
 import argparse
 import glob as g
+from pathlib import Path
 from io import StringIO
 
 # data processing
@@ -120,7 +121,6 @@ from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astropy.utils.exceptions import AstropyWarning
 
 # Image alignment import
 import astroalign as aa
@@ -154,6 +154,7 @@ distFC = 0
 ax1 = plt.figure()  # placeholder
 # ################### END PROPERTIES ##########################################
 
+
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
     mdata = savgol_filter(ogdata[~nanmask], dt, 2)
@@ -163,6 +164,7 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     sigmask = np.abs(res) > sigma*std
     nanmask[~nanmask] = sigmask
     return nanmask
+
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
@@ -187,7 +189,7 @@ class NASAExoplanetArchive:
         self.sa = lambda m, P: (self.G * m * P ** 2 / (4 * self.pi ** 2)) ** (1. / 3)
 
     def planet_info(self):
-        print("\nLooking up {}- please wait.".format(self.planet))
+        print(f"\nLooking up {self.planet}- please wait.")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
         if not candidate:
@@ -196,8 +198,8 @@ class NASAExoplanetArchive:
                 planets = [data[i]['pl_name'] for i in range(len(data))]
                 idx = planets.index(self.planet)
                 self._get_params(data[idx])
-                print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
-                writelogfile.write('\n\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
+                print(f'\nSuccessfully found {self.planet} in the NASA Exoplanet Archive!')
+                writelogfile.write(f'\n\nSuccessfully found {self.planet} in the NASA Exoplanet Archive!')
         return self.planet, candidate, self.pl_dict
 
     def _dataframe_to_jsonfile(self, dataframe, filename):
@@ -212,7 +214,7 @@ class NASAExoplanetArchive:
         uri_full = base_url
         for k in query:
             if k != "format":
-                uri_full += "{} {} ".format(k, query[k])
+                uri_full += f"{k} {query[k]} "
 
         uri_full = uri_full[:-1] + "&format={}".format(query.get("format", "csv"))
         uri_full = uri_full.replace(' ', '+')
@@ -251,7 +253,7 @@ class NASAExoplanetArchive:
         }
 
         if target:
-            uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+            uri_ipac_query["where"] += f" and pl_name = '{target}'"
 
         default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -259,13 +261,13 @@ class NASAExoplanetArchive:
         uri_ipac_query['where'] = 'tran_flag=1'
 
         if target:
-            uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+            uri_ipac_query["where"] += f" and pl_name = '{target}'"
 
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
-            target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
-                           "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
+            target = input(f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and "
+                           "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
             if target.strip().lower() == 'candidate':
                 target = input("\nPlease enter candidate planet's name: ")
                 writelogfile.write("\n\nCandidate Planet's Name: %s " % target)
@@ -422,6 +424,7 @@ def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid -0.5*pPeriod) / pPeriod % 1
     return phase - 0.5
 
+
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
 def getAirMass(hdul, ra, dec, lati, longit, elevation):
     # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
@@ -495,14 +498,14 @@ def create_directory():
         try:
             directory_name = input('Enter the name for your new directory: ')
             writelogfile.write('\nEnter the name for your new directory: '+directory_name)
-            save_path = os.path.join(os.getcwd() + directory_name, '')
+            save_path = os.path.join(Path.cwd() + directory_name, '')
             os.mkdir(save_path)
         except OSError:
-            print('Creation of the directory {} failed'.format(save_path))
-            writelogfile.write('\nCreation of the directory {} failed'.format(save_path))
+            print(f'Creation of the directory {save_path} failed')
+            writelogfile.write(f'\nCreation of the directory {save_path} failed')
         else:
-            print('Successfully created the directory {}'.format(save_path))
-            writelogfile.write('\nSuccessfully created the directory {}'.format(save_path))
+            print(f'Successfully created the directory {save_path}')
+            writelogfile.write(f'\nSuccessfully created the directory {save_path}')
             return save_path
 
 
@@ -576,13 +579,13 @@ def get_init_params(comp, dict1, dict2):
 
 # Get inits.json file from user input
 def get_initialization_file(infodict, userpdict):
-    print("\nYour current working directory is: ", os.getcwd())
-    print("\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
-    [print(i) for i in g.glob(os.getcwd() + "/*.json")]
+    print(f"\nYour current working directory is: {Path.cwd()}")
+    print(f"\nPotential initialization files I've found in {Path.cwd()} are: ")
+    [print(i) for i in g.glob(Path.cwd() + "/*.json")]
 
-    writelogfile.write("\n\nYour current working directory is: " + os.getcwd())
-    writelogfile.write("\n\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
-    [writelogfile.write("\n\t"+i) for i in g.glob(os.getcwd() + "/*.json")]
+    writelogfile.write(f"\n\nYour current working directory is: {Path.cwd()}")
+    writelogfile.write(f"\n\nPotential initialization files I've found in {Path.cwd()} are: ")
+    [writelogfile.write("\n\t"+i) for i in g.glob(Path.cwd() + "/*.json")]
 
     while True:
         try:

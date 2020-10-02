@@ -78,6 +78,7 @@ import platform
 import warnings
 import argparse
 import glob as g
+from pathlib import Path
 from io import StringIO
 
 # data processing
@@ -1986,7 +1987,8 @@ def main():
         writelogfile.write('\n\nHow would you like to input your initial parameters? '
                                        '\nEnter "1" to use the Command Line or "2" to use an input file: '+str(fileorcommandline))
 
-        # os.path.join(os.path.split(os.getcwd())[0], '')
+        # Change working directory to ./EXOTIC
+        os.chdir(Path.cwd().parent)
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:

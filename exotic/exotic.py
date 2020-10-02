@@ -120,7 +120,6 @@ from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astropy.utils.exceptions import AstropyWarning
 
 # Image alignment import
 import astroalign as aa
@@ -187,7 +186,7 @@ class NASAExoplanetArchive:
         self.sa = lambda m, P: (self.G * m * P ** 2 / (4 * self.pi ** 2)) ** (1. / 3)
 
     def planet_info(self):
-        print("\nLooking up {}- please wait.".format(self.planet))
+        print(f"\nLooking up {self.planet}- please wait.")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
         if not candidate:
@@ -196,8 +195,8 @@ class NASAExoplanetArchive:
                 planets = [data[i]['pl_name'] for i in range(len(data))]
                 idx = planets.index(self.planet)
                 self._get_params(data[idx])
-                print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
-                writelogfile.write('\n\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
+                print(f'\nSuccessfully found {self.planet} in the NASA Exoplanet Archive!')
+                writelogfile.write(f'\n\nSuccessfully found {self.planet} in the NASA Exoplanet Archive!')
         return self.planet, candidate, self.pl_dict
 
     def _dataframe_to_jsonfile(self, dataframe, filename):
@@ -212,7 +211,7 @@ class NASAExoplanetArchive:
         uri_full = base_url
         for k in query:
             if k != "format":
-                uri_full += "{} {} ".format(k, query[k])
+                uri_full += f"{k} {query[k]} "
 
         uri_full = uri_full[:-1] + "&format={}".format(query.get("format", "csv"))
         uri_full = uri_full.replace(' ', '+')
@@ -251,7 +250,7 @@ class NASAExoplanetArchive:
         }
 
         if target:
-            uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+            uri_ipac_query["where"] += f" and pl_name = '{target}'"
 
         default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
@@ -259,13 +258,13 @@ class NASAExoplanetArchive:
         uri_ipac_query['where'] = 'tran_flag=1'
 
         if target:
-            uri_ipac_query["where"] += " and pl_name = '{}'".format(target)
+            uri_ipac_query["where"] += f" and pl_name = '{target}'"
 
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
-            target = input("Cannot find target ({}) in NASA Exoplanet Archive. Check case sensitivity and re-enter the"
-                           "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
+            target = input(f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and "
+                           "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
             if target.strip().lower() == 'candidate':
                 target = input("\nPlease enter candidate planet's name: ")
                 writelogfile.write("\n\nCandidate Planet's Name: %s " % target)
@@ -498,11 +497,11 @@ def create_directory():
             save_path = os.path.join(os.getcwd() + directory_name, '')
             os.mkdir(save_path)
         except OSError:
-            print('Creation of the directory {} failed'.format(save_path))
-            writelogfile.write('\nCreation of the directory {} failed'.format(save_path))
+            print(f'Creation of the directory {save_path} failed')
+            writelogfile.write(f'\nCreation of the directory {save_path} failed')
         else:
-            print('Successfully created the directory {}'.format(save_path))
-            writelogfile.write('\nSuccessfully created the directory {}'.format(save_path))
+            print(f'Successfully created the directory {save_path}')
+            writelogfile.write(f'\nSuccessfully created the directory {save_path}')
             return save_path
 
 
@@ -576,8 +575,8 @@ def get_init_params(comp, dict1, dict2):
 
 # Get inits.json file from user input
 def get_initialization_file(infodict, userpdict):
-    print("\nYour current working directory is: ", os.getcwd())
-    print("\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
+    print(f"\nYour current working directory is: {os.getcwd()}")
+    print(f"\nPotential initialization files I've found in {os.getcwd()} are: ")
     [print(i) for i in g.glob(os.getcwd() + "/*.json")]
 
     writelogfile.write("\n\nYour current working directory is: " + os.getcwd())
@@ -666,8 +665,8 @@ class InitializationFile:
         x_pix = user_input('\n{} X Pixel Coordinate: '.format(pname), type_=int)
         y_pix = user_input('\n{} Y Pixel Coordinate: '.format(pname), type_=int)
 
-        writelogfile.write('\n{} X Pixel Coordinate: {}'.format(pname,x_pix))
-        writelogfile.write('\n{} Y Pixel Coordinate: {}'.format(pname,y_pix))
+        writelogfile.write('\n{} X Pixel Coordinate: {}'.format(pname, x_pix))
+        writelogfile.write('\n{} Y Pixel Coordinate: {}'.format(pname, y_pix))
         self.info['tarcoords'] = [x_pix, y_pix]
 
     def comparison_star_coords(self):
@@ -679,8 +678,8 @@ class InitializationFile:
             x_pix = user_input('Comparison Star {} X Pixel Coordinate: '.format(num + 1), type_=int)
             y_pix = user_input('Comparison Star {} Y Pixel Coordinate: '.format(num + 1), type_=int)
 
-            writelogfile.write('\nComparison Star {} X Pixel Coordinate: {}'.format(num + 1,x_pix))
-            writelogfile.write('\nComparison Star {} Y Pixel Coordinate: {}'.format(num + 1,y_pix))
+            writelogfile.write('\nComparison Star {} X Pixel Coordinate: {}'.format(num + 1, x_pix))
+            writelogfile.write('\nComparison Star {} Y Pixel Coordinate: {}'.format(num + 1, y_pix))
             comp_stars.append((x_pix, y_pix))
         self.info['compstars'] = comp_stars
 
@@ -1107,21 +1106,6 @@ class LimbDarkening:
         writelogfile.write("\n"+str(ld_params['LD'][1][0]) + " +/- " + str(ld_params['ERR'][1][0]))
         writelogfile.write("\n"+str(ld_params['LD'][2][0]) + " +/- " + str(ld_params['ERR'][2][0]))
         writelogfile.write("\n"+str(ld_params['LD'][3][0]) + " +/- " + str(ld_params['ERR'][3][0]))
-
-# Checks for corrupted FITS files
-def check_file_corruption(files):
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', category=AstropyWarning)
-        for file in files:
-            try:
-                with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
-                    pass
-            except OSError as e:
-                print('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
-                writelogfile.write('\nFound corrupted file and removing from reduction: {}, ({})'.format(file,e))
-                files.remove(file)
-        return files
 
 
 def check_wcs(fits_file, save_directory, plate_opt):
@@ -2262,11 +2246,6 @@ def main():
                                wl_min=infoDict['wl_min'], wl_max=infoDict['wl_max'], filter_type=infoDict['filter'])
         ld0, ld1, ld2, ld3, infoDict['filter'] = ld_obj.nonlinear_ld()
 
-        # TODO: Fix File Corruption Check
-        # If fits files are used, check that they are not corrupted
-        # if fitsortext == 1:
-        #     inputfiles = check_file_corruption(inputfiles)
-
         if fitsortext == 1:
             print('\n**************************')
             print('Starting Reduction Process')
@@ -2283,7 +2262,7 @@ def main():
             # Loop placed to check user-entered x and y target coordinates against WCS.
             while True:
                 fileNumber = 1
-                allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes  = [], [], [], [], [], [], []
+                allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
 
                 # ----TIME SORT THE FILES-------------------------------------------------------------
                 for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -2302,7 +2281,14 @@ def main():
                     # Keeps a list of file names
                     fileNameStr.append(fileName)
 
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+                    try:
+                        hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+                    except OSError as e:
+                        print(f'Found corrupted file and removing from reduction: {fileName}, ({e})')
+                        writelogfile.write(f'\nFound corrupted file and removing from reduction: {fileName}, ({e})')
+                        fileNameStr.remove(fileName)
+                        continue
+
                     imageheader = hdul[0].header
                     # TIME
                     timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
@@ -2904,20 +2890,18 @@ def main():
                         for k in pDict:
                             if "Unc" in k:
                                 if not pDict[k]:
-                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    print(f" WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
                                     writelogfile.write(
-                                        "\n WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(
-                                            k))
+                                        f"\n WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
                                     pDict[k] = 1
                                 elif pDict[k] == 0 or np.isnan(pDict[k]):
-                                    print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
+                                    print(f" WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
                                     writelogfile.write(
-                                        "\n WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(
-                                            k))
+                                        f"\n WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
                                     pDict[k] = 1
                             elif pDict[k] == None:
-                                print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
-                                writelogfile.write("\n WARNING! {} is None. Please use a numeric value in inits.json".format(k))
+                                print(f" WARNING! {k} is None. Please use a numeric value in inits.json")
+                                writelogfile.write(f"\n WARNING! {k} is None. Please use a numeric value in inits.json")
                                 pDict[k] = 0
 
                         mybounds = {

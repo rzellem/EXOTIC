@@ -153,6 +153,7 @@ distFC = 0
 ax1 = plt.figure()  # placeholder
 # ################### END PROPERTIES ##########################################
 
+
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
     mdata = savgol_filter(ogdata[~nanmask], dt, 2)
@@ -162,6 +163,7 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     sigmask = np.abs(res) > sigma*std
     nanmask[~nanmask] = sigmask
     return nanmask
+
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
@@ -420,6 +422,7 @@ def getJulianTime(hdul):
 def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid -0.5*pPeriod) / pPeriod % 1
     return phase - 0.5
+
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
 def getAirMass(hdul, ra, dec, lati, longit, elevation):
@@ -1005,7 +1008,6 @@ class LimbDarkening:
                      ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
                      ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
-
     def nonlinear_ld(self):
         self._standard_list()
 
@@ -1091,7 +1093,6 @@ class LimbDarkening:
         writelogfile.write('\nFilter name: ' + str(self.filter_type))
         writelogfile.write("\nUser-defined nonlinear limb-darkening coefficients: {}+/-{}, {}+/-{}, {}+/-{}, {}+/-{}",format(ld_0, ld0_unc, ld_1, ld1_unc, ld_2, ld2_unc, ld_3, ld3_unc))
 
-
     def _calculate_ld(self):
         self.wl_min = [self.wl_min / 1000]
         self.wl_max = [self.wl_max / 1000]
@@ -1174,38 +1175,6 @@ def result_if_max_retry_count(retry_state):
     pass
 
 
-def login_fail():
-    print('\n\nWARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    return False
-
-
-def upload_fail():
-    print('\n\nWARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    return False
-
-
-def sub_fail():
-    print('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    return False
-
-
-def job_fail():
-    print('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. '
-          'EXOTIC will continue reducing data without a plate solution.')
-    return False
-
-
 class PlateSolution:
     default_url = 'http://nova.astrometry.net/api/'
     default_apikey = {'apikey': 'vfsyxlmdxfryhprq'}
@@ -1219,23 +1188,23 @@ class PlateSolution:
     def plate_solution(self):
         session = self._login()
         if not session:
-            return login_fail()
+            return PlateSolution.login_fail()
 
         sub_id = self._upload(session)
         if not sub_id:
-            return upload_fail()
+            return PlateSolution.upload_fail()
 
         sub_url = self._get_url('submissions/%s' % sub_id)
         job_id = self._sub_status(sub_url)
         if not job_id:
-            return sub_fail()
+            return PlateSolution.sub_fail()
 
         job_url = self._get_url('jobs/%s' % job_id)
         download_url = self.apiurl.replace('/api/', '/new_fits_file/%s/' % job_id)
         wcs_file = os.path.join(self.directory, 'wcs_image.fits')
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
-            return job_fail()
+            return PlateSolution.job_fail()
         else:
             print('\n\nSuccess. ')
             writelogfile.write("\nWCS file creation successful.")
@@ -1290,6 +1259,38 @@ class PlateSolution:
             with open(wcs_file, 'wb') as f:
                 f.write(r.content)
             return wcs_file
+        return False
+
+    @staticmethod
+    def login_fail():
+        print('\n\nWARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
+              'EXOTIC will continue reducing data without a plate solution.')
+        writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
+                           'EXOTIC will continue reducing data without a plate solution.')
+        return False
+
+    @staticmethod
+    def upload_fail():
+        print('\n\nWARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
+              'EXOTIC will continue reducing data without a plate solution.')
+        writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
+                           'EXOTIC will continue reducing data without a plate solution.')
+        return False
+
+    @staticmethod
+    def sub_fail():
+        print('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from '
+              'nova.astrometry.net. EXOTIC will continue reducing data without a plate solution.')
+        writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from '
+                           'nova.astrometry.net. EXOTIC will continue reducing data without a plate solution.')
+        return False
+
+    @staticmethod
+    def job_fail():
+        print('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Job Status from '
+              'nova.astrometry.net. EXOTIC will continue reducing data without a plate solution.')
+        writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Job Status from '
+                           'nova.astrometry.net. EXOTIC will continue reducing data without a plate solution.')
         return False
 
 

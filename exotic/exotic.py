@@ -132,7 +132,10 @@ except ImportError:  # package import
     from api.gaelLDNL import createldgrid
 
 # Exotic constants.py import
-import constants as exotic_const
+try:
+    from constants import *
+except ImportError:
+    from .constants import *
 
 # photometry
 from photutils import CircularAperture
@@ -166,6 +169,7 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     sigmask = np.abs(res) > sigma*std
     nanmask[~nanmask] = sigmask
     return nanmask
+
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
@@ -291,9 +295,9 @@ class NASAExoplanetArchive:
                                 default.loc[default.pl_name == i, k] = 0
                             elif k == 'pl_ratdor':  # a/R*
                                 # Kepler's 3rd law
-                                semi = exotic_const.SA(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                                default.loc[default.pl_name == i, k] = semi * exotic_const.AU / (
-                                            ddata.st_rad.values[0] * exotic_const.R_SUN)
+                                semi = SA(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
+                                default.loc[default.pl_name == i, k] = semi * AU / (
+                                            ddata.st_rad.values[0] * R_SUN)
                             elif k == 'pl_orbincl':  # inclination
                                 default.loc[default.pl_name == i, k] = 90
                             elif k == "pl_orbeccen":  # eccentricity
@@ -314,10 +318,10 @@ class NASAExoplanetArchive:
                 rprs = data['pl_ratror']
                 rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
             except (KeyError, TypeError):
-                rp = data['pl_radj'] * exotic_const.R_JUP
-                rperr = data['pl_radjerr1'] * exotic_const.R_JUP
-                rs = data['st_rad'] * exotic_const.R_SUN
-                rserr = data['st_raderr1'] * exotic_const.R_SUN
+                rp = data['pl_radj'] * R_JUP
+                rperr = data['pl_radjerr1'] * R_JUP
+                rs = data['st_rad'] * R_SUN
+                rserr = data['st_raderr1'] * R_SUN
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
         self.pl_dict = {
@@ -422,7 +426,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         am = float(hdul[0].header['AIRMASS'])
     elif 'TELALT' in hdul[0].header:
         alt = float(hdul[0].header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((exotic_const.PI / 180) * (90.0 - alt))
+        cosam = np.cos((PI / 180) * (90.0 - alt))
         am = 1 / cosam
     else:
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
@@ -797,9 +801,9 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 print("\nWould you like to:\n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
 
-                writelogfile.write("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
-                writelogfile.write("\n\tNASA Exoplanet Archive value: %s" % pdict[key])
-                writelogfile.write("\n\tInitialization file value: %s" % userpdict[key])
+                writelogfile.write("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+                writelogfile.write("\n\tNASA Exoplanet Archive value: %s" % pdict[item])
+                writelogfile.write("\n\tInitialization file value: %s" % userpdict[item])
                 writelogfile.write("\nWould you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
                 writelogfile.write('\nWhich option do you choose? (1/2/3): '+str(option))
 
@@ -1524,8 +1528,8 @@ def fit_centroid(data, pos, init=None, box=10):
             data,
             [wx, wy], # position estimate
             init,    # initial guess: [amp, sigx, sigy, rotation, bg]
-            [wx-5, wy-5, 0, 0, 0, -exotic_const.PI/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-            [wx+5, wy+5, 1e7, 20, 20, exotic_const.PI/4, np.nanmax(data[yv,xv])+1 ], # upper bound
+            [wx-5, wy-5, 0, 0, 0, -PI/4, np.nanmin(data)-1 ], # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wx+5, wy+5, 1e7, 20, 20, PI/4, np.nanmax(data[yv,xv])+1 ], # upper bound
             psf_function=gaussian_psf, method='trf',
             box=box  # only fit a subregion +/- 5 px from centroid
         )
@@ -1534,8 +1538,8 @@ def fit_centroid(data, pos, init=None, box=10):
         print("  check location of comparison star in the first few images")
         print("  fitting parameters are out of bounds")
         print("  init:",init)
-        print(" lower:",[wx-5, wy-5, 0, 0, 0, -exotic_const.PI/4, np.nanmin(data)-1 ] )
-        print(" upper:",[wx+5, wy+5, 1e7, 20, 20, exotic_const.PI/4, np.nanmax(data[yv,xv])+1 ])
+        print(" lower:",[wx-5, wy-5, 0, 0, 0, -PI/4, np.nanmin(data)-1 ] )
+        print(" upper:",[wx+5, wy+5, 1e7, 20, 20, PI/4, np.nanmax(data[yv,xv])+1 ])
 
         writelogfile.write("\n\nWARNING trouble fitting Gaussian PSF to star at {},{}".format(wx,wy))
         writelogfile.write("\n  check location of comparison star in the first few images")
@@ -1547,8 +1551,8 @@ def fit_centroid(data, pos, init=None, box=10):
         # use LM in unbounded optimization
         pars = fit_psf(
             data, [wx, wy], init,
-            [wx-5, wy-5, 0, 0, 0, -exotic_const.PI/4, np.nanmin(data)-1 ],
-            [wx+5, wy+5, 1e7, 20, 20, exotic_const.PI/4, np.nanmax(data[yv,xv])+1 ],
+            [wx-5, wy-5, 0, 0, 0, -PI/4, np.nanmin(data)-1 ],
+            [wx+5, wy+5, 1e7, 20, 20, PI/4, np.nanmax(data[yv,xv])+1 ],
             psf_function=gaussian_psf,
             box=box, method='lm'
         )
@@ -1792,7 +1796,7 @@ def realTimeReduce(i, target_name):
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
         tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
-        tpsfFlux = 2*exotic_const.PI*tamplitude*tsigX*tsigY
+        tpsfFlux = 2*PI*tamplitude*tsigX*tsigY
         currTPX = tx
         currTPY = ty
 
@@ -1800,7 +1804,7 @@ def realTimeReduce(i, target_name):
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
         rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
-        rpsfFlux = 2*exotic_const.PI*ramplitude*rsigX*rsigY
+        rpsfFlux = 2*PI*ramplitude*rsigX*rsigY
         currRPX = rx
         currRPY = ry
 
@@ -2828,9 +2832,9 @@ def main():
                             rpsfflux = []
                             for k in target_fits.keys():
                                 xc,yc,amp,sigx,sigy,off = target_fits[k]
-                                tpsfflux.append(2*exotic_const.PI*sigx*sigy*amp)
+                                tpsfflux.append(2*PI*sigx*sigy*amp)
                                 xc,yc,amp,sigx,sigy,off = ref_fits[k]
-                                rpsfflux.append(2*exotic_const.PI*sigx*sigy*amp)
+                                rpsfflux.append(2*PI*sigx*sigy*amp)
                             arrayReferences = np.array(rpsfflux)
                             arrayTUnc = arrayFinalFlux**0.5
                             arrayRUnc = arrayReferences**0.5

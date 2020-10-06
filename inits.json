@@ -1,11 +1,11 @@
 {
     "inits_guide": {
             "Title": "EXOTIC's Initialization File",
-            "Comments": "Please answer all the following requirements below by following the format of the given",
-            "Comments": "sample dataset HAT-P-32 b. Edit this file as needed to match the data wanting to be reduced.",
-            "Comments": "Do not delete areas where there are quotation marks, commas, and brackets.",
-            "Comments": "The inits_guide dictionary (these lines of text) does not have to be edited",
-            "Comments": "and is only here to serve as a guide. Will be updated per user's advice.",
+            "Comment": "Please answer all the following requirements below by following the format of the given",
+            "Comment1": "sample dataset HAT-P-32 b. Edit this file as needed to match the data wanting to be reduced.",
+            "Comment2": "Do not delete areas where there are quotation marks, commas, and brackets.",
+            "Comment3": "The inits_guide dictionary (these lines of text) does not have to be edited",
+            "Comment4": "and is only here to serve as a guide. Will be updated per user's advice.",
             "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
             "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
             "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
@@ -32,7 +32,6 @@
             "Obs. Latitude": "+31.68",
             "Obs. Longitude": "-110.88",
             "Obs. Elevation (meters)": 2616,
-
             "Camera Type (CCD or DSLR)": "CCD",
             "Pixel Binning": "1x1",
             "Filter Name (aavso.org/filters)": "V",
@@ -44,10 +43,10 @@
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
     },
     "planetary_parameters": {
-            "Target Star RA (hh:mm:ss)": "02:04:10",
-            "Target Star Dec (+/-hh:mm:ss)": "+46:41:23",
-            "Planet's Name": "HAT-P-32 b",
-            "Host Star's Name": "HAT-P-32",
+            "Target Star RA": "02:04:10",
+            "Target Star Dec": "+46:41:23",
+            "Planet Name": "HAT-P-32 b",
+            "Host Star Name": "HAT-P-32",
             "Orbital Period (days)": 2.1500082,
             "Orbital Period Uncertainty": 1.3e-07,
             "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,

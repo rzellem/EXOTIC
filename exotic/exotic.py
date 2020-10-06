@@ -92,6 +92,7 @@ from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
+from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports
@@ -115,7 +116,7 @@ from photutils import CircularAperture
 from photutils import aperture_photometry
 import requests
 # scipy imports
-from scipy.ndimage import binary_erosion, binary_dilation, binary_closing, label, median_filter, generic_filter
+from scipy.ndimage import median_filter, generic_filter
 from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
@@ -226,6 +227,27 @@ class NASAExoplanetArchive:
             return pandas.read_csv(StringIO(response.text))
         else:
             return response.text
+
+    def resolve_name(self):
+        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+        uri_ipac_query = {
+            # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+            "select": "pl_name,hostname",
+            "from": "ps",  # Table name
+            "where": "tran_flag = 1",
+            "order by": "pl_pubdate desc",
+            "format": "csv"
+        }
+
+        if self.planet:
+            uri_ipac_query["where"] += " and pl_name = '{}'".format(self.planet)
+
+        default = self._tap_query(uri_ipac_base, uri_ipac_query)
+
+        if len(default) == 0:
+            return False
+        else:
+            return True
 
     @retry(stop=stop_after_attempt(3),
            wait=wait_exponential(multiplier=1, min=17, max=1024),
@@ -1432,11 +1454,11 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imscaleunits = header.comments['PIXSCALE']
         imagescale = imscaleunits + ": " + str(imscalen)
     elif pixel_init:
-        imagescale = "Image scale: " + pixel_init
+        imagescale = "Image scale: " + str(pixel_init)
     else:
         print("Cannot find the pixel scale in the image header.")
         imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). ")
-        imagescale = "Image scale: " + imscalen
+        imagescale = "Image scale: " + str(imscalen)
 
         log.debug("Cannot find the pixel scale in the image header.")
         log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). "+imscalen)
@@ -1574,23 +1596,23 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
 
         fig, ax = plt_exotic.subplots(2, 2, figsize=(9, 9))
         im = ax[0, 0].imshow(data[yv, xv], vmin=minb, vmax=maxb, cmap='inferno')
-        ax[0,0].set_title("Original Data")
+        ax[0, 0].set_title("Original Data")
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         divider = make_axes_locatable(ax[0, 0])
         cax = divider.append_axes('right', size='5%', pad=0.05)
-        fig.colorbar(im,cax=cax, orientation='vertical')
+        fig.colorbar(im, cax=cax, orientation='vertical')
 
-        ax[1,0].hist(bgsky.flatten(),label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky), amode), alpha=0.5, bins=np.arange(minb, maxb))
-        ax[1,0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat), cmode), alpha=0.5, bins=np.arange(minb, maxb))
-        ax[1,0].legend(loc='best')
-        ax[1,0].set_title("Sky Background")
-        ax[1,0].set_xlabel("Pixel Value")
+        ax[1, 0].hist(bgsky.flatten(), label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky), amode), alpha=0.5, bins=np.arange(minb, maxb))
+        ax[1, 0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat), cmode), alpha=0.5, bins=np.arange(minb, maxb))
+        ax[1, 0].legend(loc='best')
+        ax[1, 0].set_title("Sky Background")
+        ax[1, 0].set_xlabel("Pixel Value")
 
-        ax[1,1].imshow(dat, vmin=minb, vmax=maxb, cmap='inferno')
-        ax[1,1].set_title("Clipped Sky Background")
+        ax[1, 1].imshow(dat, vmin=minb, vmax=maxb, cmap='inferno')
+        ax[1, 1].set_title("Clipped Sky Background")
 
-        ax[0,1].imshow(bgsky, vmin=minb, vmax=maxb, cmap='inferno')
-        ax[0,1].set_title("Sky Annulus")
+        ax[0, 1].imshow(bgsky, vmin=minb, vmax=maxb, cmap='inferno')
+        ax[0, 1].set_title("Sky Annulus")
         plt_exotic.tight_layout()
         plt_exotic.show()
     return min(np.nanmedian(dat), mode(dat.flatten(), nan_policy='omit').mode[0])
@@ -1827,17 +1849,18 @@ def realTimeReduce(i, target_name):
 
 
 def parse_args():
-    # TODO
     parser = argparse.ArgumentParser()
 
-    help_ = "Choose a target to process"
-    parser.add_argument("-t", "--target", help=help_, type=str, default="all")
+    help_ = "choose an inits file"
+    parser.add_argument("-i", "--init", help=help_, type=str, default="")
 
     return parser.parse_args()
 
 
 def main():
-    # TODO use text based interface if no command line arguments
+
+    # command line args
+    args = parse_args()
 
     log.debug("*************************")
     log.debug("EXOTIC reduction log file")
@@ -1947,14 +1970,14 @@ def main():
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
         fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start '
-                                'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
+                                    'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 
         log.debug('Enter "1" to perform aperture photometry on fits files or "2" to start '
                                 '\nwith pre-reduced data in a .txt format: '+str(fitsortext))
 
         fileorcommandline = user_input('How would you like to input your initial parameters? '
-                                       'Enter "1" to use the Command Line or "2" to use an input file: ',
-                                       type_=int, val1=1, val2=2)
+                                        'Enter "1" to use the Command Line or "2" to use an input file: ',
+                                        type_=int, val1=1, val2=2)
 
         log.debug('How would you like to input your initial parameters? '
                   '\nEnter "1" to use the Command Line or "2" to use an input file: '+str(fileorcommandline))
@@ -2351,29 +2374,45 @@ def main():
                 # else:
                 #     cosmicrayfilter_bool = False
 
-                # The cosmic ray filter isn't really working for now...so let's just turn it off
-                cosmicrayfilter_bool = False
+                # TODO add option to inits file
+                cosmicrayfilter_bool = True
                 if cosmicrayfilter_bool:
-                    print("\nFiltering your data for cosmic rays.")
-                    log.debug("Filtering your data for cosmic rays.")
-                    animate_toggle(True)
+                    log.info("Filtering your data for cosmic rays.")
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    psffwhm = 2.355*(targsigX+targsigY)/2
+                    log.debug("FWHM in 1st image: {:.2f} px".format(np.round(psffwhm, 2)))
+                    log.debug("STDEV before: {:.2f}".format(np.std(sortedallImageData, 0).mean()))
+
                     # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
-                    # For now, this is a simple median filter...in the future, should use something more smart later
-                    for xi in np.arange(np.shape(sortedallImageData)[-2]):
-                        # print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
-                        for yi in np.arange(np.shape(sortedallImageData)[-1]):
-                            # Simple median filter
-                            idx = np.abs(sortedallImageData[:, xi, yi]-np.nanmedian(sortedallImageData[:, xi, yi])) > 5*np.nanstd(sortedallImageData[:, xi, yi])
-                            sortedallImageData[idx, xi, yi] = np.nanmedian(sortedallImageData[:, xi, yi])
-                            # Filter iteratively until no more 5sigma outliers exist - not currently working, so keep commented out for now
-                            # while sum(idx) > 0:
-                            #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
-                            #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
+
+                    animate_toggle(True)
+
+                    for ii in range(len(sortedallImageData)):
+
+                        # remove nans                        
+                        nanmask = np.isnan(sortedallImageData[ii])
+                        if nanmask.sum() > 0:
+                            bg = generic_filter(sortedallImageData[ii], np.nanmedian, (3, 3))
+                            sortedallImageData[ii][nanmask] = bg[nanmask]
+                        
+                        mask, clean = detect_cosmics(sortedallImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)                        
+                        sortedallImageData[ii] = clean
+                        
+                        # TODO move to function
+                        # if ii == 0:
+                        # f,ax = plt_exotic.subplots(1,3,figsize=(18,8))
+                        # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[0].set_title("Original Data")
+                        # ax[1].imshow(mask,cmap='binary_r')
+                        # ax[1].set_title("Cosmic Ray Mask")
+                        # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[2].set_title("Corrected Image")
+                        # plt_exotic.tight_layout()
+                        # plt_exotic.show()
+
                     animate_toggle()
 
-                # if len(sortedTimeList) == 0:
-                #     print("Error: .FITS files not found in " + directoryP)
-                #     sys.exit()
+                log.debug("STDEV after: {:.2f}".format(np.std(sortedallImageData, 0).mean()))
 
                 # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 
@@ -2452,68 +2491,13 @@ def main():
                 else:
                     break
 
-            # TODO move to a function
-            # remove hot pixels
-            for ii in range(len(sortedallImageData)):
-                # bg = median_filter(sortedallImageData[ii],(4,4))
-                # kernel = Gaussian2DKernel(x_stddev=1)
-                # bg2 = convolve(sortedallImageData[ii],kernel)
-                # res = sortedallImageData[ii] - bg2
-                # mask = np.abs(res) > 3*np.std(res)
-                # std = np.nanmedian([np.nanstd(np.random.choice(res.flatten(),1000)) for i in range(250)])
-                # smask = np.abs(res) > 3*std # removes portions of the psf
-
-                # computationally expensive
-                # std = generic_filter(sortedallImageData[ii], np.std, (5,5))
-                # mask = np.abs(sortedallImageData[ii] - bg) > 3*std
-                # bgimg = np.copy(sortedallImageData[ii])
-                # bgimg[mask] = bg[mask]
-
-                # diagnostic debug
-                # ogdata = np.copy(sortedallImageData[ii])
-
-                # remove nans
-                nanmask = np.isnan(sortedallImageData[ii])
-                if nanmask.sum() > 0:
-                    bg = generic_filter(sortedallImageData[ii],np.nanmedian,(4,4))
-                else:
-                    # faster
-                    bg = median_filter(sortedallImageData[ii],(4,4))
-                sortedallImageData[ii][nanmask] = bg[nanmask]
-
-                # find and remove all single pixel blocks brighter than 98th percentile
-                bmask = binary_closing(sortedallImageData[ii] > np.percentile(sortedallImageData[ii], 98))
-                bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
-                hotmask = np.logical_xor(bmask,bmask1)
-                labels, nlabel = label(hotmask)
-                sortedallImageData[ii][hotmask] = bg[hotmask]
-
-                # kinda slow
-                # replace hot pixels with average of neighboring pixels
-                # for j in range(1,nlabel+1):
-                #     mmask = labels==j  # mini mask
-                #     smask = binary_dilation(mmask)  # dilated mask
-                #     bmask = np.logical_xor(smask,mmask)  # bounding pixels
-                #     sortedallImageData[ii][mmask] = np.mean(sortedallImageData[ii][bmask])  # replace
-
-                # TODO move to function
-                # f,ax = plt_exotic.subplots(1,3,figsize=(18,8))
-                # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                # ax[0].set_title("Original Data")
-                # ax[1].imshow(hotmask,cmap='binary_r')
-                # ax[1].set_title("Hot Mask")
-                # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                # ax[2].set_title("Corrected Image")
-                # plt_exotic.tight_layout()
-                # plt_exotic.show()
-
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
             timesListed = timesListed[boollist]
             airMassList = airMassList[boollist]
 
-            minAperture = max(1,int(2 * max(targsigX, targsigY)))
+            minAperture = max(1, int(2 * max(targsigX, targsigY)))
             maxAperture = int(5 * max(targsigX, targsigY) + 1)
             minAnnulus = 2
             maxAnnulus = 5
@@ -2557,13 +2541,13 @@ def main():
                 if aperture_min <= 1:
                     aperture_sizes = np.arange(1, 10, 2)
                 else:
-                    aperture_sizes = np.round(np.linspace(aperture_min, aperture_max, 10),2)
+                    aperture_sizes = np.round(np.linspace(aperture_min, aperture_max, 10), 2)
 
                 aperture_sizes = np.append(aperture_sizes, -1*aperture_sizes)  # no comparison star
                 aperture_sizes = np.append(aperture_sizes, 0)  # PSF fit
 
                 # single annulus size
-                annulus_sizes = [10,12,15]
+                annulus_sizes = [10, 12, 15]
 
                 target_fits = {}
                 ref_fits = {}
@@ -2739,7 +2723,7 @@ def main():
 
                                 else:
                                     # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
-
+                                    
                                     # gets the flux value of the target star and subtracts the background light
                                     tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, abs(apertureR), annulusR)
                                     targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
@@ -2843,14 +2827,14 @@ def main():
 
                         # -----LM LIGHTCURVE FIT--------------------------------------
                         prior = {
-                            'rprs':pDict['rprs'],    # Rp/Rs
-                            'ars':pDict['aRs'],      # a/Rs
-                            'per':pDict['pPer'],     # Period [day]
-                            'inc':pDict['inc'],      # Inclination [deg]
+                            'rprs': pDict['rprs'],    # Rp/Rs
+                            'ars': pDict['aRs'],      # a/Rs
+                            'per': pDict['pPer'],     # Period [day]
+                            'inc': pDict['inc'],      # Inclination [deg]
                             'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
                             'ecc': pDict['ecc'],     # Eccentricity
-                            'omega':0,          # Arg of periastron
-                            'tmid':pDict['midT'],    # time of mid transit [day]
+                            'omega': 0,          # Arg of periastron
+                            'tmid': pDict['midT'],    # time of mid transit [day]
                             'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
                             'a2': 0,             # Flux lower bound
                         }
@@ -3028,7 +3012,7 @@ def main():
             # outParamsFile.write('#RA, Dec, Target = 0 / Ref Star = 1, Centroid [pix]\n')
             # outParamsFile.write(raStr+","+decStr+",0,"+str(minAperture)+"\n")
             # outParamsFile.close()
-
+ 
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)
@@ -3293,20 +3277,20 @@ def main():
 
         try:
             mybounds = {
-                'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
-                'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
-                'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+                'rprs': [pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                'tmid': [max(lower, goodTimes.min()), min(goodTimes.max(), upper)],
+                'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-                'a1':[bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
-                'a2':[bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
+                'a1': [bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
+                'a2': [bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
             }
         except:
             mybounds = {
-                'rprs':[pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
-                'tmid':[max(lower,goodTimes.min()),min(goodTimes.max(),upper)],
-                'ars':[pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
-                'a1':[0, 3*np.nanmax(goodFluxes)],
-                'a2':[-3,3],
+                'rprs': [pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
+                'tmid': [max(lower, goodTimes.min()), min(goodTimes.max(), upper)],
+                'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+                'a1': [0, 3*np.nanmax(goodFluxes)],
+                'a2': [-3, 3],
             }
 
         # fitting method in elca.py
@@ -3356,7 +3340,6 @@ def main():
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
 
-
         ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10),
                         yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
                         fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
@@ -3378,11 +3361,10 @@ def main():
         ###################################################################################
 
         # triangle plot
-        fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4, 0.85], smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e', hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig, axs[1:,:-1]], plot_kwargs={'alpha': 0.1,'zorder': 1,})
+        fig, axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4, 0.85], smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e', hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
+        dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
         fig.savefig(exotic_infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], exotic_infoDict['date']))
         plt_exotic.close()
-
 
         # write output to text file
         outParamsFile = open(exotic_infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + exotic_infoDict['date'] + '.csv', 'w+')

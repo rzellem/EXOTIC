@@ -3075,7 +3075,6 @@ def main():
                 # time_barycentre = timesToConvert.tdb + ltt_bary
                 # resultos = time_barycentre.value
                 # goodTimes = resultos
-                global done_flag_exotic_imports
                 done_flag_exotic_imports = False
                 th = threading.Thread(target=animate, daemon=True)
                 th.start()

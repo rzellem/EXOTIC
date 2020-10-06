@@ -9,4 +9,4 @@
 # https://semver.org, e.g. __version__ = "0.14.4" from the version file import at ./version.py
 # ########################################################################### #
 
-__version__ = "0.20.0"
+__version__ = "0.22.0"

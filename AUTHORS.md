@@ -14,4 +14,5 @@
 - [Rob Zellem](https://github.com/rzellem)
 
 ## Translators
-- [Kaio Duarte Costa](https://github.com/kaiodcosta)
+- [Kaio Duarte Costa](https://github.com/kaiodcosta) - Português do Brasil
+- [Leon Bewersdorff](https://github.com/LeonBew) - German

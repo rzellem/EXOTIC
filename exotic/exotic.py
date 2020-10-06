@@ -13,17 +13,13 @@
 # WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 # EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
-####################################################################
+# ########################################################################### #
 # EXOplanet Transit Interpretation Code (EXOTIC)
 #
-# Authors: Ethan Blaser, Rob Zellem, Kyle Pearson, Tamim Fatahi, Marlee Smith, Aaron Tran, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
+# Authors: Ethan Blaser, Rob Zellem, Kyle Pearson, Tamim Fatahi, Marlee Smith,
+#     Aaron Tran, John Engelke, Sujay Nair, Jon Varghese, Michael Fitzgerald
 # Supplemental Code: Kyle Pearson, Gael Roudier, and Jason Eastman
-####################################################################
-
-# --IMPORTS -----------------------------------------------------------
-print("Importing Python Packages - please wait.")
-
+# ########################################################################### #
 # EXOTIC version number
 # Now adhering to the Semantic Versioning 2.0.0
 # Given a version number MAJOR.MINOR.PATCH, increment the:
@@ -31,134 +27,126 @@ print("Importing Python Packages - please wait.")
 # MINOR version when you add functionality in a backwards compatible manner, and
 # PATCH version when you make backwards compatible bug fixes.
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
-# https://semver.org, e.g. __version__ = "0.14.4" from the version import
-try:  # module import
-    from .version import __version__
-except ImportError:  # package import
-    from version import __version__
+# https://semver.org, e.g. __version__ = "0.14.4" from the version file import at ./version.py
+# ########################################################################### #
+
+# -- IMPORTS START ------------------------------------------------------------
+print("Importing Python Packages - please wait.")
+# ########## IMPORTS -- PRELOAD ANIMATION START ##########
+done_flag_exotic_imports = False
 
 import itertools
 import threading
 import time
 import sys
-import datetime
 
-writelogfile = open("logfile.txt", "w")
 
-writelogfile.write("*************************\nEXOTIC reduction log file\n*************************\n\n")
-writelogfile.write("Started: "+str(datetime.datetime.now()))
-
-print('Python Version: %s' % sys.version)
-writelogfile.write('\n\nPython Version: %s' % sys.version)
-
-# To increase memory allocation for EXOTIC; allows for more fits files
-# import resource
-# resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
-
-# here is the animation
 def animate():
     for c in itertools.cycle(['|', '/', '-', '\\']):
-        if done:
+        if done_flag_exotic_imports:
+            sys.stdout.write('\rThinking ... DONE!')
+            sys.stdout.write('\n')
             break
         sys.stdout.write('\rThinking ' + c)
         sys.stdout.flush()
         time.sleep(0.1)
-    # sys.stdout.write('\nDone!     \n')
-    # print('\nDone!     \n')
 
 
-done = False
 t = threading.Thread(target=animate, daemon=True)
 t.start()
+# ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
-import logging
-import os
-import json
-import platform
-import warnings
 import argparse
-import glob as g
-from io import StringIO
-
-# data processing
-import pandas
-import requests
-import numpy as np
-
-# julian conversion imports
-import dateutil.parser as dup
-
-# UTC to BJD converter import
-from barycorrpy import utc_tdb
-
-# scipy imports
-from scipy.optimize import least_squares
-from scipy.ndimage import binary_erosion, binary_dilation, binary_closing, label, median_filter, generic_filter
-from scipy.stats import mode
-from scipy.signal import savgol_filter
-
-# Pyplot imports
-import matplotlib.pyplot as plt
-from astropy.visualization import astropy_mpl_style
-from matplotlib.animation import FuncAnimation
-
-plt.style.use(astropy_mpl_style)
-
-# Nested Sampling imports
-import dynesty
-try:  # module import
-    from .api.elca import lc_fitter, binner
-except ImportError:  # package import
-    from api.elca import lc_fitter, binner
-
-# astropy imports
-import astropy.time
-import astropy.coordinates
-from astropy.io import fits
-import astropy.units as u
-from astropy.coordinates import SkyCoord, EarthLocation, AltAz
-from astropy.wcs import WCS, FITSFixedWarning
-from astropy.utils.exceptions import AstropyWarning
-from astroquery.simbad import Simbad
-from astroquery.gaia import Gaia
-
 # Image alignment import
 import astroalign as aa
-
-# Nonlinear Limb Darkening Calculations import
-try:  # module import
-    from .api.gaelLDNL import createldgrid
-except ImportError:  # package import
-    from api.gaelLDNL import createldgrid
-
-# Exotic constants.py import
-try:
-    from constants import *
-except ImportError:
-    from .constants import *
-
+# astropy imports
+from astropy.coordinates import SkyCoord, EarthLocation, AltAz
+from astropy.io import fits
+import astropy.time
+import astropy.units as u
+from astropy.utils.exceptions import AstropyWarning
+from astropy.visualization import astropy_mpl_style
+from astropy.wcs import WCS, FITSFixedWarning
+from astroquery.simbad import Simbad
+from astroquery.gaia import Gaia
+# UTC to BJD converter import
+from barycorrpy import utc_tdb
+import datetime
+# julian conversion imports
+import dateutil.parser as dup
+# Nested Sampling imports
+import dynesty
+import glob as g
+from io import StringIO
+import json
+import logging
+from logging.handlers import TimedRotatingFileHandler
+from matplotlib.animation import FuncAnimation
+# Pyplot imports
+import matplotlib.pyplot as plt
+# import resource
+import numpy as np
+import os
+# data processing
+import pandas
 # photometry
 from photutils import CircularAperture
 from photutils import aperture_photometry
-
-# cross corrolation imports
+import requests
+# scipy imports
+from scipy.ndimage import binary_erosion, binary_dilation, binary_closing, label, median_filter, generic_filter
+from scipy.optimize import least_squares
+from scipy.stats import mode
+from scipy.signal import savgol_filter
+# cross correlation imports
 from skimage.registration import phase_cross_correlation
-
 # error handling for scraper
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
+import warnings
 
-# long process here
-# time.sleep(10)
-done = True
+# ########## EXOTIC imports ##########
+try:  # science constants
+    from constants import *
+except ImportError:
+    from .constants import *
+try:  # light curve numerics
+    from .api.elca import lc_fitter, binner
+except ImportError:  # package import
+    from api.elca import lc_fitter, binner
+try:  # nonlinear limb darkening numerics
+    from .api.gaelLDNL import createldgrid
+except ImportError:  # package import
+    from api.gaelLDNL import createldgrid
+try:  # simple version
+    from .version import __version__
+except ImportError:  # package import
+    from version import __version__
 
-# ################### START PROPERTIES ########################################
+done_flag_exotic_imports = True  # CLOSE PRELOAD ANIMATION
+# -- IMPORTS END --------------------------------------------------------------
+
+# ################### START PROPERTIES/SETTINGS ############################# #
 # GLOBALS (set in main before method calls)
 infoDict = dict()
 UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY = 0, 0, 0, 0
 distFC = 0
 ax1 = plt.figure()  # placeholder
-# ################### END PROPERTIES ##########################################
+
+# SETTINGS
+plt.style.use(astropy_mpl_style)
+# To increase memory allocation for EXOTIC; allows for more fits files
+# resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+# ################### END PROPERTIES/SETTINGS ############################### #
+
+# logging -- https://docs.python.org/3/library/logging.html
+log = logging.getLogger(__name__)
+
+writelogfile = open("logfile.txt", "w")
+writelogfile.write("*************************\nEXOTIC reduction log file\n*************************\n\n")
+writelogfile.write("Started: "+str(datetime.datetime.now()))
+writelogfile.write('\n\nPython Version: %s' % sys.version)
+
 
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
@@ -1596,6 +1584,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
         fig,ax = plt.subplots(2,2,figsize=(9,9))
         im = ax[0,0].imshow(data[yv,xv],vmin=minb,vmax=maxb,cmap='inferno')
         ax[0,0].set_title("Original Data")
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
         divider = make_axes_locatable(ax[0,0])
         cax = divider.append_axes('right', size='5%', pad=0.05)
         fig.colorbar(im,cax=cax, orientation='vertical')
@@ -1859,11 +1848,11 @@ def parse_args():
 def main():
     # TODO use text based interface if no command line arguments
 
-    print('\n')
-    print('*************************************************************')
-    print('Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)')
-    print("Version ", __version__)
-    print('*************************************************************\n')
+    print(f"Python Version: {str(sys.version)}")
+    print("\n*************************************************************")
+    print("Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)")
+    print(f"Version {__version__}")
+    print("*************************************************************\n")
 
     writelogfile.write('\n\nEXOTIC Version: %s' % __version__)
 
@@ -2351,7 +2340,8 @@ def main():
                 # TODO: comment out conditional block?
                 # If all of the airmasses == 1, then you need to calculate the airmass for the user
                 if set(airMassList) == 1:
-                    pointingAltAz = pointing.transform_to(AltAz(obstime=t, location=location))
+                    # pointingAltAz = pointing.transform_to(AltAz(obstime=t, location=location))
+                    pass
 
                 # # Time sorts the file names based on the fits file header
                 # timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
@@ -3547,4 +3537,17 @@ def main():
 
 
 if __name__ == "__main__":
+    # configure logger for standalone execution
+    logging.root.setLevel(logging.NOTSET)
+    fileFormatter = logging.Formatter("%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
+                                      "%(funcName)s:%(lineno)d - %(message)s", f"%Y-%m-%dT%H:%M:%S")
+    fileHandler = TimedRotatingFileHandler(filename="exotic.log", when="midnight", backupCount=2)
+    fileHandler.setLevel(logging.DEBUG)
+    fileHandler.setFormatter(fileFormatter)
+    consoleFormatter = logging.Formatter("%(message)s")
+    consoleHandler = logging.StreamHandler(sys.stdout)
+    consoleHandler.setFormatter(consoleFormatter)
+    consoleHandler.setLevel(logging.INFO)
+    log.addHandler(fileHandler)
+    log.addHandler(consoleHandler)
     main()

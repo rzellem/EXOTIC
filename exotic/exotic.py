@@ -142,11 +142,6 @@ plt.style.use(astropy_mpl_style)
 # logging -- https://docs.python.org/3/library/logging.html
 log = logging.getLogger(__name__)
 
-writelogfile = open("logfile.txt", "w")
-writelogfile.write("*************************\nEXOTIC reduction log file\n*************************\n\n")
-writelogfile.write("Started: "+str(datetime.datetime.now()))
-writelogfile.write('\n\nPython Version: %s' % sys.version)
-
 
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
@@ -171,7 +166,7 @@ class NASAExoplanetArchive:
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
     def planet_info(self):
-        print("\nLooking up {}- please wait.".format(self.planet))
+        print("Looking up {}- please wait.".format(self.planet))
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
         if not candidate:
@@ -180,8 +175,7 @@ class NASAExoplanetArchive:
                 planets = [data[i]['pl_name'] for i in range(len(data))]
                 idx = planets.index(self.planet)
                 self._get_params(data[idx])
-                print('\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
-                writelogfile.write('\n\nSuccessfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
+                log.info('Successfully found {} in the NASA Exoplanet Archive!'.format(self.planet))
         return self.planet, candidate, self.pl_dict
 
     @staticmethod
@@ -201,7 +195,7 @@ class NASAExoplanetArchive:
 
         uri_full = uri_full[:-1] + "&format={}".format(query.get("format", "csv"))
         uri_full = uri_full.replace(' ', '+')
-        print(uri_full)
+        log.info(uri_full)
 
         response = requests.get(uri_full, timeout=self.requests_timeout)
         # TODO check status_code?
@@ -253,7 +247,7 @@ class NASAExoplanetArchive:
                            "\nplanet's name or type candidate if this is a planet candidate: ".format(target))
             if target.strip().lower() == 'candidate':
                 target = input("\nPlease enter candidate planet's name: ")
-                writelogfile.write("\n\nCandidate Planet's Name: %s " % target)
+                log.debug("Candidate Planet's Name: %s " % target)
                 return target, True
             else:
                 return self._new_scrape(filename="eaConf.json", target=target)
@@ -276,7 +270,7 @@ class NASAExoplanetArchive:
                             # replace with first index
                             default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
                             # TODO could use mean for some variables (not mid-transit)
-                            # print(i,k,edata[k][edata[k].notna()].values[0])
+                            # log.info(i,k,edata[k][edata[k].notna()].values[0])
                         else:
                             # permanent nans - require manual entry
                             if k == 'pl_orblper':  # omega
@@ -469,9 +463,9 @@ def get_save_directory(save_directory):
             print('Error: the directory entered does not exist. Please try again. Make sure to follow this formatting (using whichever directory you choose): /sample-data/results')
             save_directory = input("Enter the directory to save the results and plots into or type new to create one: ")
 
-            writelogfile.write(
+            log.debug(
                 '\nError: the directory entered does not exist. Please try again. Make sure to follow this formatting (using whichever directory you choose): /sample-data/results')
-            writelogfile.write("\nEnter the directory to save the results and plots into or type new to create one: "+save_directory)
+            log.debug("Enter the directory to save the results and plots into or type new to create one: "+save_directory)
 
 
 # Create a save directory within the current working directory
@@ -479,15 +473,15 @@ def create_directory():
     while True:
         try:
             directory_name = input('Enter the name for your new directory: ')
-            writelogfile.write('\nEnter the name for your new directory: '+directory_name)
+            log.debug('Enter the name for your new directory: '+directory_name)
             save_path = os.path.join(os.getcwd() + directory_name, '')
             os.mkdir(save_path)
         except OSError:
             print('Creation of the directory {} failed'.format(save_path))
-            writelogfile.write('\nCreation of the directory {} failed'.format(save_path))
+            log.debug('Creation of the directory {} failed'.format(save_path))
         else:
             print('Successfully created the directory {}'.format(save_path))
-            writelogfile.write('\nSuccessfully created the directory {}'.format(save_path))
+            log.debug('Successfully created the directory {}'.format(save_path))
             return save_path
 
 
@@ -565,14 +559,14 @@ def get_initialization_file(infodict, userpdict):
     print("\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
     [print(i) for i in g.glob(os.getcwd() + "/*.json")]
 
-    writelogfile.write("\n\nYour current working directory is: " + os.getcwd())
-    writelogfile.write("\n\nPotential initialization files I've found in {} are: ".format(os.getcwd()))
-    [writelogfile.write("\n\t"+i) for i in g.glob(os.getcwd() + "/*.json")]
+    log.debug("Your current working directory is: " + os.getcwd())
+    log.debug("Potential initialization files I've found in {} are: ".format(os.getcwd()))
+    [log.debug("\t"+i) for i in g.glob(os.getcwd() + "/*.json")]
 
     while True:
         try:
             initfilename = str(input("\nPlease enter the Directory and Filename of your Initialization File: "))
-            writelogfile.write("\nPlease enter the Directory and Filename of your Initialization File: "+initfilename)
+            log.debug("Please enter the Directory and Filename of your Initialization File: "+initfilename)
             if initfilename == 'ok':
                 initfilename = "/Users/rzellem/Documents/EXOTIC/inits.json"
             return inits_file(initfilename, infodict, userpdict)
@@ -612,11 +606,11 @@ class InitializationFile:
 
     def image_directory(self):
         self.info['fitsdir'] = input('Please enter the Directory of Imaging Files: ')
-        writelogfile.write('\nPlease enter the Directory of Imaging Files: '+self.info['fitsdir'])
+        log.debug('Please enter the Directory of Imaging Files: '+self.info['fitsdir'])
 
     def save_directory(self):
         self.info['saveplot'] = input('Please enter the directory to save the results and plots into or type new to create one: ')
-        writelogfile.write(
+        log.debug(
             '\nPlease enter the directory to save the results and plots into or type new to create one: '+self.info['saveplot'])
 
     def initial(self):
@@ -636,50 +630,50 @@ class InitializationFile:
     def latitude(self):
         self.info['latitude'] = input("Please enter the longitude of where you observed (deg) "
                                       "(Don't forget the sign where East is '+' and West is '-'): ")
-        writelogfile.write("\nPlease enter the longitude of where you observed (deg) "+self.info['latitude'])
+        log.debug("Please enter the longitude of where you observed (deg) "+self.info['latitude'])
 
     def longitude(self):
         self.info['longitude'] = input("Please enter the longitude of where you observed (deg) "
                                        "(Don't forget the sign where East is '+' and West is '-'): ")
-        writelogfile.write("\nPlease enter the longitude of where you observed (deg) "+self.info['longitude'])
+        log.debug("Please enter the longitude of where you observed (deg) "+self.info['longitude'])
 
     def elevation(self):
         self.info['elev'] = user_input('Please enter the elevation (in meters) of where you observed: ', type_=float)
-        writelogfile.write('\nPlease enter the elevation (in meters) of where you observed: '+str(self.info['elev']))
+        log.debug('Please enter the elevation (in meters) of where you observed: '+str(self.info['elev']))
 
     def target_star_coords(self, pname):
         x_pix = user_input('\n{} X Pixel Coordinate: '.format(pname), type_=int)
         y_pix = user_input('\n{} Y Pixel Coordinate: '.format(pname), type_=int)
 
-        writelogfile.write('\n{} X Pixel Coordinate: {}'.format(pname,x_pix))
-        writelogfile.write('\n{} Y Pixel Coordinate: {}'.format(pname,y_pix))
+        log.debug('{} X Pixel Coordinate: {}'.format(pname,x_pix))
+        log.debug('{} Y Pixel Coordinate: {}'.format(pname,y_pix))
         self.info['tarcoords'] = [x_pix, y_pix]
 
     def comparison_star_coords(self):
         num_comp_stars = user_input('How many comparison stars would you like to use? (1-10) ', type_=int)
-        writelogfile.write('\nHow many comparison stars would you like to use? (1-10) '+str(num_comp_stars))
+        log.debug('How many comparison stars would you like to use? (1-10) '+str(num_comp_stars))
         comp_stars = []
 
         for num in range(num_comp_stars):
             x_pix = user_input('Comparison Star {} X Pixel Coordinate: '.format(num + 1), type_=int)
             y_pix = user_input('Comparison Star {} Y Pixel Coordinate: '.format(num + 1), type_=int)
 
-            writelogfile.write('\nComparison Star {} X Pixel Coordinate: {}'.format(num + 1,x_pix))
-            writelogfile.write('\nComparison Star {} Y Pixel Coordinate: {}'.format(num + 1,y_pix))
+            log.debug('Comparison Star {} X Pixel Coordinate: {}'.format(num + 1,x_pix))
+            log.debug('Comparison Star {} Y Pixel Coordinate: {}'.format(num + 1,y_pix))
             comp_stars.append((x_pix, y_pix))
         self.info['compstars'] = comp_stars
 
     def exposure(self):
         self.info['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
-        writelogfile.write('\nPlease enter your exposure time (seconds): '+str(self.info['exposure']))
+        log.debug('Please enter your exposure time (seconds): '+str(self.info['exposure']))
 
     def pixel_scale(self):
         self.info['flatsdir'] = input('Please enter the size of your pixel (Ex: 5 arcsec/pixel): ')
-        writelogfile.write('\nPlease enter the size of your pixel (Ex: 5 arcsec/pixel): '+str(self.info['flatsdir']))
+        log.debug('Please enter the size of your pixel (Ex: 5 arcsec/pixel): '+str(self.info['flatsdir']))
 
     def planet(self):
         self.planet_name = input('\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): ')
-        writelogfile.write(
+        log.debug(
             '\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): '+self.planet_name)
 
 
@@ -724,7 +718,7 @@ def check_parameters(init_parameters, parameters):
     if different:
         opt = user_input('\nDifference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
                          '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \n(please enter 1 or 2) ', type_=str, val1='1', val2='2')
-        writelogfile.write(
+        log.debug(
         '\nDifference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
         '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \n(please enter 1 or 2) '+opt)
 
@@ -740,8 +734,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     print('\n*******************************************')
     print("Planetary Parameters for Lightcurve Fitting\n")
 
-    writelogfile.write('\n\n*******************************************')
-    writelogfile.write("\nPlanetary Parameters for Lightcurve Fitting")
+    log.debug('*******************************************')
+    log.debug("Planetary Parameters for Lightcurve Fitting")
 
     # The order of planet_params list must match the pDict that is declared when scraping the NASA Exoplanet Archive
     planet_params = ["Target Star RA in the form: HH:MM:SS (ignore the decimal values)",
@@ -789,11 +783,11 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 print("\nWould you like to:\n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
 
-                writelogfile.write("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
-                writelogfile.write("\n\tNASA Exoplanet Archive value: %s" % pdict[item])
-                writelogfile.write("\n\tInitialization file value: %s" % userpdict[item])
-                writelogfile.write("\nWould you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
-                writelogfile.write('\nWhich option do you choose? (1/2/3): '+str(option))
+                log.debug("*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
+                log.debug("\tNASA Exoplanet Archive value: %s" % pdict[item])
+                log.debug("\tInitialization file value: %s" % userpdict[item])
+                log.debug("Would you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
+                log.debug('Which option do you choose? (1/2/3): '+str(option))
 
                 if option == 1:
                     userpdict[item] = pdict[item]
@@ -810,7 +804,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     # Exoplanet confirmed in NASA Exoplanet Archive
     if not candplanetbool:
         print('\n\n*** Here are the values scraped from the NASA Exoplanet Archive for %s that were not set (or set to null) in your initialization file. ***' % pdict['pName'])
-        writelogfile.write('\n\n*** Here are the values scraped from the NASA Exoplanet Archive for %s that were not set (or set to null) in your initialization file. ***' %
+        log.debug('*** Here are the values scraped from the NASA Exoplanet Archive for %s that were not set (or set to null) in your initialization file. ***' %
             pdict['pName'])
         # print('For each planetary parameter, enter "y" if you agree and "n" if you disagree.')
         # print('enter "1" to use NASA Exoplanet Archive value, "2" to use initialization file value, or "3" to enter a new value if you ')
@@ -832,28 +826,28 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 print("\nWould you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
 
-                writelogfile.write("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
-                writelogfile.write("\n\tNASA Exoplanet Archive value: %s" % pdict[key])
-                writelogfile.write("\n\tInitialization file value: %s" % userpdict[key])
-                writelogfile.write("\nWould you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
-                writelogfile.write('\nWhich option do you choose? (1/2/3): '+str(option))
+                log.debug("*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[i]))
+                log.debug("\tNASA Exoplanet Archive value: %s" % pdict[key])
+                log.debug("\tInitialization file value: %s" % userpdict[key])
+                log.debug("Would you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
+                log.debug('Which option do you choose? (1/2/3): '+str(option))
                 if option == 1:
                     userpdict[key] = pdict[key]
                 elif option == 2:
                     continue
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
-                    writelogfile.write('\nEnter the ' + planet_params[i] + ': ' + str(userpdict[key]))
+                    log.debug('Enter the ' + planet_params[i] + ': ' + str(userpdict[key]))
             # Did not use initialization file or null
             else:
                 print('\n' + pdict['pName'] + ' ' + planet_params[i] + ': ' + str(pdict[key]))
                 agreement = user_input('Do you agree? (y/n): ', type_=str, val1='y', val2='n')
-                writelogfile.write('\nDo you agree? (y/n): '+str(agreement))
+                log.debug('Do you agree? (y/n): '+str(agreement))
                 if agreement == 'y':
                     userpdict[key] = pdict[key]
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(pdict[key]))
-                    writelogfile.write('\nEnter the ' + planet_params[i] + ': '+str(userpdict[key]))
+                    log.debug('Enter the ' + planet_params[i] + ': '+str(userpdict[key]))
 
     # Exoplanet not confirmed in NASA Exoplanet Archive
     else:
@@ -864,19 +858,19 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if userpdict[key] is not None:
                 agreement = user_input('%s: %s \nDo you agree? (y/n): '
                                        % (planet_params[i], userpdict[key]), type_=str, val1='y', val2='n')
-                writelogfile.write('\n%s: %s \nDo you agree? (y/n): '+agreement)
+                log.debug('%s: %s \nDo you agree? (y/n): '+agreement)
                 if agreement == 'y':
                     continue
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=type(userpdict[key]))
-                    writelogfile.write('\nEnter the ' + planet_params[i] + ': '+userpdict[key])
+                    log.debug('Enter the ' + planet_params[i] + ': '+userpdict[key])
             # Did not use initialization file
             else:
                 if key in ('pName', 'sName'):
                     userpdict[key] = input('\nEnter the ' + planet_params[i] + ': ')
                 else:
                     userpdict[key] = user_input('Enter the ' + planet_params[i] + ': ', type_=float)
-                writelogfile.write('\nEnter the ' + planet_params[i] + ': ' + str(userpdict[key]))
+                log.debug('Enter the ' + planet_params[i] + ': ' + str(userpdict[key]))
     return userpdict
 
 
@@ -929,20 +923,20 @@ def check_imaging_files(directory, filename):
         except FileNotFoundError:
             extaddoption = user_input("\nError: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
                                       ".\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ", type_=str, val1='y', val2='n')
-            writelogfile.write("\nError: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
+            log.debug("Error: " + filename + " files not found with .fits, .fit or .fts extensions in " + directory +
                                       ".\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): "+extaddoption)
             if extaddoption == 'y':
                 addit_extension = input('Please enter the extension you want to add (EX: .FITS): ')
                 file_extensions.append(addit_extension)
-                writelogfile.write('\nPlease enter the extension you want to add (EX: .FITS): '+addit_extension)
+                log.debug('Please enter the extension you want to add (EX: .FITS): '+addit_extension)
             else:
                 directory = input("Enter the directory path where " + filename + " files are located: ")
-                writelogfile.write("\nEnter the directory path where " + filename + " files are located: "+directory)
+                log.debug("Enter the directory path where " + filename + " files are located: "+directory)
         except OSError:
             print("\nError: No such directory exists when searching for FITS files. Please try again.")
             directory = input("Enter the directory path where " + filename + " files are located: ")
-            writelogfile.write("\nError: No such directory exists when searching for FITS files. Please try again.")
-            writelogfile.write("\nEnter the directory path where " + filename + " files are located: " + directory)
+            log.debug("Error: No such directory exists when searching for FITS files. Please try again.")
+            log.debug("Enter the directory path where " + filename + " files are located: " + directory)
 
 
 class LimbDarkening:
@@ -1002,13 +996,13 @@ class LimbDarkening:
         else:
             option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters '
                                 'with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
-            writelogfile.write('\nWould you like EXOTIC to calculate your limb darkening parameters '
+            log.debug('Would you like EXOTIC to calculate your limb darkening parameters '
                                 'with uncertainties? (y/n): '+str(option))
 
             if option == 'y':
                 opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
                                  type_=int, val1=1, val2=2)
-                writelogfile.write('\nPlease enter 1 to use a standard filter or 2 for a customized filter: '+str(opt))
+                log.debug('Please enter 1 to use a standard filter or 2 for a customized filter: '+str(opt))
                 if opt == 1:
                     self._standard()
                 elif opt == 2:
@@ -1021,7 +1015,7 @@ class LimbDarkening:
         print('\n\n***************************')
         print('Limb Darkening Coefficients')
         print('***************************')
-        writelogfile.write('\n\n***************************'
+        log.debug('***************************'
                             '\nLimb Darkening Coefficients'
                             '\n***************************')
         print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
@@ -1034,7 +1028,7 @@ class LimbDarkening:
             try:
                 if not self.filter_type:
                     self.filter_type = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
-                    writelogfile.write('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): '+str(self.filter_type))
+                    log.debug('Please enter in the filter type (EX: Johnson V, V, STB, RJ): '+str(self.filter_type))
                 for key, value in self.fwhm.items():
                     if self.filter_type in (key[0], key[1]) and self.filter_type != 'N/A':
                         self.filter_type = (key[0], key[1])
@@ -1044,7 +1038,7 @@ class LimbDarkening:
                 break
             except KeyError:
                 print('\nError: The entered filter is not in the provided list of standard filters.')
-                writelogfile.write('\nError: The entered filter is not in the provided list of standard filters.')
+                log.debug('Error: The entered filter is not in the provided list of standard filters.')
                 self.filter_type = None
 
         self.wl_min = self.fwhm[self.filter_type][0]
@@ -1056,10 +1050,10 @@ class LimbDarkening:
         self.filter_type = 'N/A'
         if not self.wl_min:
             self.wl_min = float(input('FWHM Minimum wavelength (nm): '))
-            writelogfile.write('\nFWHM Minimum wavelength (nm): '+str(self.wl_min))
+            log.debug('FWHM Minimum wavelength (nm): '+str(self.wl_min))
         if not self.wl_max:
             self.wl_max = float(input('FWHM Maximum wavelength (nm): '))
-            writelogfile.write('\nFWHM Maximum wavelength (nm): ' + str(self.wl_max))
+            log.debug('FWHM Maximum wavelength (nm): ' + str(self.wl_max))
         self._calculate_ld()
 
     def _user_entered(self):
@@ -1074,8 +1068,8 @@ class LimbDarkening:
         ld3_unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
         self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
 
-        writelogfile.write('\nFilter name: ' + str(self.filter_type))
-        writelogfile.write("\nUser-defined nonlinear limb-darkening coefficients: {}+/-{}, {}+/-{}, {}+/-{}, {}+/-{}",format(ld_0, ld0_unc, ld_1, ld1_unc, ld_2, ld2_unc, ld_3, ld3_unc))
+        log.debug('Filter name: ' + str(self.filter_type))
+        log.debug("User-defined nonlinear limb-darkening coefficients: {}+/-{}, {}+/-{}, {}+/-{}, {}+/-{}",format(ld_0, ld0_unc, ld_1, ld1_unc, ld_2, ld2_unc, ld_3, ld3_unc))
 
 
     def _calculate_ld(self):
@@ -1087,11 +1081,11 @@ class LimbDarkening:
         self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
         self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
 
-        writelogfile.write("\nEXOTIC-calculated nonlinear limb-darkening coefficients: ")
-        writelogfile.write("\n"+str(ld_params['LD'][0][0]) + " +/- " + str(ld_params['ERR'][0][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][1][0]) + " +/- " + str(ld_params['ERR'][1][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][2][0]) + " +/- " + str(ld_params['ERR'][2][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][3][0]) + " +/- " + str(ld_params['ERR'][3][0]))
+        log.debug("EXOTIC-calculated nonlinear limb-darkening coefficients: ")
+        log.debug(""+str(ld_params['LD'][0][0]) + " +/- " + str(ld_params['ERR'][0][0]))
+        log.debug(""+str(ld_params['LD'][1][0]) + " +/- " + str(ld_params['ERR'][1][0]))
+        log.debug(""+str(ld_params['LD'][2][0]) + " +/- " + str(ld_params['ERR'][2][0]))
+        log.debug(""+str(ld_params['LD'][3][0]) + " +/- " + str(ld_params['ERR'][3][0]))
 
 # Checks for corrupted FITS files
 def check_file_corruption(files):
@@ -1104,7 +1098,7 @@ def check_file_corruption(files):
                     pass
             except OSError as e:
                 print('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
-                writelogfile.write('\nFound corrupted file and removing from reduction: {}, ({})'.format(file,e))
+                log.debug('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
                 files.remove(file)
         return files
 
@@ -1125,7 +1119,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
         if wcs_exists:
             trust_wcs = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ',
                                    type_=str, val1='y', val2='n')
-            writelogfile.write('\nThe imaging data from your file has WCS information. Do you trust this? (y/n): '+trust_wcs)
+            log.debug('The imaging data from your file has WCS information. Do you trust this? (y/n): '+trust_wcs)
 
             if trust_wcs == 'y':
                 return fits_file
@@ -1135,7 +1129,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
         if wcs_exists:
             trust_wcs = user_input('The imaging data from your file has WCS information. Do you trust this? (y/n): ',
                                    type_=str, val1='y', val2='n')
-            writelogfile.write(
+            log.debug(
                 '\nThe imaging data from your file has WCS information. Do you trust this? (y/n): ' + trust_wcs)
         else:
             trust_wcs = 'n'
@@ -1144,7 +1138,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
             opt = user_input("\nWould you like to upload the your image for a plate solution?"
                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net."
                              " (y/n): ", type_=str, val1='y', val2='n')
-            writelogfile.write("\nWould you like to upload the your image for a plate solution?"
+            log.debug("Would you like to upload the your image for a plate solution?"
                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net."
                              " (y/n): "+opt)
             if opt == 'y':
@@ -1178,7 +1172,7 @@ def result_if_max_retry_count(retry_state):
 def login_fail():
     print('\n\nWARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
+    log.debug('WARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
     return False
 
@@ -1186,7 +1180,7 @@ def login_fail():
 def upload_fail():
     print('\n\nWARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
+    log.debug('WARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
     return False
 
@@ -1194,7 +1188,7 @@ def upload_fail():
 def sub_fail():
     print('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. '
+    log.debug('WARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
     return False
 
@@ -1202,7 +1196,7 @@ def sub_fail():
 def job_fail():
     print('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
-    writelogfile.write('\n\nWARNING: After multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. '
+    log.debug('WARNING: After multiple attempts, EXOTIC could did not receive a Job Status from nova.astrometry.net. '
           'EXOTIC will continue reducing data without a plate solution.')
     return False
 
@@ -1239,7 +1233,7 @@ class PlateSolution:
             return job_fail()
         else:
             print('\n\nSuccess. ')
-            writelogfile.write("\nWCS file creation successful.")
+            log.debug("WCS file creation successful.")
             return wcs_file
 
     def _get_url(self, service):
@@ -1311,16 +1305,16 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             # Margins are within 20 arcseconds
             if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
                 print('\nError: The X Pixel Coordinate entered does not match the right ascension.')
-                writelogfile.write('\nError: The X Pixel Coordinate entered does not match the right ascension.')
+                log.debug('Error: The X Pixel Coordinate entered does not match the right ascension.')
                 raise ValueError
             if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
                 print('\nError: The Y Pixel Coordinate entered does not match the declination.')
-                writelogfile.write('\nError: The Y Pixel Coordinate entered does not match the declination.')
+                log.debug('Error: The Y Pixel Coordinate entered does not match the declination.')
                 raise ValueError
             return pixx, pixy
         except ValueError:
             repixopt = user_input('Would you like to re-enter the pixel coordinates? (y/n): ', type_=str, val1='y', val2='n')
-            writelogfile.write('\nWould you like to re-enter the pixel coordinates? (y/n): '+repixopt)
+            log.debug('Would you like to re-enter the pixel coordinates? (y/n): '+repixopt)
 
             # User wants to change their coordinates
             if repixopt == 'y':
@@ -1329,7 +1323,7 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
                 searchopt = user_input('Here are the suggested pixel coordinates: X Pixel: %s Y Pixel: %s'
                                        '\nWould you like to use these? (y/n): ' % (pixx, pixy), type_=str, val1='y', val2='n')
-                writelogfile.write('Here are the suggested pixel coordinates: X Pixel: %s Y Pixel: %s'
+                log.debug('Here are the suggested pixel coordinates: X Pixel: %s Y Pixel: %s'
                                        '\nWould you like to use these? (y/n): %s' % (pixx, pixy,searchopt))
                 # Use the coordinates found by code
                 if searchopt == 'y':
@@ -1339,8 +1333,8 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                     pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
                     pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
 
-                    writelogfile.write("\nPlease re-enter the target star's X Pixel Coordinate: %s" % pixx)
-                    writelogfile.write("\nPlease re-enter the target star's Y Pixel Coordinate: %s" % pixy)
+                    log.debug("Please re-enter the target star's X Pixel Coordinate: %s" % pixx)
+                    log.debug("Please re-enter the target star's Y Pixel Coordinate: %s" % pixy)
             else:
                 # User does not want to change coordinates even though they don't match the expected ra and dec
                 return pixx, pixy
@@ -1380,7 +1374,7 @@ def variableStarCheck(refx, refy, hdulWCS):
         starName = simbad_result['MAIN_ID'][0].decode("utf-8")
     except:
         print("Your star cannot be resolved in SIMBAD. Proceed with caution.")
-        writelogfile.write("\nYour star cannot be resolved in SIMBAD. Proceed with caution.")
+        log.debug("Your star cannot be resolved in SIMBAD. Proceed with caution.")
         return False
     identifiers = Simbad.query_objectids(starName)
     for currName in identifiers:
@@ -1416,10 +1410,10 @@ def image_alignment(imagedata):
               % (str(notaligned), str(len(imagedata) + notaligned)))
         print('*********************************************************************')
 
-        writelogfile.write('\n\n*********************************************************************')
-        writelogfile.write('\nWARNING: From the given imaging files: %s of %s were not aligned.'
+        log.debug('*********************************************************************')
+        log.debug('WARNING: From the given imaging files: %s of %s were not aligned.'
               % (str(notaligned), str(len(imagedata) + notaligned)))
-        writelogfile.write('\n*********************************************************************')
+        log.debug('*********************************************************************')
         time.sleep(5)
 
     return imagedata, boollist
@@ -1447,8 +1441,8 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). ")
         imagescale = "Image scale: " + imscalen
 
-        writelogfile.write("Cannot find the pixel scale in the image header.")
-        writelogfile.write("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). "+imscalen)
+        log.debug("Cannot find the pixel scale in the image header.")
+        log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). "+imscalen)
     return imagescale
 
 
@@ -1529,12 +1523,12 @@ def fit_centroid(data, pos, init=None, box=10):
         print(" lower:",[wx-5, wy-5, 0, 0, 0, -PI/4, np.nanmin(data)-1 ] )
         print(" upper:",[wx+5, wy+5, 1e7, 20, 20, PI/4, np.nanmax(data[yv,xv])+1 ])
 
-        writelogfile.write("\n\nWARNING trouble fitting Gaussian PSF to star at {},{}".format(wx,wy))
-        writelogfile.write("\n  check location of comparison star in the first few images")
-        writelogfile.write("\n  fitting parameters are out of bounds")
-        writelogfile.write("\n  init:",init)
-        writelogfile.write("\n lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
-        writelogfile.write("\n upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
+        log.debug("WARNING trouble fitting Gaussian PSF to star at {},{}".format(wx,wy))
+        log.debug("  check location of comparison star in the first few images")
+        log.debug("  fitting parameters are out of bounds")
+        log.debug("  init:",init)
+        log.debug(" lower:",[wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1 ] )
+        log.debug(" upper:",[wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv,xv])+1 ])
 
         # use LM in unbounded optimization
         pars = fit_psf(
@@ -1848,13 +1842,14 @@ def parse_args():
 def main():
     # TODO use text based interface if no command line arguments
 
-    print(f"Python Version: {str(sys.version)}")
-    print("\n*************************************************************")
-    print("Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)")
-    print(f"Version {__version__}")
-    print("*************************************************************\n")
+    log.debug("*************************\nEXOTIC reduction log file\n*************************\n\n")
+    log.debug("Starting ...")
+    log.info(f"Python Version: {str(sys.version)}")
 
-    writelogfile.write('\n\nEXOTIC Version: %s' % __version__)
+    log.info("*************************************************************")
+    log.info("Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)")
+    log.info(f"Version {__version__}")
+    log.info("*************************************************************")
 
     # ---INITIALIZATION-------------------------------------------------------
     global infoDict
@@ -1884,20 +1879,18 @@ def main():
     #############################
 
     if realTimeAns == 1:
-        print('\n**************************************************************')
-        print('Real Time Reduction ("Control + C"  or close the plot to quit)')
-        print('**************************************************************\n')
-
-        writelogfile.write("\n\n*** Real Time Reduction ***\n\n")
+        log.info('**************************************************************')
+        log.info('Real Time Reduction ("Control + C"  or close the plot to quit)')
+        log.info('**************************************************************')
 
         directToWatch = str(input("Enter the Directory Path of imaging files: "))
-        writelogfile.write("Enter the Directory Path of imaging files: "+directToWatch)
+        log.debug("Enter the Directory Path of imaging files: "+directToWatch)
         directoryP = ""
         directoryP = directToWatch
         directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
 
         targetName = str(input("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-        writelogfile.write("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
+        log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
 
         while True:
             try:
@@ -1913,10 +1906,10 @@ def main():
         UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
         UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
-        writelogfile.write(targetName + " X Pixel Coordinate: "+str(UIprevTPX))
-        writelogfile.write(targetName + " Y Pixel Coordinate: "+str(UIprevTPY))
-        writelogfile.write("Comp Star X Pixel Coordinate: "+str(UIprevRPX))
-        writelogfile.write("Comp Star Y Pixel Coordinate: "+str(UIprevRPY))
+        log.debug(targetName + " X Pixel Coordinate: "+str(UIprevTPX))
+        log.debug(targetName + " Y Pixel Coordinate: "+str(UIprevTPY))
+        log.debug("Comp Star X Pixel Coordinate: "+str(UIprevRPX))
+        log.debug("Comp Star Y Pixel Coordinate: "+str(UIprevRPY))
 
         print('Real Time Plotting ("Control + C" or close the plot to quit)')
         print('\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.')
@@ -1930,20 +1923,15 @@ def main():
         anim = FuncAnimation(fig, realTimeReduce, fargs=(targetName), interval=15000)  # refresh every 15 seconds
         plt.show()
 
-        writelogfile.close()
-        print('Log File Saved')
-
     ###########################
     # Complete Reduction Routine
     ###########################
 
     # ----USER INPUTS----------------------------------------------------------
     else:
-        print('\n**************************')
-        print('Complete Reduction Routine')
-        print('**************************\n')
-
-        writelogfile.write("\n\n*** Complete Reduction ***\n\n")
+        log.info('**************************')
+        log.info('Complete Reduction Routine')
+        log.info('**************************')
 
         directoryP = ""
         compStarList = []
@@ -1962,15 +1950,15 @@ def main():
         fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start '
                                 'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 
-        writelogfile.write('\nEnter "1" to perform aperture photometry on fits files or "2" to start '
+        log.debug('Enter "1" to perform aperture photometry on fits files or "2" to start '
                                 '\nwith pre-reduced data in a .txt format: '+str(fitsortext))
 
         fileorcommandline = user_input('How would you like to input your initial parameters? '
                                        'Enter "1" to use the Command Line or "2" to use an input file: ',
                                        type_=int, val1=1, val2=2)
 
-        writelogfile.write('\n\nHow would you like to input your initial parameters? '
-                                       '\nEnter "1" to use the Command Line or "2" to use an input file: '+str(fileorcommandline))
+        log.debug('How would you like to input your initial parameters? '
+                  '\nEnter "1" to use the Command Line or "2" to use an input file: '+str(fileorcommandline))
 
         # os.path.join(os.path.split(os.getcwd())[0], '')
 
@@ -2012,31 +2000,31 @@ def main():
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
                 infoDict['fitsdir'] = str(input("\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "))
-                writelogfile.write("\n\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "+str(infoDict['fitsdir']))
+                log.debug("Enter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "+str(infoDict['fitsdir']))
 
             infoDict['fitsdir'], inputfiles = check_imaging_files(infoDict['fitsdir'], 'imaging')
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
-            writelogfile.write("\nEnter the path and filename of your data file: "+str(datafile))
+            log.debug("Enter the path and filename of your data file: "+str(datafile))
             if datafile == 'ok':
                 datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                writelogfile.write("\n\nHello, Rob.")
+                log.debug("Hello, Rob.")
                 # datafile = "/Users/rzellem/Downloads/fluxorama.csv
             try:
                 initf = open(datafile, 'r')
             except FileNotFoundError:
                 print("ERROR: Data file not found. Please try again.")
-                writelogfile.write("\n\nERROR: Data file not found. Please try again.")
+                log.debug("ERROR: Data file not found. Please try again.")
                 sys.exit()
 
             infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
-            writelogfile.write("\nPlease enter your image exposure time in seconds: "+str(infoDict['exposure']))
+            log.debug("Please enter your image exposure time in seconds: "+str(infoDict['exposure']))
 
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
             infoDict['saveplot'] = input("Enter the directory to save the results and plots into or type new to create one: ")
-            writelogfile.write("\nEnter the directory to save the results and plots into or type new to create one: "+str(infoDict['saveplot']))
+            log.debug("Enter the directory to save the results and plots into or type new to create one: "+str(infoDict['saveplot']))
 
         infoDict['saveplot'] = get_save_directory(infoDict['saveplot'])
 
@@ -2049,7 +2037,7 @@ def main():
 
         if fileorcommandline == 1:
             userpDict['pName'] = str(input("\nEnter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-            writelogfile.write("\nEnter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+userpDict['pName'])
+            log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+userpDict['pName'])
 
         nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
         userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
@@ -2057,21 +2045,21 @@ def main():
         # observation date
         if fileorcommandline == 1:
             infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
-            writelogfile.write("\nEnter the Observation Date (MM-DD-YYYY): "+str(infoDict['date']))
+            log.debug("Enter the Observation Date (MM-DD-YYYY): "+str(infoDict['date']))
 
         # Using a / in your date can screw up the file paths- this will check user's date
         while "/" in infoDict['date']:
             print("Do not use / in your date. Please try again.")
             infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
-            writelogfile("\nDo not use / in your date. Please try again.")
-            writelogfile.write("\nEnter the Observation Date (MM-DD-YYYY): " + str(infoDict['date']))
+            log.debug("Do not use / in your date. Please try again.")
+            log.debug("Enter the Observation Date (MM-DD-YYYY): " + str(infoDict['date']))
 
         if fitsortext == 1:
             if fileorcommandline == 1:
                 infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
                                         "Don't forget the sign where North is '+' and South is '-'! "
                                         "(Example: +50.4): ")
-                writelogfile.write("\nEnter the latitude of where you observed (deg) " + str(infoDict['lat']))
+                log.debug("Enter the latitude of where you observed (deg) " + str(infoDict['lat']))
             # Latitude
             while True:
                 try:
@@ -2088,13 +2076,13 @@ def main():
                     infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
                                             "Don't forget the sign where North is '+' and South is '-'! "
                                             "(Example: +50.4): ")
-                    writelogfile.write("\nEnter the latitude (in degrees) of where you observed. " + str(infoDict['lat']))
+                    log.debug("Enter the latitude (in degrees) of where you observed. " + str(infoDict['lat']))
 
             if fileorcommandline == 1:
                 infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
                                          "(Don't forget the sign where East is '+' and West is '-')! "
                                          "(Example: -32.12): ")
-                writelogfile.write("\nEnter the longitude (in degrees) of where you observed. " + str(infoDict['lat']))
+                log.debug("Enter the longitude (in degrees) of where you observed. " + str(infoDict['lat']))
             # Longitude
             while True:
                 try:
@@ -2111,11 +2099,11 @@ def main():
                     infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
                                              "(Don't forget the sign where East is '+' and West is '-')! "
                                              "(Example: -32.12): ")
-                    writelogfile.write("\nEnter the longitude (in degrees) of where you observed. " + str(infoDict['long']))
+                    log.debug("Enter the longitude (in degrees) of where you observed. " + str(infoDict['long']))
 
             if fileorcommandline == 1:
                 infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
-                writelogfile.write("\nEnter the elevation (in meters) of where you observed (deg) " + str(infoDict['elev']))
+                log.debug("Enter the elevation (in meters) of where you observed (deg) " + str(infoDict['elev']))
 
             # TARGET STAR
             if fileorcommandline == 1:
@@ -2123,21 +2111,21 @@ def main():
                 UIprevTPY = user_input(userpDict['pName'] + " Y Pixel Coordinate: ", type_=int)
                 numCompStars = user_input("How many comparison stars would you like to use? (1-10) ", type_=int)
 
-                writelogfile.write('\n' + userpDict['pName'] + " X Pixel Coordinate: " + str(UIprevTPX))
-                writelogfile.write('\n' + userpDict['pName'] + " Y Pixel Coordinate: " + str(UIprevTPY))
-                writelogfile.write("\nHow many comparison stars would you like to use? (1-10) "+str(numCompStars))
+                log.debug('' + userpDict['pName'] + " X Pixel Coordinate: " + str(UIprevTPX))
+                log.debug('' + userpDict['pName'] + " Y Pixel Coordinate: " + str(UIprevTPY))
+                log.debug("How many comparison stars would you like to use? (1-10) "+str(numCompStars))
 
                 for num in range(numCompStars):
                     xpix = user_input("Comparison Star %s X Pixel Coordinate: " % str(num+1), type_=int)
                     ypix = user_input("Comparison Star %s Y Pixel Coordinate: " % str(num+1), type_=int)
-                    writelogfile.write("Comparison Star %s X Pixel Coordinate: %s " % str(num+1,xpix))
-                    writelogfile.write("Comparison Star %s Y Pixel Coordinate: %s " % str(num+1, ypix))
+                    log.debug(f"Comparison Star {str(num+1)} X Pixel Coordinate: {xpix} ")
+                    log.debug(f"Comparison Star {str(num+1)} Y Pixel Coordinate: {ypix} ")
                     compStarList.append((xpix, ypix))
 
             # ---HANDLE CALIBRATION IMAGES------------------------------------------------
             if fileorcommandline == 1:
                 cals = user_input('\nDo you have any calibration images (flats, darks or biases)? (y/n): ', type_=str, val1='y', val2='n')
-                writelogfile.write('\nDo you have any calibration images (flats, darks or biases)? (y/n): '+cals)
+                log.debug('Do you have any calibration images (flats, darks or biases)? (y/n): '+cals)
 
             # if they have cals, handle them by calculating the median flat, dark or bias
             if cals == 'y':
@@ -2146,11 +2134,11 @@ def main():
                 # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
                     flats = user_input('\nDo you have flats? (y/n): ', type_=str, val1='y', val2='n')
-                    writelogfile.write('\nDo you have flats? (y/n): '+flats)
+                    log.debug('Do you have flats? (y/n): '+flats)
                     if flats == 'y':
                         flatsBool = True
                         infoDict['flatsdir'] = str(input('Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
-                        writelogfile.write('\nEnter the directory path to your flats (must be in their own separate folder): '+infoDict['flatsdir'])
+                        log.debug('Enter the directory path to your flats (must be in their own separate folder): '+infoDict['flatsdir'])
                     else:
                         flatsBool = False
 
@@ -2171,11 +2159,11 @@ def main():
                 # darks
                 if fileorcommandline == 1:
                     darks = user_input('\nDo you have darks? (y/n): ', type_=str, val1='y', val2='n')
-                    writelogfile.write('\nDo you have darks? (y/n): '+darks)
+                    log.debug('Do you have darks? (y/n): '+darks)
                     if darks == 'y':
                         darksBool = True
                         infoDict['darksdir'] = str(input('Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
-                        writelogfile.write('\nEnter the directory path to your darks (must be in their own separate folder): '+infoDict['darksdir'])
+                        log.debug('Enter the directory path to your darks (must be in their own separate folder): '+infoDict['darksdir'])
                     else:
                         darksBool = False
 
@@ -2191,11 +2179,11 @@ def main():
                 # biases
                 if fileorcommandline == 1:
                     biases = user_input('\nDo you have biases? (y/n): ', type_=str, val1='y', val2='n')
-                    writelogfile.write('\nDo you have biases? (y/n): '+biases)
+                    log.debug('Do you have biases? (y/n): '+biases)
                     if biases == 'y':
                         biasesBool = True
                         infoDict['biasesdir'] = str(input('Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
-                        writelogfile.write('\nEnter the directory path to your biases (must be in their own separate folder): '+infoDict['biasesdir'])
+                        log.debug('Enter the directory path to your biases (must be in their own separate folder): '+infoDict['biasesdir'])
                     else:
                         biasesBool = False
 
@@ -2213,7 +2201,7 @@ def main():
                 biasesBool = False
 
         print("\n***************************************")
-        writelogfile.write("\n***************************************")
+        log.debug("***************************************")
 
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
@@ -2227,13 +2215,13 @@ def main():
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
             infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-            writelogfile.write('\nPlease enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): '+infoDict['aavsonum'])
-            writelogfile.write('\nPlease enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '+infoDict['secondobs'])
-            writelogfile.write("\nPlease enter your camera type (CCD or DSLR): "+infoDict['ctype'])
-            writelogfile.write('\nPlease enter your pixel binning: '+infoDict['pixelbin'])
-            writelogfile.write('\nPlease enter your filter name from the options at '
+            log.debug('Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): '+infoDict['aavsonum'])
+            log.debug('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '+infoDict['secondobs'])
+            log.debug("Please enter your camera type (CCD or DSLR): "+infoDict['ctype'])
+            log.debug('Please enter your pixel binning: '+infoDict['pixelbin'])
+            log.debug('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '+infoDict['filter'])
-            writelogfile.write('\nPlease enter any observing notes (seeing, weather, etc.): '+infoDict['notes'])
+            log.debug('Please enter any observing notes (seeing, weather, etc.): '+infoDict['notes'])
 
         if fileorcommandline == 2:
             diff = check_parameters(userpDict, pDict)
@@ -2258,7 +2246,7 @@ def main():
             print('Starting Reduction Process')
             print('**************************')
 
-            writelogfile.write('\n\n**************************'
+            log.debug('**************************'
                                 '\nStarting Reduction Process'
                                 '\n**************************')
 
@@ -2364,7 +2352,7 @@ def main():
                 cosmicrayfilter_bool = False
                 if cosmicrayfilter_bool:
                     print("\nFiltering your data for cosmic rays.")
-                    writelogfile.write("\nFiltering your data for cosmic rays.")
+                    log.debug("Filtering your data for cosmic rays.")
                     done = False
                     t = threading.Thread(target=animate, daemon=True)
                     t.start()
@@ -2417,18 +2405,18 @@ def main():
                 # apply cals correction if applicable
                 if darksBool:
                     print("Dark subtracting images.")
-                    writelogfile.write("\nDark subtracting images.")
+                    log.debug("Dark subtracting images.")
                     sortedallImageData = sortedallImageData - generalDark
                 elif biasesBool:
                     print("Bias-correcting images.")
-                    writelogfile.write("\nBias-correcting images.")
+                    log.debug("Bias-correcting images.")
                     sortedallImageData = sortedallImageData - generalBias
                 else:
                     pass
 
                 if flatsBool:
                     print("Flattening images.")
-                    writelogfile.write("\nFlattening images.")
+                    log.debug("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
                 # Reference File
@@ -2443,14 +2431,14 @@ def main():
                 convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
                 convertToFITS.writeto(refFile)
                 print('\nHere is the path to the reference imaging file used by EXOTIC: \n' + refFile)
-                writelogfile.write('\nHere is the path to the reference imaging file used by EXOTIC: \n' + refFile)
+                log.debug('Here is the path to the reference imaging file used by EXOTIC: \n' + refFile)
                 wcsFile = check_wcs(refFile, infoDict['saveplot'], infoDict['plate_opt'])
                 hdulWCS = None
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
                 if wcsFile:
                     print('Here is the path to your plate solution: \n' + wcsFile)
-                    writelogfile.write('\nHere is the path to your plate solution: \n' + wcsFile)
+                    log.debug('Here is the path to your plate solution: \n' + wcsFile)
                     hdulWCS = fits.open(name=wcsFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
                     rafile, decfile = get_radec(hdulWCS)
 
@@ -2536,29 +2524,29 @@ def main():
                 print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
                 print('***************************************************************')
 
-                writelogfile.write('\n\n***************************************************************')
-                writelogfile.write('\nDetermining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
-                writelogfile.write('\n***************************************************************\n')
+                log.debug('***************************************************************')
+                log.debug('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
+                log.debug('***************************************************************\n')
 
                 # #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
                 # timeSortedNames = tsnCopy
 
                 UIprevRPX, UIprevRPY = compStarList[compCounter]
                 print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
-                writelogfile.write('\nTarget X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
+                log.debug('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
                 refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
                                                                                 box=10)
                 print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
-                writelogfile.write('\nComparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
+                log.debug('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
 
                 #If plate solution was generated, use it to check if the comparison stars selected are variable
                 #If yes, skip determining optimal aperture and annulus for that comparison star
                 if wcsFile:
                     print("Checking for variability in current comparison star... ")
-                    writelogfile.write("\nChecking for variability in current comparison star... ")
+                    log.debug("Checking for variability in current comparison star... ")
                     if variableStarCheck(refx, refy, hdulWCS):
                         print("Current comparison star is variable, proceeding to next star.")
-                        writelogfile.write("\nCurrent comparison star is variable, proceeding to next star.")
+                        log.debug("Current comparison star is variable, proceeding to next star.")
                         continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
@@ -2593,14 +2581,14 @@ def main():
 
                         if apertureR == 0:
                             print('Testing Comparison Star #' + str(compCounter+1) + ' with a PSF photometry.')
-                            writelogfile.write('\nTesting Comparison Star #' + str(compCounter + 1) + ' with a PSF photometry.')
+                            log.debug('Testing Comparison Star #' + str(compCounter + 1) + ' with a PSF photometry.')
                         elif apertureR < 0 and compCounter == 0:
                             print('Testing NO Comparison Star with a '+str(abs(apertureR))+' pixel aperture and a '+str(abs(annulusR))+' pixel annulus.')
-                            writelogfile.write('\nTesting NO Comparison Star with a ' + str(
+                            log.debug('Testing NO Comparison Star with a ' + str(
                                 abs(apertureR)) + ' pixel aperture and a ' + str(abs(annulusR)) + ' pixel annulus.')
                         else:
                             print('Testing Comparison Star #' + str(compCounter+1) + ' with a '+str(apertureR)+' pixel aperture and a '+str(annulusR)+' pixel annulus.')
-                            writelogfile.write('\nTesting Comparison Star #' + str(compCounter + 1) + ' with a ' + str(
+                            log.debug('Testing Comparison Star #' + str(compCounter + 1) + ' with a ' + str(
                                 apertureR) + ' pixel aperture and a ' + str(annulusR) + ' pixel annulus.')
 
                         for fileNumber, imageData in enumerate(sortedallImageData):
@@ -2648,7 +2636,7 @@ def main():
                                 #tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored')
 
-                                writelogfile.write('\n\n*************************************************************************************'
+                                log.debug('*************************************************************************************'
                                         '\nWARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.'
                                         '\nAll the remaining images after image #'+str(fileNumber-1)+' will be ignored\n')
 
@@ -2670,7 +2658,7 @@ def main():
                                 print('All the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star')
                                 print('*************************************************************************************')
 
-                                writelogfile.write('\n\n*************************************************************************************'
+                                log.debug('*************************************************************************************'
                                         '\nWARNING: In image '+str(fileNumber)+', your target star has drifted too close to the edge of the detector.'
                                         '\nAll the remaining images after image #'+str(fileNumber-1)+' will be ignored for this comparison star\n')
 
@@ -2704,7 +2692,7 @@ def main():
                                 tGuessAmp = targSearchA.max() - tGuessBkg
                                 if tGuessAmp < 0:
                                     print('ERROR: the Darks have a higher pixel counts than the image itself')
-                                    writelogfile.write('\n\nERROR: the Darks have a higher pixel counts than the image itself')
+                                    log.debug('ERROR: the Darks have a higher pixel counts than the image itself')
                                 myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, tGuessBkg]
 
                                 # tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
@@ -2742,11 +2730,11 @@ def main():
 
                                 if tamplitude < 0 or tsigX < 0 or tsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
                                     print('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
-                                    writelogfile.write('\nCould not fit 2D gaussian to Target for File Number' + str(fileNumber))
+                                    log.debug('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
 
                                 elif ramplitude < 0 or rsigX < 0 or rsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
                                     print('Could not fit 2D gaussian to Comparison Star for File Number' + str(fileNumber))
-                                    writelogfile.write('\nCould not fit 2D gaussian to Comparison Star for File Number' + str(
+                                    log.debug('Could not fit 2D gaussian to Comparison Star for File Number' + str(
                                         fileNumber))
 
                                 else:
@@ -2794,7 +2782,7 @@ def main():
                             # otherwise, mask off the rest of the files from time sorted names including the current one
                             else:
                                 print("\nFiltering data to account for drifting target.")
-                                writelogfile.write("\n\nFiltering data to account for drifting target.")
+                                log.debug("Filtering data to account for drifting target.")
                                 # timeSortedNames = timeSortedNames[:fileNumber]
 
                                 # TIME
@@ -2880,31 +2868,31 @@ def main():
                             print('    obs end:', arrayTimes[~filtered_data].max())
                             print(' tmid prior:', prior['tmid'])
 
-                            writelogfile.write("\n\nWARNING!")
-                            writelogfile.write("\n Estimated mid-transit time is not within the observations")
-                            writelogfile.write("\n Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-                            writelogfile.write('\n  obs start:', arrayTimes[~filtered_data].min())
-                            writelogfile.write('\n    obs end:', arrayTimes[~filtered_data].max())
-                            writelogfile.write('\n tmid prior:', prior['tmid'])
+                            log.debug("WARNING!")
+                            log.debug(" Estimated mid-transit time is not within the observations")
+                            log.debug(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                            log.debug('  obs start:', arrayTimes[~filtered_data].min())
+                            log.debug('    obs end:', arrayTimes[~filtered_data].max())
+                            log.debug(' tmid prior:', prior['tmid'])
 
                         # check for Nans + Zeros
                         for k in pDict:
                             if "Unc" in k:
                                 if not pDict[k]:
                                     print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
-                                    writelogfile.write(
+                                    log.debug(
                                         "\n WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(
                                             k))
                                     pDict[k] = 1
                                 elif pDict[k] == 0 or np.isnan(pDict[k]):
                                     print(" WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(k))
-                                    writelogfile.write(
+                                    log.debug(
                                         "\n WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(
                                             k))
                                     pDict[k] = 1
                             elif pDict[k] == None:
                                 print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
-                                writelogfile.write("\n WARNING! {} is None. Please use a numeric value in inits.json".format(k))
+                                log.debug(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
                                 pDict[k] = 0
 
                         mybounds = {
@@ -2933,8 +2921,8 @@ def main():
                         print('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
                         print('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
 
-                        writelogfile.write('\nThe Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
-                        writelogfile.write('\nThe Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
+                        log.debug('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
+                        log.debug('The Mean Squared Error is: ' + str(round( np.sum(myfit.residuals**2), 6)) + '\n')
 
                         resstd = myfit.residuals.std()/np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min
@@ -3004,11 +2992,11 @@ def main():
                 print('Optimal Method: PSF photometry')
                 print('********************************************\n')
 
-                writelogfile.write('\n\n*********************************************')
-                writelogfile.write('\nBest Comparison Star: #' + str(bestCompStar))
-                writelogfile.write('\nMinimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                writelogfile.write('\nOptimal Method: PSF photometry')
-                writelogfile.write('\n********************************************\n')
+                log.debug('*********************************************')
+                log.debug('Best Comparison Star: #' + str(bestCompStar))
+                log.debug('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                log.debug('Optimal Method: PSF photometry')
+                log.debug('********************************************\n')
 
             elif minAperture < 0: # no comp star
                 print('\n*********************************************')
@@ -3018,12 +3006,12 @@ def main():
                 print('Optimal Annulus: ' + str(minAnnulus))
                 print('********************************************\n')
 
-                writelogfile.write('\n\n*********************************************')
-                writelogfile.write('\nBest Comparison Star: None')
-                writelogfile.write('\nMinimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                writelogfile.write('\nOptimal Aperture: ' + str(abs(minAperture)))
-                writelogfile.write('\nOptimal Annulus: ' + str(minAnnulus))
-                writelogfile.write('\n********************************************\n')
+                log.debug('*********************************************')
+                log.debug('Best Comparison Star: None')
+                log.debug('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                log.debug('Optimal Aperture: ' + str(abs(minAperture)))
+                log.debug('Optimal Annulus: ' + str(minAnnulus))
+                log.debug('********************************************\n')
 
             else:
                 print('\n*********************************************')
@@ -3033,12 +3021,12 @@ def main():
                 print('Optimal Annulus: ' + str(minAnnulus))
                 print('********************************************\n')
 
-                writelogfile.write('\n\n*********************************************')
-                writelogfile.write('\nBest Comparison Star: #' + str(bestCompStar))
-                writelogfile.write('\nMinimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                writelogfile.write('\nOptimal Aperture: ' + str(minAperture))
-                writelogfile.write('\nOptimal Annulus: ' + str(minAnnulus))
-                writelogfile.write('\n********************************************\n')
+                log.debug('*********************************************')
+                log.debug('Best Comparison Star: #' + str(bestCompStar))
+                log.debug('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                log.debug('Optimal Aperture: ' + str(minAperture))
+                log.debug('Optimal Annulus: ' + str(minAnnulus))
+                log.debug('********************************************\n')
 
             # # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             # # Save a text file of the RA and DEC of the target and comp
@@ -3095,7 +3083,7 @@ def main():
             plt.close()
 
             print("\nFOV file saved as: "+infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf\n")
-            writelogfile.write("\n\nFOV file saved as: " + infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf\n")
+            log.debug("FOV file saved as: " + infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf\n")
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in imageheader:
@@ -3105,7 +3093,7 @@ def main():
                 print("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
                 print("Please be patient- this step can take a few minutes.")
 
-                writelogfile.write("\n\nNo BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
+                log.debug("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
                 # targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
                 # obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
                 # timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
@@ -3199,7 +3187,7 @@ def main():
             # CODE YIELDED DATA IN PREV LINE FORMAT
             outParamsFile.close()
             print('\nOutput File Saved')
-            writelogfile.write('\n\nOutput File Saved')
+            log.debug('Output File Saved')
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             for i in processeddata:
@@ -3220,16 +3208,16 @@ def main():
             validTimeFormats = ['BJD_TDB', "MJD_UTC", "JD_UTC"]
             formatEntered = False
             print("\nNOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
-            writelogfile.write("\n\nNOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
+            log.debug("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
             while not formatEntered:
                 print("Which of the following time formats is your data file stored in? (Type q to quit)")
                 timeFormat = str(input("BJD_TDB / JD_UTC / MJD_UTC: "))
-                writelogfile.write("\nWhich of the following time formats is your data file stored in? (Type q to quit) "+timeFormat)
+                log.debug("Which of the following time formats is your data file stored in? (Type q to quit) "+timeFormat)
                 if (timeFormat.upper()).strip() == 'Q':
                     sys.exit()
                 elif (timeFormat.upper()).strip() not in validTimeFormats:
                     print("\nInvalid entry; please try again.")
-                    writelogfile.write("\nInvalid entry; please try again.")
+                    log.debug("Invalid entry; please try again.")
                 else:
                     formatEntered = True
             timeFormat = (timeFormat.upper()).strip()
@@ -3239,16 +3227,16 @@ def main():
             validFluxFormats = ['flux', "magnitude", "millimagnitude"]
             formatEntered = False
             print("\nNOTE: If your file is not in one of the following formats, please rereduce your data into one of the time formats recognized by EXOTIC.")
-            writelogfile.write("\n\nNOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
+            log.debug("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
             while not formatEntered:
                 print("Which of the following units of flux is your data file stored in? (Type q to quit)")
                 fluxFormat = str(input("flux / magnitude / millimagnitude: "))
-                writelogfile.write("\nWhich of the following units of flux is your data file stored in? (Type q to quit)"+fluxFormat)
+                log.debug("Which of the following units of flux is your data file stored in? (Type q to quit)"+fluxFormat)
                 if (fluxFormat.upper()).strip() == 'Q':
                     sys.exit()
                 elif (fluxFormat.lower()).strip() not in validFluxFormats:
                     print("\nInvalid entry; please try again.")
-                    writelogfile.write("\nInvalid entry; please try again.")
+                    log.debug("Invalid entry; please try again.")
                 else:
                     formatEntered = True
             fluxFormat = (fluxFormat.lower()).strip()
@@ -3262,9 +3250,9 @@ def main():
         print('Fitting a Light Curve Model to Your Data')
         print('****************************************\n')
 
-        writelogfile.write('\n\n****************************************')
-        writelogfile.write('\nFitting a Light Curve Model to Your Data')
-        writelogfile.write('\n****************************************\n')
+        log.debug('****************************************')
+        log.debug('Fitting a Light Curve Model to Your Data')
+        log.debug('****************************************\n')
 
 
         ##########################
@@ -3310,10 +3298,10 @@ def main():
             print('  end:', goodTimes.max())
             print('prior:', prior['tmid'])
 
-            writelogfile.write('\n\nERROR: Estimated mid-transit not in observation range (check priors or observation time)')
-            writelogfile.write('\nstart:', goodTimes.min())
-            writelogfile.write('\n  end:', goodTimes.max())
-            writelogfile.write('\nprior:', prior['tmid'])
+            log.debug('ERROR: Estimated mid-transit not in observation range (check priors or observation time)')
+            log.debug('start:', goodTimes.min())
+            log.debug('  end:', goodTimes.max())
+            log.debug('prior:', prior['tmid'])
 
         try:
             mybounds = {
@@ -3425,33 +3413,15 @@ def main():
         # print final extracted planetary parameters
         #######################################################################
 
-        print('*********************************************************')
-        print('FINAL PLANETARY PARAMETERS\n')
-        print('              Mid-Transit Time [BJD]: {} +- {} '.format(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid']), round_to_2(myfit.errors['tmid'])))
-        print('  Radius Ratio (Planet/Star) [Rp/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['rprs'],myfit.errors['rprs']), round_to_2(myfit.errors['rprs'])))
-        print(' Semi Major Axis/ Star Radius [a/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['ars'],myfit.errors['ars']), round_to_2(myfit.errors['ars'])))
-        print('               Airmass coefficient 1: {} +- {} '.format(round_to_2(myfit.parameters['a1'],myfit.errors['a1']), round_to_2(myfit.errors['a1'])))
-        print('               Airmass coefficient 2: {} +- {} '.format(round_to_2(myfit.parameters['a2'],myfit.errors['a2']), round_to_2(myfit.errors['a2'])))
-        print('The scatter in the residuals of the lightcurve fit is: {} %'.format(round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))))
-        print('\n*********************************************************')
-
-        writelogfile.write('\n\n*********************************************************')
-        writelogfile.write('\nFINAL PLANETARY PARAMETERS\n')
-        writelogfile.write(
-            '\n              Mid-Transit Time [BJD]: {} +- {} '.format(round_to_2(myfit.parameters['tmid'], myfit.errors['tmid']),
-                                                                     round_to_2(myfit.errors['tmid'])))
-        writelogfile.write(
-            '\n  Radius Ratio (Planet/Star) [Rp/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['rprs'], myfit.errors['rprs']),
-                                                                     round_to_2(myfit.errors['rprs'])))
-        writelogfile.write('\n Semi Major Axis/ Star Radius [a/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['ars'], myfit.errors['ars']),
-                                                                       round_to_2(myfit.errors['ars'])))
-        writelogfile.write('\n               Airmass coefficient 1: {} +- {} '.format(round_to_2(myfit.parameters['a1'], myfit.errors['a1']),
-                                                                       round_to_2(myfit.errors['a1'])))
-        writelogfile.write('\n               Airmass coefficient 2: {} +- {} '.format(round_to_2(myfit.parameters['a2'], myfit.errors['a2']),
-                                                                       round_to_2(myfit.errors['a2'])))
-        writelogfile.write('\nThe scatter in the residuals of the lightcurve fit is: {} %'.format(
-            round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))))
-        writelogfile.write('\n\n*********************************************************')
+        log.info('*********************************************************')
+        log.info('FINAL PLANETARY PARAMETERS\n')
+        log.info('              Mid-Transit Time [BJD]: {} +- {} '.format(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid']), round_to_2(myfit.errors['tmid'])))
+        log.info('  Radius Ratio (Planet/Star) [Rp/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['rprs'],myfit.errors['rprs']), round_to_2(myfit.errors['rprs'])))
+        log.info(' Semi Major Axis/ Star Radius [a/Rs]: {} +- {} '.format(round_to_2(myfit.parameters['ars'],myfit.errors['ars']), round_to_2(myfit.errors['ars'])))
+        log.info('               Airmass coefficient 1: {} +- {} '.format(round_to_2(myfit.parameters['a1'],myfit.errors['a1']), round_to_2(myfit.errors['a1'])))
+        log.info('               Airmass coefficient 2: {} +- {} '.format(round_to_2(myfit.parameters['a2'],myfit.errors['a2']), round_to_2(myfit.errors['a2'])))
+        log.info('The scatter in the residuals of the lightcurve fit is: {} %'.format(round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))))
+        log.info('*********************************************************')
 
         ##########
         # SAVE DATA
@@ -3520,20 +3490,11 @@ def main():
         outParamsFile.close()
         print('Output File Saved')
 
+        log.info('************************')
+        log.info('End of Reduction Process')
+        log.info('************************')
 
-
-        print('\n************************')
-        print('End of Reduction Process')
-        print('************************')
-
-        writelogfile.write('\n\n************************')
-        writelogfile.write('\nEnd of Reduction Process')
-        writelogfile.write('\n************************')
-
-        writelogfile.write("\n\nStopped: " + str(datetime.datetime.now()))
-        # close log file
-        writelogfile.close()
-        print("\nLog File Saved")
+        log.debug("Stopped ...")
 
 
 if __name__ == "__main__":

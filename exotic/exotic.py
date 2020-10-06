@@ -54,8 +54,8 @@ def animate():
 
 if __name__ == "__main__":
     print("Importing Python Packages - please wait.")
-    t = threading.Thread(target=animate, daemon=True)
-    t.start()
+    th_animate_exotic = threading.Thread(target=animate, daemon=True)
+    th_animate_exotic.start()
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
 import argparse
@@ -1818,10 +1818,14 @@ def parse_args():
 def main():
     # TODO use text based interface if no command line arguments
 
+    if th_animate_exotic is not None:  # kill animate thread before proceeding
+        th_animate_exotic.join()  # lightest solution
+
     log.debug("*************************")
     log.debug("EXOTIC reduction log file")
     log.debug("*************************")
     log.debug("Starting ...")
+    log.info("")
     log.info(f"Python Version: {str(sys.version)}")
 
     log.info("*************************************************************")
@@ -1849,7 +1853,6 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-    time.sleep(.5)  # required in certain consoles to allow log cache to flush
     realTimeAns = user_input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: ', type_=int, val1=1, val2=2)
 
     #############################

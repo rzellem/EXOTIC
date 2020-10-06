@@ -536,10 +536,10 @@ def inits_file(inits_path, dict_info, dict_params):
                        'plate_opt': 'Plate Solution? (y/n)',
                        'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'}
 
-    comparison_parameters = {'ra': 'Target Star RA (hh:mm:ss)',
-                             'dec': 'Target Star Dec (+/-hh:mm:ss)',
-                             'pName': "Planet's Name",
-                             'sName': "Host Star's Name",
+    comparison_parameters = {'ra': 'Target Star RA',
+                             'dec': 'Target Star Dec',
+                             'pName': "Planet Name",
+                             'sName': "Host Star Name",
                              'pPer': 'Orbital Period (days)',
                              'pPerUnc': 'Orbital Period Uncertainty',
                              'midT': 'Published Mid-Transit Time (BJD-UTC)',

@@ -49,6 +49,7 @@ def animate():
         sys.stdout.write('\rThinking ' + c)
         sys.stdout.flush()
         time.sleep(0.1)
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":
@@ -1848,7 +1849,7 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-
+    time.sleep(.5)  # required in certain consoles to allow log cache to flush
     realTimeAns = user_input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: ', type_=int, val1=1, val2=2)
 
     #############################

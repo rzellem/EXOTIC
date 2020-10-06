@@ -31,17 +31,16 @@
 # ########################################################################### #
 
 # -- IMPORTS START ------------------------------------------------------------
-print("Importing Python Packages - please wait.")
 # ########## IMPORTS -- PRELOAD ANIMATION START ##########
 done_flag_exotic_imports = False
 
-import itertools
 import threading
 import time
 import sys
 
 
 def animate():
+    import itertools
     for c in itertools.cycle(['|', '/', '-', '\\']):
         if done_flag_exotic_imports:
             sys.stdout.write('\rThinking ... DONE!')
@@ -52,8 +51,10 @@ def animate():
         time.sleep(0.1)
 
 
-t = threading.Thread(target=animate, daemon=True)
-t.start()
+if __name__ == "__main__":
+    print("Importing Python Packages - please wait.")
+    t = threading.Thread(target=animate, daemon=True)
+    t.start()
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
 import argparse
@@ -83,7 +84,7 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt_exotic
 # import resource
 import numpy as np
 import os
@@ -128,13 +129,13 @@ done_flag_exotic_imports = True  # CLOSE PRELOAD ANIMATION
 
 # ################### START PROPERTIES/SETTINGS ############################# #
 # GLOBALS (set in main before method calls)
-infoDict = dict()
-UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY = 0, 0, 0, 0
-distFC = 0
-ax1 = plt.figure()  # placeholder
+exotic_infoDict = dict()
+exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
+exotic_distFC = 0
+exotic_ax1 = plt_exotic.figure()  # placeholder
 
 # SETTINGS
-plt.style.use(astropy_mpl_style)
+plt_exotic.style.use(astropy_mpl_style)
 # To increase memory allocation for EXOTIC; allows for more fits files
 # resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 # ################### END PROPERTIES/SETTINGS ############################### #
@@ -1575,7 +1576,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
         cmode = mode(dat.flatten(), nan_policy='omit').mode[0]
         amode = mode(bgsky.flatten(), nan_policy='omit').mode[0]
 
-        fig,ax = plt.subplots(2,2,figsize=(9,9))
+        fig,ax = plt_exotic.subplots(2, 2, figsize=(9, 9))
         im = ax[0,0].imshow(data[yv,xv],vmin=minb,vmax=maxb,cmap='inferno')
         ax[0,0].set_title("Original Data")
         from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -1594,8 +1595,8 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
 
         ax[0,1].imshow(bgsky,vmin=minb,vmax=maxb,cmap='inferno')
         ax[0,1].set_title("Sky Annulus")
-        plt.tight_layout()
-        plt.show()
+        plt_exotic.tight_layout()
+        plt_exotic.show()
     return min(np.nanmedian(dat), mode(dat.flatten(), nan_policy='omit').mode[0])
 
 
@@ -1613,61 +1614,61 @@ def nearestTransitTime(timeData, period, originalT):
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     times = np.array(times)
     # X TARGET
-    plt.figure()
-    plt.plot(times - np.nanmin(times), xTarg, '-bo')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('X Pixel Position')
-    plt.title(targetname + ' X Centroid Position ' + date)
-    plt.savefig(infoDict['saveplot'] + 'temp/XCentroidPosition' + targetname + date + '.png')
-    plt.close()
+    plt_exotic.figure()
+    plt_exotic.plot(times - np.nanmin(times), xTarg, '-bo')
+    plt_exotic.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
+    plt_exotic.ylabel('X Pixel Position')
+    plt_exotic.title(targetname + ' X Centroid Position ' + date)
+    plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/XCentroidPosition' + targetname + date + '.png')
+    plt_exotic.close()
 
     # Y TARGET
-    plt.figure()
-    plt.plot(times - np.nanmin(times), yTarg, '-bo')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('Y Pixel Position')
-    plt.title(targetname + ' Y Centroid Position ' + date)
-    plt.savefig(infoDict['saveplot'] + 'temp/YCentroidPos' + targetname + date + '.png')
-    plt.close()
+    plt_exotic.figure()
+    plt_exotic.plot(times - np.nanmin(times), yTarg, '-bo')
+    plt_exotic.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
+    plt_exotic.ylabel('Y Pixel Position')
+    plt_exotic.title(targetname + ' Y Centroid Position ' + date)
+    plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/YCentroidPos' + targetname + date + '.png')
+    plt_exotic.close()
 
     # X COMP
-    plt.figure()
-    plt.plot(times - np.nanmin(times), xRef, '-ro')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('X Pixel Position')
-    plt.title('Comp Star X Centroid Position ' + date)
-    plt.savefig(infoDict['saveplot'] + 'temp/CompStarXCentroidPos' + date + '.png')
-    plt.close()
+    plt_exotic.figure()
+    plt_exotic.plot(times - np.nanmin(times), xRef, '-ro')
+    plt_exotic.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
+    plt_exotic.ylabel('X Pixel Position')
+    plt_exotic.title('Comp Star X Centroid Position ' + date)
+    plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/CompStarXCentroidPos' + date + '.png')
+    plt_exotic.close()
 
     # Y COMP
-    plt.figure()
-    plt.plot(times - np.nanmin(times), yRef, '-ro')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('Y Pixel Position')
-    plt.title('Comp Star Y Centroid Position ' + date)
-    plt.savefig(infoDict['saveplot'] + 'temp/CompStarYCentroidPos' + date + '.png')
-    plt.close()
+    plt_exotic.figure()
+    plt_exotic.plot(times - np.nanmin(times), yRef, '-ro')
+    plt_exotic.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
+    plt_exotic.ylabel('Y Pixel Position')
+    plt_exotic.title('Comp Star Y Centroid Position ' + date)
+    plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/CompStarYCentroidPos' + date + '.png')
+    plt_exotic.close()
 
     # X DISTANCE BETWEEN TARGET AND COMP
-    plt.figure()
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('X Pixel Distance')
+    plt_exotic.figure()
+    plt_exotic.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
+    plt_exotic.ylabel('X Pixel Distance')
     for e in range(0, len(xTarg)):
-        plt.plot(times[e] - np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
-    plt.title('Distance between Target and Comparison X position')
-    plt.savefig(infoDict['saveplot'] + 'temp/XCentroidDistance' + targetname + date + '.png')
-    plt.close()
+        plt_exotic.plot(times[e] - np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
+    plt_exotic.title('Distance between Target and Comparison X position')
+    plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/XCentroidDistance' + targetname + date + '.png')
+    plt_exotic.close()
 
     # Y DISTANCE BETWEEN TARGET AND COMP
-    plt.figure()
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('Y Pixel Difference')
+    plt_exotic.figure()
+    plt_exotic.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
+    plt_exotic.ylabel('Y Pixel Difference')
     d = 0
     for d in range(0, len(yTarg)):
-        plt.plot(times[d] - np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
-    plt.title('Difference between Target and Comparison Y position')
-    plt.savefig(infoDict['saveplot'] + 'temp/YCentroidDistance' + targetname + date + '.png')
-    plt.close()
+        plt_exotic.plot(times[d] - np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
+    plt_exotic.title('Difference between Target and Comparison Y position')
+    plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/YCentroidDistance' + targetname + date + '.png')
+    plt_exotic.close()
 
 
 def realTimeReduce(i, target_name):
@@ -1716,8 +1717,8 @@ def realTimeReduce(i, target_name):
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
     # fit first image
-    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY], box=10)
-    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY], box=10)
+    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
 
     # just use one aperture and annulus
     apertureR = 3 * max(targsigX, targsigY)
@@ -1738,7 +1739,7 @@ def realTimeReduce(i, target_name):
         # Find the target star in the image and get its pixel coordinates if it is the first file
         if fileNumber == 1:
             # Initializing the star location guess as the user inputted pixel coordinates
-            prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY
+            prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
             prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
 
             prevImageData = imageData  # no shift should be registered
@@ -1757,18 +1758,18 @@ def realTimeReduce(i, target_name):
 
         # --------GAUSSIAN FIT AND CENTROIDING----------------------------------------------
 
-        txmin = int(prevTPX) - distFC  # left
-        txmax = int(prevTPX) + distFC  # right
-        tymin = int(prevTPY) - distFC  # top
-        tymax = int(prevTPY) + distFC  # bottom
+        txmin = int(prevTPX) - exotic_distFC  # left
+        txmax = int(prevTPX) + exotic_distFC  # right
+        tymin = int(prevTPY) - exotic_distFC  # top
+        tymax = int(prevTPY) + exotic_distFC  # bottom
 
         targSearchA = imageData[tymin:tymax, txmin:txmax]
 
         # Set reference search area
-        rxmin = int(prevRPX) - distFC  # left
-        rxmax = int(prevRPX) + distFC  # right
-        rymin = int(prevRPY) - distFC  # top
-        rymax = int(prevRPY) + distFC  # bottom
+        rxmin = int(prevRPX) - exotic_distFC  # left
+        rxmax = int(prevRPX) + exotic_distFC  # right
+        rymin = int(prevRPY) - exotic_distFC  # top
+        rymax = int(prevRPY) + exotic_distFC  # bottom
 
         refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
@@ -1822,11 +1823,11 @@ def realTimeReduce(i, target_name):
 
     # EXIT THE FILE LOOP
 
-    ax1.clear()
-    ax1.set_title(target_name)
-    ax1.set_ylabel('Normalized Flux')
-    ax1.set_xlabel('Time (jd)')
-    ax1.plot(timesListed, normalizedFluxVals, 'bo')
+    exotic_ax1.clear()
+    exotic_ax1.set_title(target_name)
+    exotic_ax1.set_ylabel('Normalized Flux')
+    exotic_ax1.set_xlabel('Time (jd)')
+    exotic_ax1.plot(timesListed, normalizedFluxVals, 'bo')
 
 
 def parse_args():
@@ -1842,7 +1843,9 @@ def parse_args():
 def main():
     # TODO use text based interface if no command line arguments
 
-    log.debug("*************************\nEXOTIC reduction log file\n*************************\n\n")
+    log.debug("*************************")
+    log.debug("EXOTIC reduction log file")
+    log.debug("*************************")
     log.debug("Starting ...")
     log.info(f"Python Version: {str(sys.version)}")
 
@@ -1852,10 +1855,10 @@ def main():
     log.info("*************************************************************")
 
     # ---INITIALIZATION-------------------------------------------------------
-    global infoDict
-    global UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY
-    global distFC
-    global ax1
+    global exotic_infoDict
+    global exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
+    global exotic_distFC
+    global exotic_ax1
 
     targetFluxVals, referenceFluxVals, normalizedFluxVals, targUncertanties, refUncertanties, timeList, phasesList, airMassList = (
         [] for l in range(8))
@@ -1867,7 +1870,7 @@ def main():
     fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
-    distFC = 10  # gaussian search area
+    exotic_distFC = 10  # gaussian search area
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
@@ -1901,27 +1904,27 @@ def main():
             except ValueError:
                 continue
 
-        UIprevTPX = user_input(targetName + " X Pixel Coordinate: ", type_=int)
-        UIprevTPY = user_input(targetName + " Y Pixel Coordinate: ", type_=int)
-        UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
-        UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
+        exotic_UIprevTPX = user_input(targetName + " X Pixel Coordinate: ", type_=int)
+        exotic_UIprevTPY = user_input(targetName + " Y Pixel Coordinate: ", type_=int)
+        exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
+        exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
-        log.debug(targetName + " X Pixel Coordinate: "+str(UIprevTPX))
-        log.debug(targetName + " Y Pixel Coordinate: "+str(UIprevTPY))
-        log.debug("Comp Star X Pixel Coordinate: "+str(UIprevRPX))
-        log.debug("Comp Star Y Pixel Coordinate: "+str(UIprevRPY))
+        log.debug(targetName + " X Pixel Coordinate: " + str(exotic_UIprevTPX))
+        log.debug(targetName + " Y Pixel Coordinate: " + str(exotic_UIprevTPY))
+        log.debug("Comp Star X Pixel Coordinate: " + str(exotic_UIprevRPX))
+        log.debug("Comp Star Y Pixel Coordinate: " + str(exotic_UIprevRPY))
 
         print('Real Time Plotting ("Control + C" or close the plot to quit)')
         print('\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.')
 
-        fig = plt.figure()
-        ax1 = fig.add_subplot(1, 1, 1)
-        ax1.set_title(targetName)
-        ax1.set_ylabel('Normalized Flux')
-        ax1.set_xlabel('Time (jd)')
+        fig = plt_exotic.figure()
+        exotic_ax1 = fig.add_subplot(1, 1, 1)
+        exotic_ax1.set_title(targetName)
+        exotic_ax1.set_ylabel('Normalized Flux')
+        exotic_ax1.set_xlabel('Time (jd)')
 
         anim = FuncAnimation(fig, realTimeReduce, fargs=(targetName), interval=15000)  # refresh every 15 seconds
-        plt.show()
+        plt_exotic.show()
 
     ###########################
     # Complete Reduction Routine
@@ -1936,7 +1939,7 @@ def main():
         directoryP = ""
         compStarList = []
 
-        infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
+        exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
                     'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None,
                     'ctype': None, 'pixelbin': None, 'filter': None, 'wl_min': None, 'wl_max': None, 'notes': None,
                     'tarcoords': None, 'compstars': None, 'plate_opt': None, 'pixel_scale': None}
@@ -1964,21 +1967,21 @@ def main():
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            infoDict, userpDict = get_initialization_file(infoDict, userpDict)
-            init_obj = InitializationFile(infoDict, userpDict['pName'])
-            infoDict, userpDict['pName'] = init_obj.get_info()
+            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict)
+            init_obj = InitializationFile(exotic_infoDict, userpDict['pName'])
+            exotic_infoDict, userpDict['pName'] = init_obj.get_info()
 
-            if infoDict['flatsdir'] is None:
+            if exotic_infoDict['flatsdir'] is None:
                 flatsBool = False
             else:
                 flatsBool = True
 
-            if infoDict['darksdir'] is None:
+            if exotic_infoDict['darksdir'] is None:
                 darksBool = False
             else:
                 darksBool = True
 
-            if infoDict['biasesdir'] is None:
+            if exotic_infoDict['biasesdir'] is None:
                 biasesBool = False
             else:
                 biasesBool = True
@@ -1989,20 +1992,20 @@ def main():
                 cals = 'n'
 
             # Initial position of target star
-            UIprevTPX = infoDict['tarcoords'][0]
-            UIprevTPY = infoDict['tarcoords'][1]
+            exotic_UIprevTPX = exotic_infoDict['tarcoords'][0]
+            exotic_UIprevTPY = exotic_infoDict['tarcoords'][1]
 
             # Read in locations of comp stars
-            for i in infoDict['compstars']:
+            for i in exotic_infoDict['compstars']:
                 compStarList.append((i[0], i[1]))
 
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                infoDict['fitsdir'] = str(input("\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "))
-                log.debug("Enter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "+str(infoDict['fitsdir']))
+                exotic_infoDict['fitsdir'] = str(input("\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "))
+                log.debug("Enter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): " + str(exotic_infoDict['fitsdir']))
 
-            infoDict['fitsdir'], inputfiles = check_imaging_files(infoDict['fitsdir'], 'imaging')
+            exotic_infoDict['fitsdir'], inputfiles = check_imaging_files(exotic_infoDict['fitsdir'], 'imaging')
         else:
             datafile = str(input("Enter the path and filename of your data file: "))
             log.debug("Enter the path and filename of your data file: "+str(datafile))
@@ -2017,20 +2020,20 @@ def main():
                 log.debug("ERROR: Data file not found. Please try again.")
                 sys.exit()
 
-            infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
-            log.debug("Please enter your image exposure time in seconds: "+str(infoDict['exposure']))
+            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
+            log.debug("Please enter your image exposure time in seconds: " + str(exotic_infoDict['exposure']))
 
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
-            infoDict['saveplot'] = input("Enter the directory to save the results and plots into or type new to create one: ")
-            log.debug("Enter the directory to save the results and plots into or type new to create one: "+str(infoDict['saveplot']))
+            exotic_infoDict['saveplot'] = input("Enter the directory to save the results and plots into or type new to create one: ")
+            log.debug("Enter the directory to save the results and plots into or type new to create one: " + str(exotic_infoDict['saveplot']))
 
-        infoDict['saveplot'] = get_save_directory(infoDict['saveplot'])
+        exotic_infoDict['saveplot'] = get_save_directory(exotic_infoDict['saveplot'])
 
         # Make a temp directory of helpful files
         try:
-            os.makedirs(infoDict['saveplot'] + "temp/")
+            os.makedirs(exotic_infoDict['saveplot'] + "temp/")
         except FileExistsError:
             # directory already exists
             pass
@@ -2044,75 +2047,75 @@ def main():
 
         # observation date
         if fileorcommandline == 1:
-            infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
-            log.debug("Enter the Observation Date (MM-DD-YYYY): "+str(infoDict['date']))
+            exotic_infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
+            log.debug("Enter the Observation Date (MM-DD-YYYY): " + str(exotic_infoDict['date']))
 
         # Using a / in your date can screw up the file paths- this will check user's date
-        while "/" in infoDict['date']:
+        while "/" in exotic_infoDict['date']:
             print("Do not use / in your date. Please try again.")
-            infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
+            exotic_infoDict['date'] = str(input("\nEnter the Observation Date (MM-DD-YYYY): "))
             log.debug("Do not use / in your date. Please try again.")
-            log.debug("Enter the Observation Date (MM-DD-YYYY): " + str(infoDict['date']))
+            log.debug("Enter the Observation Date (MM-DD-YYYY): " + str(exotic_infoDict['date']))
 
         if fitsortext == 1:
             if fileorcommandline == 1:
-                infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
+                exotic_infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
                                         "Don't forget the sign where North is '+' and South is '-'! "
                                         "(Example: +50.4): ")
-                log.debug("Enter the latitude of where you observed (deg) " + str(infoDict['lat']))
+                log.debug("Enter the latitude of where you observed (deg) " + str(exotic_infoDict['lat']))
             # Latitude
             while True:
                 try:
-                    infoDict['lat'] = infoDict['lat'].replace(' ', '')
-                    if infoDict['lat'][0] != '+' and infoDict['lat'][0] != '-':
+                    exotic_infoDict['lat'] = exotic_infoDict['lat'].replace(' ', '')
+                    if exotic_infoDict['lat'][0] != '+' and exotic_infoDict['lat'][0] != '-':
                         raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-                    lati = float(infoDict['lat'])
+                    lati = float(exotic_infoDict['lat'])
                     if lati <= -90.00 or lati >= 90.00:
                         raise ValueError('Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
                     break
                 # check to make sure they have a sign
                 except ValueError as err:
                     print(err.args)
-                    infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
+                    exotic_infoDict['lat'] = input("Enter the latitude (in degrees) of where you observed. "
                                             "Don't forget the sign where North is '+' and South is '-'! "
                                             "(Example: +50.4): ")
-                    log.debug("Enter the latitude (in degrees) of where you observed. " + str(infoDict['lat']))
+                    log.debug("Enter the latitude (in degrees) of where you observed. " + str(exotic_infoDict['lat']))
 
             if fileorcommandline == 1:
-                infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
+                exotic_infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
                                          "(Don't forget the sign where East is '+' and West is '-')! "
                                          "(Example: -32.12): ")
-                log.debug("Enter the longitude (in degrees) of where you observed. " + str(infoDict['lat']))
+                log.debug("Enter the longitude (in degrees) of where you observed. " + str(exotic_infoDict['lat']))
             # Longitude
             while True:
                 try:
-                    infoDict['long'] = infoDict['long'].replace(' ', '')
-                    if infoDict['long'][0] != '+' and infoDict['long'][0] != '-':
+                    exotic_infoDict['long'] = exotic_infoDict['long'].replace(' ', '')
+                    if exotic_infoDict['long'][0] != '+' and exotic_infoDict['long'][0] != '-':
                         raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
-                    longit = float(infoDict['long'])
+                    longit = float(exotic_infoDict['long'])
                     if longit <= -180.00 or longit >= 180.00:
                         raise ValueError('Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
                     break
                 # check to make sure they have a sign
                 except ValueError as err:
                     print(err.args)
-                    infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
+                    exotic_infoDict['long'] = input("Enter the longitude (in degrees) of where you observed. "
                                              "(Don't forget the sign where East is '+' and West is '-')! "
                                              "(Example: -32.12): ")
-                    log.debug("Enter the longitude (in degrees) of where you observed. " + str(infoDict['long']))
+                    log.debug("Enter the longitude (in degrees) of where you observed. " + str(exotic_infoDict['long']))
 
             if fileorcommandline == 1:
-                infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
-                log.debug("Enter the elevation (in meters) of where you observed (deg) " + str(infoDict['elev']))
+                exotic_infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
+                log.debug("Enter the elevation (in meters) of where you observed (deg) " + str(exotic_infoDict['elev']))
 
             # TARGET STAR
             if fileorcommandline == 1:
-                UIprevTPX = user_input('\n' + userpDict['pName'] + " X Pixel Coordinate: ", type_=int)
-                UIprevTPY = user_input(userpDict['pName'] + " Y Pixel Coordinate: ", type_=int)
+                exotic_UIprevTPX = user_input('\n' + userpDict['pName'] + " X Pixel Coordinate: ", type_=int)
+                exotic_UIprevTPY = user_input(userpDict['pName'] + " Y Pixel Coordinate: ", type_=int)
                 numCompStars = user_input("How many comparison stars would you like to use? (1-10) ", type_=int)
 
-                log.debug('' + userpDict['pName'] + " X Pixel Coordinate: " + str(UIprevTPX))
-                log.debug('' + userpDict['pName'] + " Y Pixel Coordinate: " + str(UIprevTPY))
+                log.debug('' + userpDict['pName'] + " X Pixel Coordinate: " + str(exotic_UIprevTPX))
+                log.debug('' + userpDict['pName'] + " Y Pixel Coordinate: " + str(exotic_UIprevTPY))
                 log.debug("How many comparison stars would you like to use? (1-10) "+str(numCompStars))
 
                 for num in range(numCompStars):
@@ -2137,13 +2140,13 @@ def main():
                     log.debug('Do you have flats? (y/n): '+flats)
                     if flats == 'y':
                         flatsBool = True
-                        infoDict['flatsdir'] = str(input('Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
-                        log.debug('Enter the directory path to your flats (must be in their own separate folder): '+infoDict['flatsdir'])
+                        exotic_infoDict['flatsdir'] = str(input('Enter the directory path to your flats (must be in their own separate folder): '))  # +"/*.FITS"
+                        log.debug('Enter the directory path to your flats (must be in their own separate folder): ' + exotic_infoDict['flatsdir'])
                     else:
                         flatsBool = False
 
                     if flatsBool:
-                        infoDict['flatsdir'], inputflats = check_imaging_files(infoDict['flatsdir'], 'flats')
+                        exotic_infoDict['flatsdir'], inputflats = check_imaging_files(exotic_infoDict['flatsdir'], 'flats')
                         flatsImgList = []
                         for flatFile in inputflats:
                             flatData = fits.getdata(flatFile, ext=0)
@@ -2162,14 +2165,14 @@ def main():
                     log.debug('Do you have darks? (y/n): '+darks)
                     if darks == 'y':
                         darksBool = True
-                        infoDict['darksdir'] = str(input('Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
-                        log.debug('Enter the directory path to your darks (must be in their own separate folder): '+infoDict['darksdir'])
+                        exotic_infoDict['darksdir'] = str(input('Enter the directory path to your darks (must be in their own separate folder): '))  # +"/*.FITS"
+                        log.debug('Enter the directory path to your darks (must be in their own separate folder): ' + exotic_infoDict['darksdir'])
                     else:
                         darksBool = False
 
                 # Only do the dark correction if user selects this option
                 if darksBool:
-                    infoDict['darksdir'], inputdarks = check_imaging_files(infoDict['darksdir'], 'darks')
+                    exotic_infoDict['darksdir'], inputdarks = check_imaging_files(exotic_infoDict['darksdir'], 'darks')
                     darksImgList = []
                     for darkFile in inputdarks:
                         darkData = fits.getdata(darkFile, ext=0)
@@ -2182,14 +2185,14 @@ def main():
                     log.debug('Do you have biases? (y/n): '+biases)
                     if biases == 'y':
                         biasesBool = True
-                        infoDict['biasesdir'] = str(input('Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
-                        log.debug('Enter the directory path to your biases (must be in their own separate folder): '+infoDict['biasesdir'])
+                        exotic_infoDict['biasesdir'] = str(input('Enter the directory path to your biases (must be in their own separate folder): '))  # +"/*.FITS"
+                        log.debug('Enter the directory path to your biases (must be in their own separate folder): ' + exotic_infoDict['biasesdir'])
                     else:
                         biasesBool = False
 
                 if biasesBool:
                     # Add / to end of directory if user does not input it
-                    infoDict['biasesdir'], inputbiases = check_imaging_files(infoDict['biasesdir'], 'biases')
+                    exotic_infoDict['biasesdir'], inputbiases = check_imaging_files(exotic_infoDict['biasesdir'], 'biases')
                     biasesImgList = []
                     for biasFile in inputbiases:
                         biasData = fits.getdata(biasFile, ext=0)
@@ -2206,22 +2209,22 @@ def main():
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
             # userNameEmails = str(input('Please enter your name(s) and email address(es) in the format: Your Name (youremail@example.com), Next Name (nextemail@example.com), etc.  '))
-            infoDict['aavsonum'] = str(input('Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): '))
-            infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
-            infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
-            infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
+            exotic_infoDict['aavsonum'] = str(input('Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): '))
+            exotic_infoDict['secondobs'] = str(input('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '))
+            exotic_infoDict['ctype'] = str(input("Please enter your camera type (CCD or DSLR): "))
+            exotic_infoDict['pixelbin'] = str(input('Please enter your pixel binning: '))
             # infoDict['exposure'] = user_input('Please enter your exposure time (seconds): ', type_=int)
-            infoDict['filter'] = str(input('Please enter your filter name from the options at '
+            exotic_infoDict['filter'] = str(input('Please enter your filter name from the options at '
                                            'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '))
-            infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
+            exotic_infoDict['notes'] = str(input('Please enter any observing notes (seeing, weather, etc.): '))
 
-            log.debug('Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): '+infoDict['aavsonum'])
-            log.debug('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): '+infoDict['secondobs'])
-            log.debug("Please enter your camera type (CCD or DSLR): "+infoDict['ctype'])
-            log.debug('Please enter your pixel binning: '+infoDict['pixelbin'])
+            log.debug('Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): ' + exotic_infoDict['aavsonum'])
+            log.debug('Please enter your comma-separated secondary observer codes (or type N/A if only 1 observer code): ' + exotic_infoDict['secondobs'])
+            log.debug("Please enter your camera type (CCD or DSLR): " + exotic_infoDict['ctype'])
+            log.debug('Please enter your pixel binning: ' + exotic_infoDict['pixelbin'])
             log.debug('Please enter your filter name from the options at '
-                                           'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: '+infoDict['filter'])
-            log.debug('Please enter any observing notes (seeing, weather, etc.): '+infoDict['notes'])
+                                           'http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ' + exotic_infoDict['filter'])
+            log.debug('Please enter any observing notes (seeing, weather, etc.): ' + exotic_infoDict['notes'])
 
         if fileorcommandline == 2:
             diff = check_parameters(userpDict, pDict)
@@ -2233,8 +2236,8 @@ def main():
         ld_obj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
                                met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
                                logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
-                               wl_min=infoDict['wl_min'], wl_max=infoDict['wl_max'], filter_type=infoDict['filter'])
-        ld0, ld1, ld2, ld3, infoDict['filter'] = ld_obj.nonlinear_ld()
+                               wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'], filter_type=exotic_infoDict['filter'])
+        ld0, ld1, ld2, ld3, exotic_infoDict['filter'] = ld_obj.nonlinear_ld()
 
         # TODO: Fix File Corruption Check
         # If fits files are used, check that they are not corrupted
@@ -2288,7 +2291,7 @@ def main():
                     timesListed.append(currTime)
 
                     # AIRMASS
-                    airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, infoDict['elev'])  # gets the airmass at the time the image was taken
+                    airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
                     airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                     # IMAGES
@@ -2313,10 +2316,10 @@ def main():
 
                 if consistent_et :
                     #print("All Elements in List are Equal")
-                    infoDict['exposure'] = exptimes[0]
+                    exotic_infoDict['exposure'] = exptimes[0]
                 else:
                     #print("All Elements in List are Not Equal")
-                    infoDict['exposure'] = np.median(exptimes)
+                    exotic_infoDict['exposure'] = np.median(exptimes)
                     #print(infoDict['exposure'])
 
                 # Recast list as numpy arrays
@@ -2388,8 +2391,8 @@ def main():
                 while True:
                     # fit Target in the first image and use it to determine aperture and annulus range
                     try:
-                        targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [UIprevTPX, UIprevTPY],
-                                                                                                box=10)
+                        targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY],
+                                                                                                         box=10)
                         break
                     # If the first image is a bad one, then move on to the next image
                     except Exception:
@@ -2420,7 +2423,7 @@ def main():
                     sortedallImageData = sortedallImageData / generalFlat
 
                 # Reference File
-                refFile = os.path.join(infoDict['saveplot'], 'ref_file_%s_%s'
+                refFile = os.path.join(exotic_infoDict['saveplot'], 'ref_file_%s_%s'
                                        % (firstimagecounter, os.path.split(fileNameStr[firstimagecounter])[-1]))
 
                 # Removes existing file of reference file
@@ -2432,7 +2435,7 @@ def main():
                 convertToFITS.writeto(refFile)
                 print('\nHere is the path to the reference imaging file used by EXOTIC: \n' + refFile)
                 log.debug('Here is the path to the reference imaging file used by EXOTIC: \n' + refFile)
-                wcsFile = check_wcs(refFile, infoDict['saveplot'], infoDict['plate_opt'])
+                wcsFile = check_wcs(refFile, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
                 hdulWCS = None
 
                 # Check pixel coordinates by converting to WCS. If not correct, loop over again
@@ -2443,11 +2446,11 @@ def main():
                     rafile, decfile = get_radec(hdulWCS)
 
                     # Save previously entered x and y pixel coordinates before checking against plate solution
-                    saveUIprevTPX, saveUIprevTPY = UIprevTPX, UIprevTPY
-                    UIprevTPX, UIprevTPY = check_targetpixelwcs(UIprevTPX, UIprevTPY, pDict['ra'],
-                                                                pDict['dec'], rafile, decfile)
+                    saveUIprevTPX, saveUIprevTPY = exotic_UIprevTPX, exotic_UIprevTPY
+                    exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY, pDict['ra'],
+                                                                              pDict['dec'], rafile, decfile)
                     # If the coordinates were not changed, do not loop over again
-                    if UIprevTPX == saveUIprevTPX and UIprevTPY == saveUIprevTPY:
+                    if exotic_UIprevTPX == saveUIprevTPX and exotic_UIprevTPY == saveUIprevTPY:
                         break
                 else:
                     break
@@ -2497,15 +2500,15 @@ def main():
                 #     sortedallImageData[ii][mmask] = np.mean(sortedallImageData[ii][bmask])  # replace
 
                 # TODO move to function
-                # f,ax = plt.subplots(1,3,figsize=(18,8))
+                # f,ax = plt_exotic.subplots(1,3,figsize=(18,8))
                 # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
                 # ax[0].set_title("Original Data")
                 # ax[1].imshow(hotmask,cmap='binary_r')
                 # ax[1].set_title("Hot Mask")
                 # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
                 # ax[2].set_title("Corrected Image")
-                # plt.tight_layout()
-                # plt.show()
+                # plt_exotic.tight_layout()
+                # plt_exotic.show()
 
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
@@ -2531,11 +2534,11 @@ def main():
                 # #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
                 # timeSortedNames = tsnCopy
 
-                UIprevRPX, UIprevRPY = compStarList[compCounter]
+                exotic_UIprevRPX, exotic_UIprevRPY = compStarList[compCounter]
                 print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
                 log.debug('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
-                refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid(firstImageData, [UIprevRPX, UIprevRPY],
-                                                                                box=10)
+                refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY],
+                                                                                          box=10)
                 print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
                 log.debug('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
 
@@ -2598,7 +2601,7 @@ def main():
                             # Find the target star in the image and get its pixel coordinates if it is the first file
                             if fileNumber == 0:
                                 # Initializing the star location guess as the user inputted pixel coordinates
-                                prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY  # 398, 275, 419, 203
+                                prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY  # 398, 275, 419, 203
                                 prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
                                 prevImageData = imageData  # no shift should be registered
 
@@ -2621,10 +2624,10 @@ def main():
                             prevRPY = prevRPY - yShift
 
                             # set target search area
-                            txmin = int(prevTPX) - distFC  # left
-                            txmax = int(prevTPX) + distFC  # right
-                            tymin = int(prevTPY) - distFC  # top
-                            tymax = int(prevTPY) + distFC  # bottom
+                            txmin = int(prevTPX) - exotic_distFC  # left
+                            txmax = int(prevTPX) + exotic_distFC  # right
+                            tymin = int(prevTPY) - exotic_distFC  # top
+                            tymax = int(prevTPY) + exotic_distFC  # bottom
 
                             # boolean that represents if either the target or comp star gets too close to the detector
                             driftBool = False
@@ -2645,10 +2648,10 @@ def main():
                                 # mask off the rest of timeSortedNames and then ignore the rest of the procedure until
 
                             # Set reference search area
-                            rxmin = int(prevRPX) - distFC  # left
-                            rxmax = int(prevRPX) + distFC  # right
-                            rymin = int(prevRPY) - distFC  # top
-                            rymax = int(prevRPY) + distFC  # bottom
+                            rxmin = int(prevRPX) - exotic_distFC  # left
+                            rxmax = int(prevRPX) + exotic_distFC  # right
+                            rymin = int(prevRPY) - exotic_distFC  # top
+                            rymax = int(prevRPY) + exotic_distFC  # bottom
 
                             # check if the reference is too close to the edge of the detector
                             if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
@@ -2701,7 +2704,7 @@ def main():
                                     tx, ty, tamplitude, tsigX, tsigY, toff = target_fits[fileNumber]
                                 else:
                                     tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, targPos,
-                                                                                          init=myPriors, box=distFC)
+                                                                                                init=myPriors, box=exotic_distFC)
                                     target_fits[fileNumber] = [tx, ty, tamplitude, tsigX, tsigY, toff]
 
                                 currTPX = tx
@@ -2719,7 +2722,7 @@ def main():
                                     rx, ry, ramplitude, rsigX, rsigY, roff = ref_fits[fileNumber]
                                 else:
                                     rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY],
-                                                                                          init=myRefPriors, box=distFC)
+                                                                                                init=myRefPriors, box=exotic_distFC)
                                     ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff]
                                 currRPX = rx
                                 currRPY = ry
@@ -3040,7 +3043,7 @@ def main():
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            imscale = get_pixel_scale(hdulWCS, wcsFile, imageheader, infoDict['pixel_scale'])
+            imscale = get_pixel_scale(hdulWCS, wcsFile, imageheader, exotic_infoDict['pixel_scale'])
             if hdulWCS:
                 hdulWCS.close()  # close stream
                 del hdulWCS
@@ -3051,39 +3054,39 @@ def main():
             FORwidth = pltx[1]-pltx[0]
             plty = [min([finYTargCent[0], finYRefCent[0]])-picframe, max([finYTargCent[0], finYRefCent[0]])+picframe]
             FORheight = plty[1]-plty[0]
-            fig, ax = plt.subplots()
-            target_circle = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
-            target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture+minAnnulus, color='lime', fill=False, ls='--', lw=.5)
+            fig, ax = plt_exotic.subplots()
+            target_circle = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
+            target_circle_sky = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus, color='lime', fill=False, ls='--', lw=.5)
             if minAperture >= 0:
-                ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
-                ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture+minAnnulus, color='r', fill=False, ls='--', lw=.5)
+                ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
+                ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
             med_img = median_filter(sortedallImageData[0],(4,4))
-            plt.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(np.log10(med_img),5), vmax=np.percentile(np.log10(med_img),99))
-            plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
+            plt_exotic.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(np.log10(med_img), 5), vmax=np.percentile(np.log10(med_img), 99))
+            plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
             if minAperture >= 0:
                 ax.add_artist(ref_circle)
                 ax.add_artist(ref_circle_sky)
-                plt.plot(finXRefCent[0], finYRefCent[0], '+r')
-            plt.xlabel("x-axis [pixel]")
-            plt.ylabel("y-axis [pixel]")
-            plt.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
-            plt.xlim(pltx[0], pltx[1])
-            plt.ylim(plty[0], plty[1])
+                plt_exotic.plot(finXRefCent[0], finYRefCent[0], '+r')
+            plt_exotic.xlabel("x-axis [pixel]")
+            plt_exotic.ylabel("y-axis [pixel]")
+            plt_exotic.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
+            plt_exotic.xlim(pltx[0], pltx[1])
+            plt_exotic.ylim(plty[0], plty[1])
             ax.grid(False)
-            plt.plot(0, 0, color='lime', ls='-', label='Target')
+            plt_exotic.plot(0, 0, color='lime', ls='-', label='Target')
             if minAperture >= 0:
-                plt.plot(0, 0, color='r', ls='-.', label='Comp')
-            l = plt.legend(frameon=None, framealpha=0)
+                plt_exotic.plot(0, 0, color='r', ls='-.', label='Comp')
+            l = plt_exotic.legend(frameon=None, framealpha=0)
             for text in l.get_texts():
                 text.set_color("white")
-            plt.savefig(infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf", bbox_inches='tight')
-            plt.close()
+            plt_exotic.savefig(exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf", bbox_inches='tight')
+            plt_exotic.close()
 
-            print("\nFOV file saved as: "+infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf\n")
-            log.debug("FOV file saved as: " + infoDict['saveplot'] + "FOV" + pDict['pName'] + infoDict['date'] + ".pdf\n")
+            print("\nFOV file saved as: " + exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf\n")
+            log.debug("FOV file saved as: " + exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf\n")
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in imageheader:
@@ -3104,12 +3107,12 @@ def main():
                 done = False
                 t = threading.Thread(target=animate, daemon=True)
                 t.start()
-                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=infoDict['elev'])
+                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
                 goodTimes = resultos[0]
                 done = True
 
             # Centroid position plots
-            plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes, pDict['pName'], infoDict['date'])
+            plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes, pDict['pName'], exotic_infoDict['date'])
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
@@ -3148,39 +3151,39 @@ def main():
             # PLOTS ROUND 1
             ####################################
             # Make plots of raw target and reference values
-            plt.figure()
-            plt.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
-            plt.xlabel('Time (BJD)')
-            plt.ylabel('Total Flux')
-            # plt.rc('grid', linestyle="-", color='black')
-            # plt.grid(True)
-            plt.title(pDict['pName'] + ' Raw Flux Values ' + infoDict['date'])
-            plt.savefig(infoDict['saveplot'] + 'temp/TargetRawFlux' + pDict['pName'] + infoDict['date'] + '.png')
-            plt.close()
+            plt_exotic.figure()
+            plt_exotic.errorbar(goodTimes, goodTargets, yerr=goodTUnc, linestyle='None', fmt='-o')
+            plt_exotic.xlabel('Time (BJD)')
+            plt_exotic.ylabel('Total Flux')
+            # plt_exotic.rc('grid', linestyle="-", color='black')
+            # plt_exotic.grid(True)
+            plt_exotic.title(pDict['pName'] + ' Raw Flux Values ' + exotic_infoDict['date'])
+            plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/TargetRawFlux' + pDict['pName'] + exotic_infoDict['date'] + '.png')
+            plt_exotic.close()
 
-            plt.figure()
-            plt.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
-            plt.xlabel('Time (BJD)')
-            plt.ylabel('Total Flux')
-            # plt.rc('grid', linestyle="-", color='black')
-            # plt.grid(True)
-            plt.title('Comparison Star Raw Flux Values ' + infoDict['date'])
-            plt.savefig(infoDict['saveplot'] + 'temp/CompRawFlux' + pDict['pName'] + infoDict['date'] + '.png')
-            plt.close()
+            plt_exotic.figure()
+            plt_exotic.errorbar(goodTimes, goodReferences, yerr=goodRUnc, linestyle='None', fmt='-o')
+            plt_exotic.xlabel('Time (BJD)')
+            plt_exotic.ylabel('Total Flux')
+            # plt_exotic.rc('grid', linestyle="-", color='black')
+            # plt_exotic.grid(True)
+            plt_exotic.title('Comparison Star Raw Flux Values ' + exotic_infoDict['date'])
+            plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/CompRawFlux' + pDict['pName'] + exotic_infoDict['date'] + '.png')
+            plt_exotic.close()
 
             # Plots final reduced light curve (after the 3 sigma clip)
-            plt.figure()
-            plt.errorbar(goodTimes, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
-            plt.xlabel('Time (BJD)')
-            plt.ylabel('Normalized Flux')
-            # plt.rc('grid', linestyle="-", color='black')
-            # plt.grid(True)
-            plt.title(pDict['pName'] + ' Normalized Flux vs. Time ' + infoDict['date'])
-            plt.savefig(infoDict['saveplot'] + 'NormalizedFluxTime' + pDict['pName'] + infoDict['date'] + '.png')
-            plt.close()
+            plt_exotic.figure()
+            plt_exotic.errorbar(goodTimes, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
+            plt_exotic.xlabel('Time (BJD)')
+            plt_exotic.ylabel('Normalized Flux')
+            # plt_exotic.rc('grid', linestyle="-", color='black')
+            # plt_exotic.grid(True)
+            plt_exotic.title(pDict['pName'] + ' Normalized Flux vs. Time ' + exotic_infoDict['date'])
+            plt_exotic.savefig(exotic_infoDict['saveplot'] + 'NormalizedFluxTime' + pDict['pName'] + exotic_infoDict['date'] + '.png')
+            plt_exotic.close()
 
             # Save normalized flux to text file prior to MCMC
-            outParamsFile = open(infoDict['saveplot'] + 'NormalizedFlux' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
+            outParamsFile = open(exotic_infoDict['saveplot'] + 'NormalizedFlux' + pDict['pName'] + exotic_infoDict['date'] + '.txt', 'w+')
             outParamsFile.write(str("BJD") + ',' + str("Norm Flux") + ',' + str("Norm Err") + ',' + str("AM") + '\n')
             for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
                 outParamsFile.write(str(round(ti, 8)) + ',' + str(round(fi, 7)) + ',' + str(round(erri, 6)) + ',' + str(round(ami, 2)) + '\n')
@@ -3221,7 +3224,7 @@ def main():
                 else:
                     formatEntered = True
             timeFormat = (timeFormat.upper()).strip()
-            goodTimes = timeConvert(goodTimes, timeFormat, pDict, infoDict)
+            goodTimes = timeConvert(goodTimes, timeFormat, pDict, exotic_infoDict)
 
             #Ask user for flux units and convert to flux if in magnitude/millimagnitude
             validFluxFormats = ['flux', "magnitude", "millimagnitude"]
@@ -3330,7 +3333,7 @@ def main():
         ########################
         # PLOT FINAL LIGHT CURVE
         ########################
-        f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
+        f, (ax_lc, ax_res) = plt_exotic.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
 
         ax_lc.set_title(pDict['pName'])
         ax_res.set_xlabel('Phase')
@@ -3382,22 +3385,22 @@ def main():
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         try:
-            f.savefig(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + ".pdf", bbox_inches="tight")
+            f.savefig(exotic_infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + exotic_infoDict['date'] + ".pdf", bbox_inches="tight")
         except AttributeError:
-            f.savefig(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + ".png", bbox_inches="tight")
-        plt.close()
+            f.savefig(exotic_infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + exotic_infoDict['date'] + ".png", bbox_inches="tight")
+        plt_exotic.close()
 
         ###################################################################################
 
         # triangle plot
         fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        fig.savefig(infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], infoDict['date']))
-        plt.close()
+        fig.savefig(exotic_infoDict['saveplot'] + 'temp/Triangle_{}_{}.png'.format(pDict['pName'], exotic_infoDict['date']))
+        plt_exotic.close()
 
 
         # write output to text file
-        outParamsFile = open(infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + infoDict['date'] + '.csv', 'w+')
+        outParamsFile = open(exotic_infoDict['saveplot'] + 'FinalLightCurve' + pDict['pName'] + exotic_infoDict['date'] + '.csv', 'w+')
         outParamsFile.write('# FINAL TIMESERIES OF ' + pDict['pName'] + '\n')
         outParamsFile.write('# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n')
 
@@ -3429,7 +3432,7 @@ def main():
 
         # TODO write as json
         # write output to text file
-        outParamsFile = open(infoDict['saveplot'] + 'FinalParams' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
+        outParamsFile = open(exotic_infoDict['saveplot'] + 'FinalParams' + pDict['pName'] + exotic_infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('FINAL PLANETARY PARAMETERS\n')
         outParamsFile.write('')
         outParamsFile.write(' Mid-Transit Time: ' + str(round_to_2(myfit.parameters['tmid'],myfit.errors['tmid'])) + ' +/- ' + str(round_to_2(myfit.errors['tmid'])) + ' (BJD)\n')
@@ -3440,27 +3443,27 @@ def main():
         outParamsFile.write(' airmass coefficient 2: ' + str(round_to_2(myfit.parameters['a2'],myfit.errors['a2'])) + ' +/- ' + str(round_to_2(myfit.errors['a2'])) + '\n')
         outParamsFile.write(' scatter in the residuals of the lightcurve fit is: ' + str( round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))) + '%\n')
         outParamsFile.close()
-        print('\nFinal Planetary Parameters have been saved in ' + infoDict['saveplot'] + ' as '
-              + pDict['pName'] + infoDict['date'] + '.txt' + '\n')
+        print('\nFinal Planetary Parameters have been saved in ' + exotic_infoDict['saveplot'] + ' as '
+              + pDict['pName'] + exotic_infoDict['date'] + '.txt' + '\n')
 
         # AAVSO Format
-        userCode = infoDict['aavsonum']
-        secuserCode = infoDict['secondobs']
+        userCode = exotic_infoDict['aavsonum']
+        secuserCode = exotic_infoDict['secondobs']
         # else:
-        outParamsFile = open(infoDict['saveplot'] + 'AAVSO' + pDict['pName'] + infoDict['date'] + '.txt', 'w+')
+        outParamsFile = open(exotic_infoDict['saveplot'] + 'AAVSO' + pDict['pName'] + exotic_infoDict['date'] + '.txt', 'w+')
         outParamsFile.write('#TYPE=EXOPLANET\n')  # fixed
-        outParamsFile.write('#OBSCODE=' + infoDict['aavsonum'] + '\n')  # UI
-        outParamsFile.write('#SECONDARY_OBSCODE=' + infoDict['secondobs'] + '\n')  # UI
+        outParamsFile.write('#OBSCODE=' + exotic_infoDict['aavsonum'] + '\n')  # UI
+        outParamsFile.write('#SECONDARY_OBSCODE=' + exotic_infoDict['secondobs'] + '\n')  # UI
         outParamsFile.write('#SOFTWARE=EXOTIC v' + __version__ + '\n')  # fixed
         outParamsFile.write('#DELIM=,\n')  # fixed
         outParamsFile.write('#DATE_TYPE=BJD_TDB\n')  # fixed
-        outParamsFile.write('#OBSTYPE=' + infoDict['ctype'] + '\n')
+        outParamsFile.write('#OBSTYPE=' + exotic_infoDict['ctype'] + '\n')
         outParamsFile.write('#STAR_NAME=' + pDict['sName'] + '\n')  # code yields
         outParamsFile.write('#EXOPLANET_NAME=' + pDict['pName'] + '\n')  # code yields
-        outParamsFile.write('#BINNING=' + infoDict['pixelbin'] + '\n')  # user input
-        outParamsFile.write('#EXPOSURE_TIME=' + str(infoDict['exposure']) + '\n')  # UI
-        outParamsFile.write('#FILTER=' + infoDict['filter'] + '\n')
-        outParamsFile.write('#NOTES=' + infoDict['notes'] + '\n')
+        outParamsFile.write('#BINNING=' + exotic_infoDict['pixelbin'] + '\n')  # user input
+        outParamsFile.write('#EXPOSURE_TIME=' + str(exotic_infoDict['exposure']) + '\n')  # UI
+        outParamsFile.write('#FILTER=' + exotic_infoDict['filter'] + '\n')
+        outParamsFile.write('#NOTES=' + exotic_infoDict['notes'] + '\n')
         outParamsFile.write('#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n')  # fixed
         outParamsFile.write('#MEASUREMENT_TYPE=Rnflux\n')  # fixed
         # outParamsFile.write('#PRIORS=Period=' + str(planetPeriod) + ' +/- ' + str(ogPeriodErr) + ',a/R*=' + str(

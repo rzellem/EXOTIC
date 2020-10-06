@@ -148,7 +148,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ## Contributing to EXOTIC
 
-EXOTIC is an open-source project that welcomes contributions. Please fork the repository and submit a pull request to the develop branch for your addition(s) to be reviewed. 
+EXOTIC is an open source project that welcomes contributions. Please fork the repository and submit a pull request to the develop branch for your addition(s) to be reviewed. 
 
 ## Citation
 If you use any of these algorithms in your work, please cite our 2020 paper: [Zellem, Pearson, Blaser, et al. 2020](https://ui.adsabs.harvard.edu/abs/2020arXiv200309046Z/abstract) 

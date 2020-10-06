@@ -32,7 +32,8 @@
 
 # -- IMPORTS START ------------------------------------------------------------
 # ########## IMPORTS -- PRELOAD ANIMATION START ##########
-done_flag_exotic_imports = False
+done_flag_animate_exotic = None
+th_animate_exotic = None
 
 import threading
 import time
@@ -42,20 +43,42 @@ import sys
 def animate():
     import itertools
     for c in itertools.cycle(['|', '/', '-', '\\']):
-        if done_flag_exotic_imports:
+        if done_flag_animate_exotic:
             sys.stdout.write('\rThinking ... DONE!')
             sys.stdout.write('\n')
             break
-        sys.stdout.write('\rThinking ' + c)
+        sys.stdout.write('\rThinking ' + c + ' ... ')
         sys.stdout.flush()
-        time.sleep(0.1)
+        time.sleep(0.11)
     sys.stdout.flush()
+
+
+def animate_toggle(enabled=False):
+    """
+    Console feature intended to be run in a single synchronous block.
+    """
+    global done_flag_animate_exotic
+    global th_animate_exotic
+    counter_wait = 0
+    if enabled:
+        done_flag_animate_exotic = False
+        th_animate_exotic = threading.Thread(target=animate, daemon=True)
+        th_animate_exotic.start()
+    else:
+        done_flag_animate_exotic = True
+        if th_animate_exotic is not None:  # kill animate thread before proceeding
+            while th_animate_exotic.is_alive() and counter_wait <= 30:
+                time.sleep(.37)
+                counter_wait += 1
+            th_animate_exotic.join()  # lightest solution
+        th_animate_exotic = None
+    return not done_flag_animate_exotic
 
 
 if __name__ == "__main__":
     print("Importing Python Packages - please wait.")
-    th_animate_exotic = threading.Thread(target=animate, daemon=True)
-    th_animate_exotic.start()
+    animate_toggle(True)
+
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
 import argparse
@@ -121,7 +144,7 @@ try:  # simple version
 except ImportError:  # package import
     from version import __version__
 
-done_flag_exotic_imports = True  # CLOSE PRELOAD ANIMATION
+animate_toggle()  # CLOSE PRELOAD ANIMATION
 # -- IMPORTS END --------------------------------------------------------------
 
 # ################### START PROPERTIES/SETTINGS ############################# #
@@ -1130,14 +1153,12 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 def get_wcs(file, directory):
-    print("\nGetting the plate solution for your imaging file. Please wait.")
-    global done_flag_exotic_imports
-    done_flag_exotic_imports = False
-    th = threading.Thread(target=animate, daemon=True)
-    th.start()
+    log.info("")
+    log.info("Getting the plate solution for your imaging file. Please wait. ...")
+    animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
     wcs_file = wcs_obj.plate_solution()
-    done_flag_exotic_imports = True
+    animate_toggle()
     return wcs_file
 
 
@@ -1818,9 +1839,6 @@ def parse_args():
 def main():
     # TODO use text based interface if no command line arguments
 
-    if th_animate_exotic is not None:  # kill animate thread before proceeding
-        th_animate_exotic.join()  # lightest solution
-
     log.debug("*************************")
     log.debug("EXOTIC reduction log file")
     log.debug("*************************")
@@ -2338,10 +2356,7 @@ def main():
                 if cosmicrayfilter_bool:
                     print("\nFiltering your data for cosmic rays.")
                     log.debug("Filtering your data for cosmic rays.")
-                    global done_flag_exotic_imports
-                    done_flag_exotic_imports = False
-                    th = threading.Thread(target=animate, daemon=True)
-                    th.start()
+                    animate_toggle(True)
                     # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
                     # For now, this is a simple median filter...in the future, should use something more smart later
                     for xi in np.arange(np.shape(sortedallImageData)[-2]):
@@ -2354,7 +2369,7 @@ def main():
                             # while sum(idx) > 0:
                             #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
                             #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
-                    done_flag_exotic_imports = True
+                    animate_toggle()
 
                 # if len(sortedTimeList) == 0:
                 #     print("Error: .FITS files not found in " + directoryP)
@@ -3079,12 +3094,10 @@ def main():
                 # time_barycentre = timesToConvert.tdb + ltt_bary
                 # resultos = time_barycentre.value
                 # goodTimes = resultos
-                done_flag_exotic_imports = False
-                th = threading.Thread(target=animate, daemon=True)
-                th.start()
+                animate_toggle(True)
                 resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
                 goodTimes = resultos[0]
-                done_flag_exotic_imports = True
+                animate_toggle()
 
             # Centroid position plots
             plotCentroids(finXTargCent, finYTargCent, finXRefCent, finYRefCent, goodTimes, pDict['pName'], exotic_infoDict['date'])

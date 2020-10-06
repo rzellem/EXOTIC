@@ -121,14 +121,16 @@ from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
 
+from astroscrappy import detect_cosmics
+
 # Image alignment import
 import astroalign as aa
 
 # Nonlinear Limb Darkening Calculations import
 try:  # module import
-    from .api.gaelLDNL import createldgrid
+    from .api.gaelLDNL import LimbDarkening
 except ImportError:  # package import
-    from api.gaelLDNL import createldgrid
+    from api.gaelLDNL import LimbDarkening
 
 # photometry
 from photutils import CircularAperture
@@ -226,6 +228,28 @@ class NASAExoplanetArchive:
             return pandas.read_csv(StringIO(response.text))
         else:
             return response.text
+
+    def resolve_name(self):
+        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+        uri_ipac_query = {
+            # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
+            "select": "pl_name,hostname",
+            "from": "ps",  # Table name
+            "where": "tran_flag = 1",
+            "order by": "pl_pubdate desc",
+            "format": "csv"
+        }
+
+        if self.planet:
+            uri_ipac_query["where"] += " and pl_name = '{}'".format(self.planet)
+
+        default = self._tap_query(uri_ipac_base, uri_ipac_query)
+
+        if len(default) == 0:
+            return False
+        else:
+            return True
+         
 
     @retry(stop=stop_after_attempt(3),
            wait=wait_exponential(multiplier=1, min=17, max=1024),
@@ -962,151 +986,20 @@ def check_imaging_files(directory, filename):
             writelogfile.write("\nEnter the directory path where " + filename + " files are located: " + directory)
 
 
-class LimbDarkening:
+# Checks for corrupted FITS files
+def check_file_corruption(files):
 
-    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
-                 logg=None, loggpos=None, loggneg=None, wl_min=None, wl_max=None, filter_type=None):
-        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
-                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
-                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
-        self.filter_type = filter_type
-        self.wl_min = wl_min
-        self.wl_max = wl_max
-        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
-
-        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
-                     # Near-Infrared
-        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
-                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
-
-                     # Sloan
-                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
-                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
-                     ('Sloan z', 'SZ'): (841.20, 978.20),
-
-                     # Stromgren
-                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
-                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
-
-                     # Johnson
-                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
-                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
-                     ('Johnson I', 'IJ'): (780.00, 1020.00),
-
-                     # Cousins
-                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
-
-                     # MObs Clear Filter, Source: Martin Fowler
-                     ('MObs CV', 'CV'): (350.00, 850.00),
-
-                     # Astrodon CBB: George Silvis: https://astrodon.com/products/astrodon-exo-planet-filter/
-                     ('Astrodon ExoPlanet-BB', 'CBB'): (500.00, 1000.00),
-
-                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
-                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
-                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
-
-    def nonlinear_ld(self):
-        self._standard_list()
-
-        if self.filter_type and not (self.wl_min or self.wl_max):
-            self._standard()
-        elif self.wl_min or self.wl_max:
-            self._custom()
-        else:
-            option = user_input('\nWould you like EXOTIC to calculate your limb darkening parameters '
-                                'with uncertainties? (y/n): ', type_=str, val1='y', val2='n')
-            writelogfile.write('\nWould you like EXOTIC to calculate your limb darkening parameters '
-                                'with uncertainties? (y/n): '+str(option))
-
-            if option == 'y':
-                opt = user_input('Please enter 1 to use a standard filter or 2 for a customized filter: ',
-                                 type_=int, val1=1, val2=2)
-                writelogfile.write('\nPlease enter 1 to use a standard filter or 2 for a customized filter: '+str(opt))
-                if opt == 1:
-                    self._standard()
-                elif opt == 2:
-                    self._custom()
-            else:
-                self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type
-
-    def _standard_list(self):
-        print('\n\n***************************')
-        print('Limb Darkening Coefficients')
-        print('***************************')
-        writelogfile.write('\n\n***************************'
-                            '\nLimb Darkening Coefficients'
-                            '\n***************************')
-        print('\nStandard bands available to filter for limb darkening parameters (https://www.aavso.org/filters)'
-              '\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n')
-        for key, value in self.fwhm.items():
-            print('\t{}: {} - ({:.2f}-{:.2f}) nm'.format(key[1], key[0], value[0], value[1]))
-
-    def _standard(self):
-        while True:
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', category=AstropyWarning)
+        for file in files:
             try:
-                if not self.filter_type:
-                    self.filter_type = input('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): ')
-                    writelogfile.write('\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ): '+str(self.filter_type))
-                for key, value in self.fwhm.items():
-                    if self.filter_type in (key[0], key[1]) and self.filter_type != 'N/A':
-                        self.filter_type = (key[0], key[1])
-                        break
-                else:
-                    raise KeyError
-                break
-            except KeyError:
-                print('\nError: The entered filter is not in the provided list of standard filters.')
-                writelogfile.write('\nError: The entered filter is not in the provided list of standard filters.')
-                self.filter_type = None
-
-        self.wl_min = self.fwhm[self.filter_type][0]
-        self.wl_max = self.fwhm[self.filter_type][1]
-        self.filter_type = self.filter_type[1]
-        self._calculate_ld()
-
-    def _custom(self):
-        self.filter_type = 'N/A'
-        if not self.wl_min:
-            self.wl_min = float(input('FWHM Minimum wavelength (nm): '))
-            writelogfile.write('\nFWHM Minimum wavelength (nm): '+str(self.wl_min))
-        if not self.wl_max:
-            self.wl_max = float(input('FWHM Maximum wavelength (nm): '))
-            writelogfile.write('\nFWHM Maximum wavelength (nm): ' + str(self.wl_max))
-        self._calculate_ld()
-
-    def _user_entered(self):
-        self.filter_type = input('\nEnter in your filter name: ')
-        ld_0 = user_input('\nEnter in your first nonlinear term: ', type_=float)
-        ld0_unc = user_input('Enter in your first nonlinear term uncertainty: ', type_=float)
-        ld_1 = user_input('\nEnter in your second nonlinear term: ', type_=float)
-        ld1_unc = user_input('Enter in your second nonlinear term uncertainty: ', type_=float)
-        ld_2 = user_input('\nEnter in your third nonlinear term: ', type_=float)
-        ld2_unc = user_input('Enter in your third nonlinear term uncertainty: ', type_=float)
-        ld_3 = user_input('\nEenter in your fourth nonlinear term: ', type_=float)
-        ld3_unc = user_input('Enter in your fourth nonlinear term uncertainty: ', type_=float)
-        self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
-
-        writelogfile.write('\nFilter name: ' + str(self.filter_type))
-        writelogfile.write("\nUser-defined nonlinear limb-darkening coefficients: {}+/-{}, {}+/-{}, {}+/-{}, {}+/-{}",format(ld_0, ld0_unc, ld_1, ld1_unc, ld_2, ld2_unc, ld_3, ld3_unc))
-
-    def _calculate_ld(self):
-        self.wl_min = [self.wl_min / 1000]
-        self.wl_max = [self.wl_max / 1000]
-        ld_params = createldgrid(np.array(self.wl_min), np.array(self.wl_max), self.priors)
-        self.ld0 = ld_params['LD'][0][0], ld_params['ERR'][0][0]
-        self.ld1 = ld_params['LD'][1][0], ld_params['ERR'][1][0]
-        self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
-        self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
-
-        writelogfile.write("\nEXOTIC-calculated nonlinear limb-darkening coefficients: ")
-        writelogfile.write("\n"+str(ld_params['LD'][0][0]) + " +/- " + str(ld_params['ERR'][0][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][1][0]) + " +/- " + str(ld_params['ERR'][1][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][2][0]) + " +/- " + str(ld_params['ERR'][2][0]))
-        writelogfile.write("\n"+str(ld_params['LD'][3][0]) + " +/- " + str(ld_params['ERR'][3][0]))
+                with fits.open(file, checksum=True, ignore_missing_end=True) as hdul:
+                    pass
+            except OSError as e:
+                print('Found corrupted file and removing from reduction: {}, ({})'.format(file,e))
+                writelogfile.write('\nFound corrupted file and removing from reduction: {}, ({})'.format(file,e))
+                files.remove(file)
+        return files
 
 
 def check_wcs(fits_file, save_directory, plate_opt):
@@ -1441,14 +1334,14 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imscaleunits = header.comments['PIXSCALE']
         imagescale = imscaleunits + ": " + str(imscalen)
     elif pixel_init:
-        imagescale = "Image scale: " + pixel_init
+        imagescale = "Image scale: " + str(pixel_init)
     else:
         print("Cannot find the pixel scale in the image header.")
         imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). ")
-        imagescale = "Image scale: " + imscalen
+        imagescale = "Image scale: " + str(imscalen)
 
         writelogfile.write("Cannot find the pixel scale in the image header.")
-        writelogfile.write("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). "+imscalen)
+        writelogfile.write("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). "+str(imscalen))
     return imagescale
 
 
@@ -1561,7 +1454,6 @@ def getFlux(data, xc, yc, r=5, dr=5):
     phot_table = aperture_photometry(bdata, apertures, method='exact')
 
     return float(phot_table['aperture_sum']), bgflux
-
 
 def skybg_phot(data, xc, yc, r=10, dr=5, ptol=85, debug=False):
     # create a crude annulus to mask out bright background pixels
@@ -1835,17 +1727,17 @@ def realTimeReduce(i, target_name):
 
 
 def parse_args():
-    # TODO
     parser = argparse.ArgumentParser()
 
-    help_ = "Choose a target to process"
-    parser.add_argument("-t", "--target", help=help_, type=str, default="all")
+    help_ = "choose an inits file"
+    parser.add_argument("-i", "--init", help=help_, type=str, default="")
 
     return parser.parse_args()
 
-
 def main():
-    # TODO use text based interface if no command line arguments
+
+    # command line args
+    args = parse_args()
 
     print('\n')
     print('*************************************************************')
@@ -1875,7 +1767,6 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-
     realTimeAns = user_input('Enter "1" for Real Time Reduction or "2" for for Complete Reduction: ', type_=int, val1=1, val2=2)
 
     #############################
@@ -1959,14 +1850,14 @@ def main():
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
         fitsortext = user_input('Enter "1" to perform aperture photometry on fits files or "2" to start '
-                                'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
+                                    'with pre-reduced data in a .txt format: ', type_=int, val1=1, val2=2)
 
         writelogfile.write('\nEnter "1" to perform aperture photometry on fits files or "2" to start '
                                 '\nwith pre-reduced data in a .txt format: '+str(fitsortext))
 
         fileorcommandline = user_input('How would you like to input your initial parameters? '
-                                       'Enter "1" to use the Command Line or "2" to use an input file: ',
-                                       type_=int, val1=1, val2=2)
+                                        'Enter "1" to use the Command Line or "2" to use an input file: ',
+                                        type_=int, val1=1, val2=2)
 
         writelogfile.write('\n\nHow would you like to input your initial parameters? '
                                        '\nEnter "1" to use the Command Line or "2" to use an input file: '+str(fileorcommandline))
@@ -2363,31 +2254,47 @@ def main():
                 # else:
                 #     cosmicrayfilter_bool = False
 
-                # The cosmic ray filter isn't really working for now...so let's just turn it off
-                cosmicrayfilter_bool = False
+                # TODO add option to inits file
+                cosmicrayfilter_bool = True
                 if cosmicrayfilter_bool:
                     print("\nFiltering your data for cosmic rays.")
                     writelogfile.write("\nFiltering your data for cosmic rays.")
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [UIprevTPX, UIprevTPY], box=10)
+                    psffwhm = 2.355*(targsigX+targsigY)/2
+                    writelogfile.write(" FWHM in 1st image: {:.2f} px".format(np.round(psffwhm,2)))
+                    writelogfile.write(" STDEV before: {:.2f}".format(np.std(sortedallImageData,0).mean()))
+                    
+                    # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
+                    
                     done = False
                     t = threading.Thread(target=animate, daemon=True)
                     t.start()
-                    # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
-                    # For now, this is a simple median filter...in the future, should use something more smart later
-                    for xi in np.arange(np.shape(sortedallImageData)[-2]):
-                        # print("Filtering for cosmic rays in image row: "+str(xi)+"/"+str(np.shape(sortedallImageData)[-2]))
-                        for yi in np.arange(np.shape(sortedallImageData)[-1]):
-                            # Simple median filter
-                            idx = np.abs(sortedallImageData[:, xi, yi]-np.nanmedian(sortedallImageData[:, xi, yi])) > 5*np.nanstd(sortedallImageData[:, xi, yi])
-                            sortedallImageData[idx, xi, yi] = np.nanmedian(sortedallImageData[:, xi, yi])
-                            # Filter iteratively until no more 5sigma outliers exist - not currently working, so keep commented out for now
-                            # while sum(idx) > 0:
-                            #     # sortedallImageData[idx,xi,yi] = np.nanmedian(sortedallImageData[:,xi,yi])
-                            #     idx = np.abs(sortedallImageData[:,xi,yi]-np.nanmedian(sortedallImageData[:,xi,yi])) >  5*np.nanstd(sortedallImageData[:,xi,yi])
-                    done = True
+                    
+                    for ii in range(len(sortedallImageData)):
 
-                # if len(sortedTimeList) == 0:
-                #     print("Error: .FITS files not found in " + directoryP)
-                #     sys.exit()
+                        # remove nans                        
+                        nanmask = np.isnan(sortedallImageData[ii])
+                        if nanmask.sum() > 0:
+                            bg = generic_filter(sortedallImageData[ii],np.nanmedian,(3,3))
+                            sortedallImageData[ii][nanmask] = bg[nanmask]
+                        
+                        mask, clean = detect_cosmics(sortedallImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)                        
+                        sortedallImageData[ii] = clean
+                        
+                        # TODO move to function
+                        # if ii == 0:
+                        # f,ax = plt.subplots(1,3,figsize=(18,8))
+                        # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[0].set_title("Original Data")
+                        # ax[1].imshow(mask,cmap='binary_r')
+                        # ax[1].set_title("Cosmic Ray Mask")
+                        # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[2].set_title("Corrected Image")
+                        # plt.tight_layout()
+                        # plt.show()
+
+                    done = True
+                writelogfile.write(" STDEV after: {:.2f}".format(np.std(sortedallImageData,0).mean()))
 
                 # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 
@@ -2466,62 +2373,7 @@ def main():
                         break
                 else:
                     break
-
-            # TODO move to a function
-            # remove hot pixels
-            for ii in range(len(sortedallImageData)):
-                # bg = median_filter(sortedallImageData[ii],(4,4))
-                # kernel = Gaussian2DKernel(x_stddev=1)
-                # bg2 = convolve(sortedallImageData[ii],kernel)
-                # res = sortedallImageData[ii] - bg2
-                # mask = np.abs(res) > 3*np.std(res)
-                # std = np.nanmedian([np.nanstd(np.random.choice(res.flatten(),1000)) for i in range(250)])
-                # smask = np.abs(res) > 3*std # removes portions of the psf
-
-                # computationally expensive
-                # std = generic_filter(sortedallImageData[ii], np.std, (5,5))
-                # mask = np.abs(sortedallImageData[ii] - bg) > 3*std
-                # bgimg = np.copy(sortedallImageData[ii])
-                # bgimg[mask] = bg[mask]
-
-                # diagnostic debug
-                # ogdata = np.copy(sortedallImageData[ii])
-
-                # remove nans
-                nanmask = np.isnan(sortedallImageData[ii])
-                if nanmask.sum() > 0:
-                    bg = generic_filter(sortedallImageData[ii],np.nanmedian,(4,4))
-                else:
-                    # faster
-                    bg = median_filter(sortedallImageData[ii],(4,4))
-                sortedallImageData[ii][nanmask] = bg[nanmask]
-
-                # find and remove all single pixel blocks brighter than 98th percentile
-                bmask = binary_closing(sortedallImageData[ii] > np.percentile(sortedallImageData[ii], 98))
-                bmask1 = binary_dilation(binary_erosion(binary_closing(bmask)))
-                hotmask = np.logical_xor(bmask,bmask1)
-                labels, nlabel = label(hotmask)
-                sortedallImageData[ii][hotmask] = bg[hotmask]
-
-                # kinda slow
-                # replace hot pixels with average of neighboring pixels
-                # for j in range(1,nlabel+1):
-                #     mmask = labels==j  # mini mask
-                #     smask = binary_dilation(mmask)  # dilated mask
-                #     bmask = np.logical_xor(smask,mmask)  # bounding pixels
-                #     sortedallImageData[ii][mmask] = np.mean(sortedallImageData[ii][bmask])  # replace
-
-                # TODO move to function
-                # f,ax = plt.subplots(1,3,figsize=(18,8))
-                # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                # ax[0].set_title("Original Data")
-                # ax[1].imshow(hotmask,cmap='binary_r')
-                # ax[1].set_title("Hot Mask")
-                # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                # ax[2].set_title("Corrected Image")
-                # plt.tight_layout()
-                # plt.show()
-
+            
             # Image Alignment
             sortedallImageData, boollist = image_alignment(sortedallImageData)
 
@@ -2754,7 +2606,7 @@ def main():
 
                                 else:
                                     # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
-
+                                    
                                     # gets the flux value of the target star and subtracts the background light
                                     tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, abs(apertureR), annulusR)
                                     targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
@@ -3048,7 +2900,7 @@ def main():
             # outParamsFile.write('#RA, Dec, Target = 0 / Ref Star = 1, Centroid [pix]\n')
             # outParamsFile.write(raStr+","+decStr+",0,"+str(minAperture)+"\n")
             # outParamsFile.close()
-
+ 
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)

@@ -17,3 +17,6 @@ scikit-image~=0.17.2
 scipy~=1.4
 tenacity~=5.1
 semantic_version>=2.8.5
+holoviews~=1.13
+panel~=0.9
+astroscrappy~=1.0

@@ -57,13 +57,12 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ```json
 {
-    "user_info": [
-        {
-            "Directory with FITS files": "../sample-data/HatP32Dec202017",
-            "Directory to Save Plots": "../output",
-            "Directory of Flats": "n",
-            "Directory of Darks": "n",
-            "Directory of Biases": "n",
+    "user_info": {
+            "Directory with FITS files": "sample-data/HatP32Dec202017",
+            "Directory to Save Plots": "sample-data/",
+            "Directory of Flats": null,
+            "Directory of Darks": null,
+            "Directory of Biases": null,
 
             "AAVSO Observer Code (N/A if none)": "RTZ",
             "Secondary Observer Codes (N/A if none)": "N/A",
@@ -72,21 +71,21 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Obs. Latitude": "+31.68",
             "Obs. Longitude": "-110.88",
             "Obs. Elevation (meters)": 2616,
-
             "Camera Type (CCD or DSLR)": "CCD",
             "Pixel Binning": "1x1",
             "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",
+
+            "Plate Solution? (y/n)": "n",
+
             "Target Star X & Y Pixel": [424, 286],
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
-        }
-    ],
-    "planetary_parameters": [
-        {
-            "Target Star RA (hh:mm:ss)": "02:04:10",
-            "Target Star Dec (+/-hh:mm:ss)": "+46:41:23",
-            "Planet's Name": "HAT-P-32 b",
-            "Host Star's Name": "HAT-P-32",
+    },
+    "planetary_parameters": {
+            "Target Star RA": "02:04:10",
+            "Target Star Dec": "+46:41:23",
+            "Planet Name": "HAT-P-32 b",
+            "Host Star Name": "HAT-P-32",
             "Orbital Period (days)": 2.1500082,
             "Orbital Period Uncertainty": 1.3e-07,
             "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
@@ -107,8 +106,12 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Star Surface Gravity (log(g))": 4.22,
             "Star Surface Gravity (+) Uncertainty": 0.04,
             "Star Surface Gravity (-) Uncertainty": -0.04
-        }
-    ]
+    },
+    "optional_info": {
+            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
+            "Filter Minimum Wavelength (nm)": null,
+            "Filter Maximum Wavelength (nm)": null
+    }
 }
 ```
 
@@ -145,7 +148,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ## Contributing to EXOTIC
 
-Please create an issue and track the changes with a new branch that has the same name as the issue number
+EXOTIC is an open-source project that welcomes contributions. Please fork the repository and submit a pull request to the develop branch for your addition(s) to be reviewed. 
 
 ## Citation
 If you use any of these algorithms in your work, please cite our 2020 paper: [Zellem, Pearson, Blaser, et al. 2020](https://ui.adsabs.harvard.edu/abs/2020arXiv200309046Z/abstract) 

@@ -1174,23 +1174,23 @@ class PlateSolution:
     def plate_solution(self):
         session = self._login()
         if not session:
-            return PlateSolution.login_fail()
+            return PlateSolution.fail('Login')
 
         sub_id = self._upload(session)
         if not sub_id:
-            return PlateSolution.upload_fail()
+            return PlateSolution.fail('Upload')
 
         sub_url = self._get_url('submissions/%s' % sub_id)
         job_id = self._sub_status(sub_url)
         if not job_id:
-            return PlateSolution.sub_fail()
+            return PlateSolution.fail('Submission ID')
 
         job_url = self._get_url('jobs/%s' % job_id)
         download_url = self.apiurl.replace('/api/', '/new_fits_file/%s/' % job_id)
         wcs_file = os.path.join(self.directory, 'wcs_image.fits')
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
-            return PlateSolution.job_fail()
+            return PlateSolution.fail('Job Status')
         else:
             print('\n\nSuccess. ')
             log.debug("WCS file creation successful.")
@@ -1248,31 +1248,10 @@ class PlateSolution:
         return False
 
     @staticmethod
-    def login_fail():
+    def fail(error_type):
         log.info("")
-        log.info('WARNING: After multiple attempts, EXOTIC could not Login to nova.astrometry.net. '
-                 'EXOTIC will continue reducing data without a plate solution.')
-        return False
-
-    @staticmethod
-    def upload_fail():
-        log.info("")
-        log.info('WARNING: After multiple attempts, EXOTIC could not Upload to nova.astrometry.net. '
-                 'EXOTIC will continue reducing data without a plate solution.')
-        return False
-
-    @staticmethod
-    def sub_fail():
-        log.info("")
-        log.info('WARNING: After multiple attempts, EXOTIC could did not receive a Submission ID from '
-                 'nova.astrometry.net. EXOTIC will continue reducing data without a plate solution.')
-        return False
-
-    @staticmethod
-    def job_fail():
-        log.info("")
-        log.info('WARNING: After multiple attempts, EXOTIC could did not receive a Job Status from '
-                 'nova.astrometry.net. EXOTIC will continue reducing data without a plate solution.')
+        log.info('WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net'
+                 f' due to {error_type}. EXOTIC will continue reducing data without a plate solution.')
         return False
 
 

@@ -1,3 +1,4 @@
+# NOTE: Version information now contained in version.py
 # -- IMPORTS START ------------------------------------------------------------
 # ########## IMPORTS -- PRELOAD ANIMATION START ##########
 done_flag_animate_exotic = None

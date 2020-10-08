@@ -2325,33 +2325,28 @@ def main():
 
                 # Interactive Plotting
                 print('\nIn the new window that just opened up, please select the plot that has the best contrast.')
+                log.debug('\nIn the new window that just opened up, please select the plot that has the best contrast.')
                 fig, axs = plt_exotic.subplots(2, 2)
                 norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LinearStretch())
                 axs[0, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
                 axs[0, 0].set_title("(1) Linear Stretch")
-                # axs[0, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
-                # axs[0, 1].set_title("Oh, hello.")
 
                 norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SquaredStretch())
                 axs[0, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
                 axs[0, 1].set_title("(2) Squared Stretch")
-                # axs[1, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
-                # axs[1, 1].set_title("Oh, hello.")
 
                 norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SqrtStretch())
                 axs[1, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
                 axs[1, 0].set_title("(3) Sqrt Stretch")
-                # axs[2, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
-                # axs[2, 1].set_title("Oh, hello.")
 
                 norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LogStretch())
                 axs[1, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
                 axs[1, 1].set_title("(4) Log Stretch")
-                # axs[3, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
-                # axs[3, 1].set_title("Oh, hello.")
+                plt_exotic.tight_layout()
+                plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/All_FOV_contrasts_' + pDict['pName'] + exotic_infoDict['date'] + '.png')
                 fig.show()
 
-                stretchnum = user_input('Please select your stretching (1, 2, 3, or 4): ', type_=str, val1='1',
+                stretchnum = user_input('Please select your stretching (1 for Linear, 2 for Squared, 3 for Sqrt, or 4 for Log): ', type_=str, val1='1',
                                         val2='2', val3='3', val4='4')
                 if stretchnum == '1':
                     print("You have selected Linear Stretch.")
@@ -3039,9 +3034,9 @@ def main():
                 ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
                 ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
-            # med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
+            med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
             norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
-            plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+            plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
             plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)
@@ -3058,7 +3053,7 @@ def main():
             plt_exotic.plot(0, 0, color='lime', ls='-', label='Target')
             if minAperture >= 0:
                 plt_exotic.plot(0, 0, color='r', ls='-.', label='Comp')
-            l = plt_exotic.legend(frameon=None, framealpha=0)
+            l = plt_exotic.legend(frameon=None, framealpha=0.1)
             for text in l.get_texts():
                 text.set_color("white")
             plt_exotic.savefig(exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf", bbox_inches='tight')

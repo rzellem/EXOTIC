@@ -157,7 +157,7 @@ class NASAExoplanetArchive:
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
     def planet_info(self):
-        log.info(f"Looking up {self.planet}- please wait. ...")
+        log.info(f"Looking up {self.planet}. Please wait. ...")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
         if not candidate:
@@ -256,7 +256,7 @@ class NASAExoplanetArchive:
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
-            target = input(f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and "
+            target = input(f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and spacing and"
                            "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
             if target.strip().lower() == 'candidate':
                 target = input("\nPlease enter candidate planet's name: ")
@@ -684,9 +684,32 @@ class InitializationFile:
         log.debug('Please enter the size of your pixel (Ex: 5 arcsec/pixel): '+str(self.info['flatsdir']))
 
     def planet(self):
-        self.planet_name = input('\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): ')
-        log.debug(
-            '\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): '+self.planet_name)
+        # self.planet_name = input('\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): ')
+        # log.debug(
+        #     '\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): '+self.planet_name)
+
+        while True:
+            self.planet_name = str(input(
+                "\nPlease enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+            log.debug(
+                "Please enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): " +
+                userpDict['pName'])
+
+            if not userpDict['pName'][-2].isspace():
+                print(
+                    "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
+                log.debug(
+                    "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
+                planetnameconfirm = user_input('\nPlease confirm:\n  (1) ' + userpDict[
+                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ',
+                                               type_=int, val1=1, val2=2)
+                log.debug('\nPlease confirm:\n  (1) ' + userpDict[
+                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ' + str(
+                    planetnameconfirm))
+            else:
+                break
+            if planetnameconfirm == 1:
+                break
 
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
@@ -730,9 +753,9 @@ def check_parameters(init_parameters, parameters):
 
     if different:
         opt = user_input('\nDifference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
-                         '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \n(please enter 1 or 2) ', type_=str, val1='1', val2='2')
+                         '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \nPlease enter 1 or 2: ', type_=str, val1='1', val2='2')
         log.debug('Difference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
-                  '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \n(please enter 1 or 2) '+opt)
+                  '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \nPlease enter 1 or 2: '+opt)
 
         if opt == '2':
             return True
@@ -1859,8 +1882,31 @@ def main():
         directoryP = directToWatch
         directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
 
-        targetName = str(input("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-        log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
+        # targetName = str(input("Please Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+        # log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
+
+        while True:
+            targetName = str(input(
+                "\nPlease enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+            log.debug(
+                "Please enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): " +
+                userpDict['pName'])
+
+            if not userpDict['pName'][-2].isspace():
+                print(
+                    "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
+                log.debug(
+                    "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
+                planetnameconfirm = user_input('\nPlease confirm:\n  (1) ' + userpDict[
+                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ',
+                                               type_=int, val1=1, val2=2)
+                log.debug('\nPlease confirm:\n  (1) ' + userpDict[
+                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ' + str(
+                    planetnameconfirm))
+            else:
+                break
+            if planetnameconfirm == 1:
+                break
 
         while True:
             try:
@@ -1969,8 +2015,8 @@ def main():
         if fitsortext == 1:
             # File directory name and initial guess at target and comp star locations on image.
             if fileorcommandline == 1:
-                exotic_infoDict['fitsdir'] = str(input("\nEnter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): "))
-                log.debug("Enter the directory path where imaging files are located. (Example using the sample data: 'sample-data/HatP32Dec202017'): " + str(exotic_infoDict['fitsdir']))
+                exotic_infoDict['fitsdir'] = str(input("\nEnter the directory path where imaging files are located. (Example using the sample data: sample-data/HatP32Dec202017): "))
+                log.debug("Enter the directory path where imaging files are located. (Example using the sample data: sample-data/HatP32Dec202017): " + str(exotic_infoDict['fitsdir']))
 
             exotic_infoDict['fitsdir'], inputfiles = check_imaging_files(exotic_infoDict['fitsdir'], 'imaging')
         else:
@@ -2006,8 +2052,21 @@ def main():
             pass
 
         if fileorcommandline == 1:
-            userpDict['pName'] = str(input("\nEnter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-            log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+userpDict['pName'])
+            while True:
+                userpDict['pName'] = str(input("\nEnter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+                log.debug("Enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+userpDict['pName'])
+
+                if not userpDict['pName'][-2].isspace():
+                    print("The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
+                    log.debug(
+                        "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
+                    planetnameconfirm = user_input('\nPlease confirm:\n  (1) '+userpDict['pName']+' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ', type_=int, val1=1, val2=2)
+                    log.debug('\nPlease confirm:\n  (1) ' + userpDict[
+                        'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: '+str(planetnameconfirm))
+                else:
+                    break
+                if planetnameconfirm==1:
+                    break
 
         nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
         userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()

@@ -57,7 +57,8 @@ import astroalign as aa
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
-from astropy.visualization import astropy_mpl_style
+from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormalize
+from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
@@ -435,7 +436,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
 
 
 # Validate user input
-def user_input(prompt, type_, val1=None, val2=None, val3=None):
+def user_input(prompt, type_, val1=None, val2=None, val3=None, val4=None):
     while True:
         try:
             option = type_(input(prompt))
@@ -450,6 +451,11 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
                 return option
         elif type_ == int and val1 and val2 and val3:
             if option not in (val1, val2, val3):
+                print("Sorry, your response was not valid.")
+            else:
+                return option
+        elif type_ == int and val1 and val2 and val3 and val4:
+            if option not in (val1, val2, val3, val4):
                 print("Sorry, your response was not valid.")
             else:
                 return option
@@ -730,9 +736,9 @@ def check_parameters(init_parameters, parameters):
 
     if different:
         opt = user_input('\nDifference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
-                         '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \n(please enter 1 or 2) ', type_=str, val1='1', val2='2')
+                         '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \nPlease enter 1 or 2: ', type_=str, val1='1', val2='2')
         log.debug('Difference(s) found between initialization file parameters and those scraped by EXOTIC from the NASA Exoplanet Archive. '
-                  '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \n(please enter 1 or 2) '+opt)
+                  '\n Would you like:\n  (1) EXOTIC to adopt of all of your defined parameters or\n  (2) to review the ones scraped from the Archive that differ? \nPlease enter 1 or 2: '+opt)
 
         if opt == '2':
             return True
@@ -2315,6 +2321,55 @@ def main():
                 airMassList = airMassList[np.argsort(timeList)]
                 # sortedTimeList = sorted(timeList)
 
+                plt_exotic.close()
+
+                # Interactive Plotting
+                print('\nIn the new window that just opened up, please select the plot that has the best contrast.')
+                fig, axs = plt_exotic.subplots(2, 2)
+                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LinearStretch())
+                axs[0, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+                axs[0, 0].set_title("(1) Linear Stretch")
+                # axs[0, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
+                # axs[0, 1].set_title("Oh, hello.")
+
+                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SquaredStretch())
+                axs[0, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+                axs[0, 1].set_title("(2) Squared Stretch")
+                # axs[1, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
+                # axs[1, 1].set_title("Oh, hello.")
+
+                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SqrtStretch())
+                axs[1, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+                axs[1, 0].set_title("(3) Sqrt Stretch")
+                # axs[2, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
+                # axs[2, 1].set_title("Oh, hello.")
+
+                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LogStretch())
+                axs[1, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+                axs[1, 1].set_title("(4) Log Stretch")
+                # axs[3, 1].imshow((sortedallImageData[0]), norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile((sortedallImageData[0]), 5), vmax=np.percentile((sortedallImageData[0]), 99))
+                # axs[3, 1].set_title("Oh, hello.")
+                fig.show()
+
+                stretchnum = user_input('Please select your stretching (1, 2, 3, or 4): ', type_=str, val1='1',
+                                        val2='2', val3='3', val4='4')
+                if stretchnum == '1':
+                    print("You have selected Linear Stretch.")
+                    log.debug("You have selected Linear Stretch.")
+                    stretch = LinearStretch()
+                if stretchnum == '2':
+                    print("You have selected Squared Stretch.")
+                    log.debug("You have selected Squared Stretch.")
+                    stretch = SquaredStretch()
+                if stretchnum == '3':
+                    print("You have selected Sqrt Stretch.")
+                    log.debug("You have selected Sqrt Stretch.")
+                    stretch = SqrtStretch()
+                if stretchnum == '4':
+                    print("You have selected Log Stretch.")
+                    log.debug("You have selected Log Stretch.")
+                    stretch = LogStretch()
+
                 # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
                 # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
                 # if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
@@ -2969,13 +3024,14 @@ def main():
             if hdulWCS:
                 hdulWCS.close()  # close stream
                 del hdulWCS
-            imwidth = np.shape(sortedallImageData[0])[1]
-            imheight = np.shape(sortedallImageData[0])[0]
+            # imwidth = np.shape(sortedallImageData[0])[1]
+            # imheight = np.shape(sortedallImageData[0])[0]
             picframe = 10*(minAperture+minAnnulus)
             pltx = [min([finXTargCent[0], finXRefCent[0]])-picframe, max([finXTargCent[0], finXRefCent[0]])+picframe]
-            FORwidth = pltx[1]-pltx[0]
+            # FORwidth = pltx[1]-pltx[0]
             plty = [min([finYTargCent[0], finYRefCent[0]])-picframe, max([finYTargCent[0], finYRefCent[0]])+picframe]
-            FORheight = plty[1]-plty[0]
+            # FORheight = plty[1]-plty[0]
+
             fig, ax = plt_exotic.subplots()
             target_circle = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
             target_circle_sky = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus, color='lime', fill=False, ls='--', lw=.5)
@@ -2983,8 +3039,9 @@ def main():
                 ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
                 ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
-            med_img = median_filter(sortedallImageData[0], (4, 4))
-            plt_exotic.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(np.log10(med_img), 5), vmax=np.percentile(np.log10(med_img), 99))
+            # med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
+            norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
+            plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
             plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
             ax.add_artist(target_circle)
             ax.add_artist(target_circle_sky)

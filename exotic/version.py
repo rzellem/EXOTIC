@@ -45,4 +45,4 @@
 # Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 # https://semver.org, e.g. __version__ = "0.14.4" from the version file import at ./version.py
 # ########################################################################### #
-__version__ = "0.22.0"
+__version__ = "0.23.0"

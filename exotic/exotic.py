@@ -2416,50 +2416,6 @@ def main():
                 airMassList = airMassList[np.argsort(timeList)]
                 # sortedTimeList = sorted(timeList)
 
-                plt_exotic.close()
-
-                # Interactive Plotting
-                print('\nIn the new window that just opened up, please select the plot that has the best contrast.')
-                log.debug('\nIn the new window that just opened up, please select the plot that has the best contrast.')
-                fig, axs = plt_exotic.subplots(2, 2)
-                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LinearStretch())
-                axs[0, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-                axs[0, 0].set_title("(1) Linear Stretch")
-
-                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SquaredStretch())
-                axs[0, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-                axs[0, 1].set_title("(2) Squared Stretch")
-
-                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SqrtStretch())
-                axs[1, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-                axs[1, 0].set_title("(3) Sqrt Stretch")
-
-                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LogStretch())
-                axs[1, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-                axs[1, 1].set_title("(4) Log Stretch")
-                plt_exotic.tight_layout()
-                plt_exotic.savefig(exotic_infoDict['saveplot'] + 'temp/All_FOV_contrasts_' + pDict['pName'] + exotic_infoDict['date'] + '.png')
-                fig.show()
-
-                stretchnum = user_input('Please select your stretching (1 for Linear, 2 for Squared, 3 for Sqrt, or 4 for Log): ', type_=str, val1='1',
-                                        val2='2', val3='3', val4='4')
-                if stretchnum == '1':
-                    print("You have selected Linear Stretch.")
-                    log.debug("You have selected Linear Stretch.")
-                    stretch = LinearStretch()
-                if stretchnum == '2':
-                    print("You have selected Squared Stretch.")
-                    log.debug("You have selected Squared Stretch.")
-                    stretch = SquaredStretch()
-                if stretchnum == '3':
-                    print("You have selected Sqrt Stretch.")
-                    log.debug("You have selected Sqrt Stretch.")
-                    stretch = SqrtStretch()
-                if stretchnum == '4':
-                    print("You have selected Log Stretch.")
-                    log.debug("You have selected Log Stretch.")
-                    stretch = LogStretch()
-
                 # print("\nEXOTIC now has the option to filter the raw images for cosmic rays. Typically, images do not need this filter. However, if you run into an error while running EXOTIC, give this a try. As a heads up, this can take a few minutes.")
                 # cosmicrayfilter = user_input("\nDo you want to filter the raw images for cosmic rays? (y/n): ")
                 # if cosmicrayfilter.lower() == "yes" or cosmicrayfilter.lower() == "y":
@@ -3129,30 +3085,80 @@ def main():
                 ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
                 ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
-            med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
-            norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
-            plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
-            plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
-            ax.add_artist(target_circle)
-            ax.add_artist(target_circle_sky)
-            if minAperture >= 0:
-                ax.add_artist(ref_circle)
-                ax.add_artist(ref_circle_sky)
-                plt_exotic.plot(finXRefCent[0], finYRefCent[0], '+r')
-            plt_exotic.xlabel("x-axis [pixel]")
-            plt_exotic.ylabel("y-axis [pixel]")
-            plt_exotic.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
-            plt_exotic.xlim(pltx[0], pltx[1])
-            plt_exotic.ylim(plty[0], plty[1])
-            ax.grid(False)
-            plt_exotic.plot(0, 0, color='lime', ls='-', label='Target')
-            if minAperture >= 0:
-                plt_exotic.plot(0, 0, color='r', ls='-.', label='Comp')
-            l = plt_exotic.legend(frameon=None, framealpha=0.1)
-            for text in l.get_texts():
-                text.set_color("white")
-            plt_exotic.savefig(exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf", bbox_inches='tight')
             plt_exotic.close()
+
+            # # Interactive Plotting
+            # print('\nIn the new window that just opened up, please select the plot that has the best contrast.')
+            # log.debug('\nIn the new window that just opened up, please select the plot that has the best contrast.')
+            # fig, axs = plt_exotic.subplots(2, 2)
+            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LinearStretch())
+            # axs[0, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+            # axs[0, 0].set_title("(1) Linear Stretch")
+            #
+            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SquaredStretch())
+            # axs[0, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+            # axs[0, 1].set_title("(2) Squared Stretch")
+            #
+            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SqrtStretch())
+            # axs[1, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+            # axs[1, 0].set_title("(3) Sqrt Stretch")
+            #
+            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LogStretch())
+            # axs[1, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+            # axs[1, 1].set_title("(4) Log Stretch")
+            # plt_exotic.tight_layout()
+            # plt_exotic.savefig(
+            #     exotic_infoDict['saveplot'] + 'temp/All_FOV_contrasts_' + pDict['pName'] + exotic_infoDict[
+            #         'date'] + '.png')
+            # fig.show()
+            #
+            # stretchnum = user_input(
+            #     'Please select your stretching (1 for Linear, 2 for Squared, 3 for Sqrt, or 4 for Log): ', type_=str,
+            #     val1='1',
+            #     val2='2', val3='3', val4='4')
+            # if stretchnum == '1':
+            #     print("You have selected Linear Stretch.")
+            #     log.debug("You have selected Linear Stretch.")
+            #     stretch = LinearStretch()
+            # if stretchnum == '2':
+            #     print("You have selected Squared Stretch.")
+            #     log.debug("You have selected Squared Stretch.")
+            #     stretch = SquaredStretch()
+            # if stretchnum == '3':
+            #     print("You have selected Sqrt Stretch.")
+            #     log.debug("You have selected Sqrt Stretch.")
+            #     stretch = SqrtStretch()
+            # if stretchnum == '4':
+            #     print("You have selected Log Stretch.")
+            #     log.debug("You have selected Log Stretch.")
+            #     stretch = LogStretch()
+
+
+            for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
+                med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
+                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
+                plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
+                plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
+                ax.add_artist(target_circle)
+                ax.add_artist(target_circle_sky)
+                if minAperture >= 0:
+                    ax.add_artist(ref_circle)
+                    ax.add_artist(ref_circle_sky)
+                    plt_exotic.plot(finXRefCent[0], finYRefCent[0], '+r')
+                plt_exotic.xlabel("x-axis [pixel]")
+                plt_exotic.ylabel("y-axis [pixel]")
+                plt_exotic.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
+                plt_exotic.xlim(pltx[0], pltx[1])
+                plt_exotic.ylim(plty[0], plty[1])
+                ax.grid(False)
+                plt_exotic.plot(0, 0, color='lime', ls='-', label='Target')
+                if minAperture >= 0:
+                    plt_exotic.plot(0, 0, color='r', ls='-.', label='Comp')
+                l = plt_exotic.legend(frameon=None, framealpha=0.1)
+                for text in l.get_texts():
+                    text.set_color("white")
+                plt_exotic.savefig(exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] +"_"+ str(stretch.__class__).split(".")[-1].split("'")[0] + ".pdf", bbox_inches='tight')
+                plt_exotic.close()
 
             print("\nFOV file saved as: " + exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf\n")
             log.debug("FOV file saved as: " + exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf\n")

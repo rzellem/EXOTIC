@@ -93,7 +93,8 @@ import astroalign as aa
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
-from astropy.visualization import astropy_mpl_style
+from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormalize
+from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
@@ -471,7 +472,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
 
 
 # Validate user input
-def user_input(prompt, type_, val1=None, val2=None, val3=None):
+def user_input(prompt, type_, val1=None, val2=None, val3=None, val4=None):
     while True:
         try:
             option = type_(input(prompt))
@@ -486,6 +487,11 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
                 return option
         elif type_ == int and val1 and val2 and val3:
             if option not in (val1, val2, val3):
+                print("Sorry, your response was not valid.")
+            else:
+                return option
+        elif type_ == int and val1 and val2 and val3 and val4:
+            if option not in (val1, val2, val3, val4):
                 print("Sorry, your response was not valid.")
             else:
                 return option
@@ -3064,13 +3070,14 @@ def main():
             if hdulWCS:
                 hdulWCS.close()  # close stream
                 del hdulWCS
-            imwidth = np.shape(sortedallImageData[0])[1]
-            imheight = np.shape(sortedallImageData[0])[0]
+            # imwidth = np.shape(sortedallImageData[0])[1]
+            # imheight = np.shape(sortedallImageData[0])[0]
             picframe = 10*(minAperture+minAnnulus)
             pltx = [min([finXTargCent[0], finXRefCent[0]])-picframe, max([finXTargCent[0], finXRefCent[0]])+picframe]
-            FORwidth = pltx[1]-pltx[0]
+            # FORwidth = pltx[1]-pltx[0]
             plty = [min([finYTargCent[0], finYRefCent[0]])-picframe, max([finYTargCent[0], finYRefCent[0]])+picframe]
-            FORheight = plty[1]-plty[0]
+            # FORheight = plty[1]-plty[0]
+
             fig, ax = plt_exotic.subplots()
             target_circle = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
             target_circle_sky = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus, color='lime', fill=False, ls='--', lw=.5)
@@ -3078,29 +3085,33 @@ def main():
                 ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
                 ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
-            med_img = median_filter(sortedallImageData[0], (4, 4))
-            plt_exotic.imshow(np.log10(sortedallImageData[0]), origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(np.log10(med_img), 5), vmax=np.percentile(np.log10(med_img), 99))
-            plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
-            ax.add_artist(target_circle)
-            ax.add_artist(target_circle_sky)
-            if minAperture >= 0:
-                ax.add_artist(ref_circle)
-                ax.add_artist(ref_circle_sky)
-                plt_exotic.plot(finXRefCent[0], finYRefCent[0], '+r')
-            plt_exotic.xlabel("x-axis [pixel]")
-            plt_exotic.ylabel("y-axis [pixel]")
-            plt_exotic.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
-            plt_exotic.xlim(pltx[0], pltx[1])
-            plt_exotic.ylim(plty[0], plty[1])
-            ax.grid(False)
-            plt_exotic.plot(0, 0, color='lime', ls='-', label='Target')
-            if minAperture >= 0:
-                plt_exotic.plot(0, 0, color='r', ls='-.', label='Comp')
-            l = plt_exotic.legend(frameon=None, framealpha=0)
-            for text in l.get_texts():
-                text.set_color("white")
-            plt_exotic.savefig(exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf", bbox_inches='tight')
             plt_exotic.close()
+
+            for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
+                med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
+                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
+                plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
+                plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
+                ax.add_artist(target_circle)
+                ax.add_artist(target_circle_sky)
+                if minAperture >= 0:
+                    ax.add_artist(ref_circle)
+                    ax.add_artist(ref_circle_sky)
+                    plt_exotic.plot(finXRefCent[0], finYRefCent[0], '+r')
+                plt_exotic.xlabel("x-axis [pixel]")
+                plt_exotic.ylabel("y-axis [pixel]")
+                plt_exotic.title("FOV for " + pDict['pName'] + "\n(" + imscale + ")")
+                plt_exotic.xlim(pltx[0], pltx[1])
+                plt_exotic.ylim(plty[0], plty[1])
+                ax.grid(False)
+                plt_exotic.plot(0, 0, color='lime', ls='-', label='Target')
+                if minAperture >= 0:
+                    plt_exotic.plot(0, 0, color='r', ls='-.', label='Comp')
+                l = plt_exotic.legend(frameon=None, framealpha=0.1)
+                for text in l.get_texts():
+                    text.set_color("white")
+                plt_exotic.savefig(exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] +"_"+ str(stretch.__class__).split(".")[-1].split("'")[0] + ".pdf", bbox_inches='tight')
+                plt_exotic.close()
 
             print("\nFOV file saved as: " + exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf\n")
             log.debug("FOV file saved as: " + exotic_infoDict['saveplot'] + "FOV" + pDict['pName'] + exotic_infoDict['date'] + ".pdf\n")

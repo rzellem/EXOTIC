@@ -2825,7 +2825,7 @@ def main():
                             'tmid': [max(lower, arrayTimes[~filtered_data].min()), min(arrayTimes[~filtered_data].max(), upper)],
                             'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-                            'a1': [0, 3*max(arrayFinalFlux[~filtered_data])],
+                            'a1': [min(0,min(arrayFinalFlux[~filtered_data])), 3*max(arrayFinalFlux[~filtered_data])],
                             'a2': [-3, 3],
                             # 'a3':[0, max(arrayFinalFlux[~filtered_data])]
                         }
@@ -3237,7 +3237,7 @@ def main():
                 'rprs': [pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']+3*pDict['rprsUnc']],
                 'tmid': [max(lower, goodTimes.min()), min(goodTimes.max(), upper)],
                 'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
-                'a1': [0, 3*np.nanmax(goodFluxes)],
+                'a1': [ min(0,np.nanmin(goodFluxes)), 3*np.nanmax(goodFluxes)],
                 'a2': [-3, 3],
             }
 

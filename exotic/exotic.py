@@ -3087,53 +3087,6 @@ def main():
 
             plt_exotic.close()
 
-            # # Interactive Plotting
-            # print('\nIn the new window that just opened up, please select the plot that has the best contrast.')
-            # log.debug('\nIn the new window that just opened up, please select the plot that has the best contrast.')
-            # fig, axs = plt_exotic.subplots(2, 2)
-            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LinearStretch())
-            # axs[0, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-            # axs[0, 0].set_title("(1) Linear Stretch")
-            #
-            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SquaredStretch())
-            # axs[0, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-            # axs[0, 1].set_title("(2) Squared Stretch")
-            #
-            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=SqrtStretch())
-            # axs[1, 0].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-            # axs[1, 0].set_title("(3) Sqrt Stretch")
-            #
-            # norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=LogStretch())
-            # axs[1, 1].imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-            # axs[1, 1].set_title("(4) Log Stretch")
-            # plt_exotic.tight_layout()
-            # plt_exotic.savefig(
-            #     exotic_infoDict['saveplot'] + 'temp/All_FOV_contrasts_' + pDict['pName'] + exotic_infoDict[
-            #         'date'] + '.png')
-            # fig.show()
-            #
-            # stretchnum = user_input(
-            #     'Please select your stretching (1 for Linear, 2 for Squared, 3 for Sqrt, or 4 for Log): ', type_=str,
-            #     val1='1',
-            #     val2='2', val3='3', val4='4')
-            # if stretchnum == '1':
-            #     print("You have selected Linear Stretch.")
-            #     log.debug("You have selected Linear Stretch.")
-            #     stretch = LinearStretch()
-            # if stretchnum == '2':
-            #     print("You have selected Squared Stretch.")
-            #     log.debug("You have selected Squared Stretch.")
-            #     stretch = SquaredStretch()
-            # if stretchnum == '3':
-            #     print("You have selected Sqrt Stretch.")
-            #     log.debug("You have selected Sqrt Stretch.")
-            #     stretch = SqrtStretch()
-            # if stretchnum == '4':
-            #     print("You have selected Log Stretch.")
-            #     log.debug("You have selected Log Stretch.")
-            #     stretch = LogStretch()
-
-
             for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
                 med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])),int(plty[0]):round(int(plty[1]))]
                 norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)

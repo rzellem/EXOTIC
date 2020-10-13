@@ -310,8 +310,10 @@ class LimbDarkening:
                     raise KeyError
                 break
             except KeyError:
-                print('\nError: The entered filter is not in the provided list of standard filters.')
-                self.filter_type = None
+                # changed for citisens
+                self.filter_type = 'V'
+                # print('\nError: The entered filter is not in the provided list of standard filters.')
+                # self.filter_type = None
         self.wl_min = self.fwhm[self.filter_type][0]
         self.wl_max = self.fwhm[self.filter_type][1]
         self.filter_type = self.filter_type[1]

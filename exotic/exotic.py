@@ -731,22 +731,18 @@ class InitializationFile:
         #     '\nPlease enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): '+self.planet_name)
 
         while True:
-            self.planet_name = str(input(
-                "\nPlease enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-            log.debug(
-                "Please enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): " +
-                userpDict['pName'])
+            self.planet_name = str(input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
+            log.debug("Please enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): " +
+                self.planet_name)
 
-            if not userpDict['pName'][-2].isspace():
+            if not self.planet_name[-2].isspace():
                 print(
                     "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
                 log.debug(
                     "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
-                planetnameconfirm = user_input('\nPlease confirm:\n  (1) ' + userpDict[
-                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ',
+                planetnameconfirm = user_input('\nPlease confirm:\n  (1) ' + self.planet_name + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ',
                                                type_=int, val1=1, val2=2)
-                log.debug('\nPlease confirm:\n  (1) ' + userpDict[
-                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ' + str(
+                log.debug('\nPlease confirm:\n  (1) ' + self.planet_name + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ' + str(
                     planetnameconfirm))
             else:
                 break
@@ -788,7 +784,17 @@ def fluxConvert(fluxList, errorList, fluxFormat):
 # Check for difference between NEA and initialization file
 def check_parameters(init_parameters, parameters):
     different = False
+    uncert = 20 / 3600
+
+    if init_parameters['ra'] and init_parameters['dec']:
+        init_parameters['ra'], init_parameters['dec'] = radec_hours_to_degree(init_parameters['ra'], init_parameters['dec'])
+
     for key, value in parameters.items():
+        if key in ['ra', 'dec'] and init_parameters[key]:
+            if not parameters[key] - uncert <= init_parameters[key] <= parameters[key] + uncert:
+                different = True
+                break
+            continue
         if value != init_parameters[key]:
             different = True
             break
@@ -845,7 +851,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
         userpdict['ra'] = input('\nEnter the %s: ' % planet_params[0])
     if userpdict['dec'] is None:
         userpdict['dec'] = input('\nEnter the %s: ' % planet_params[1])
-    userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
+    if type(userpdict['ra']) and type(userpdict['dec']) is str:
+        userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
     radeclist = ['ra', 'dec']
     if not candplanetbool:
@@ -855,14 +862,14 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             else:
                 print("\n\n*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
-                print("\tNASA Exoplanet Archive value: %s" % pdict[item])
-                print("\tInitialization file value: %s" % userpdict[item])
+                print("\tNASA Exoplanet Archive value (degrees): %s" % pdict[item])
+                print("\tInitialization file value (degrees): %s" % userpdict[item])
                 print("\nWould you like to:\n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
                 option = user_input('Which option do you choose? (1/2/3): ', type_=int, val1=1, val2=2, val3=3)
 
                 log.debug("*** WARNING: %s initialization file's %s does not match the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n" % (pdict['pName'], planet_params[idx]))
-                log.debug("\tNASA Exoplanet Archive value: %s" % pdict[item])
-                log.debug("\tInitialization file value: %s" % userpdict[item])
+                log.debug("\tNASA Exoplanet Archive value (degrees): %s" % pdict[item])
+                log.debug("\tInitialization file value (degrees): %s" % userpdict[item])
                 log.debug("Would you like to: \n  (1) use NASA Exoplanet Archive value, \n  (2) use initialization file value, or \n  (3) enter in a new value.")
                 log.debug('Which option do you choose? (1/2/3): '+str(option))
 
@@ -1932,19 +1939,16 @@ def main():
                 "\nPlease enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
             log.debug(
                 "Please enter the Planet Name. Make sure it matches the case sensitive name and spacing used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): " +
-                userpDict['pName'])
+                targetName)
 
-            if not userpDict['pName'][-2].isspace():
+            if not targetName[-2].isspace():
                 print(
                     "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
                 log.debug(
                     "The convention on the NASA Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star name and the planet letter. Please confirm that you have properly input the planet's name.")
-                planetnameconfirm = user_input('\nPlease confirm:\n  (1) ' + userpDict[
-                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ',
+                planetnameconfirm = user_input('\nPlease confirm:\n  (1) ' + targetName + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ',
                                                type_=int, val1=1, val2=2)
-                log.debug('\nPlease confirm:\n  (1) ' + userpDict[
-                    'pName'] + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ' + str(
-                    planetnameconfirm))
+                log.debug('\nPlease confirm:\n  (1) ' + targetName + ' is correct.\n  (2) The planet name needs to be changed.\nPlease select 1 or 2: ' + str(planetnameconfirm))
             else:
                 break
             if planetnameconfirm == 1:

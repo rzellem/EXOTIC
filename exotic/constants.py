@@ -35,31 +35,15 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-import importlib_metadata as metadata
-from pathlib import Path
-import sys
+from numpy import pi
+import astropy.constants as const
+import astropy.units as u
 
-# extend PYTHONPATH
-path_update = ['.', str(Path(__file__).resolve().parent)]
-for p in path_update:
-    if p not in sys.path:
-        sys.path.append(p)
+AU = const.au                                                       # m
+PI = pi
+R_SUN = const.R_sun                                                 # m
+R_JUP = const.R_jup                                                 # m
 
-try:  # module import
-    from .api.versioning import version_read
-except ImportError:  # package import
-    from api.versioning import version_read
-
-ignore = True
-
-try:
-    __version__ = metadata.version(__name__)
-except metadata.PackageNotFoundError:
-    # package is not installed, try reading from exotic script
-    try:
-        __version__ = version_read("exotic.py")
-    except IOError:
-        # unable to read from exotic script
-        __version__ = "unknown"
-        pass
-    pass
+# CALCULATED VALUES
+G = const.G.to(AU**3 / (const.M_sun * u.day**2))                    # AU^3 /(msun * day^2)
+SA = lambda m, p: (G * m * p ** 2. / (4. * PI ** 2.)) ** (1. / 3.)  # Keplerian semi-major axis (au)

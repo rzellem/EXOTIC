@@ -1,24 +1,46 @@
-# Copyright (c) 2002-2019, California Institute of Technology.
-# All rights reserved.  Based on Government Sponsored Research under contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
-
-# Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-#    1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-#    2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-#    3. Neither the name of the California Institute of Technology (Caltech), its operating division the Jet Propulsion Laboratory (JPL), the National Aeronautics and Space Administration (NASA), nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
-
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-# IN NO EVENT SHALL THE CALIFORNIA INSTITUTE OF TECHNOLOGY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-####################################################################
+# ########################################################################### #
+#    Copyright (c) 2019-2020, California Institute of Technology.
+#    All rights reserved.  Based on Government Sponsored Research under
+#    contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
+#
+#    Redistribution and use in source and binary forms, with or without
+#    modification, are permitted provided that the following conditions
+#    are met:
+#      1. Redistributions of source code must retain the above copyright
+#         notice, this list of conditions and the following disclaimer.
+#      2. Redistributions in binary form must reproduce the above copyright
+#         notice, this list of conditions and the following disclaimer in
+#         the documentation and/or other materials provided with the
+#         distribution.
+#      3. Neither the name of the California Institute of
+#         Technology (Caltech), its operating division the Jet Propulsion
+#         Laboratory (JPL), the National Aeronautics and Space
+#         Administration (NASA), nor the names of its contributors may be
+#         used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE CALIFORNIA
+#    INSTITUTE OF TECHNOLOGY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+#    TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#    PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# ########################################################################### #
+#    EXOplanet Transit Interpretation Code (EXOTIC)
+#    # NOTE: See companion file version.py for version info.
+# ########################################################################### #
+# ########################################################################### #
 # Exoplanet light curve analysis
 #
 # Authors: Kyle Pearson, Marlee Smith, Rob Zellem
 # Supplemental Code: Gael Roudier and Jason Eastman
-####################################################################
+# ########################################################################### #
 
 import copy
 import numpy as np
@@ -248,12 +270,13 @@ class lc_fitter(object):
         try:
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
                 bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
-        except:
+        except Exception as e:
+            print(e)
             print("bounded  light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
 
             for i,k in enumerate(freekeys):
                 print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
-                
+
             print("removing bounds and trying again...")
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], method='lm', jac='3-point', loss='linear')
 

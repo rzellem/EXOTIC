@@ -5,7 +5,7 @@ from astroscrappy import detect_cosmics
 from scipy.ndimage import label
 from bokeh.plotting import figure, output_file, show
 from bokeh.palettes import Viridis256
-from bokeh.models import ColorBar, LinearColorMapper
+from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
 from bokeh.io import output_notebook
 
 def plot_image(filename):
@@ -21,7 +21,7 @@ def plot_image(filename):
         psffwhm=4, psfsize=2*round(4)+1, # just a guess
         sepmed=False, sigclip = 4.25,
         niter=3, objlim=10, cleantype='idw', verbose=False
-        )
+    )
 
 
     # show how many pixels are saturated
@@ -42,12 +42,15 @@ def plot_image(filename):
     print(bad_pix)
 
 
-    # create a figure with text on mouse hover
+    # create a figure with text on mouse hover\
+    print("Saturated pixels are marked with red. These are pixels which have exceeded the maximum value for brightness, and are thus not suitable for use as comparison stars.")
     fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800)
     fig.x_range.range_padding = fig.y_range.range_padding = 0
 
+    ##TODO: add colorbar
+
     # set up a colobar + data range
-    mapper = LinearColorMapper( palette=Viridis256, low=np.percentile(cdata,55), high=np.percentile(cdata,99.5))
+    mapper = LinearColorMapper( palette=Viridis256, low=np.percentile(data, 55), high=np.percentile(cdata, 99))
 
     # must give a vector of image data for image parameter
     fig.image(
@@ -61,7 +64,13 @@ def plot_image(filename):
     # TODO figure out hover value
 
     fig.grid.grid_line_width = 0.5
-    # TODO show a color bar
+
+    color_mapper = LogColorMapper(palette="Viridis256", low=np.percentile(cdata, 55), high=np.percentile(cdata, 99))
+
+    color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
+                         label_standoff=12, border_line_color=None, location=(0,0))
+
+    fig.add_layout(color_bar, 'right')
 
     #output_file("image.html", title="fts example")
     show(fig)
@@ -69,4 +78,4 @@ def plot_image(filename):
 
 
 ##Testing
-plot_image("sample-data/HatP32Dec202017/HATP-32171220013343.fits")
+plot_image("Kepler412b.fts")

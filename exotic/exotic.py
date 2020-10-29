@@ -1420,7 +1420,7 @@ def variableStarCheck(refx, refy, hdulWCS):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def image_alignment(imagedata, alignment_tolerance=15):
+def image_alignment(imagedata):
     print("\nAligning your images from FITS files. Please wait.")
     boollist = []
     notaligned = 0

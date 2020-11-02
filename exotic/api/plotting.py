@@ -25,7 +25,7 @@ def plot_image(filename, showorno):
 
 
     # show how many pixels are saturated
-    SATURATION = 65536
+    SATURATION = 2**(hdu[0].header['bitpix'])
     mmask = cdata >= SATURATION*0.9
     labels, ngroups = label(mmask)
     print('Saturated Areas:',ngroups)
@@ -60,7 +60,8 @@ def plot_image(filename, showorno):
     )
 
     # plot saturated stars
-    fig.x(bad_pix['x'], bad_pix['y'], size=25, color='red')
+    fig.x(bad_pix['x'], bad_pix['y'], size=25, color='red', line_width=3)
+    fig.x(bad_pix['x'], bad_pix['y'], size=25, color='white', line_width=1)
     # TODO figure out hover value
 
     fig.grid.grid_line_width = 0.5

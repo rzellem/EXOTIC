@@ -1603,7 +1603,7 @@ def main():
     if realTimeAns == 1:
         log.info("\n**************************************************************")
         log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
-        log.info("**************************************************************")
+        log.info("**************************************************************\n")
 
         directToWatch = user_input("Enter the Directory Path of imaging files:", type_=str)
         directoryP = ""

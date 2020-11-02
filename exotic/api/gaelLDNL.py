@@ -297,7 +297,7 @@ class LimbDarkening:
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
 
         # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
-        # Near-Infrared
+                     # Near-Infrared
         self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
                      ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
 

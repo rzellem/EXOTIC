@@ -227,7 +227,6 @@ class NASAExoplanetArchive:
             if k != "format":
                 uri_full += f"{k} {query[k]} "
 
-        # uri_full = uri_full[:-1] + "&format={}".format(query.get("format", "csv"))
         uri_full = f"{uri_full[:-1]} &format={query.get('format', 'csv')}"
         uri_full = uri_full.replace(' ', '+')
         log.info(uri_full)
@@ -513,7 +512,7 @@ def get_save_directory(save_directory):
                 if not Path(save_directory).is_dir():
                     raise NotADirectoryError
             return save_directory
-        except NotADirectoryError:
+        except (NotADirectoryError, OSError):
             log.info("Error: the directory entered does not exist. Please try again. Make sure to follow this "
                      "\nformatting (using whichever directory you choose): /sample-data/results")
             save_directory = user_input("Enter the directory to save the results and plots into or type "
@@ -957,7 +956,7 @@ def check_imaging_files(directory, filename):
                 for ext in file_extensions:
                     for file in directory.iterdir():
                         if file.is_file() and file.name.lower().endswith(ext.lower()) and file.name[0:2] not in ('ref', 'wcs'):
-                            input_files.append(str(directory / file))
+                            input_files.append(str(file))
                     if input_files:
                         return directory, input_files
                 if not input_files:

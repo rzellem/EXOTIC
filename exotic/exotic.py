@@ -2292,33 +2292,28 @@ def main():
                 ax.plot(*psf_data[ckey][:,:2].T,'g-', alpha=0.5)
 
             ax.legend(loc='best')
-            plt_exotic.savefig(exotic_infoDict['saveplot'] +"temp/image_alignment_" + pDict['pName'] + exotic_infoDict['date'] + '.png')
+            plt_exotic.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
+                               f"ImageAlignment_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt_exotic.close()
 
             # fit centroids for first image to determine priors to be used later
             for compCounter in range(0, len(compStarList)):
-                print('\n\n***************************************************************')
-                print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
-                print('***************************************************************')
+                log.info("\n\n***************************************************************")
+                log.info(f"Determining Optimal Aperture and Annulus Size for Comp Star #{compCounter + 1}")
+                log.info("***************************************************************\n")
 
-                log.debug('***************************************************************')
-                log.debug('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
-                log.debug('***************************************************************\n')
+                ckey = f"comp{compCounter + 1}"
 
-                ckey = "comp{}".format(compCounter+1)
-
-                print('Target X: ' + str(round(psf_data["target"][0,0])) + ' Target Y: ' + str(round(psf_data["target"][0,1])))
-                log.debug('Target X: ' + str(round(psf_data["target"][0,0])) + ' Target Y: ' + str(round(psf_data["target"][0,1])))
-                print('Comparison X: ' + str(round(psf_data[ckey][0,0])) + ' Comparison Y: ' + str(round(psf_data[ckey][0,1])) + '\n')
-                log.debug('Comparison X: ' + str(round(psf_data[ckey][0,0])) + ' Comparison Y: ' + str(round(psf_data[ckey][0,1])) + '\n')
+                log.info(f"Target X: {round(psf_data['target'][0, 0])} Target Y: {round(psf_data['target'][0, 1])}\n")
+                log.info(f"Comparison X: {round(psf_data[ckey][0, 0])} Comparison Y: {round(psf_data[ckey][0, 1])}\n")
 
                 # If plate solution was generated, use it to check if the comparison stars selected are variable
                 # If yes, skip determining optimal aperture and annulus for that comparison star
-                if wcs_file:
-                    log.info("Checking for variability in current comparison star... ")
-                    if variableStarCheck(refx, refy, hdulWCS):
-                        log.info("Current comparison star is variable, proceeding to next star.")
-                        continue
+                # if wcs_file:
+                #     log.info("Checking for variability in current comparison star... ")
+                #     if variableStarCheck(round(psf_data[ckey][0, 0]), round(psf_data[ckey][0, 1]), hdulWCS):
+                #         log.info("Current comparison star is variable, proceeding to next star.")
+                #         continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = 1 * np.nanmax([targsigX, targsigY])

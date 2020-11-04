@@ -764,9 +764,6 @@ def check_parameters(init_parameters, parameters):
     different = False
     uncert = 20 / 3600
 
-    if init_parameters['ra'] and init_parameters['dec']:
-        init_parameters['ra'], init_parameters['dec'] = radec_hours_to_degree(init_parameters['ra'], init_parameters['dec'])
-
     for key, value in parameters.items():
         if key in ['ra', 'dec'] and init_parameters[key]:
             if not parameters[key] - uncert <= init_parameters[key] <= parameters[key] + uncert:
@@ -1061,7 +1058,9 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 # Checks for the closest pixel location in ralist and declist for expected ra and dec
                 dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
                 pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
-                searchopt = user_input(f"Here are the suggested pixel coordinates: X Pixel: {pixx} Y Pixel: {pixy}"
+                searchopt = user_input(f"Here are the suggested pixel coordinates:"
+                                       f"  X Pixel: {pixx}"
+                                       f"  Y Pixel: {pixy}"
                                        "\nWould you like to use these? (y/n):",
                                        type_=str, val1='y', val2='n')
                 # Use the coordinates found by code
@@ -1963,7 +1962,12 @@ def main():
                                                   type_=str)
 
         if fileorcommandline == 2:
-            diff = check_parameters(userpDict, pDict)
+            diff = False
+
+            userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+
+            if not CandidatePlanetBool:
+                diff = check_parameters(userpDict, pDict)
             if diff:
                 pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
             else:
@@ -2412,12 +2416,12 @@ def main():
                         lower = prior['tmid'] - np.abs(25*pDict['midTUnc'] + np.floor(arrayPhases).max()*25*pDict['pPerUnc'])
 
                         if np.floor(arrayPhases).max()-np.floor(arrayPhases).min() == 0:
-                            log.info("WARNING!")
+                            log.info("\nWARNING!")
                             log.info(" Estimated mid-transit time is not within the observations")
                             log.info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
                             log.info(f"  obs start:{arrayTimes.min()}")
                             log.info(f"    obs end:{arrayTimes.max()}")
-                            log.info(f" tmid prior:{prior['tmid']}")
+                            log.info(f" tmid prior:{prior['tmid']}\n")
 
                         # check for Nans + Zeros
                         for k in pDict:

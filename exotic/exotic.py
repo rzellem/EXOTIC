@@ -764,9 +764,6 @@ def check_parameters(init_parameters, parameters):
     different = False
     uncert = 20 / 3600
 
-    if init_parameters['ra'] and init_parameters['dec']:
-        init_parameters['ra'], init_parameters['dec'] = radec_hours_to_degree(init_parameters['ra'], init_parameters['dec'])
-
     for key, value in parameters.items():
         if key in ['ra', 'dec'] and init_parameters[key]:
             if not parameters[key] - uncert <= init_parameters[key] <= parameters[key] + uncert:
@@ -1061,7 +1058,9 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 # Checks for the closest pixel location in ralist and declist for expected ra and dec
                 dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
                 pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
-                searchopt = user_input(f"Here are the suggested pixel coordinates: X Pixel: {pixx} Y Pixel: {pixy}"
+                searchopt = user_input(f"Here are the suggested pixel coordinates:"
+                                       f"  X Pixel: {pixx}"
+                                       f"  Y Pixel: {pixy}"
                                        "\nWould you like to use these? (y/n):",
                                        type_=str, val1='y', val2='n')
                 # Use the coordinates found by code
@@ -1122,36 +1121,34 @@ def variableStarCheck(refx, refy, hdulWCS):
 def image_alignment(imagedata):
     log.info("\nAligning your images from FITS files. Please wait.")
     boollist = []
-    notaligned = 0
 
     rot = np.zeros(len(imagedata))
-    pos = np.zeros((len(imagedata),2))
+    pos = np.zeros((len(imagedata), 2))
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
     # boollist for discarded images to delete .FITS data from airmass and times.
     for i, image_file in enumerate(imagedata):
         try:
-            sys.stdout.write('Aligning Image %s of %s\r' % (str(i+1), str(len(imagedata))))
-            log.debug('Aligning Image %s of %s\r' % (str(i + 1), str(len(imagedata))))
+            sys.stdout.write(f"Aligning Image {i + 1} of {len(imagedata)}\r")
+            log.debug(f"Aligning Image {i + 1} of {len(imagedata)}\r")
             sys.stdout.flush()
             
             results = aa.find_transform(image_file, imagedata[0])
             rot[i] = results[0].rotation
             pos[i] = results[0].translation
 
-            #imagedata[i], footprint = aa.register(image_file, imagedata[0])
+            # imagedata[i], footprint = aa.register(image_file, imagedata[0])
             boollist.append(True)
         except Exception as ee:
-            print(ee)
-            print('Image %s of %s failed to align' % (str(i+1), str(len(imagedata))))
+            log.info(ee)
+            log.info(f"Image {i + 1} of {len(imagedata)} failed to align")
             boollist.append(False)
 
     if np.sum(boollist) < 0.5*len(boollist):
-        print("Image alignment failed, resorting to no alignment...")
-        log.debug("Image alignment failed, resorting to no alignment...")
+        log.info("Image alignment failed, resorting to no alignment...")
         boollist = np.ones(len(imagedata)).astype(bool)
         rot = np.zeros(len(imagedata))
-        pos = np.zeros((len(imagedata),2))
+        pos = np.zeros((len(imagedata), 2))
     else:
         pos = pos[boollist]
         rot = rot[boollist]
@@ -1238,10 +1235,10 @@ def fit_centroid(data, pos, init=[], box=10, debug=False):
     xv, yv = mesh_box(pos, box)
     
     # weighted flux centroid
-    wfx = np.sum(np.unique(xv)* (data[yv,xv].sum(0) - data[yv,xv].sum(0).min()))/np.sum( (data[yv,xv].sum(0) - data[yv,xv].sum(0).min()))
-    wfy = np.sum(np.unique(yv)* (data[yv,xv].sum(1) - data[yv,xv].sum(1).min()))/np.sum( (data[yv,xv].sum(1) - data[yv,xv].sum(1).min()))
+    wfx = np.sum(np.unique(xv)*(data[yv, xv].sum(0) - data[yv, xv].sum(0).min()))/np.sum((data[yv, xv].sum(0) - data[yv, xv].sum(0).min()))
+    wfy = np.sum(np.unique(yv)*(data[yv, xv].sum(1) - data[yv, xv].sum(1).min()))/np.sum((data[yv, xv].sum(1) - data[yv, xv].sum(1).min()))
 
-    if len(init)==5:
+    if len(init) == 5:
         pass
     else:
         init = [np.nanmax(data[yv, xv])-np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
@@ -1258,24 +1255,24 @@ def fit_centroid(data, pos, init=[], box=10, debug=False):
             box=box  # only fit a subregion +/- 5 px from centroid
         )
     except:
-        log.info(f"WARNING: trouble fitting Gaussian PSF to star at {wx},{wy}")
+        log.info(f"WARNING: trouble fitting Gaussian PSF to star at {wfx},{wfy}")
         log.info("  check location of comparison star in the first few images")
         log.info("  fitting parameters are out of bounds")
         log.info(f"  init: {init}")
-        log.info(" lower:", [wx-5, wy-5, 0, 0, 0, -np.pi/4, np.nanmin(data)-1])
-        log.info(" upper:", [wx+5, wy+5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv, xv])+1])
+        log.info(" lower:", [wfx - 5, wfy - 5, 0, 0, 0, -np.pi/4, np.nanmin(data) - 1])
+        log.info(" upper:", [wfx + 5, wfy + 5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv, xv]) + 1])
 
         # use LM in unbounded optimization
         pars = fit_psf(
-            data, [wx, wy], init,
-            [wx-5, wy-5, 0, 0, 0, -PI/4, np.nanmin(data)-1],
-            [wx+5, wy+5, 1e7, 20, 20, PI/4, np.nanmax(data[yv, xv])+1],
+            data, [wfx, wfy], init,
+            [wfx - 5, wfy - 5, 0, 0, 0, -PI/4, np.nanmin(data) - 1],
+            [wfx + 5, wfy + 5, 1e7, 20, 20, PI/4, np.nanmax(data[yv, xv]) + 1],
             psf_function=gaussian_psf,
             box=box, method='lm'
         )
 
     if pars[2] <= 10:
-        print('amplitude is really low, are you sure there is a star at:',pos)
+        log.info(f"amplitude is really low, are you sure there is a star at:{pos}")
 
     return pars
 
@@ -1587,7 +1584,7 @@ def main():
     log.debug("*************************")
     log.debug("Starting ...")
     log.debug("")
-    log.debug(f"Python Version: {str(sys.version)}")
+    log.debug(f"Python Version: {sys.version}")
 
     log.info("\n*************************************************************")
     log.info("Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)")
@@ -1965,9 +1962,16 @@ def main():
                                                   type_=str)
 
         if fileorcommandline == 2:
-            diff = check_parameters(userpDict, pDict)
+            diff = False
+
+            userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+
+            if not CandidatePlanetBool:
+                diff = check_parameters(userpDict, pDict)
             if diff:
                 pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+            else:
+                pDict = userpDict
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
@@ -2412,19 +2416,12 @@ def main():
                         lower = prior['tmid'] - np.abs(25*pDict['midTUnc'] + np.floor(arrayPhases).max()*25*pDict['pPerUnc'])
 
                         if np.floor(arrayPhases).max()-np.floor(arrayPhases).min() == 0:
-                            print("WARNING!")
-                            print(" Estimated mid-transit time is not within the observations")
-                            print(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-                            print('  obs start:', arrayTimes.min())
-                            print('    obs end:', arrayTimes.max())
-                            print(' tmid prior:', prior['tmid'])
-
-                            log.debug("WARNING!")
-                            log.debug(" Estimated mid-transit time is not within the observations")
-                            log.debug(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-                            log.debug('  obs start:', arrayTimes.min())
-                            log.debug('    obs end:', arrayTimes.max())
-                            log.debug(' tmid prior:', prior['tmid'])
+                            log.info("\nWARNING!")
+                            log.info(" Estimated mid-transit time is not within the observations")
+                            log.info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                            log.info(f"  obs start:{arrayTimes.min()}")
+                            log.info(f"    obs end:{arrayTimes.max()}")
+                            log.info(f" tmid prior:{prior['tmid']}\n")
 
                         # check for Nans + Zeros
                         for k in pDict:

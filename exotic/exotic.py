@@ -2586,7 +2586,7 @@ def main():
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in imageheader:
+            if "BJD_TDB" in imageheader or "BJD" in imageheader:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

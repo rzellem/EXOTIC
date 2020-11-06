@@ -706,7 +706,7 @@ class InitializationFile:
         self.info['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
 
     def pixel_scale(self):
-        self.info['flatsdir'] = user_input("Please enter the size of your pixel (Ex: 5 arcsec/pixel): ", type_=str)
+        self.info['flatsdir'] = user_input("Please enter the size of your pixel (e.g., 5 arcsec/pixel): ", type_=str)
 
     def planet(self):
         while True:
@@ -1176,9 +1176,9 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imagescale = "Image scale: " + str(pixel_init)
     else:
         log.info("Cannot find the pixel scale in the image header.")
-        imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). ")
+        imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ")
         imagescale = "Image scale: " + str(imscalen)
-        log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel). "+imscalen)
+        log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): "+imscalen)
     return imagescale
 
 
@@ -2536,21 +2536,26 @@ def main():
             # imwidth = np.shape(sortedallImageData[0])[1]
             # imheight = np.shape(sortedallImageData[0])[0]
             picframe = 10*(minAperture+minAnnulus)
-            pltx = [min([finXTargCent[0], finXRefCent[0]])-picframe, max([finXTargCent[0], finXRefCent[0]])+picframe]
+            pltx = [max([0,min([finXTargCent[0], finXRefCent[0]])-picframe]), min([np.shape(sortedallImageData[0])[0],max([finXTargCent[0], finXRefCent[0]])+picframe])]
             # FORwidth = pltx[1]-pltx[0]
-            plty = [min([finYTargCent[0], finYRefCent[0]])-picframe, max([finYTargCent[0], finYRefCent[0]])+picframe]
+            plty = [max([0,min([finYTargCent[0], finYRefCent[0]])-picframe]), min([np.shape(sortedallImageData[0])[1],max([finYTargCent[0], finYRefCent[0]])+picframe])]
             # FORheight = plty[1]-plty[0]
-
-            fig, ax = plt_exotic.subplots()
-            target_circle = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
-            target_circle_sky = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus, color='lime', fill=False, ls='--', lw=.5)
-            if minAperture >= 0:
-                ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
-                ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
             plt_exotic.close()
 
             for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
+                fig, ax = plt_exotic.subplots()
+                # Draw apertures and sky annuli
+                target_circle = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime',
+                                                  fill=False, ls='-', label='Target')
+                target_circle_sky = plt_exotic.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus,
+                                                      color='lime', fill=False, ls='--', lw=.5)
+                if minAperture >= 0:
+                    ref_circle = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False,
+                                                   ls='-.', label='Comp')
+                    ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus,
+                                                       color='r', fill=False, ls='--', lw=.5)
+
                 med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
                 norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
                 plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))

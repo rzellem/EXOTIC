@@ -35,6 +35,7 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
+
 import logging
 import numpy as np
 import lmfit as lm

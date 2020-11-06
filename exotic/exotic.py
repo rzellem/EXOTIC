@@ -305,7 +305,7 @@ class NASAExoplanetArchive:
             target = input(f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and spacing and"
                            "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
             if target.strip().lower() == 'candidate':
-                target = user_input("\nPlease enter candidate planet's name:", type_=str)
+                target = user_input("\nPlease enter candidate planet's name: ", type_=str)
                 return target, True
             else:
                 return self._new_scrape(filename="eaConf.json", target=target)
@@ -483,7 +483,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
     while True:
         try:
             result = type_(input(prompt))
-            log.debug(f"{prompt} {result}")
+            log.debug(f"{prompt}{result}")
         except ValueError:
             log.info("Sorry, not a valid datatype.")
             continue
@@ -520,7 +520,7 @@ def get_save_directory(save_directory):
             log.info("Error: the directory entered does not exist. Please try again. Make sure to follow this "
                      "\nformatting (using whichever directory you choose): /sample-data/results")
             save_directory = user_input("Enter the directory to save the results and plots into or type "
-                                        "new to create one:", type_=str)
+                                        "new to create one: ", type_=str)
 
 
 # Create a save directory within the current working directory
@@ -528,7 +528,7 @@ def create_directory():
     save_path = ""
     while True:
         try:
-            directory = user_input("Enter the name for your new directory:", type_=str)
+            directory = user_input("Enter the name for your new directory: ", type_=str)
             save_path = Path.cwd() / directory
             Path(save_path).mkdir()
         except OSError:
@@ -615,7 +615,7 @@ def get_initialization_file(info_dict, user_pdict):
 
     while True:
         try:
-            init_file = user_input("\nPlease enter the Directory and Filename of your Initialization File:", type_=str)
+            init_file = user_input("\nPlease enter the Directory and Filename of your Initialization File: ", type_=str)
             if init_file == 'ok':
                 init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
             return check_init_file(init_file, info_dict, user_pdict)
@@ -654,11 +654,11 @@ class InitializationFile:
         return self.info, self.planet_name
 
     def image_directory(self):
-        self.info['fitsdir'] = user_input("Please enter the Directory of Imaging Files:", type_=str)
+        self.info['fitsdir'] = user_input("Please enter the Directory of Imaging Files: ", type_=str)
 
     def save_directory(self):
         self.info['saveplot'] = user_input("Please enter the directory to save the results and plots into "
-                                           "or type new to create one:", type_=str)
+                                           "or type new to create one: ", type_=str)
 
     def initial(self):
         notes = ['Please enter your AAVSO Observer Account Number (type N/A if you do not currently have an account): ',
@@ -675,44 +675,44 @@ class InitializationFile:
                 i += 1
 
     def latitude(self):
-        self.info['latitude'] = user_input("Please enter the longitude of where you observed (deg) "
-                                           "(Don't forget the sign where East is '+' and West is '-'):", type_=str)
+        self.info['latitude'] = user_input("Please enter the latitude of where you observed (deg) "
+                                           "(Don't forget the sign where North is '+' and South is '-'): ", type_=str)
 
     def longitude(self):
         self.info['longitude'] = user_input("Please enter the longitude of where you observed (deg) "
-                                            "(Don't forget the sign where East is '+' and West is '-'):", type_=str)
+                                            "(Don't forget the sign where East is '+' and West is '-'): ", type_=str)
 
     def elevation(self):
-        self.info['elev'] = user_input("Please enter the elevation (in meters) of where you observed:", type_=float)
+        self.info['elev'] = user_input("Please enter the elevation (in meters) of where you observed: ", type_=float)
 
     def target_star_coords(self, pname):
-        x_pix = user_input(f"\n{pname} X Pixel Coordinate:", type_=int)
-        y_pix = user_input(f"\n{pname} Y Pixel Coordinate:", type_=int)
+        x_pix = user_input(f"\n{pname} X Pixel Coordinate: ", type_=int)
+        y_pix = user_input(f"\n{pname} Y Pixel Coordinate: ", type_=int)
 
         self.info['tarcoords'] = [x_pix, y_pix]
 
     def comparison_star_coords(self):
-        num_comp_stars = user_input("How many comparison stars would you like to use? (1-10):", type_=int)
+        num_comp_stars = user_input("How many comparison stars would you like to use? (1-10): ", type_=int)
         comp_stars = []
 
         for num in range(num_comp_stars):
-            x_pix = user_input(f"Comparison Star {num + 1} X Pixel Coordinate:", type_=int)
-            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate:", type_=int)
+            x_pix = user_input(f"Comparison Star {num + 1} X Pixel Coordinate: ", type_=int)
+            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=int)
             comp_stars.append((x_pix, y_pix))
 
         self.info['compstars'] = comp_stars
 
     def exposure(self):
-        self.info['exposure'] = user_input("Please enter your exposure time (seconds):", type_=int)
+        self.info['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
 
     def pixel_scale(self):
-        self.info['flatsdir'] = user_input("Please enter the size of your pixel (e.g., 5 arcsec/pixel):", type_=str)
+        self.info['flatsdir'] = user_input("Please enter the size of your pixel (e.g., 5 arcsec/pixel): ", type_=str)
 
     def planet(self):
         while True:
             self.planet_name = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive "
                                           "name and spacing used on Exoplanet Archive "
-                                          "(https://exoplanetarchive.ipac.caltech.edu/index.html):", type_=str)
+                                          "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
             if not self.planet_name[-2].isspace():
                 log.info("The convention on the NASA Exoplanet Archive "
@@ -721,7 +721,7 @@ class InitializationFile:
                          "\nPlease confirm:"
                          f"\n  (1) {self.planet_name} is correct."
                          "\n  (2) The planet name needs to be changed.")
-                planetnameconfirm = user_input("\nPlease select 1 or 2:", type_=int, val1=1, val2=2)
+                planetnameconfirm = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
             else:
                 break
             if planetnameconfirm == 1:
@@ -780,7 +780,7 @@ def check_parameters(init_parameters, parameters):
                  "\n Would you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
                  "\n  (2) to review the ones scraped from the Archive that differ?")
-        opt = user_input("\nPlease enter 1 or 2:", type_=str, val1='1', val2='2')
+        opt = user_input("\nPlease enter 1 or 2: ", type_=str, val1='1', val2='2')
 
         if opt == '2':
             return True
@@ -822,9 +822,9 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
 
     # Conversion between hours to degrees if user entered ra and dec
     if userpdict['ra'] is None:
-        userpdict['ra'] = user_input(f"\nEnter the {planet_params[0]}:", type_=str)
+        userpdict['ra'] = user_input(f"\nEnter the {planet_params[0]}: ", type_=str)
     if userpdict['dec'] is None:
-        userpdict['dec'] = user_input(f"\nEnter the {planet_params[1]}:", type_=str)
+        userpdict['dec'] = user_input(f"\nEnter the {planet_params[1]}: ", type_=str)
     if type(userpdict['ra']) and type(userpdict['dec']) is str:
         userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
@@ -843,15 +843,15 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
                          "\n  (3) enter in a new value.")
-                option = user_input("Which option do you choose? (1/2/3):", type_=int, val1=1, val2=2, val3=3)
+                option = user_input("Which option do you choose? (1/2/3): ", type_=int, val1=1, val2=2, val3=3)
 
                 if option == 1:
                     userpdict[item] = pdict[item]
                 elif option == 2:
                     continue
                 else:
-                    userpdict['ra'] = user_input(f"Enter the {planet_params[0]}:", type_=str)
-                    userpdict['dec'] = user_input(f"Enter the {planet_params[1]}:", type_=str)
+                    userpdict['ra'] = user_input(f"Enter the {planet_params[0]}: ", type_=str)
+                    userpdict['dec'] = user_input(f"Enter the {planet_params[1]}: ", type_=str)
                     break
 
     if type(userpdict['ra']) and type(userpdict['dec']) is str:
@@ -880,21 +880,21 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
                          "\n  (3) enter in a new value.")
-                option = user_input("Which option do you choose? (1/2/3):", type_=int, val1=1, val2=2, val3=3)
+                option = user_input("Which option do you choose? (1/2/3): ", type_=int, val1=1, val2=2, val3=3)
                 if option == 1:
                     userpdict[key] = pdict[key]
                 elif option == 2:
                     continue
                 else:
-                    userpdict[key] = user_input(f"Enter the {planet_params[i]}:", type_=type(userpdict[key]))
+                    userpdict[key] = user_input(f"Enter the {planet_params[i]}: ", type_=type(userpdict[key]))
             # Did not use initialization file or null
             else:
                 log.info(f"\n {pdict['pName']} {planet_params[i]}: {pdict[key]}")
-                agreement = user_input("Do you agree? (y/n):", type_=str, val1='y', val2='n')
+                agreement = user_input("Do you agree? (y/n): ", type_=str, val1='y', val2='n')
                 if agreement == 'y':
                     userpdict[key] = pdict[key]
                 else:
-                    userpdict[key] = user_input(f"Enter the {planet_params[i]}:", type_=type(pdict[key]))
+                    userpdict[key] = user_input(f"Enter the {planet_params[i]}: ", type_=type(pdict[key]))
 
     # Exoplanet not confirmed in NASA Exoplanet Archive
     else:
@@ -903,18 +903,18 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             # Used initialization file and is not empty
             if userpdict[key] is not None:
-                agreement = user_input(f"{planet_params[i]}: {userpdict[key]} \nDo you agree? (y/n):",
+                agreement = user_input(f"{planet_params[i]}: {userpdict[key]} \nDo you agree? (y/n): ",
                                        type_=str, val1='y', val2='n')
                 if agreement == 'y':
                     continue
                 else:
-                    userpdict[key] = user_input(f"Enter the {planet_params[i]}:", type_=type(userpdict[key]))
+                    userpdict[key] = user_input(f"Enter the {planet_params[i]}: ", type_=type(userpdict[key]))
             # Did not use initialization file
             else:
                 if key in ('pName', 'sName'):
-                    userpdict[key] = user_input(f"\nEnter the {planet_params[i]}:", type_=str)
+                    userpdict[key] = user_input(f"\nEnter the {planet_params[i]}: ", type_=str)
                 else:
-                    userpdict[key] = user_input(f"Enter the {planet_params[i]}:", type_=float)
+                    userpdict[key] = user_input(f"Enter the {planet_params[i]}: ", type_=float)
     return userpdict
 
 
@@ -966,16 +966,16 @@ def check_imaging_files(directory, filename):
                 raise NotADirectoryError
         except FileNotFoundError:
             opt = user_input(f"\nError: {filename} files not found with .fits, .fit or .fts extensions in {directory}."
-                             "\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n):",
+                             "\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
                              type_=str, val1='y', val2='n')
             if opt == 'y':
-                add_ext = user_input("Please enter the extension you want to add (EX: .FITS):", type_=str)
+                add_ext = user_input("Please enter the extension you want to add (EX: .FITS): ", type_=str)
                 file_extensions.append(add_ext)
             else:
-                directory = user_input(f"Enter the directory path where {filename} files are located:", type_=str)
+                directory = user_input(f"Enter the directory path where {filename} files are located: ", type_=str)
         except (NotADirectoryError, OSError):
             log.info("\nError: No such directory exists when searching for FITS files. Please try again.")
-            directory = user_input(f"Enter the directory path where {filename} files are located:", type_=str)
+            directory = user_input(f"Enter the directory path where {filename} files are located: ", type_=str)
 
 
 def check_wcs(fits_file, save_directory, plate_opt):
@@ -992,7 +992,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
         if wcs_exists:
-            trust_wcs = user_input("The imaging data from your file has WCS information. Do you trust this? (y/n):",
+            trust_wcs = user_input("The imaging data from your file has WCS information. Do you trust this? (y/n): ",
                                    type_=str, val1='y', val2='n')
 
             if trust_wcs == 'y':
@@ -1001,7 +1001,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
                 return False
     else:
         if wcs_exists:
-            trust_wcs = user_input("The imaging data from your file has WCS information. Do you trust this? (y/n):",
+            trust_wcs = user_input("The imaging data from your file has WCS information. Do you trust this? (y/n): ",
                                    type_=str, val1='y', val2='n')
         else:
             trust_wcs = 'n'
@@ -1009,7 +1009,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
         if trust_wcs == 'n':
             opt = user_input("\nWould you like to upload the your image for a plate solution?"
                              "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net."
-                             " (y/n):", type_=str, val1='y', val2='n')
+                             " (y/n): ", type_=str, val1='y', val2='n')
             if opt == 'y':
                 return get_wcs(fits_file, save_directory)
             else:
@@ -1050,7 +1050,7 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 raise ValueError
             return pixx, pixy
         except ValueError:
-            repixopt = user_input("Would you like to re-enter the pixel coordinates? (y/n):",
+            repixopt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ",
                                   type_=str, val1='y', val2='n')
 
             # User wants to change their coordinates
@@ -1061,15 +1061,15 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 searchopt = user_input(f"Here are the suggested pixel coordinates:"
                                        f"  X Pixel: {pixx}"
                                        f"  Y Pixel: {pixy}"
-                                       "\nWould you like to use these? (y/n):",
+                                       "\nWould you like to use these? (y/n): ",
                                        type_=str, val1='y', val2='n')
                 # Use the coordinates found by code
                 if searchopt == 'y':
                     return pixx, pixy
                 # User enters their own coordinates to be re-checked
                 else:
-                    pixx = user_input("Please re-enter the target star's X Pixel Coordinate:", type_=int)
-                    pixy = user_input("Please re-enter the target star's Y Pixel Coordinate:", type_=int)
+                    pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
+                    pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
             else:
                 # User does not want to change coordinates even though they don't match the expected ra and dec
                 return pixx, pixy
@@ -1417,7 +1417,7 @@ def realTimeReduce(i, target_name):
 
     # -------TIME SORT THE FILES--------------------------------------------------------------------------------
     directoryP = ""
-    directToWatch = user_input("Enter the Directory Path where .FITS or .FTS Image Files are located:", type_=str)
+    directToWatch = user_input("Enter the Directory Path where .FITS or .FTS Image Files are located: ", type_=str)
     # Add / to end of directory if user does not input it
     if directToWatch[-1] != "/":
         directToWatch += "/"
@@ -1425,7 +1425,7 @@ def realTimeReduce(i, target_name):
 
     while len(g.glob(directoryP)) == 0:
         log.info(f"Error: .FITS files not found in {directoryP}")
-        directToWatch = user_input("Enter the Directory Path where FITS Image Files are located:", type_=str)
+        directToWatch = user_input("Enter the Directory Path where FITS Image Files are located: ", type_=str)
         # Add / to end of directory if user does not input it
         if directToWatch[-1] != "/":
             directToWatch += "/"
@@ -1611,7 +1611,7 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-    realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction:",
+    realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
                              type_=int, val1=1, val2=2)
 
     #############################
@@ -1623,7 +1623,7 @@ def main():
         log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log.info("**************************************************************\n")
 
-        directToWatch = user_input("Enter the Directory Path of imaging files:", type_=str)
+        directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
         directoryP = ""
         directoryP = directToWatch
         directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
@@ -1634,7 +1634,7 @@ def main():
         while True:
             targetName = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and "
                                     "spacing used on Exoplanet Archive "
-                                    "(https://exoplanetarchive.ipac.caltech.edu/index.html):", type_=str)
+                                    "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
             if not targetName[-2].isspace():
                 log.info("The convention on the NASA Exoplanet Archive "
@@ -1644,7 +1644,7 @@ def main():
                          f"\n  (1) {targetName} is correct."
                          "\n  (2) The planet name needs to be changed.")
 
-                planetnameconfirm = user_input("\nPlease select 1 or 2:", type_=int, val1=1, val2=2)
+                planetnameconfirm = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
             else:
                 break
             if planetnameconfirm == 1:
@@ -1652,17 +1652,17 @@ def main():
 
         while True:
             try:
-                carryOn = user_input(f"Type continue after the first image has been taken and saved:", type_=str)
+                carryOn = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
                 if carryOn != 'continue':
                     raise ValueError
                 break
             except ValueError:
                 continue
 
-        exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate:", type_=int)
-        exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate:", type_=int)
-        exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate:", type_=int)
-        exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate:", type_=int)
+        exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
+        exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
+        exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
+        exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
         log.info("Real Time Plotting ('Control + C' or close the plot to quit)")
         log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
@@ -1701,10 +1701,10 @@ def main():
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
         fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                "pre-reduced data in a .txt format:", type_=int, val1=1, val2=2)
+                                "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
 
         fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
-                                       "Enter '1' to use the Command Line or '2' to use an input file:",
+                                       "Enter '1' to use the Command Line or '2' to use an input file: ",
                                        type_=int, val1=1, val2=2)
 
         # Read in input file rather than using the command line
@@ -1746,11 +1746,11 @@ def main():
             if fileorcommandline == 1:
                 exotic_infoDict['fitsdir'] = user_input("\nEnter the directory path where imaging files are located. "
                                                         "(Example using the sample data: "
-                                                        "sample-data/HatP32Dec202017):", type_=str)
+                                                        "sample-data/HatP32Dec202017): ", type_=str)
 
             exotic_infoDict['fitsdir'], inputfiles = check_imaging_files(exotic_infoDict['fitsdir'], 'imaging')
         else:
-            datafile = user_input("Enter the path and filename of your data file:", type_=str)
+            datafile = user_input("Enter the path and filename of your data file: ", type_=str)
             if datafile == 'ok':
                 datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
                 log.debug("Hello, Rob.")
@@ -1761,13 +1761,13 @@ def main():
                 log.info("ERROR: Data file not found. Please try again.")
                 sys.exit()
 
-            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds:", type_=int)
+            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
 
             processeddata = initf.readlines()
 
         if fileorcommandline == 1:
             exotic_infoDict['saveplot'] = user_input("Enter the directory to save the results and plots into "
-                                                     "or type new to create one:", type_=str)
+                                                     "or type new to create one: ", type_=str)
 
         exotic_infoDict['saveplot'] = get_save_directory(exotic_infoDict['saveplot'])
 
@@ -1778,7 +1778,7 @@ def main():
             while True:
                 userpDict['pName'] = user_input("\nEnter the Planet Name. Make sure it matches the case sensitive name "
                                                 "and spacing used on Exoplanet Archive "
-                                                "(https://exoplanetarchive.ipac.caltech.edu/index.html):", type_=str)
+                                                "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
                 if not userpDict['pName'][-2].isspace():
                     log.info("The convention on the NASA Exoplanet Archive "
@@ -1789,7 +1789,7 @@ def main():
                              f"\n  (1) {userpDict['pName']} is correct."
                              "\n  (2) The planet name needs to be changed.")
 
-                    planetnameconfirm = user_input("\nPlease select 1 or 2:", type_=int, val1=1, val2=2)
+                    planetnameconfirm = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
                 else:
                     break
                 if planetnameconfirm == 1:
@@ -1800,18 +1800,18 @@ def main():
 
         # observation date
         if fileorcommandline == 1:
-            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY):", type_=str)
+            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
 
         # Using a / in your date can screw up the file paths- this will check user's date
         while "/" in exotic_infoDict['date']:
             log.info("Do not use / in your date. Please try again.")
-            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY):", type_=str)
+            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
 
         if fitsortext == 1:
             if fileorcommandline == 1:
                 exotic_infoDict['lat'] = user_input("Enter the latitude (in degrees) of where you observed. "
                                                     "Don't forget the sign where North is '+' and South is '-'! "
-                                                    "(Example: +50.4):", type_=str)
+                                                    "(Example: +50.4): ", type_=str)
             # Latitude
             while True:
                 try:
@@ -1827,12 +1827,12 @@ def main():
                     log.info(err.args)
                     exotic_infoDict['lat'] = user_input("Enter the latitude (in degrees) of where you observed. "
                                                         "Don't forget the sign where North is '+' and South is '-'! "
-                                                        "(Example: +50.4):", type_=str)
+                                                        "(Example: +50.4): ", type_=str)
 
             if fileorcommandline == 1:
                 exotic_infoDict['long'] = user_input("Enter the longitude (in degrees) of where you observed. "
                                                      "(Don't forget the sign where East is '+' and West is '-')! "
-                                                     "(Example: -32.12):", type_=str)
+                                                     "(Example: -32.12): ", type_=str)
             # Longitude
             while True:
                 try:
@@ -1848,26 +1848,26 @@ def main():
                     log.info(err.args)
                     exotic_infoDict['long'] = user_input("Enter the longitude (in degrees) of where you observed. "
                                                          "(Don't forget the sign where East is '+' and West is '-')! "
-                                                         "(Example: -32.12):", type_=str)
+                                                         "(Example: -32.12): ", type_=str)
 
             if fileorcommandline == 1:
-                exotic_infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed:",
+                exotic_infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ",
                                                      type_=float)
 
             # TARGET STAR
             if fileorcommandline == 1:
-                exotic_UIprevTPX = user_input(f"\n{userpDict['pName']} X Pixel Coordinate:", type_=int)
-                exotic_UIprevTPY = user_input(f"\n{userpDict['pName']} Y Pixel Coordinate:", type_=int)
-                numCompStars = user_input("How many comparison stars would you like to use? (1-10):", type_=int)
+                exotic_UIprevTPX = user_input(f"\n{userpDict['pName']} X Pixel Coordinate: ", type_=int)
+                exotic_UIprevTPY = user_input(f"\n{userpDict['pName']} Y Pixel Coordinate: ", type_=int)
+                numCompStars = user_input("How many comparison stars would you like to use? (1-10): ", type_=int)
 
                 for num in range(numCompStars):
-                    xpix = user_input(f"Comparison Star {num + 1} X Pixel Coordinate:", type_=int)
-                    ypix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate:", type_=int)
+                    xpix = user_input(f"Comparison Star {num + 1} X Pixel Coordinate: ", type_=int)
+                    ypix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=int)
                     compStarList.append((xpix, ypix))
 
             # ---HANDLE CALIBRATION IMAGES------------------------------------------------
             if fileorcommandline == 1:
-                cals = user_input("\nDo you have any calibration images (flats, darks or biases)? (y/n):",
+                cals = user_input("\nDo you have any calibration images (flats, darks or biases)? (y/n): ",
                                   type_=str, val1='y', val2='n')
 
             # if they have cals, handle them by calculating the median flat, dark or bias
@@ -1876,12 +1876,12 @@ def main():
                 # flats
                 # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
-                    flats = user_input("\nDo you have flats? (y/n):", type_=str, val1='y', val2='n')
+                    flats = user_input("\nDo you have flats? (y/n): ", type_=str, val1='y', val2='n')
 
                     if flats == 'y':
                         flatsBool = True
                         exotic_infoDict['flatsdir'] = user_input("Enter the directory path to your flats "
-                                                                 "(must be in their own separate folder):",
+                                                                 "(must be in their own separate folder): ",
                                                                  type_=str)  # +"/*.FITS"
                     else:
                         flatsBool = False
@@ -1902,11 +1902,11 @@ def main():
 
                 # darks
                 if fileorcommandline == 1:
-                    darks = user_input("\nDo you have darks? (y/n):", type_=str, val1='y', val2='n')
+                    darks = user_input("\nDo you have darks? (y/n): ", type_=str, val1='y', val2='n')
                     if darks == 'y':
                         darksBool = True
                         exotic_infoDict['darksdir'] = user_input("Enter the directory path to your darks "
-                                                                 "(must be in their own separate folder):",
+                                                                 "(must be in their own separate folder): ",
                                                                  type_=str)  # +"/*.FITS"
                     else:
                         darksBool = False
@@ -1922,11 +1922,11 @@ def main():
 
                 # biases
                 if fileorcommandline == 1:
-                    biases = user_input("\nDo you have biases? (y/n):", type_=str, val1='y', val2='n')
+                    biases = user_input("\nDo you have biases? (y/n): ", type_=str, val1='y', val2='n')
                     if biases == 'y':
                         biasesBool = True
                         exotic_infoDict['biasesdir'] = user_input("Enter the directory path to your biases "
-                                                                  "(must be in their own separate folder):",
+                                                                  "(must be in their own separate folder): ",
                                                                   type_=str)  # +"/*.FITS"
                     else:
                         biasesBool = False
@@ -1949,16 +1949,16 @@ def main():
         # Handle AAVSO Formatting
         if fileorcommandline == 1:
             exotic_infoDict['aavsonum'] = user_input("Please enter your AAVSO Observer Account Number "
-                                                     "(type N/A if you do not currently have an account):", type_=str)
+                                                     "(type N/A if you do not currently have an account): ", type_=str)
             exotic_infoDict['secondobs'] = user_input("Please enter your comma-separated secondary observer codes "
-                                                      "(or type N/A if only 1 observer code):", type_=str)
-            exotic_infoDict['ctype'] = user_input("Please enter your camera type (CCD or DSLR):", type_=str)
-            exotic_infoDict['pixelbin'] = user_input("Please enter your pixel binning:", type_=str)
+                                                      "(or type N/A if only 1 observer code): ", type_=str)
+            exotic_infoDict['ctype'] = user_input("Please enter your camera type (CCD or DSLR): ", type_=str)
+            exotic_infoDict['pixelbin'] = user_input("Please enter your pixel binning: ", type_=str)
             # infoDict['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
             exotic_infoDict['filter'] = user_input("Please enter your filter name from the options at "
-                                                   "http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml:",
+                                                   "http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ",
                                                    type_=str)
-            exotic_infoDict['notes'] = user_input("Please enter any observing notes (seeing, weather, etc.):",
+            exotic_infoDict['notes'] = user_input("Please enter any observing notes (seeing, weather, etc.): ",
                                                   type_=str)
 
         if fileorcommandline == 2:
@@ -2695,7 +2695,7 @@ def main():
             log.info("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
             while not formatEntered:
                 timeFormat = user_input("Which of the following time formats is your data file stored in? "
-                                        "(Type q to quit)\nBJD_TDB / JD_UTC / MJD_UTC:", type_=str)
+                                        "(Type q to quit)\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
                 if (timeFormat.upper()).strip() == 'Q':
                     sys.exit()
                 elif (timeFormat.upper()).strip() not in validTimeFormats:
@@ -2711,7 +2711,7 @@ def main():
             log.info("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
             while not formatEntered:
                 fluxFormat = user_input("Which of the following units of flux is your data file stored in? "
-                                        "(Type q to quit)\nflux / magnitude / millimagnitude:", type_=str)
+                                        "(Type q to quit)\nflux / magnitude / millimagnitude: ", type_=str)
                 if (fluxFormat.upper()).strip() == 'Q':
                     sys.exit()
                 elif (fluxFormat.lower()).strip() not in validFluxFormats:

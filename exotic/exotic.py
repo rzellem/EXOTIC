@@ -1212,9 +1212,9 @@ def find_target(target, hdufile, verbose=False):
     hdu = fits.open(hdufile)[0]
 
     try:
-        dateobs = hdu[0].header['DATE_OBS']
+        dateobs = hdu.header['DATE_OBS']
     except:
-        dateobs = hdu[0].header['DATE-OBS']
+        dateobs = hdu.header['DATE-OBS']
 
     # ignore timezone
     if len(dateobs.split('-')) == 4:

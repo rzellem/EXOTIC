@@ -244,7 +244,7 @@ class NASAExoplanetArchive:
                 "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
                 "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
             }
-            return return self.planet, candidate, flabels
+            return self.planet, candidate, flabels
 
         return self.planet, candidate, self.pl_dict
 

@@ -16,12 +16,8 @@ def plot_image(filename, showorno):
     dheader = dict(hdu[0].header)
     for k in dheader:
         if len(k) >= 2:
-            pass
-            #print(f"{k}: {dheader[k]}"[:80])
-        else:
-            del(dheader[k])
+            print(f"{k}: {dheader[k]}")
 
-    pprint(dheader)
     print(hdu.info())
     data = hdu[0].data
 

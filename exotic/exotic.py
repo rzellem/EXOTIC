@@ -1190,7 +1190,7 @@ def find_target(target, hdufile, verbose=False):
     service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
     # http://simbad.u-strasbg.fr/simbad/tap/tapsearch.html
     query = '''
-    SELECT basic.OID, ra, dec, main_id, pmra, pmdec, 
+    SELECT basic.OID, ra, dec, main_id, pmra, pmdec
     FROM basic JOIN ident ON oidref = oid
     WHERE id = '{}';
     '''.format(target)

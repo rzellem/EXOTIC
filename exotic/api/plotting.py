@@ -6,14 +6,16 @@ from scipy.ndimage import label
 from bokeh.plotting import figure, output_file, show, save
 from bokeh.palettes import Viridis256
 from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
-from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PointDrawTool,PanTool
+from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PanTool,FreehandDrawTool
 from bokeh.io import output_notebook
 from pprint import pprint
 
 def plot_image(filename, showorno):
 
     hdu = fits.open(filename)
-    pprint(dict(hdu[0].header))
+    dheader = dict(hdu[0].header)
+    for k in dheader:
+        print(f"{k}: {dheader[k]}"[:80])
     print(hdu.info())
     data = hdu[0].data
 
@@ -45,13 +47,16 @@ def plot_image(filename, showorno):
     # create a figure with text on mouse hover\
     print("Saturated pixels are marked with red. These are pixels which have exceeded the maximum value for brightness, and are thus not suitable for use as comparison stars.")
     fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800,
-        tools=[PanTool(),BoxZoomTool(),WheelZoomTool(),ResetTool(),HoverTool(),PointDrawTool()])
+        tools=[PanTool(),BoxZoomTool(),WheelZoomTool(),ResetTool(),HoverTool()])
     fig.x_range.range_padding = fig.y_range.range_padding = 0
+
+    r = fig.multi_line('x', 'y', source={'x':[],'y':[]},color='white',line_width=3)
+    fig.add_tools(FreehandDrawTool(renderers=[r]))
 
     ##TODO: add colorbar
 
     # set up a colobar + data range
-    color_mapper = LogColorMapper(palette="Viridis256", low=np.percentile(data, 55), high=np.percentile(data, 99))
+    color_mapper = LogColorMapper(palette="Cividis256", low=np.percentile(data, 55), high=np.percentile(data, 99))
 
     # must give a vector of image data for image parameter
     fig.image(

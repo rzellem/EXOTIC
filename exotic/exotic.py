@@ -204,7 +204,7 @@ class NASAExoplanetArchive:
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
-    def planet_info(self):
+    def planet_info(self, verbose=False):
         log.info(f"\nLooking up {self.planet}. Please wait. ...")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
@@ -215,6 +215,36 @@ class NASAExoplanetArchive:
                 idx = planets.index(self.planet)
                 self._get_params(data[idx])
                 log.info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
+
+        # fancy titles explaining data
+        if verbose:
+            flabels = {
+                "Target Star RA": self.pl_dict['ra'],
+                "Target Star Dec": self.pl_dict['dec'],
+                "Planet Name": self.pl_dict['pName'],
+                "Host Star Name": self.pl_dict['sName'],
+                "Orbital Period (days)": self.pl_dict['pPer'],
+                "Orbital Period Uncertainty": self.pl_dict['pPerUnc'],
+                "Published Mid-Transit Time (BJD-UTC)": self.pl_dict['midT'],
+                "Mid-Transit Time Uncertainty": self.pl_dict['midTUnc'],
+                "Ratio of Planet to Stellar Radius (Rp/Rs)": self.pl_dict['rprs'],
+                "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": self.pl_dict['rprsUnc'],
+                "Ratio of Distance to Stellar Radius (a/Rs)": self.pl_dict['aRs'],
+                "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": self.pl_dict['aRsUnc'],
+                "Orbital Inclination (deg)": self.pl_dict['inc'],
+                "Orbital Inclination (deg) Uncertainity": self.pl_dict['incUnc'],
+                "Orbital Eccentricity (0 if null)": self.pl_dict['ecc'],
+                "Star Effective Temperature (K)": self.pl_dict['teff'],
+                "Star Effective Temperature (+) Uncertainty": self.pl_dict['teffUncPos'],
+                "Star Effective Temperature (-) Uncertainty": self.pl_dict['teffUncNeg'],
+                "Star Metallicity ([FE/H])": self.pl_dict['met'],
+                "Star Metallicity (+) Uncertainty": self.pl_dict['metUncPos'],
+                "Star Metallicity (-) Uncertainty": self.pl_dict['metUncNeg'],
+                "Star Surface Gravity (log(g))": self.pl_dict['logg'],
+                "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
+                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
+            }
+            print(json.dumps(flabels,indent=4))
 
         return self.planet, candidate, self.pl_dict
 

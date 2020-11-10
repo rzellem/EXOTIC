@@ -3,14 +3,14 @@ from io import BytesIO
 from astropy.io import fits
 from astroscrappy import detect_cosmics
 from scipy.ndimage import label
-from bokeh.plotting import figure, output_file, show, save
+from bokeh.plotting import figure, output_file, show
 from bokeh.palettes import Viridis256
 from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
 from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PanTool,FreehandDrawTool
 from bokeh.io import output_notebook
 from pprint import pprint
 
-def plot_image(filename, showorno):
+def plot_image(filename, save=False):
 
     hdu = fits.open(filename)
     dheader = dict(hdu[0].header)
@@ -79,9 +79,7 @@ def plot_image(filename, showorno):
 
     fig.add_layout(color_bar, 'right')
 
-    #output_file("image.html", title="fts example")
-    if(showorno):
-        show(fig)
-    else:
+    if save:
         output_file("interactivefits.html")
-        save(fig)
+    else:
+        show(fig)

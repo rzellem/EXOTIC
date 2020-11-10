@@ -1211,12 +1211,16 @@ def find_target(target, hdufile, verbose=False):
 
     hdu = fits.open(hdufile)[0]
 
-    # apply proper motion
     try:
-        t = astropy.time.Time(hdu.header['DATE_OBS'], format='isot', scale='utc')
+        dateobs = hdu[0].header['DATE_OBS']
     except:
-        t = astropy.time.Time(hdu.header['DATE-OBS'], format='isot', scale='utc')
+        dateobs = hdu[0].header['DATE-OBS']
 
+    # ignore timezone
+    if len(dateobs.split('-')) == 4:
+        dateobs = '-'.join(dateobs.split('-')[:-1])
+
+    t = astropy.time.Time(dateobs, format='isot', scale='utc')
     coordpm = coord.apply_space_motion(new_obstime=t)
 
     # wcs coordinate translation

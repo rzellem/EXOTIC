@@ -217,7 +217,7 @@ class NASAExoplanetArchive:
                 log.info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
 
         # fancy titles explaining data
-        if verbose:
+        if fancy:
             flabels = {
                 "Target Star RA": self.pl_dict['ra'],
                 "Target Star Dec": self.pl_dict['dec'],
@@ -244,7 +244,7 @@ class NASAExoplanetArchive:
                 "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
                 "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
             }
-            print(json.dumps(flabels,indent=4))
+            return return self.planet, candidate, flabels
 
         return self.planet, candidate, self.pl_dict
 

@@ -5,7 +5,7 @@ from astroscrappy import detect_cosmics
 from scipy.ndimage import label
 from bokeh.plotting import figure, output_file, show, save
 from bokeh.palettes import Viridis256
-from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker, 
+from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
 from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PointDrawTool,PanTool
 from bokeh.io import output_notebook
 from pprint import pprint

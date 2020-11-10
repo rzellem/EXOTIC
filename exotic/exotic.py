@@ -216,7 +216,7 @@ class NASAExoplanetArchive:
                 self._get_params(data[idx])
                 log.info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
 
-        # fancy keys matching inits file
+        # fancy keys matching inits fil
         if fancy:
             flabels = {
                 "Target Star RA": self.pl_dict['ra'],
@@ -244,7 +244,8 @@ class NASAExoplanetArchive:
                 "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
                 "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
             }
-            return self.planet, candidate, flabels
+
+            return json.dumps(flabels,indent=4)
 
         return self.planet, candidate, self.pl_dict
 

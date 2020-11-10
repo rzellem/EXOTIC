@@ -92,6 +92,7 @@ import astroalign as aa
 aa.PIXEL_TOL=1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
+from astropy import units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
@@ -110,6 +111,7 @@ import dynesty
 import glob as g
 from pathlib import Path
 from io import StringIO
+import pyvo as vo
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -1018,6 +1020,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
             return fits_file
 
 
+
 def get_wcs(file, directory):
     log.info("\nGetting the plate solution for your imaging file. Please wait. ...")
     animate_toggle(True)
@@ -1181,12 +1184,58 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): "+imscalen)
     return imagescale
 
+# finds target in WCS image after applying proper motion correction from SIMBAD
+def find_target(target, hdufile, verbose=False):
+    # query simbad to get proper motions
+    service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
+    # http://simbad.u-strasbg.fr/simbad/tap/tapsearch.html
+    query = '''
+    SELECT basic.OID, ra, dec, main_id, pmra, pmdec, 
+    FROM basic JOIN ident ON oidref = oid
+    WHERE id = '{}';
+    '''.format(target)
+
+    result = service.search(query)
+    # TODO check that simbad returned a value
+
+    # set up astropy object
+    coord = SkyCoord(
+        ra = result['ra'][0]*u.deg,
+        dec = result['dec'][0]*u.deg,
+        distance=1*u.pc, 
+        pm_ra_cosdec=result['pmra'][0]*u.mas/u.yr,
+        pm_dec=result['pmdec'][0]*u.mas/u.yr,
+        frame="icrs",
+        obstime=astropy.time.Time("2000-1-1T00:00:00")
+    )
+
+    hdu = fits.open(hdufile)[0]
+
+    # apply proper motion
+    try:
+        t = astropy.time.Time(hdu.header['DATE_OBS'], format='isot', scale='utc')
+    except:
+        t = astropy.time.Time(hdu.header['DATE-OBS'], format='isot', scale='utc')
+
+    coordpm = coord.apply_space_motion(new_obstime=t)
+
+    # wcs coordinate translation
+    wcs = WCS(hdu.header)
+
+    pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]],0)
+
+    if verbose:
+        print("Simbad:",result)
+        print("\nObs Date:",t)
+        print("NEW:", coordpm.ra, coordpm.dec)
+        print("Target Location:",np.round(pixcoord[0],2))
+
+    return pixcoord[0]
 
 # defines the star point spread function as a 2D Gaussian
 def star_psf(x, y, x0, y0, a, sigx, sigy, b):
     gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
     return gaus
-
 
 # Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
 def estimate_sigma(x, maxidx=-1):

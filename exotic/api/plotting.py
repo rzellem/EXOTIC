@@ -7,12 +7,12 @@ from bokeh.plotting import figure, output_file, show, save
 from bokeh.palettes import Viridis256
 from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
 from bokeh.io import output_notebook
-
+from pprint import pprint
 def plot_image(filename, showorno):
 
     hdu = fits.open(filename)
+    pprint(dict(hdu[0].header))
     print(hdu.info())
-    print(hdu[0].header)
     data = hdu[0].data
 
     # quick hot pixel/ cosmic ray mask
@@ -22,7 +22,6 @@ def plot_image(filename, showorno):
         sepmed=False, sigclip = 4.25,
         niter=3, objlim=10, cleantype='idw', verbose=False
     )
-
 
     # show how many pixels are saturated
     SATURATION = 2**(hdu[0].header['bitpix'])
@@ -39,8 +38,7 @@ def plot_image(filename, showorno):
         bad_pix['y'].append(yc)
         bad_pix['value'].append(cdata[imask].mean())
 
-    print(bad_pix)
-
+    pprint(bad_pix)
 
     # create a figure with text on mouse hover\
     print("Saturated pixels are marked with red. These are pixels which have exceeded the maximum value for brightness, and are thus not suitable for use as comparison stars.")

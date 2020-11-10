@@ -204,7 +204,7 @@ class NASAExoplanetArchive:
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
-    def planet_info(self, verbose=False):
+    def planet_info(self, fancy=False):
         log.info(f"\nLooking up {self.planet}. Please wait. ...")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
@@ -216,7 +216,7 @@ class NASAExoplanetArchive:
                 self._get_params(data[idx])
                 log.info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
 
-        # fancy titles explaining data
+        # fancy keys matching inits file
         if fancy:
             flabels = {
                 "Target Star RA": self.pl_dict['ra'],

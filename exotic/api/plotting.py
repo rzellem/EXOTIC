@@ -15,7 +15,8 @@ def plot_image(filename, showorno):
     hdu = fits.open(filename)
     dheader = dict(hdu[0].header)
     for k in dheader:
-        print(f"{k}: {dheader[k]}"[:80])
+        if len(k) >= 2:
+            print(f"{k}: {dheader[k]}"[:80])
     print(hdu.info())
     data = hdu[0].data
 

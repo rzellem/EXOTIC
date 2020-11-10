@@ -8,6 +8,7 @@ from bokeh.palettes import Viridis256
 from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
 from bokeh.io import output_notebook
 from pprint import pprint
+
 def plot_image(filename, showorno):
 
     hdu = fits.open(filename)
@@ -42,7 +43,8 @@ def plot_image(filename, showorno):
 
     # create a figure with text on mouse hover\
     print("Saturated pixels are marked with red. These are pixels which have exceeded the maximum value for brightness, and are thus not suitable for use as comparison stars.")
-    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800)
+    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800,
+        tools=[BoxZoomTool(),WheelZoomTool(),ResetTool(),HoverTool(),PointDrawTool()])
     fig.x_range.range_padding = fig.y_range.range_padding = 0
 
     ##TODO: add colorbar

@@ -1232,6 +1232,7 @@ def find_target(target, hdufile, verbose=False):
         print("Simbad:",result)
         print("\nObs Date:",t)
         print("NEW:", coordpm.ra, coordpm.dec)
+        print("")
         print("Target Location:",np.round(pixcoord[0],2))
 
     return pixcoord[0]

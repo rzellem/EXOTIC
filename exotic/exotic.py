@@ -192,7 +192,6 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask[~nanmask] = sigmask
     return nanmask
 
-
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
 
@@ -2667,6 +2666,9 @@ def main():
                 plt_exotic.savefig(Path(exotic_infoDict['saveplot']) /
                                    f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
+                plt_exotic.savefig(Path(exotic_infoDict['saveplot']) /
+                                   f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
+                                   f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt_exotic.close()
 
             log.info(f"FOV file saved as: {exotic_infoDict['saveplot']}/FOV_{pDict['pName']}_"
@@ -2937,6 +2939,8 @@ def main():
         try:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+            f.savefig(Path(exotic_infoDict['saveplot']) /
+                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         except AttributeError:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")

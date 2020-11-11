@@ -1064,7 +1064,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 
-def get_wcs(file, directory):
+def get_wcs(file, directory=""):
     log.info("\nGetting the plate solution for your imaging file. Please wait. ...")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)

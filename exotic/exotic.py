@@ -574,8 +574,8 @@ def create_directory():
 
 
 # Check user's inits.json for user information and planetary parameters
-def check_init_file(inits_path, dict_info, dict_params):
-    with open(inits_path) as json_file:
+def check_init_file(init, dict_info, dict_params):
+    with init.open('r') as json_file:
         data = json.load(json_file)
 
     comparison_info = {'fitsdir': 'Directory with FITS files',
@@ -642,7 +642,7 @@ def get_init_params(comp, dict1, dict2):
 
 
 # Get inits.json file from user input
-def get_initialization_file(info_dict, user_pdict):
+def get_initialization_file(info_dict, user_pdict, args_init):
     cwd = Path.cwd()
     log.info(f"\nYour current working directory is: {cwd}")
     log.info(f"Potential initialization files I've found in {cwd} are: ")
@@ -650,14 +650,20 @@ def get_initialization_file(info_dict, user_pdict):
 
     while True:
         try:
-            init_file = user_input("\nPlease enter the Directory and Filename of your Initialization File: ", type_=str)
+            if not args_init:
+                init_file = user_input("\nPlease enter the Directory and Filename of your Initialization File: ",
+                                       type_=str)
+            else:
+                init_file = args_init
             if init_file == 'ok':
                 init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
-            return check_init_file(init_file, info_dict, user_pdict)
+            return check_init_file(Path(init_file), info_dict, user_pdict)
         except FileNotFoundError:
             log.info("Error: Initialization file not found. Please try again.")
         except IsADirectoryError:
             log.info("Error: Entered a directory. Please try again.")
+        finally:
+            args_init = None
 
 
 class InitializationFile:
@@ -1653,11 +1659,8 @@ def realTimeReduce(i, target_name):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-
-    help_ = "choose an inits file"
-    parser.add_argument("-i", "--init", help=help_, type=str, default="")
-
+    parser = argparse.ArgumentParser(description="Using initialization file for Complete Reduction.")
+    parser.add_argument('-i', '--init', help="choose an inits.json file", type=str, default='')
     return parser.parse_args()
 
 
@@ -1698,8 +1701,11 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-    realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
-                             type_=int, val1=1, val2=2)
+    if not args.init:
+        realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+                                 type_=int, val1=1, val2=2)
+    else:
+        realTimeAns = 2
 
     #############################
     # Real Time Reduction Routine
@@ -1787,16 +1793,19 @@ def main():
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
-        fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
-
-        fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
-                                       "Enter '1' to use the Command Line or '2' to use an input file: ",
-                                       type_=int, val1=1, val2=2)
+        if not args.init:
+            fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
+                                    "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+            fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
+                                           "Enter '1' to use the Command Line or '2' to use an input file: ",
+                                           type_=int, val1=1, val2=2)
+        else:
+            fitsortext = 1
+            fileorcommandline = 2
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict)
+            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict, args.init)
             init_obj = InitializationFile(exotic_infoDict, userpDict['pName'])
             exotic_infoDict, userpDict['pName'] = init_obj.get_info()
 
@@ -2678,7 +2687,7 @@ def main():
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in imageheader:
+            if "BJD_TDB" in imageheader or "BJD" in imageheader:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

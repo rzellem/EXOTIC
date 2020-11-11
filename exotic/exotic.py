@@ -1657,12 +1657,10 @@ def realTimeReduce(i, target_name):
     exotic_ax1.set_xlabel('Time (jd)')
     exotic_ax1.plot(timesListed, normalizedFluxVals, 'bo')
 
-
 def parse_args():
-    parser = argparse.ArgumentParser(description="Using initialization file for Complete Reduction.")
+    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user input.")
     parser.add_argument('-i', '--init', help="choose an inits.json file", type=str, default='')
     return parser.parse_args()
-
 
 def main():
 

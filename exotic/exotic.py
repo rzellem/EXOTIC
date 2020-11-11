@@ -396,6 +396,9 @@ class NASAExoplanetArchive:
                 rserr = np.sqrt(np.abs(data['st_raderr1']*data['st_raderr2'])) * R_SUN
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
+
+        import pdb; pdb.set_trace()
+
         self.pl_dict = {
             'ra': data['ra'],
             'dec': data['dec'],
@@ -409,7 +412,7 @@ class NASAExoplanetArchive:
             'rprs': rprs,
             'rprsUnc': rprserr,
             'aRs': data['pl_ratdor'],
-            'aRsUnc': np.sqrt(np.abs(data['pl_ratdorerr1']*data['pl_ratdorerr2'])),
+            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2'])),
             'inc': data['pl_orbincl'],
             'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2'])),
 

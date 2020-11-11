@@ -631,7 +631,6 @@ def check_init_file(init, dict_info, dict_params):
 
     return dict_info, dict_params
 
-
 def get_init_params(comp, dict1, dict2):
     for key, value in comp.items():
         try:

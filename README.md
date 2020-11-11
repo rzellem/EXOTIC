@@ -17,19 +17,24 @@ The objective of this pipeline is to help you reduce your images of your transit
 
 The easiest way to install exotic is with pip: 
 
-`pip install exotic`
+`$ pip install exotic`
 
 **Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation instructions including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
 
-## Running exotic
+## Examples 
+- [Google Collab](https://colab.research.google.com/drive/1W1vrgEp9_IjEN16WFxmopLDYvHeYfxpw?usp=sharing)
+- [Jupyter Notebook](examples/Exotic_Notebook.ipynb)
+- Command Line: `$ exotic`
 
-`python exotic/exotic.py`
+or if you have an inits file already:
 
-FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required. Download a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
+`$ exotic -i inits.json`
+
+FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC. We provide a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
 
 [Sample Data](https://github.com/rzellem/EXOTIC_sampledata)
 
-A resulting lightcurve from the sample dataset is shown below:
+A lightcurve from the sample dataset is shown below:
 
 ![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/HAT-P-32bExample.png)
 

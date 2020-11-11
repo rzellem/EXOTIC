@@ -2,6 +2,8 @@
 
 A python 3 package for reducing photometric data of transiting exoplanets into lightcurves, and retrieving transit epochs and planetary radii.
 
+### [Example on Google Collab]
+
 The EXOplanet Transit Interpretation Code relies upon the transit method for exoplanet detection. This method detects exoplanets by measuring the dimming of a star as an orbiting planet transits, which is when it passes between its host star and the Earth. If we record the host star’s emitted light, known as the flux, and observe how it changes as a function of time, we should observe a small dip in the brightness when a transit event occurs. A graph of host star flux vs. time is known as a lightcurve, and it holds the key to determining how large the planet is, and how long it will be until it transits again.
 
 ![Light Curve Graph displaying brightness versus time.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/transitsimple.jpg)
@@ -17,15 +19,18 @@ The objective of this pipeline is to help you reduce your images of your transit
 
 The easiest way to install exotic is with pip: 
 
-`pip install exotic`
+`$ pip install exotic`
 
 **Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation instructions including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
 
-## Running exotic
+## Examples 
+- [Google Collab](https://colab.research.google.com/drive/1W1vrgEp9_IjEN16WFxmopLDYvHeYfxpw?usp=sharing)
+- [Jupyter Notebook](examples/Exotic_Notebook.ipynb)
+- Command Line:
 
-`python exotic/exotic.py`
+`$ exotic`
 
-FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required. Download a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
+FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC. Download a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
 
 [Sample Data](https://github.com/rzellem/EXOTIC_sampledata)
 

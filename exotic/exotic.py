@@ -376,6 +376,8 @@ class NASAExoplanetArchive:
                                 default.loc[default.pl_name == i, k] = 0
                             elif k == "st_met":  # [Fe/H]
                                 default.loc[default.pl_name == i, k] = 0
+                            else:
+                                default.loc[default.pl_name == i, k] = 0
 
             NASAExoplanetArchive.dataframe_to_jsonfile(default, filename)
             return target, False
@@ -397,8 +399,6 @@ class NASAExoplanetArchive:
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
 
-        import pdb; pdb.set_trace()
-
         self.pl_dict = {
             'ra': data['ra'],
             'dec': data['dec'],
@@ -412,17 +412,17 @@ class NASAExoplanetArchive:
             'rprs': rprs,
             'rprsUnc': rprserr,
             'aRs': data['pl_ratdor'],
-            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2'])),
+            'aRsUnc': max(1,np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2']))),
             'inc': data['pl_orbincl'],
-            'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2'])),
+            'incUnc': max(1,np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2']))),
 
             'ecc': data.get('pl_orbeccen', 0),
             'teff': data['st_teff'],
             'teffUncPos': data['st_tefferr1'],
             'teffUncNeg': data['st_tefferr2'],
             'met': data['st_met'],
-            'metUncPos': data['st_meterr1'],
-            'metUncNeg': data['st_meterr2'],
+            'metUncPos': max(0.01,data['st_meterr1']),
+            'metUncNeg': min(-0.01,data['st_meterr2']),
             'logg': data['st_logg'],
             'loggUncPos': data['st_loggerr1'],
             'loggUncNeg': data['st_loggerr2']

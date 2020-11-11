@@ -821,6 +821,11 @@ def check_parameters(init_parameters, parameters):
                  "\n Would you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
                  "\n  (2) to review the ones scraped from the Archive that differ?")
+        print("\nDifference(s) found between initialization file parameters and "
+                 "those scraped by EXOTIC from the NASA Exoplanet Archive."
+                 "\n Would you like:"
+                 "\n  (1) EXOTIC to adopt of all of your defined parameters or"
+                 "\n  (2) to review the ones scraped from the Archive that differ?")
         opt = user_input("\nPlease enter 1 or 2: ", type_=str, val1='1', val2='2')
 
         if opt == '2':

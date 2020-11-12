@@ -217,9 +217,13 @@ class NASAExoplanetArchive:
 
         # fancy keys matching inits fil
         if fancy:
+            coord = SkyCoord(ra=self.pl_dict['ra']*u.degree, dec=self.pl_dict['dec']*u.degree)
+            rastr = coord.to_string('hmsdms',sep=':').split(' ')[0]
+            decstr= coord.to_string('hmsdms',sep=':').split(' ')[1]
+
             flabels = {
-                "Target Star RA": self.pl_dict['ra'],
-                "Target Star Dec": self.pl_dict['dec'],
+                "Target Star RA": rastr,
+                "Target Star Dec": decstr,
                 "Planet Name": self.pl_dict['pName'],
                 "Host Star Name": self.pl_dict['sName'],
                 "Orbital Period (days)": self.pl_dict['pPer'],

@@ -416,9 +416,9 @@ class NASAExoplanetArchive:
             'rprs': rprs,
             'rprsUnc': rprserr,
             'aRs': data['pl_ratdor'],
-            'aRsUnc': max(1,np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2']))),
+            'aRsUnc': max(0.1,np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2']))),
             'inc': data['pl_orbincl'],
-            'incUnc': max(1,np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2']))),
+            'incUnc': max(0.1,np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2']))),
 
             'ecc': data.get('pl_orbeccen', 0),
             'teff': data['st_teff'],

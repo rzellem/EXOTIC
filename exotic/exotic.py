@@ -416,9 +416,9 @@ class NASAExoplanetArchive:
             'rprs': rprs,
             'rprsUnc': rprserr,
             'aRs': data['pl_ratdor'],
-            'aRsUnc': max(1,np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2']))),
+            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2'])),
             'inc': data['pl_orbincl'],
-            'incUnc': max(1,np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2']))),
+            'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2'])),
 
             'ecc': data.get('pl_orbeccen', 0),
             'teff': data['st_teff'],
@@ -431,6 +431,13 @@ class NASAExoplanetArchive:
             'loggUncPos': data['st_loggerr1'],
             'loggUncNeg': data['st_loggerr2']
         }
+
+        if self.pl_dict['aRsUnc'] == 0:
+            self.pl_dict['aRsUnc'] = 0.1
+        
+        if self.pl_dict['incUnc'] == 0:
+            self.pl_dict['incUnc'] = 0.1
+
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
 

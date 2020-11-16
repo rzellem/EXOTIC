@@ -3,16 +3,22 @@ from io import BytesIO
 from astropy.io import fits
 from astroscrappy import detect_cosmics
 from scipy.ndimage import label
-from bokeh.plotting import figure, output_file, show, save
+from bokeh.plotting import figure, output_file, show
 from bokeh.palettes import Viridis256
 from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
+from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PanTool,FreehandDrawTool
 from bokeh.io import output_notebook
+from pprint import pprint
 
-def plot_image(filename, showorno):
+def plot_image(filename, save=False):
 
     hdu = fits.open(filename)
+    dheader = dict(hdu[0].header)
+    for k in dheader:
+        if len(k) >= 2:
+            print(f"{k}: {dheader[k]}")
+
     print(hdu.info())
-    print(hdu[0].header)
     data = hdu[0].data
 
     # quick hot pixel/ cosmic ray mask
@@ -22,7 +28,6 @@ def plot_image(filename, showorno):
         sepmed=False, sigclip = 4.25,
         niter=3, objlim=10, cleantype='idw', verbose=False
     )
-
 
     # show how many pixels are saturated
     SATURATION = 2**(hdu[0].header['bitpix'])
@@ -39,18 +44,21 @@ def plot_image(filename, showorno):
         bad_pix['y'].append(yc)
         bad_pix['value'].append(cdata[imask].mean())
 
-    print(bad_pix)
-
+    pprint(bad_pix)
 
     # create a figure with text on mouse hover\
     print("Saturated pixels are marked with red. These are pixels which have exceeded the maximum value for brightness, and are thus not suitable for use as comparison stars.")
-    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800)
+    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800,
+        tools=[PanTool(),BoxZoomTool(),WheelZoomTool(),ResetTool(),HoverTool()])
     fig.x_range.range_padding = fig.y_range.range_padding = 0
+
+    r = fig.multi_line('x', 'y', source={'x':[],'y':[]},color='white',line_width=3)
+    fig.add_tools(FreehandDrawTool(renderers=[r]))
 
     ##TODO: add colorbar
 
     # set up a colobar + data range
-    color_mapper = LogColorMapper(palette="Viridis256", low=np.percentile(data, 55), high=np.percentile(data, 99))
+    color_mapper = LogColorMapper(palette="Cividis256", low=np.percentile(data, 55), high=np.percentile(data, 99))
 
     # must give a vector of image data for image parameter
     fig.image(
@@ -71,9 +79,7 @@ def plot_image(filename, showorno):
 
     fig.add_layout(color_bar, 'right')
 
-    #output_file("image.html", title="fts example")
-    if(showorno):
-        show(fig)
-    else:
+    if save:
         output_file("interactivefits.html")
-        save(fig)
+    else:
+        show(fig)

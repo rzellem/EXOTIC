@@ -92,6 +92,7 @@ import astroalign as aa
 aa.PIXEL_TOL=1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
+from astropy import units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
@@ -110,6 +111,7 @@ import dynesty
 import glob as g
 from pathlib import Path
 from io import StringIO
+import pyvo as vo
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -190,7 +192,6 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask[~nanmask] = sigmask
     return nanmask
 
-
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
 
@@ -202,7 +203,7 @@ class NASAExoplanetArchive:
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
-    def planet_info(self):
+    def planet_info(self, fancy=False):
         log.info(f"\nLooking up {self.planet}. Please wait. ...")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
@@ -213,6 +214,41 @@ class NASAExoplanetArchive:
                 idx = planets.index(self.planet)
                 self._get_params(data[idx])
                 log.info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
+
+        # fancy keys matching inits fil
+        if fancy:
+            coord = SkyCoord(ra=self.pl_dict['ra']*u.degree, dec=self.pl_dict['dec']*u.degree)
+            rastr = coord.to_string('hmsdms',sep=':').split(' ')[0]
+            decstr= coord.to_string('hmsdms',sep=':').split(' ')[1]
+
+            flabels = {
+                "Target Star RA": rastr,
+                "Target Star Dec": decstr,
+                "Planet Name": self.pl_dict['pName'],
+                "Host Star Name": self.pl_dict['sName'],
+                "Orbital Period (days)": self.pl_dict['pPer'],
+                "Orbital Period Uncertainty": self.pl_dict['pPerUnc'],
+                "Published Mid-Transit Time (BJD-UTC)": self.pl_dict['midT'],
+                "Mid-Transit Time Uncertainty": self.pl_dict['midTUnc'],
+                "Ratio of Planet to Stellar Radius (Rp/Rs)": self.pl_dict['rprs'],
+                "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": self.pl_dict['rprsUnc'],
+                "Ratio of Distance to Stellar Radius (a/Rs)": self.pl_dict['aRs'],
+                "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": self.pl_dict['aRsUnc'],
+                "Orbital Inclination (deg)": self.pl_dict['inc'],
+                "Orbital Inclination (deg) Uncertainity": self.pl_dict['incUnc'],
+                "Orbital Eccentricity (0 if null)": self.pl_dict['ecc'],
+                "Star Effective Temperature (K)": self.pl_dict['teff'],
+                "Star Effective Temperature (+) Uncertainty": self.pl_dict['teffUncPos'],
+                "Star Effective Temperature (-) Uncertainty": self.pl_dict['teffUncNeg'],
+                "Star Metallicity ([FE/H])": self.pl_dict['met'],
+                "Star Metallicity (+) Uncertainty": self.pl_dict['metUncPos'],
+                "Star Metallicity (-) Uncertainty": self.pl_dict['metUncNeg'],
+                "Star Surface Gravity (log(g))": self.pl_dict['logg'],
+                "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
+                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
+            }
+
+            return json.dumps(flabels,indent=4)
 
         return self.planet, candidate, self.pl_dict
 
@@ -344,6 +380,8 @@ class NASAExoplanetArchive:
                                 default.loc[default.pl_name == i, k] = 0
                             elif k == "st_met":  # [Fe/H]
                                 default.loc[default.pl_name == i, k] = 0
+                            else:
+                                default.loc[default.pl_name == i, k] = 0
 
             NASAExoplanetArchive.dataframe_to_jsonfile(default, filename)
             return target, False
@@ -364,6 +402,7 @@ class NASAExoplanetArchive:
                 rserr = np.sqrt(np.abs(data['st_raderr1']*data['st_raderr2'])) * R_SUN
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
+
         self.pl_dict = {
             'ra': data['ra'],
             'dec': data['dec'],
@@ -377,7 +416,7 @@ class NASAExoplanetArchive:
             'rprs': rprs,
             'rprsUnc': rprserr,
             'aRs': data['pl_ratdor'],
-            'aRsUnc': np.sqrt(np.abs(data['pl_ratdorerr1']*data['pl_ratdorerr2'])),
+            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2'])),
             'inc': data['pl_orbincl'],
             'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2'])),
 
@@ -386,12 +425,19 @@ class NASAExoplanetArchive:
             'teffUncPos': data['st_tefferr1'],
             'teffUncNeg': data['st_tefferr2'],
             'met': data['st_met'],
-            'metUncPos': data['st_meterr1'],
-            'metUncNeg': data['st_meterr2'],
+            'metUncPos': max(0.01,data['st_meterr1']),
+            'metUncNeg': min(-0.01,data['st_meterr2']),
             'logg': data['st_logg'],
             'loggUncPos': data['st_loggerr1'],
             'loggUncNeg': data['st_loggerr2']
         }
+
+        if self.pl_dict['aRsUnc'] == 0:
+            self.pl_dict['aRsUnc'] = 0.1
+        
+        if self.pl_dict['incUnc'] == 0:
+            self.pl_dict['incUnc'] = 0.1
+
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
 
@@ -596,7 +642,6 @@ def check_init_file(init, dict_info, dict_params):
 
     return dict_info, dict_params
 
-
 def get_init_params(comp, dict1, dict2):
     for key, value in comp.items():
         try:
@@ -782,6 +827,11 @@ def check_parameters(init_parameters, parameters):
 
     if different:
         log.info("\nDifference(s) found between initialization file parameters and "
+                 "those scraped by EXOTIC from the NASA Exoplanet Archive."
+                 "\n Would you like:"
+                 "\n  (1) EXOTIC to adopt of all of your defined parameters or"
+                 "\n  (2) to review the ones scraped from the Archive that differ?")
+        print("\nDifference(s) found between initialization file parameters and "
                  "those scraped by EXOTIC from the NASA Exoplanet Archive."
                  "\n Would you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
@@ -1024,7 +1074,8 @@ def check_wcs(fits_file, save_directory, plate_opt):
             return fits_file
 
 
-def get_wcs(file, directory):
+
+def get_wcs(file, directory=""):
     log.info("\nGetting the plate solution for your imaging file. Please wait. ...")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
@@ -1187,12 +1238,63 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): "+imscalen)
     return imagescale
 
+# finds target in WCS image after applying proper motion correction from SIMBAD
+def find_target(target, hdufile, verbose=False):
+    # query simbad to get proper motions
+    service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
+    # http://simbad.u-strasbg.fr/simbad/tap/tapsearch.html
+    query = '''
+    SELECT basic.OID, ra, dec, main_id, pmra, pmdec
+    FROM basic JOIN ident ON oidref = oid
+    WHERE id = '{}';
+    '''.format(target)
+
+    result = service.search(query)
+    # TODO check that simbad returned a value
+
+    # set up astropy object
+    coord = SkyCoord(
+        ra = result['ra'][0]*u.deg,
+        dec = result['dec'][0]*u.deg,
+        distance=1*u.pc, 
+        pm_ra_cosdec=result['pmra'][0]*u.mas/u.yr,
+        pm_dec=result['pmdec'][0]*u.mas/u.yr,
+        frame="icrs",
+        obstime=astropy.time.Time("2000-1-1T00:00:00")
+    )
+
+    hdu = fits.open(hdufile)[0]
+
+    try:
+        dateobs = hdu.header['DATE_OBS']
+    except:
+        dateobs = hdu.header['DATE-OBS']
+
+    # ignore timezone
+    if len(dateobs.split('-')) == 4:
+        dateobs = '-'.join(dateobs.split('-')[:-1])
+
+    t = astropy.time.Time(dateobs, format='isot', scale='utc')
+    coordpm = coord.apply_space_motion(new_obstime=t)
+
+    # wcs coordinate translation
+    wcs = WCS(hdu.header)
+
+    pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]],0)
+
+    if verbose:
+        print("Simbad:",result)
+        print("\nObs Date:",t)
+        print("NEW:", coordpm.ra, coordpm.dec)
+        print("")
+        print("Target Location:",np.round(pixcoord[0],2))
+
+    return pixcoord[0]
 
 # defines the star point spread function as a 2D Gaussian
 def star_psf(x, y, x0, y0, a, sigx, sigy, b):
     gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
     return gaus
-
 
 # Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
 def estimate_sigma(x, maxidx=-1):
@@ -1570,12 +1672,10 @@ def realTimeReduce(i, target_name):
     exotic_ax1.set_xlabel('Time (jd)')
     exotic_ax1.plot(timesListed, normalizedFluxVals, 'bo')
 
-
 def parse_args():
-    parser = argparse.ArgumentParser(description="Using initialization file for Complete Reduction.")
+    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user input.")
     parser.add_argument('-i', '--init', help="choose an inits.json file", type=str, default='')
     return parser.parse_args()
-
 
 def main():
 
@@ -2591,6 +2691,9 @@ def main():
                 plt_exotic.savefig(Path(exotic_infoDict['saveplot']) /
                                    f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
+                plt_exotic.savefig(Path(exotic_infoDict['saveplot']) /
+                                   f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
+                                   f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt_exotic.close()
 
             log.info(f"FOV file saved as: {exotic_infoDict['saveplot']}/FOV_{pDict['pName']}_"
@@ -2861,6 +2964,8 @@ def main():
         try:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+            f.savefig(Path(exotic_infoDict['saveplot']) /
+                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         except AttributeError:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")

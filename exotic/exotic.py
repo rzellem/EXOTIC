@@ -2547,7 +2547,7 @@ def main():
 
                         mybounds = {
                             'rprs': [0, pDict['rprs']*1.25],
-                            'tmid': [max(lower, arrayTimes.min()), min(arrayTimes.max(), upper)],
+                            'tmid': [lower, upper],
                             'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
                             'a1': [min(0,min(arrayFinalFlux)), 3*max(arrayFinalFlux)],

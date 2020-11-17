@@ -487,7 +487,10 @@ def getJulianTime(hdul):
         if "start" in hdul[0].header.comments['MJD-OBS']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     else:
-        gDateTime = hdul[0].header['DATE-OBS']  # gets the gregorian date and time from the fits file header
+        if 'T' in hdul[0].header.get('DATE',''):
+            gDateTime = hdul[0].header['DATE']  # gets the gregorian date and time from the fits file header
+        else:
+            gDateTime = hdul[0].header['DATE-OBS']
         dt = dup.parse(gDateTime)
         atime = astropy.time.Time(dt)
         julianTime = atime.jd

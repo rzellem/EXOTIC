@@ -192,6 +192,23 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask[~nanmask] = sigmask
     return nanmask
 
+def dms_to_dd(dms_in):
+    """
+    Quick helper method to convert long/lat values in degree-minute-second (dms) form
+    (using ':' separators) to decimal (dd) form
+    :param dms_in: DMS long/lat value, colon separated
+    :return float: Properly signed long/lat value in decimal float form
+    """
+    if dms_in is None or isinstance(dms_in, str) is False or str(dms_in).count(":") != 2:
+        raise ValueError("Invalid DMS input provided for calculations. ...")
+    # clean string of errant leading/trailing/internal spaces
+    dms = str(dms_in).strip().replace(" ", "")
+    degrees, minutes, seconds = dms.split(":")
+    dec = abs(float(degrees)) + float(minutes) / 60. + float(seconds) / 3600.
+    if float(degrees) < 0.:
+        dec = dec * -1.
+    return dec
+
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
 
@@ -1931,7 +1948,12 @@ def main():
                     exotic_infoDict['lat'] = exotic_infoDict['lat'].replace(' ', '')
                     if exotic_infoDict['lat'][0] != '+' and exotic_infoDict['lat'][0] != '-':
                         raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-                    lati = float(exotic_infoDict['lat'])
+                    # Convert to float - if latitude is in +/-HH:MM:SS format, convert to a float
+                    try:
+                        lati = float(exotic_infoDict['lat'])
+                    except ValueError:
+                        exotic_infoDict['lat'] = dms_to_dd(exotic_infoDict['lat'])
+                        lati = float(exotic_infoDict['lat'])
                     if lati <= -90.00 or lati >= 90.00:
                         raise ValueError('Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
                     break
@@ -1952,7 +1974,12 @@ def main():
                     exotic_infoDict['long'] = exotic_infoDict['long'].replace(' ', '')
                     if exotic_infoDict['long'][0] != '+' and exotic_infoDict['long'][0] != '-':
                         raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
-                    longit = float(exotic_infoDict['long'])
+                    # Convert to float - if longitude is in +/-HH:MM:SS format, convert to a float
+                    try:
+                        longit = float(exotic_infoDict['long'])
+                    except ValueError:
+                        exotic_infoDict['long'] = dms_to_dd(exotic_infoDict['long'])
+                        longit = float(exotic_infoDict['long'])
                     if longit <= -180.00 or longit >= 180.00:
                         raise ValueError('Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
                     break

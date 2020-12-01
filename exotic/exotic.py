@@ -155,7 +155,7 @@ except ImportError:  # package import
 try:  # nonlinear limb darkening numerics
     from .api.gael_ld import createldgrid
 except ImportError:  # package import
-    from api.gaelLDNL import createldgrid
+    from api.gael_ld import createldgrid
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import

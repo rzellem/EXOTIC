@@ -1829,8 +1829,11 @@ def realTimeReduce(i, target_name):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user input.")
-    parser.add_argument('-i', '--init', help="choose an inits.json file", type=str, default='')
+    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user inputs.")
+    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file", )
+    parser.add_argument('-o', '--options', nargs='+', default='', type=str,
+                        choices=['prereduced', 'reduce', 'override'],
+                        help="added options to inits.json file",)
     return parser.parse_args()
 
 
@@ -1963,14 +1966,20 @@ def main():
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
-        if not args.init:
+        if not args.options:
             fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
                                     "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+        else:
+            if 'reduce' in args.options:
+                fitsortext = 1
+            else:
+                fitsortext = 2
+
+        if not args.init:
             fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
                                            "Enter '1' to use the Command Line or '2' to use an input file: ",
                                            type_=int, val1=1, val2=2)
         else:
-            fitsortext = 1
             fileorcommandline = 2
 
         # Read in input file rather than using the command line
@@ -2027,7 +2036,8 @@ def main():
                 log.info("ERROR: Data file not found. Please try again.")
                 sys.exit()
 
-            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
+            if fileorcommandline == 1:
+                exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
 
             processeddata = initf.readlines()
 
@@ -2061,8 +2071,12 @@ def main():
                 if planetnameconfirm == 1:
                     break
 
-        nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
-        userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+        if 'override' in args.options:
+            CandidatePlanetBool = False
+            pDict = userpDict
+        else:
+            nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
+            userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
 
         # observation date
         if fileorcommandline == 1:
@@ -2243,7 +2257,10 @@ def main():
             userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
 
             if not CandidatePlanetBool:
-                diff = check_parameters(userpDict, pDict)
+                if 'override' not in args.options:
+                    diff = check_parameters(userpDict, pDict)
+                else:
+                    diff = False
             if diff:
                 pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
             else:

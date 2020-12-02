@@ -1830,7 +1830,8 @@ def realTimeReduce(i, target_name):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user inputs.")
-    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file", )
+    parser.add_argument('-r', '--realtime', default='', type=str, help="using real-time reduction")
+    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file")
     parser.add_argument('-o', '--options', nargs='+', default='', type=str,
                         choices=['prereduced', 'reduce', 'override'],
                         help="added options to inits.json file",)
@@ -1874,7 +1875,9 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-    if not args.init:
+    if args.realtime:
+        realTimeAns = 1
+    elif not args.init:
         realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
                                  type_=int, val1=1, val2=2)
     else:
@@ -1889,7 +1892,10 @@ def main():
         log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log.info("**************************************************************\n")
 
-        directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
+        if not args.realtime:
+            directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
+        else:
+            directToWatch = args.realtime
         directoryP = ""
         directoryP = directToWatch
         directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')

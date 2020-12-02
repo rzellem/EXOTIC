@@ -813,7 +813,6 @@ def timeConvert(timeList, timeFormat, pDict, info_dict):
         timeList = convertedTimes[0]
     return timeList
 
-
 # Convert magnitude units to flux if pre-reduced file not in flux already
 def fluxConvert(fluxList, errorList, fluxFormat):
     # If units already in flux, do nothing, perform appropriate conversions to flux otherwise
@@ -1337,6 +1336,8 @@ def image_alignment(imagedata):
     rot = np.zeros(len(imagedata))
     pos = np.zeros((len(imagedata), 2))
 
+    roi = slice(int(imagedata[0].shape[0]*0.25),int(imagedata[0].shape[0]*0.75))
+
     # Align images from .FITS files and catch exceptions if images can't be aligned.
     # boollist for discarded images to delete .FITS data from airmass and times.
     for i, image_file in enumerate(imagedata):
@@ -1344,8 +1345,8 @@ def image_alignment(imagedata):
             sys.stdout.write(f"Aligning Image {i + 1} of {len(imagedata)}\r")
             log.debug(f"Aligning Image {i + 1} of {len(imagedata)}\r")
             sys.stdout.flush()
-            
-            results = aa.find_transform(image_file, imagedata[0])
+
+            results = aa.find_transform(image_file[roi,roi], imagedata[0][roi,roi])
             rot[i] = results[0].rotation
             pos[i] = results[0].translation
 
@@ -1715,8 +1716,8 @@ def realTimeReduce(i, target_name):
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
     # fit first image
-    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
-    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
+    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY])
+    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY])
 
     # just use one aperture and annulus
     apertureR = 3 * max(targsigX, targsigY)
@@ -1777,7 +1778,7 @@ def realTimeReduce(i, target_name):
 
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
-        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
+        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors)
         tpsfFlux = 2*PI*tamplitude*tsigX*tsigY
         currTPX = tx
         currTPY = ty
@@ -1785,7 +1786,7 @@ def realTimeReduce(i, target_name):
         # Fits Centroid for Reference
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
-        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
+        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors)
         rpsfFlux = 2*PI*ramplitude*rsigX*rsigY
         currRPX = rx
         currRPY = ry
@@ -2375,7 +2376,7 @@ def main():
                 cosmicrayfilter_bool = False
                 if cosmicrayfilter_bool:
                     log.info("Filtering your data for cosmic rays.")
-                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY])
                     psffwhm = 2.355*(targsigX+targsigY)/2
                     log.debug(f"FWHM in 1st image: {np.round(psffwhm, 2):.2f} px")
                     log.debug(f"STDEV before: {np.std(sortedallImageData, 0).mean():.2f}")
@@ -2514,6 +2515,9 @@ def main():
             sortedallImageData, boollist, apos, arot = image_alignment(sortedallImageData)
             timesListed = np.array(timesListed)[boollist]
             airMassList = np.array(airMassList)[boollist]
+            
+            if np.sum(apos==0)/2 >= 0.5*len(sortedallImageData):
+                print("alignment failed")
 
             # alloc psf fitting param
             psf_data = {
@@ -2532,21 +2536,30 @@ def main():
                 # for each image
                 for j in range(len(sortedallImageData)):
                     if i == 0:
+                        
                         # apply image alignment transformation
                         xrot = exotic_UIprevTPX*np.cos(arot[j]) - exotic_UIprevTPY*np.sin(arot[j]) - apos[j][0]
                         yrot = exotic_UIprevTPX*np.sin(arot[j]) + exotic_UIprevTPY*np.cos(arot[j]) - apos[j][1]
                         psf_data["target_align"][j] = [xrot,yrot]
-                        psf_data["target"][j] = fit_centroid(sortedallImageData[j], [xrot, yrot], box=10)
                         
                         if j == 0:
                             psf_data["target"][j] = fit_centroid(sortedallImageData[j], [xrot,yrot], box=10)
                         else:
-                            psf_data["target"][j] = fit_centroid(
-                                sortedallImageData[j], 
-                                [xrot,yrot],
-                                #np.array([xrot+psf_data[ckey][j-1][0],yrot+psf_data[ckey][j-1][1]])*0.5, 
-                                psf_data["target"][j-1][2:],
-                                box=10)
+                            try:
+                                # try astro alignment estimate
+                                psf_data["target"][j] = fit_centroid(
+                                    sortedallImageData[j], 
+                                    [xrot,yrot],
+                                    psf_data["target"][j-1][2:],
+                                    box=10)
+
+                            except:
+                                # use previous PSF position
+                                psf_data["target"][j] = fit_centroid(
+                                    sortedallImageData[j], 
+                                    psf_data["target"][j-1][:2],
+                                    psf_data["target"][j-1][2:],
+                                    box=10)
 
                     # apply image alignment transformation
                     xrot = coord[0]*np.cos(arot[j]) - coord[1]*np.sin(arot[j]) - apos[j][0]
@@ -2556,12 +2569,20 @@ def main():
                     if j == 0:
                         psf_data[ckey][j] = fit_centroid(sortedallImageData[j], [xrot,yrot], box=10)
                     else:
-                        psf_data[ckey][j] = fit_centroid(
-                            sortedallImageData[j], 
-                            [xrot,yrot],
-                            #np.array([xrot+psf_data[ckey][j-1][0],yrot+psf_data[ckey][j-1][1]])*0.5, 
-                            psf_data[ckey][j-1][2:],
-                            box=10)
+                        try:
+                            # try astro alignment estimate
+                            psf_data[ckey][j] = fit_centroid(
+                                sortedallImageData[j], 
+                                [xrot,yrot],
+                                psf_data[ckey][j-1][2:],
+                                box=10)
+                        except:
+                            # use previous PSF position
+                            psf_data[ckey][j] = fit_centroid(
+                                sortedallImageData[j], 
+                                psf_data[ckey][j-1][:2],
+                                psf_data[ckey][j-1][2:],
+                                box=10)            
 
                     # if j % 20 == 0 and j > 0:
                     #     simg = sortedallImageData[:j].sum(0)
@@ -2905,8 +2926,12 @@ def main():
                 # resultos = time_barycentre.value
                 # goodTimes = resultos
                 animate_toggle(True)
-                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
-                goodTimes = resultos[0]
+                try:
+                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
+                    goodTimes = resultos[0]
+                except:
+                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'], leap_update=False)
+                    goodTimes = resultos[0]
                 animate_toggle()
 
             # Centroid position plots

@@ -153,9 +153,9 @@ try:  # plate solution
 except ImportError:  # package import
     from api.plate_solution import PlateSolution
 try:  # nonlinear limb darkening numerics
-    from .api.gaelLDNL import LimbDarkening
+    from .api.gael_ld import createldgrid
 except ImportError:  # package import
-    from api.gaelLDNL import LimbDarkening
+    from api.gael_ld import createldgrid
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -191,6 +191,23 @@ def sigma_clip(ogdata, sigma=3, dt=21):
     sigmask = np.abs(res) > sigma*std
     nanmask[~nanmask] = sigmask
     return nanmask
+
+def dms_to_dd(dms_in):
+    """
+    Quick helper method to convert long/lat values in degree-minute-second (dms) form
+    (using ':' separators) to decimal (dd) form
+    :param dms_in: DMS long/lat value, colon separated
+    :return float: Properly signed long/lat value in decimal float form
+    """
+    if dms_in is None or isinstance(dms_in, str) is False or str(dms_in).count(":") != 2:
+        raise ValueError("Invalid DMS input provided for calculations. ...")
+    # clean string of errant leading/trailing/internal spaces
+    dms = str(dms_in).strip().replace(" ", "")
+    degrees, minutes, seconds = dms.split(":")
+    dec = abs(float(degrees)) + float(minutes) / 60. + float(seconds) / 3600.
+    if float(degrees) < 0.:
+        dec = dec * -1.
+    return dec
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
@@ -646,6 +663,7 @@ def check_init_file(init, dict_info, dict_params):
 
     return dict_info, dict_params
 
+
 def get_init_params(comp, dict1, dict2):
     for key, value in comp.items():
         try:
@@ -831,11 +849,6 @@ def check_parameters(init_parameters, parameters):
 
     if different:
         log.info("\nDifference(s) found between initialization file parameters and "
-                 "those scraped by EXOTIC from the NASA Exoplanet Archive."
-                 "\n Would you like:"
-                 "\n  (1) EXOTIC to adopt of all of your defined parameters or"
-                 "\n  (2) to review the ones scraped from the Archive that differ?")
-        print("\nDifference(s) found between initialization file parameters and "
                  "those scraped by EXOTIC from the NASA Exoplanet Archive."
                  "\n Would you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
@@ -1038,6 +1051,145 @@ def check_imaging_files(directory, filename):
             directory = user_input(f"Enter the directory path where {filename} files are located: ", type_=str)
 
 
+class LimbDarkening:
+
+    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
+                 logg=None, loggpos=None, loggneg=None, wl_min=None, wl_max=None, filter_type=None):
+        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
+                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
+                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
+        self.filter_type = filter_type
+        self.wl_min = wl_min
+        self.wl_max = wl_max
+        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
+
+        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
+                     # Near-Infrared
+        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
+                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
+
+                     # Sloan
+                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
+                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
+                     ('Sloan z', 'SZ'): (841.20, 978.20),
+
+                     # Stromgren
+                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
+                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
+
+                     # Johnson
+                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
+                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
+                     ('Johnson I', 'IJ'): (780.00, 1020.00),
+
+                     # Cousins
+                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
+
+                     # MObs Clear Filter, Source: Martin Fowler
+                     ('MObs CV', 'CV'): (350.00, 850.00),
+
+                     # Astrodon CBB: George Silvis: https://astrodon.com/products/astrodon-exo-planet-filter/
+                     ('Astrodon ExoPlanet-BB', 'CBB'): (500.00, 1000.00),
+
+                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
+                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
+                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
+                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
+                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
+
+    def nonlinear_ld(self):
+        self._standard_list()
+
+        if self.filter_type and not (self.wl_min or self.wl_max):
+            self._standard()
+        elif self.wl_min or self.wl_max:
+            self._custom()
+        else:
+            opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
+                             "with uncertainties? (y/n):", type_=str, val1='y', val2='n')
+
+            if opt == 'y':
+                opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
+                                 type_=int, val1=1, val2=2)
+                if opt == 1:
+                    self._standard()
+                elif opt == 2:
+                    self._custom()
+            else:
+                self._user_entered()
+        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type
+
+    def _standard_list(self):
+        log.info("\n\n***************************")
+        log.info("Limb Darkening Coefficients")
+        log.info("***************************")
+        log.info("\nThe standard bands that are available for limb darkening parameters (https://www.aavso.org/filters)"
+                 "\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n")
+        for key, value in self.fwhm.items():
+            log.info(f"\t{key[1]}: {key[0]} - ({value[0]:.2f}-{value[1]:.2f}) nm")
+
+    def _standard(self):
+        while True:
+            try:
+                if not self.filter_type:
+                    self.filter_type = user_input("\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ):",
+                                                  type_=str)
+                for key, value in self.fwhm.items():
+                    if self.filter_type in (key[0], key[1]) and self.filter_type != 'N/A':
+                        self.filter_type = (key[0], key[1])
+                        break
+                else:
+                    raise KeyError
+                break
+            except KeyError:
+                log.info("\nError: The entered filter is not in the provided list of standard filters.")
+                self.filter_type = None
+
+        self.wl_min = self.fwhm[self.filter_type][0]
+        self.wl_max = self.fwhm[self.filter_type][1]
+        self.filter_type = self.filter_type[1]
+        self._calculate_ld()
+
+    def _custom(self):
+        self.filter_type = 'N/A'
+        if not self.wl_min:
+            self.wl_min = user_input("FWHM Minimum wavelength (nm):", type_=float)
+        if not self.wl_max:
+            self.wl_max = user_input("FWHM Maximum wavelength (nm):", type_=float)
+        self._calculate_ld()
+
+    def _user_entered(self):
+        self.filter_type = user_input("\nEnter in your filter name:", type_=str)
+        ld_0 = user_input("\nEnter in your first nonlinear term:", type_=float)
+        ld0_unc = user_input("Enter in your first nonlinear term uncertainty:", type_=float)
+        ld_1 = user_input("\nEnter in your second nonlinear term:", type_=float)
+        ld1_unc = user_input("Enter in your second nonlinear term uncertainty:", type_=float)
+        ld_2 = user_input("\nEnter in your third nonlinear term:", type_=float)
+        ld2_unc = user_input("Enter in your third nonlinear term uncertainty:", type_=float)
+        ld_3 = user_input("\nEnter in your fourth nonlinear term:", type_=float)
+        ld3_unc = user_input("Enter in your fourth nonlinear term uncertainty:", type_=float)
+        self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
+
+        log.debug(f"Filter name: {self.filter_type}")
+        log.debug(f"User-defined nonlinear limb-darkening coefficients: {ld_0}+/-{ld0_unc}, {ld_1}+/-{ld1_unc}, "
+                  f"{ld_2}+/-{ld2_unc}, {ld_3}+/-{ld3_unc}")
+
+    def _calculate_ld(self):
+        self.wl_min = self.wl_min / 1000
+        self.wl_max = self.wl_max / 1000
+        ld_params = createldgrid(np.array([self.wl_min]), np.array([self.wl_max]), self.priors)
+        self.ld0 = ld_params['LD'][0][0], ld_params['ERR'][0][0]
+        self.ld1 = ld_params['LD'][1][0], ld_params['ERR'][1][0]
+        self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
+        self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
+
+        log.debug("EXOTIC-calculated nonlinear limb-darkening coefficients: ")
+        log.debug(f"{ld_params['LD'][0][0]} +/- + {ld_params['ERR'][0][0]}")
+        log.debug(f"{ld_params['LD'][1][0]} +/- + {ld_params['ERR'][1][0]}")
+        log.debug(f"{ld_params['LD'][2][0]} +/- + {ld_params['ERR'][2][0]}")
+        log.debug(f"{ld_params['LD'][3][0]} +/- + {ld_params['ERR'][3][0]}")
+
+
 def check_wcs(fits_file, save_directory, plate_opt):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=FITSFixedWarning)
@@ -1076,7 +1228,6 @@ def check_wcs(fits_file, save_directory, plate_opt):
                 return False
         else:
             return fits_file
-
 
 
 def get_wcs(file, directory=""):
@@ -1676,10 +1827,15 @@ def realTimeReduce(i, target_name):
     exotic_ax1.set_xlabel('Time (jd)')
     exotic_ax1.plot(timesListed, normalizedFluxVals, 'bo')
 
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user input.")
-    parser.add_argument('-i', '--init', help="choose an inits.json file", type=str, default='')
+    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user inputs.")
+    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file", )
+    parser.add_argument('-o', '--options', nargs='+', default='', type=str,
+                        choices=['prereduced', 'reduce', 'override'],
+                        help="added options to inits.json file",)
     return parser.parse_args()
+
 
 def main():
 
@@ -1810,14 +1966,20 @@ def main():
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
-        if not args.init:
+        if not args.options:
             fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
                                     "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+        else:
+            if 'reduce' in args.options:
+                fitsortext = 1
+            else:
+                fitsortext = 2
+
+        if not args.init:
             fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
                                            "Enter '1' to use the Command Line or '2' to use an input file: ",
                                            type_=int, val1=1, val2=2)
         else:
-            fitsortext = 1
             fileorcommandline = 2
 
         # Read in input file rather than using the command line
@@ -1874,7 +2036,8 @@ def main():
                 log.info("ERROR: Data file not found. Please try again.")
                 sys.exit()
 
-            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
+            if fileorcommandline == 1:
+                exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
 
             processeddata = initf.readlines()
 
@@ -1908,8 +2071,12 @@ def main():
                 if planetnameconfirm == 1:
                     break
 
-        nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
-        userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+        if 'override' in args.options:
+            CandidatePlanetBool = False
+            pDict = userpDict
+        else:
+            nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
+            userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
 
         # observation date
         if fileorcommandline == 1:
@@ -1931,7 +2098,12 @@ def main():
                     exotic_infoDict['lat'] = exotic_infoDict['lat'].replace(' ', '')
                     if exotic_infoDict['lat'][0] != '+' and exotic_infoDict['lat'][0] != '-':
                         raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-                    lati = float(exotic_infoDict['lat'])
+                    # Convert to float - if latitude is in +/-HH:MM:SS format, convert to a float
+                    try:
+                        lati = float(exotic_infoDict['lat'])
+                    except ValueError:
+                        exotic_infoDict['lat'] = dms_to_dd(exotic_infoDict['lat'])
+                        lati = float(exotic_infoDict['lat'])
                     if lati <= -90.00 or lati >= 90.00:
                         raise ValueError('Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
                     break
@@ -1952,7 +2124,12 @@ def main():
                     exotic_infoDict['long'] = exotic_infoDict['long'].replace(' ', '')
                     if exotic_infoDict['long'][0] != '+' and exotic_infoDict['long'][0] != '-':
                         raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
-                    longit = float(exotic_infoDict['long'])
+                    # Convert to float - if longitude is in +/-HH:MM:SS format, convert to a float
+                    try:
+                        longit = float(exotic_infoDict['long'])
+                    except ValueError:
+                        exotic_infoDict['long'] = dms_to_dd(exotic_infoDict['long'])
+                        longit = float(exotic_infoDict['long'])
                     if longit <= -180.00 or longit >= 180.00:
                         raise ValueError('Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
                     break
@@ -2080,7 +2257,10 @@ def main():
             userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
 
             if not CandidatePlanetBool:
-                diff = check_parameters(userpDict, pDict)
+                if 'override' not in args.options:
+                    diff = check_parameters(userpDict, pDict)
+                else:
+                    diff = False
             if diff:
                 pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
             else:

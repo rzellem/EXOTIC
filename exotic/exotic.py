@@ -139,9 +139,6 @@ from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 import warnings
 
-import requests_cache
-requests_cache.install_cache('exotic_cache')
-
 # ########## EXOTIC imports ##########
 try:  # science constants
     from constants import *
@@ -791,10 +788,10 @@ def timeConvert(timeList, timeFormat, pDict, info_dict):
     # if timeFormat is already in BJD_TDB, just do nothing
     # Perform appropriate conversion for each time format if needed
     if timeFormat == "JD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'],leap_update=False)
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
         timeList = convertedTimes[0]
     elif timeFormat == "MJD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'],leap_update=False)
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
         timeList = convertedTimes[0]
     return timeList
 
@@ -2458,7 +2455,7 @@ def main():
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = 1 * np.nanmax([targsigX, targsigY])
-                aperture_max = 10 * np.nanmax([targsigX, targsigY])
+                aperture_max = 6 * np.nanmax([targsigX, targsigY])
 
                 # run through apertures based on PSF shape
                 if aperture_min <= 1:

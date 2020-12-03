@@ -3259,8 +3259,8 @@ def main():
                     f"#NOTES={exotic_infoDict['notes']}\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
-                    f"#PRIORS-XC={json.dumps(priors_dict)}"  # code yields
-                    f"#RESULTS-XC={json.dumps(results_dict)}")  # code yields
+                    f"#PRIORS-XC={json.dumps(priors_dict)}\n"  # code yields
+                    f"#RESULTS-XC={json.dumps(results_dict)}\n")  # code yields
 
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):

@@ -1117,7 +1117,7 @@ class LimbDarkening:
                     self._custom()
             else:
                 self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type
+        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.wl_min*1000, self.wl_max*1000
 
     def _standard_list(self):
         log.info("\n\n***************************")
@@ -2265,8 +2265,6 @@ def main():
             if not CandidatePlanetBool:
                 if 'override' not in args.options:
                     diff = check_parameters(userpDict, pDict)
-                else:
-                    diff = False
             if diff:
                 pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
             else:
@@ -2279,7 +2277,7 @@ def main():
                                logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
                                wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'],
                                filter_type=exotic_infoDict['filter'])
-        ld0, ld1, ld2, ld3, exotic_infoDict['filter'] = ld_obj.nonlinear_ld()
+        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['wl_min'], exotic_infoDict['wl_max'] = ld_obj.nonlinear_ld()
 
         if fitsortext == 1:
             log.info("\n**************************"
@@ -2763,6 +2761,7 @@ def main():
                         resstd = myfit.residuals.std()/np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min
                             bestCompStar = compCounter + 1
+                            best_comp_coords = compStarList[compCounter]
                             minSTD = resstd  # set the minimum standard deviation to that
 
                             arrayNormUnc = arrayNormUnc * np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
@@ -2806,6 +2805,8 @@ def main():
                 log.info('Optimal Aperture: ' + str(abs(minAperture)))
                 log.info('Optimal Annulus: ' + str(minAnnulus))
                 log.info('********************************************\n')
+                bestCompStar = None
+                best_comp_coords = [None, None]
 
             else:
                 log.info('\n*********************************************')
@@ -3219,30 +3220,47 @@ def main():
         log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
                  f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
 
+        filter_dict = {'name': exotic_infoDict['filter'],
+                       'FWHM': [exotic_infoDict['wl_min'], exotic_infoDict['wl_max']]}
+
+        comp_ra = None
+        comp_dec = None
+
+        if bestCompStar and wcs_file:
+            comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
+            comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+
+        comp_star_dict = {'ra': comp_ra, 'dec': comp_dec, 'x': best_comp_coords[0], 'y': best_comp_coords[1]}
+
+        priors_dict = {'Period': f"{pDict['pPer']} +/- {pDict['pPerUnc']}", 'a/R*': pDict['aRs'], 'inc': pDict['inc'],
+                       'ecc': pDict['ecc'], 'u0': f"{ld0[0]} +/- {ld0[1]}", 'u1': f"{ld1[0]} +/- {ld1[1]}",
+                       'u2': f"{ld2[0]} +/- {ld2[1]}", 'u3': f"{ld3[0]} +/- {ld3[1]}"}
+
+        results_dict = {'Tc': f"{round(myfit.parameters['tmid'], 8)} + / - {round(myfit.errors['tmid'], 8)}",
+                        'Rp/R*': f"{round(myfit.parameters['rprs'], 6)} +/- {round(myfit.errors['rprs'], 6)}",
+                        'Am1': f"{round(myfit.parameters['a1'], 5)} +/- {round(myfit.errors['a1'], 5)}",
+                        'Am2': f"{round(myfit.parameters['a2'], 5)} +/- {round(myfit.errors['a2'], 5)}"}
+
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:
-            f.write("#TYPE=EXOPLANET\n")  # fixed
-            f.write(f"#OBSCODE={exotic_infoDict['aavsonum']}\n")  # UI
-            f.write(f"#SECONDARY_OBSCODE={exotic_infoDict['secondobs']}\n")  # UI
-            f.write(f"#SOFTWARE=EXOTIC v{__version__}\n")  # fixed
-            f.write("#DELIM=,\n")  # fixed
-            f.write("#DATE_TYPE=BJD_TDB\n")  # fixed
-            f.write(f"#OBSTYPE={exotic_infoDict['ctype']}\n")
-            f.write(f"#STAR_NAME={pDict['sName']}\n")  # code yields
-            f.write(f"#EXOPLANET_NAME={pDict['pName']}\n")  # code yields
-            f.write(f"#BINNING={exotic_infoDict['pixelbin']}\n")  # user input
-            f.write(f"#EXPOSURE_TIME={exotic_infoDict['exposure']}\n")  # UI
-            f.write(f"#FILTER={exotic_infoDict['filter']}\n")
-            f.write(f"#NOTES={exotic_infoDict['notes']}\n")
-            f.write("#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n")  # fixed
-            f.write("#MEASUREMENT_TYPE=Rnflux\n")  # fixed
-            f.write(f"#PRIORS=Period={pDict['pPer']} +/- {pDict['pPerUnc']},a/R*={pDict['aRs']},inc={pDict['inc']}"
-                    f",ecc={pDict['ecc']},u0={ld0[0]} +/- {ld0[1]},u1={ld1[0]} +/- {ld1[1]},u2={ld2[0]} +/- {ld2[1]}"
-                    f",u3={ld3[0]} +/- {ld3[1]}\n")  # code yields
-            f.write(f"#RESULTS=Tc={round(myfit.parameters['tmid'], 8)} +/- {round(myfit.errors['tmid'], 8)}"
-                    f",Rp/R*={round(myfit.parameters['rprs'], 6)} +/- {round(myfit.errors['rprs'], 6)}"
-                    f",Am1={round(myfit.parameters['a1'], 5)} +/- {round(myfit.errors['a1'], 5)}"
-                    f",Am2={round(myfit.parameters['a2'], 5)} +/- {round(myfit.errors['a2'], 5)}\n")  # code yields
+            f.write("#TYPE=EXOPLANET\n"  # fixed
+                    f"#OBSCODE={exotic_infoDict['aavsonum']}\n"  # UI
+                    f"#SECONDARY_OBSCODE={exotic_infoDict['secondobs']}\n"  # UI
+                    f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
+                    "#DELIM=,\n"  # fixed
+                    "#DATE_TYPE=BJD_TDB\n"  # fixed
+                    f"#OBSTYPE={exotic_infoDict['ctype']}\n"
+                    f"#STAR_NAME={pDict['sName']}\n"  # code yields
+                    f"#EXOPLANET_NAME={pDict['pName']}\n"  # code yields
+                    f"#BINNING={exotic_infoDict['pixelbin']}\n"  # user input
+                    f"#EXPOSURE_TIME={exotic_infoDict['exposure']}\n"  # UI
+                    f"#FILTER-XC={json.dumps(filter_dict)}\n"
+                    f"#COMP_STAR-XC={json.dumps(comp_star_dict)}\n"
+                    f"#NOTES={exotic_infoDict['notes']}\n"
+                    "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
+                    "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
+                    f"#PRIORS-XC={json.dumps(priors_dict)}\n"  # code yields
+                    f"#RESULTS-XC={json.dumps(results_dict)}\n")  # code yields
 
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):

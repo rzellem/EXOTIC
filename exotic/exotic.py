@@ -2480,9 +2480,7 @@ def main():
                     log.info("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                for key, value in time_dict.items():
-                    if value[0] not in timesListed:
-                        time_dict.pop(key)
+                time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
 
                 first_image = min(time_dict, key=lambda k: time_dict[k][0])
 

@@ -2292,6 +2292,7 @@ def main():
             while True:
                 fileNumber = 1
                 allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
+                time_dict = {}
 
                 # ----TIME SORT THE FILES-------------------------------------------------------------
                 for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -2320,11 +2321,15 @@ def main():
                         del hdul
                         continue
 
-                    imageheader = hdul[0].header
+                    image_header = hdul[0].header
+
                     # TIME
                     timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
                     timeList.append(timeVal)  # adds to time value list
                     fileNameList.append(fileName)
+
+                    # TIME DICT
+                    time_dict[fileName] = (timeVal, image_header)
 
                     # TIME
                     currTime = getJulianTime(hdul)
@@ -2339,11 +2344,11 @@ def main():
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
-                    exp = imageheader.get('EXPTIME')  # checking for variation in .fits header format
+                    exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
                     if exp:
-                        exptimes.append(imageheader['EXPTIME'])
+                        exptimes.append(image_header['EXPTIME'])
                     else:
-                        exptimes.append(imageheader['EXPOSURE'])
+                        exptimes.append(image_header['EXPOSURE'])
 
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
@@ -2475,9 +2480,13 @@ def main():
                     log.info("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                # Reference File
+                time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
+
+                first_image = min(time_dict, key=lambda k: time_dict[k][0])
+
+                # Reference File w/ smallest time value
                 ref_file = Path(exotic_infoDict['saveplot']) / f'ref_file_{firstimagecounter}_'\
-                                                               f'{Path(fileNameStr[firstimagecounter]).name}'
+                                                               f'{Path(first_image).name}'
 
                 # Removes existing file of reference file. For future Python 3.8 update, .unlink(missing_ok=True)
                 # can be added to that will ignore exceptions such as the one below.
@@ -2486,7 +2495,7 @@ def main():
                 except FileNotFoundError:
                     pass
 
-                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
+                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0], header=time_dict[first_image][1])
                 convertToFITS.writeto(ref_file)
                 log.info(f"\nHere is the path to the reference imaging file used by EXOTIC: \n{ref_file}")
                 wcs_file = check_wcs(ref_file, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
@@ -2828,7 +2837,7 @@ def main():
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            imscale = get_pixel_scale(hdulWCS, wcs_file, imageheader, exotic_infoDict['pixel_scale'])
+            imscale = get_pixel_scale(hdulWCS, wcs_file, image_header, exotic_infoDict['pixel_scale'])
             if hdulWCS:
                 hdulWCS.close()  # close stream
                 del hdulWCS
@@ -2891,7 +2900,7 @@ def main():
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in imageheader or "BJD" in imageheader:
+            if "BJD_TDB" in image_header or "BJD" in image_header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

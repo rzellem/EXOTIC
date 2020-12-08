@@ -1368,8 +1368,9 @@ def get_pixel_scale(hdul, file, header, pixel_init):
 # Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
 def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
     return (f"#FILTER={exotic_infoDict['filter']}\n"
-            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']},inc={pdict['inc']}"
-            f",ecc={pdict['ecc']},u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
+            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']} +/- {pdict['aRsUnc']}"
+            f",inc={pdict['inc']} +/- {pdict['incUnc']},ecc={pdict['ecc']}"
+            f",u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
             f",u3={ld_3[0]} +/- {ld_3[1]}\n"
             f"#RESULTS=Tc={round(my_fit.parameters['tmid'], 8)} +/- {round(my_fit.errors['tmid'], 8)}"		
             f",Rp/R*={round(my_fit.parameters['rprs'], 6)} +/- {round(my_fit.errors['rprs'], 6)}"		

@@ -156,6 +156,10 @@ try:  # nonlinear limb darkening numerics
     from .api.gael_ld import createldgrid
 except ImportError:  # package import
     from api.gael_ld import createldgrid
+try:  # filters
+    from .api.filters import fwhm
+except ImportError:  # package import
+    from api.filters import fwhm
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -1061,41 +1065,8 @@ class LimbDarkening:
         self.filter_type = filter_type
         self.wl_min = wl_min
         self.wl_max = wl_max
+        self.fwhm = fwhm
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
-
-        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
-                     # Near-Infrared
-        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
-                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
-
-                     # Sloan
-                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
-                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
-                     ('Sloan z', 'SZ'): (841.20, 978.20),
-
-                     # Stromgren
-                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
-                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
-
-                     # Johnson
-                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
-                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
-                     ('Johnson I', 'IJ'): (780.00, 1020.00),
-
-                     # Cousins
-                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
-
-                     # MObs Clear Filter, Source: Martin Fowler
-                     ('MObs CV', 'CV'): (350.00, 850.00),
-
-                     # Astrodon CBB: George Silvis: https://astrodon.com/products/astrodon-exo-planet-filter/
-                     ('Astrodon ExoPlanet-BB', 'CBB'): (500.00, 1000.00),
-
-                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
-                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
-                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
     def nonlinear_ld(self):
         self._standard_list()
@@ -1392,6 +1363,18 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imagescale = "Image scale: " + str(imscalen)
         log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): "+imscalen)
     return imagescale
+
+
+# Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
+def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
+    return (f"#FILTER={exotic_infoDict['filter']}\n"
+            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']},inc={pdict['inc']}"
+            f",ecc={pdict['ecc']},u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
+            f",u3={ld_3[0]} +/- {ld_3[1]}\n"
+            f"#RESULTS=Tc={round(my_fit.parameters['tmid'], 8)} +/- {round(my_fit.errors['tmid'], 8)}"		
+            f",Rp/R*={round(my_fit.parameters['rprs'], 6)} +/- {round(my_fit.errors['rprs'], 6)}"		
+            f",Am1={round(my_fit.parameters['a1'], 5)} +/- {round(my_fit.errors['a1'], 5)}"		
+            f",Am2={round(my_fit.parameters['a2'], 5)} +/- {round(my_fit.errors['a2'], 5)}\n")
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
 def find_target(target, hdufile, verbose=False):
@@ -3229,9 +3212,6 @@ def main():
         log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
                  f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
 
-        filter_dict = {'name': exotic_infoDict['filter'],
-                       'FWHM': [exotic_infoDict['wl_min'], exotic_infoDict['wl_max']]}
-
         comp_ra = None
         comp_dec = None
 
@@ -3239,16 +3219,28 @@ def main():
             comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
             comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
 
-        comp_star_dict = {'ra': comp_ra, 'dec': comp_dec, 'x': best_comp_coords[0], 'y': best_comp_coords[1]}
+        filter_dict = {'name': exotic_infoDict['filter'],
+                       'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
+                                str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
 
-        priors_dict = {'Period': f"{pDict['pPer']} +/- {pDict['pPerUnc']}", 'a/R*': pDict['aRs'], 'inc': pDict['inc'],
-                       'ecc': pDict['ecc'], 'u0': f"{ld0[0]} +/- {ld0[1]}", 'u1': f"{ld1[0]} +/- {ld1[1]}",
-                       'u2': f"{ld2[0]} +/- {ld2[1]}", 'u3': f"{ld3[0]} +/- {ld3[1]}"}
+        comp_star_dict = {'ra': str(comp_ra) if comp_ra else comp_ra,
+                          'dec': str(comp_dec) if comp_dec else comp_dec,
+                          'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],
+                          'y': str(best_comp_coords[1]) if best_comp_coords[1] else best_comp_coords[1]}
 
-        results_dict = {'Tc': f"{round(myfit.parameters['tmid'], 8)} + / - {round(myfit.errors['tmid'], 8)}",
-                        'Rp/R*': f"{round(myfit.parameters['rprs'], 6)} +/- {round(myfit.errors['rprs'], 6)}",
-                        'Am1': f"{round(myfit.parameters['a1'], 5)} +/- {round(myfit.errors['a1'], 5)}",
-                        'Am2': f"{round(myfit.parameters['a2'], 5)} +/- {round(myfit.errors['a2'], 5)}"}
+        priors_dict = {'Period': {'value': str(pDict['pPer']), 'uncertainty': str(pDict['pPerUnc']) if pDict['pPerUnc'] else pDict['pPerUnc']},
+                       'a/R*': {'value': str(pDict['aRs']), 'uncertainty': str(pDict['aRsUnc']) if pDict['aRsUnc'] else pDict['aRsUnc']},
+                       'inc': {'value': str(pDict['inc']), 'uncertainty': str(pDict['incUnc']) if pDict['incUnc'] else pDict['incUnc']},
+                       'ecc': {'value': str(pDict['ecc']), 'uncertainty': None},
+                       'u0': {'value': str(ld0[0]), 'uncertainty': str(ld0[1])},
+                       'u1': {'value': str(ld1[0]), 'uncertainty': str(ld1[1])},
+                       'u2': {'value': str(ld2[0]), 'uncertainty': str(ld2[1])},
+                       'u3': {'value': str(ld3[0]), 'uncertainty': str(ld3[1])}}
+
+        results_dict = {'Tc': {'value': str(round(myfit.parameters['tmid'], 8)), 'uncertainty': str(round(myfit.errors['tmid'], 8))},
+                        'Rp/R*': {'value': str(round(myfit.parameters['rprs'], 6)), 'uncertainty': str(round(myfit.errors['rprs'], 6))},
+                        'Am1': {'value': str(round(myfit.parameters['a1'], 5)), 'uncertainty': str(round(myfit.errors['a1'], 5))},
+                        'Am2': {'value': str(round(myfit.parameters['a2'], 5)), 'uncertainty': str(round(myfit.errors['a2'], 5))}}
 
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:
@@ -3270,6 +3262,9 @@ def main():
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
                     f"#PRIORS-XC={json.dumps(priors_dict)}\n"  # code yields
                     f"#RESULTS-XC={json.dumps(results_dict)}\n")  # code yields
+
+            # Older formatting, will remove later
+            f.write(previous_data_format(pDict, ld0, ld1, ld2, ld3, myfit))
 
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):

@@ -156,6 +156,10 @@ try:  # nonlinear limb darkening numerics
     from .api.gael_ld import createldgrid
 except ImportError:  # package import
     from api.gael_ld import createldgrid
+try:  # filters
+    from .api.filters import fwhm
+except ImportError:  # package import
+    from api.filters import fwhm
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -1061,41 +1065,8 @@ class LimbDarkening:
         self.filter_type = filter_type
         self.wl_min = wl_min
         self.wl_max = wl_max
+        self.fwhm = fwhm
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
-
-        # Source for FWHM band wavelengths (units: nm): https://www.aavso.org/filters
-                     # Near-Infrared
-        self.fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): (1420.00, 1780.00),
-                     ('K NIR 2.2micron', 'K'): (2015.00, 2385.00),
-
-                     # Sloan
-                     ('Sloan u', 'SU'): (321.80, 386.80), ('Sloan g', 'SG'): (402.50, 551.50),
-                     ('Sloan r', 'SR'): (553.10, 693.10), ('Sloan i', 'SI'): (697.50, 827.50),
-                     ('Sloan z', 'SZ'): (841.20, 978.20),
-
-                     # Stromgren
-                     ('Stromgren b', 'STB'): (459.55, 478.05), ('Stromgren y', 'STY'): (536.70, 559.30),
-                     ('Stromgren Hbw', 'STHBW'): (481.50, 496.50), ('Stromgren Hbn', 'STHBN'): (487.50, 484.50),
-
-                     # Johnson
-                     ('Johnson U', 'U'): (333.80, 398.80), ('Johnson B', 'B'): (391.60, 480.60),
-                     ('Johnson V', 'V'): (502.80, 586.80), ('Johnson R', 'RJ'): (590.00, 810.00),
-                     ('Johnson I', 'IJ'): (780.00, 1020.00),
-
-                     # Cousins
-                     ('Cousins R', 'R'): (561.70, 719.70), ('Cousins I', 'I'): (721.00, 875.00),
-
-                     # MObs Clear Filter, Source: Martin Fowler
-                     ('MObs CV', 'CV'): (350.00, 850.00),
-
-                     # Astrodon CBB: George Silvis: https://astrodon.com/products/astrodon-exo-planet-filter/
-                     ('Astrodon ExoPlanet-BB', 'CBB'): (500.00, 1000.00),
-
-                     # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
-                     ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
-                     ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
-                     ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ("LCO SDSS g'", 'N/A'): (402.00, 552.00),
-                     ("LCO SDSS r'", 'N/A'): (552.00, 691.00), ("LCO SDSS i'", 'N/A'): (690.00, 819.00)}
 
     def nonlinear_ld(self):
         self._standard_list()
@@ -1117,7 +1088,7 @@ class LimbDarkening:
                     self._custom()
             else:
                 self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type
+        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.wl_min*1000, self.wl_max*1000
 
     def _standard_list(self):
         log.info("\n\n***************************")
@@ -1392,6 +1363,19 @@ def get_pixel_scale(hdul, file, header, pixel_init):
         imagescale = "Image scale: " + str(imscalen)
         log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): "+imscalen)
     return imagescale
+
+
+# Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
+def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
+    return (f"#FILTER={exotic_infoDict['filter']}\n"
+            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']} +/- {pdict['aRsUnc']}"
+            f",inc={pdict['inc']} +/- {pdict['incUnc']},ecc={pdict['ecc']}"
+            f",u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
+            f",u3={ld_3[0]} +/- {ld_3[1]}\n"
+            f"#RESULTS=Tc={round(my_fit.parameters['tmid'], 8)} +/- {round(my_fit.errors['tmid'], 8)}"		
+            f",Rp/R*={round(my_fit.parameters['rprs'], 6)} +/- {round(my_fit.errors['rprs'], 6)}"		
+            f",Am1={round(my_fit.parameters['a1'], 5)} +/- {round(my_fit.errors['a1'], 5)}"		
+            f",Am2={round(my_fit.parameters['a2'], 5)} +/- {round(my_fit.errors['a2'], 5)}\n")
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
 def find_target(target, hdufile, verbose=False):
@@ -1830,7 +1814,8 @@ def realTimeReduce(i, target_name):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user inputs.")
-    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file", )
+    parser.add_argument('-r', '--realtime', default='', type=str, help="using real-time reduction")
+    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file")
     parser.add_argument('-o', '--options', nargs='+', default='', type=str,
                         choices=['prereduced', 'reduce', 'override'],
                         help="added options to inits.json file",)
@@ -1874,7 +1859,9 @@ def main():
     context = {}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-    if not args.init:
+    if args.realtime:
+        realTimeAns = 1
+    elif not args.init:
         realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
                                  type_=int, val1=1, val2=2)
     else:
@@ -1889,7 +1876,10 @@ def main():
         log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log.info("**************************************************************\n")
 
-        directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
+        if not args.realtime:
+            directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
+        else:
+            directToWatch = args.realtime
         directoryP = ""
         directoryP = directToWatch
         directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
@@ -2259,8 +2249,6 @@ def main():
             if not CandidatePlanetBool:
                 if 'override' not in args.options:
                     diff = check_parameters(userpDict, pDict)
-                else:
-                    diff = False
             if diff:
                 pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
             else:
@@ -2273,7 +2261,7 @@ def main():
                                logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
                                wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'],
                                filter_type=exotic_infoDict['filter'])
-        ld0, ld1, ld2, ld3, exotic_infoDict['filter'] = ld_obj.nonlinear_ld()
+        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['wl_min'], exotic_infoDict['wl_max'] = ld_obj.nonlinear_ld()
 
         if fitsortext == 1:
             log.info("\n**************************"
@@ -2288,6 +2276,7 @@ def main():
             while True:
                 fileNumber = 1
                 allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
+                time_dict = {}
 
                 # ----TIME SORT THE FILES-------------------------------------------------------------
                 for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
@@ -2316,11 +2305,15 @@ def main():
                         del hdul
                         continue
 
-                    imageheader = hdul[0].header
+                    image_header = hdul[0].header
+
                     # TIME
                     timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
                     timeList.append(timeVal)  # adds to time value list
                     fileNameList.append(fileName)
+
+                    # TIME DICT
+                    time_dict[fileName] = (timeVal, image_header)
 
                     # TIME
                     currTime = getJulianTime(hdul)
@@ -2335,11 +2328,11 @@ def main():
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
-                    exp = imageheader.get('EXPTIME')  # checking for variation in .fits header format
+                    exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
                     if exp:
-                        exptimes.append(imageheader['EXPTIME'])
+                        exptimes.append(image_header['EXPTIME'])
                     else:
-                        exptimes.append(imageheader['EXPOSURE'])
+                        exptimes.append(image_header['EXPOSURE'])
 
                     hdul.close()  # closes the file to avoid using up all of computer's resources
                     del hdul
@@ -2471,9 +2464,13 @@ def main():
                     log.info("Flattening images.")
                     sortedallImageData = sortedallImageData / generalFlat
 
-                # Reference File
+                time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
+
+                first_image = min(time_dict, key=lambda k: time_dict[k][0])
+
+                # Reference File w/ smallest time value
                 ref_file = Path(exotic_infoDict['saveplot']) / f'ref_file_{firstimagecounter}_'\
-                                                               f'{Path(fileNameStr[firstimagecounter]).name}'
+                                                               f'{Path(first_image).name}'
 
                 # Removes existing file of reference file. For future Python 3.8 update, .unlink(missing_ok=True)
                 # can be added to that will ignore exceptions such as the one below.
@@ -2482,7 +2479,7 @@ def main():
                 except FileNotFoundError:
                     pass
 
-                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0])
+                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0], header=time_dict[first_image][1])
                 convertToFITS.writeto(ref_file)
                 log.info(f"\nHere is the path to the reference imaging file used by EXOTIC: \n{ref_file}")
                 wcs_file = check_wcs(ref_file, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
@@ -2757,6 +2754,7 @@ def main():
                         resstd = myfit.residuals.std()/np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min
                             bestCompStar = compCounter + 1
+                            best_comp_coords = compStarList[compCounter]
                             minSTD = resstd  # set the minimum standard deviation to that
 
                             arrayNormUnc = arrayNormUnc * np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
@@ -2800,6 +2798,8 @@ def main():
                 log.info('Optimal Aperture: ' + str(abs(minAperture)))
                 log.info('Optimal Annulus: ' + str(minAnnulus))
                 log.info('********************************************\n')
+                bestCompStar = None
+                best_comp_coords = [None, None]
 
             else:
                 log.info('\n*********************************************')
@@ -2821,7 +2821,7 @@ def main():
             # Save an image of the FOV
             # (for now, take the first image; later will sum all of the images up)
             # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            imscale = get_pixel_scale(hdulWCS, wcs_file, imageheader, exotic_infoDict['pixel_scale'])
+            imscale = get_pixel_scale(hdulWCS, wcs_file, image_header, exotic_infoDict['pixel_scale'])
             if hdulWCS:
                 hdulWCS.close()  # close stream
                 del hdulWCS
@@ -2884,7 +2884,7 @@ def main():
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in imageheader or "BJD" in imageheader:
+            if "BJD_TDB" in image_header or "BJD" in image_header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
@@ -3213,30 +3213,59 @@ def main():
         log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
                  f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
 
+        comp_ra = None
+        comp_dec = None
+
+        if bestCompStar and wcs_file:
+            comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
+            comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+
+        filter_dict = {'name': exotic_infoDict['filter'],
+                       'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
+                                str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
+
+        comp_star_dict = {'ra': str(comp_ra) if comp_ra else comp_ra,
+                          'dec': str(comp_dec) if comp_dec else comp_dec,
+                          'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],
+                          'y': str(best_comp_coords[1]) if best_comp_coords[1] else best_comp_coords[1]}
+
+        priors_dict = {'Period': {'value': str(pDict['pPer']), 'uncertainty': str(pDict['pPerUnc']) if pDict['pPerUnc'] else pDict['pPerUnc']},
+                       'a/R*': {'value': str(pDict['aRs']), 'uncertainty': str(pDict['aRsUnc']) if pDict['aRsUnc'] else pDict['aRsUnc']},
+                       'inc': {'value': str(pDict['inc']), 'uncertainty': str(pDict['incUnc']) if pDict['incUnc'] else pDict['incUnc']},
+                       'ecc': {'value': str(pDict['ecc']), 'uncertainty': None},
+                       'u0': {'value': str(ld0[0]), 'uncertainty': str(ld0[1])},
+                       'u1': {'value': str(ld1[0]), 'uncertainty': str(ld1[1])},
+                       'u2': {'value': str(ld2[0]), 'uncertainty': str(ld2[1])},
+                       'u3': {'value': str(ld3[0]), 'uncertainty': str(ld3[1])}}
+
+        results_dict = {'Tc': {'value': str(round(myfit.parameters['tmid'], 8)), 'uncertainty': str(round(myfit.errors['tmid'], 8))},
+                        'Rp/R*': {'value': str(round(myfit.parameters['rprs'], 6)), 'uncertainty': str(round(myfit.errors['rprs'], 6))},
+                        'Am1': {'value': str(round(myfit.parameters['a1'], 5)), 'uncertainty': str(round(myfit.errors['a1'], 5))},
+                        'Am2': {'value': str(round(myfit.parameters['a2'], 5)), 'uncertainty': str(round(myfit.errors['a2'], 5))}}
+
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:
-            f.write("#TYPE=EXOPLANET\n")  # fixed
-            f.write(f"#OBSCODE={exotic_infoDict['aavsonum']}\n")  # UI
-            f.write(f"#SECONDARY_OBSCODE={exotic_infoDict['secondobs']}\n")  # UI
-            f.write(f"#SOFTWARE=EXOTIC v{__version__}\n")  # fixed
-            f.write("#DELIM=,\n")  # fixed
-            f.write("#DATE_TYPE=BJD_TDB\n")  # fixed
-            f.write(f"#OBSTYPE={exotic_infoDict['ctype']}\n")
-            f.write(f"#STAR_NAME={pDict['sName']}\n")  # code yields
-            f.write(f"#EXOPLANET_NAME={pDict['pName']}\n")  # code yields
-            f.write(f"#BINNING={exotic_infoDict['pixelbin']}\n")  # user input
-            f.write(f"#EXPOSURE_TIME={exotic_infoDict['exposure']}\n")  # UI
-            f.write(f"#FILTER={exotic_infoDict['filter']}\n")
-            f.write(f"#NOTES={exotic_infoDict['notes']}\n")
-            f.write("#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n")  # fixed
-            f.write("#MEASUREMENT_TYPE=Rnflux\n")  # fixed
-            f.write(f"#PRIORS=Period={pDict['pPer']} +/- {pDict['pPerUnc']},a/R*={pDict['aRs']},inc={pDict['inc']}"
-                    f",ecc={pDict['ecc']},u0={ld0[0]} +/- {ld0[1]},u1={ld1[0]} +/- {ld1[1]},u2={ld2[0]} +/- {ld2[1]}"
-                    f",u3={ld3[0]} +/- {ld3[1]}\n")  # code yields
-            f.write(f"#RESULTS=Tc={round(myfit.parameters['tmid'], 8)} +/- {round(myfit.errors['tmid'], 8)}"
-                    f",Rp/R*={round(myfit.parameters['rprs'], 6)} +/- {round(myfit.errors['rprs'], 6)}"
-                    f",Am1={round(myfit.parameters['a1'], 5)} +/- {round(myfit.errors['a1'], 5)}"
-                    f",Am2={round(myfit.parameters['a2'], 5)} +/- {round(myfit.errors['a2'], 5)}\n")  # code yields
+            f.write("#TYPE=EXOPLANET\n"  # fixed
+                    f"#OBSCODE={exotic_infoDict['aavsonum']}\n"  # UI
+                    f"#SECONDARY_OBSCODE={exotic_infoDict['secondobs']}\n"  # UI
+                    f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
+                    "#DELIM=,\n"  # fixed
+                    "#DATE_TYPE=BJD_TDB\n"  # fixed
+                    f"#OBSTYPE={exotic_infoDict['ctype']}\n"
+                    f"#STAR_NAME={pDict['sName']}\n"  # code yields
+                    f"#EXOPLANET_NAME={pDict['pName']}\n"  # code yields
+                    f"#BINNING={exotic_infoDict['pixelbin']}\n"  # user input
+                    f"#EXPOSURE_TIME={exotic_infoDict['exposure']}\n"  # UI
+                    f"#FILTER-XC={json.dumps(filter_dict)}\n"
+                    f"#COMP_STAR-XC={json.dumps(comp_star_dict)}\n"
+                    f"#NOTES={exotic_infoDict['notes']}\n"
+                    "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
+                    "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
+                    f"#PRIORS-XC={json.dumps(priors_dict)}\n"  # code yields
+                    f"#RESULTS-XC={json.dumps(results_dict)}\n")  # code yields
+
+            # Older formatting, will remove later
+            f.write(previous_data_format(pDict, ld0, ld1, ld2, ld3, myfit))
 
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):

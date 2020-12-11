@@ -3085,6 +3085,9 @@ def main():
                 'a2': [-3, 3],
             }
 
+        del allImageData
+        del sortedallImageData
+
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')
 

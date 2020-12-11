@@ -2324,7 +2324,6 @@ def main():
                     airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                     # IMAGES
-                    hdul[0].scale('float32')
                     allImageData.append(hdul[0].data)
 
                     # EXPOSURE_TIME
@@ -2351,7 +2350,7 @@ def main():
                 # Recast list as numpy arrays
                 allImageData = np.array(allImageData)
                 timesListed = np.array(timesListed)
-                airMassList = np.array(airMassList)
+                airMassList = np.array(airMassList, dtype=np.float32)
 
                 # sorts the times for later plotting use
                 sortedallImageData = allImageData[np.argsort(timeList)]

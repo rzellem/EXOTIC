@@ -2353,7 +2353,7 @@ def main():
                 airMassList = np.array(airMassList, dtype=np.float32)
 
                 # sorts the times for later plotting use
-                sortedallImageData = allImageData[np.argsort(timeList)]
+                allImageData = allImageData[np.argsort(timeList)]
                 timesListed = timesListed[np.argsort(timeList)]
                 airMassList = airMassList[np.argsort(timeList)]
 
@@ -2361,36 +2361,36 @@ def main():
                 cosmicrayfilter_bool = False
                 if cosmicrayfilter_bool:
                     log.info("Filtering your data for cosmic rays.")
-                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(sortedallImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(allImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
                     psffwhm = 2.355*(targsigX+targsigY)/2
                     log.debug(f"FWHM in 1st image: {np.round(psffwhm, 2):.2f} px")
-                    log.debug(f"STDEV before: {np.std(sortedallImageData, 0).mean():.2f}")
+                    log.debug(f"STDEV before: {np.std(allImageData, 0).mean():.2f}")
 
                     # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
 
                     animate_toggle(True)
 
-                    for ii in range(len(sortedallImageData)):
+                    for ii in range(len(allImageData)):
 
                         # remove nans
-                        nanmask = np.isnan(sortedallImageData[ii])
+                        nanmask = np.isnan(allImageData[ii])
 
                         if nanmask.sum() > 0:
-                            bg = generic_filter(sortedallImageData[ii], np.nanmedian, (3, 3))
-                            sortedallImageData[ii][nanmask] = bg[nanmask]
+                            bg = generic_filter(allImageData[ii], np.nanmedian, (3, 3))
+                            allImageData[ii][nanmask] = bg[nanmask]
 
-                        mask, clean = detect_cosmics(sortedallImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)
-                        sortedallImageData[ii] = clean
+                        mask, clean = detect_cosmics(allImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)
+                        allImageData[ii] = clean
 
                         # # check for bad columns
-                        # bad_cols = np.abs(np.diff(sortedallImageData[ii],1).mean(0)) > 10
+                        # bad_cols = np.abs(np.diff(allImageData[ii],1).mean(0)) > 10
                         # if bad_cols[-1]:
                         #     bad_cols = np.append(bad_cols,True)
                         # else:
                         #     bad_cols = np.append(bad_cols,False)
                         # bad_cols = binary_dilation(bad_cols)
 
-                        # #sortedallImageData[ii][:,bad_cols] = np.median(sortedallImageData[ii])
+                        # #allImageData[ii][:,bad_cols] = np.median(allImageData[ii])
                         # labels,ngroups = label(bad_cols)
                         # labeli, counts = np.unique(labels, return_counts=True)
                         
@@ -2399,11 +2399,11 @@ def main():
                         #         imask = labels == ii # mask block for integration
                         #         imask2 = binary_dilation(imask)
                         #         xmask = np.logical_xor(imask,imask2) # mask of neighboring pixels
-                        #         median = sortedallImageData[ii][:,xmask].mean(1)
+                        #         median = allImageData[ii][:,xmask].mean(1)
                         #         medianm= (np.ones((imask.shape[0],imask.sum())).T * median).T
-                        #         stdev = np.std(sortedallImageData[ii][:,xmask])
+                        #         stdev = np.std(allImageData[ii][:,xmask])
                         #         # fill in bad columns with randomly generated data based on neighboring pixels
-                        #         sortedallImageData[ii][:,imask] = np.random.normal(medianm, stdev, medianm.shape)
+                        #         allImageData[ii][:,imask] = np.random.normal(medianm, stdev, medianm.shape)
 
                         # TODO move to function
                         # if ii == 0:
@@ -2412,14 +2412,14 @@ def main():
                         # ax[0].set_title("Original Data")
                         # ax[1].imshow(mask,cmap='binary_r')
                         # ax[1].set_title("Cosmic Ray Mask")
-                        # ax[2].imshow(np.log10(sortedallImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                        # ax[2].imshow(np.log10(allImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
                         # ax[2].set_title("Corrected Image")
                         # plt_exotic.tight_layout()
                         # plt_exotic.show()
 
                     animate_toggle()
 
-                log.debug(f"STDEV after: {np.std(sortedallImageData, 0).mean():.2f}")
+                log.debug(f"STDEV after: {np.std(allImageData, 0).mean():.2f}")
 
                 # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
 
@@ -2429,7 +2429,7 @@ def main():
                 # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
                 # firstImageData = hdul['ext', 0].data  # fits.getdata(timeSortedNames[0], ext=0)
                 firstimagecounter = 0
-                firstImageData = sortedallImageData[firstimagecounter]
+                firstImageData = allImageData[firstimagecounter]
 
                 # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
                 while True:
@@ -2441,10 +2441,10 @@ def main():
                     # If the first image is a bad one, then move on to the next image
                     except Exception:
                         firstimagecounter += 1
-                        firstImageData = sortedallImageData[firstimagecounter]
+                        firstImageData = allImageData[firstimagecounter]
 
                 # Filter the other data as well
-                sortedallImageData = sortedallImageData[firstimagecounter:]
+                allImageData = allImageData[firstimagecounter:]
                 timesListed = timesListed[firstimagecounter:]
                 airMassList = airMassList[firstimagecounter:]
                 # sortedTimeList = sortedTimeList[firstimagecounter:]
@@ -2452,16 +2452,16 @@ def main():
                 # apply cals correction if applicable
                 if darksBool:
                     log.info("Dark subtracting images.")
-                    sortedallImageData = sortedallImageData - generalDark
+                    allImageData = allImageData - generalDark
                 elif biasesBool:
                     log.info("Bias-correcting images.")
-                    sortedallImageData = sortedallImageData - generalBias
+                    allImageData = allImageData - generalBias
                 else:
                     pass
 
                 if flatsBool:
                     log.info("Flattening images.")
-                    sortedallImageData = sortedallImageData / generalFlat
+                    allImageData = allImageData / generalFlat
 
                 time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
 
@@ -2478,7 +2478,7 @@ def main():
                 except FileNotFoundError:
                     pass
 
-                convertToFITS = fits.PrimaryHDU(data=sortedallImageData[0], header=time_dict[first_image][1])
+                convertToFITS = fits.PrimaryHDU(data=allImageData[0], header=time_dict[first_image][1])
                 convertToFITS.writeto(ref_file)
                 log.info(f"\nHere is the path to the reference imaging file used by EXOTIC: \n{ref_file}")
                 wcs_file = check_wcs(ref_file, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
@@ -2501,38 +2501,38 @@ def main():
                     break
 
             # Image Alignment
-            sortedallImageData, boollist, apos, arot = image_alignment(sortedallImageData)
+            allImageData, boollist, apos, arot = image_alignment(allImageData)
             timesListed = np.array(timesListed)[boollist]
             airMassList = np.array(airMassList)[boollist]
 
             # alloc psf fitting param
             psf_data = {
                 # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
-                'target':np.zeros((len(sortedallImageData), 7)),
-                'target_align':np.zeros((len(sortedallImageData), 2))
+                'target':np.zeros((len(allImageData), 7)),
+                'target_align':np.zeros((len(allImageData), 2))
             }
 
             # fit for the centroids in all images 
             for i,coord in enumerate(compStarList):
 
                 ckey = "comp{}".format(i+1)
-                psf_data[ckey] = np.zeros((len(sortedallImageData), 7))
-                psf_data[ckey+"_align"] = np.zeros((len(sortedallImageData), 2))
+                psf_data[ckey] = np.zeros((len(allImageData), 7))
+                psf_data[ckey+"_align"] = np.zeros((len(allImageData), 2))
 
                 # for each image
-                for j in range(len(sortedallImageData)):
+                for j in range(len(allImageData)):
                     if i == 0:
                         # apply image alignment transformation
                         xrot = exotic_UIprevTPX*np.cos(arot[j]) - exotic_UIprevTPY*np.sin(arot[j]) - apos[j][0]
                         yrot = exotic_UIprevTPX*np.sin(arot[j]) + exotic_UIprevTPY*np.cos(arot[j]) - apos[j][1]
                         psf_data["target_align"][j] = [xrot,yrot]
-                        psf_data["target"][j] = fit_centroid(sortedallImageData[j], [xrot, yrot], box=10)
+                        psf_data["target"][j] = fit_centroid(allImageData[j], [xrot, yrot], box=10)
                         
                         if j == 0:
-                            psf_data["target"][j] = fit_centroid(sortedallImageData[j], [xrot,yrot], box=10)
+                            psf_data["target"][j] = fit_centroid(allImageData[j], [xrot,yrot], box=10)
                         else:
                             psf_data["target"][j] = fit_centroid(
-                                sortedallImageData[j], 
+                                allImageData[j],
                                 [xrot,yrot],
                                 #np.array([xrot+psf_data[ckey][j-1][0],yrot+psf_data[ckey][j-1][1]])*0.5, 
                                 psf_data["target"][j-1][2:],
@@ -2544,17 +2544,17 @@ def main():
                     psf_data[ckey+"_align"][j] = [xrot,yrot]
 
                     if j == 0:
-                        psf_data[ckey][j] = fit_centroid(sortedallImageData[j], [xrot,yrot], box=10)
+                        psf_data[ckey][j] = fit_centroid(allImageData[j], [xrot,yrot], box=10)
                     else:
                         psf_data[ckey][j] = fit_centroid(
-                            sortedallImageData[j], 
+                            allImageData[j],
                             [xrot,yrot],
                             #np.array([xrot+psf_data[ckey][j-1][0],yrot+psf_data[ckey][j-1][1]])*0.5, 
                             psf_data[ckey][j-1][2:],
                             box=10)
 
                     # if j % 20 == 0 and j > 0:
-                    #     simg = sortedallImageData[:j].sum(0)
+                    #     simg = allImageData[:j].sum(0)
                     #     fig,ax = plt_exotic.subplots(2)
                     #     ax[0].imshow(simg,cmap='binary_r',vmin=np.percentile(simg,55), vmax=np.percentile(simg,99))
                     #     ax[0].set_title("image:"+str(j))
@@ -2562,7 +2562,7 @@ def main():
                     #     ax[0].plot(*psf_data[ckey][:j,:2].T,'g-',label='centroid',alpha=0.75)
                     #     ax[0].plot(*psf_data[ckey+"_align"][:j,:2].T,'c-',label='alignment',alpha=0.75)
                     #     ax[0].legend(loc='best')
-                    #     ax[1].imshow(sortedallImageData[j])
+                    #     ax[1].imshow(allImageData[j])
                     #     ax[1].plot(coord[0], coord[1], 'go',label='start')
                     #     ax[1].plot(*psf_data[ckey][j,:2].T,'r.',label='centroid',alpha=0.75)
                     #     ax[1].plot(*psf_data[ckey+"_align"][j,:2].T,'c.',label='alignment',alpha=0.75)
@@ -2571,7 +2571,7 @@ def main():
                     #     plt_exotic.show()
 
             # create alignment plot
-            simg = np.sum(sortedallImageData,0)
+            simg = np.sum(allImageData,0)
             f,ax = plt_exotic.subplots(1)
             ax.imshow(simg,vmin=np.percentile(simg,55),vmax=np.percentile(simg,99),cmap='binary_r')
             ax.plot(psf_data["target"][0][0],psf_data["target"][0][1], 'go',label="Target Start")
@@ -2644,10 +2644,10 @@ def main():
                                 apertureR) + ' pixel aperture and a ' + str(annulusR) + ' pixel annulus.')
 
                         # alloc flux data
-                        tFlux = np.zeros(len(sortedallImageData))
-                        cFlux = np.zeros(len(sortedallImageData))
+                        tFlux = np.zeros(len(allImageData))
+                        cFlux = np.zeros(len(allImageData))
 
-                        for fileNumber, imageData in enumerate(sortedallImageData):
+                        for fileNumber, imageData in enumerate(allImageData):
 
                             if apertureR == 0: # psf photometry
                                 # area = 2*PI*sigx*sigy*amp
@@ -2655,23 +2655,23 @@ def main():
                                 cFlux[fileNumber] = psf_data[ckey][fileNumber][2] * psf_data[ckey][fileNumber][3] * psf_data[ckey][fileNumber][4] * 2 * np.pi
 
                             elif apertureR < 0: # no comparison star aper phot
-                                cFlux = np.ones(len(sortedallImageData))
+                                cFlux = np.ones(len(allImageData))
                                 tFlux[fileNumber], bg = getFlux(
-                                    sortedallImageData[fileNumber], 
+                                    allImageData[fileNumber],
                                     psf_data["target"][fileNumber,0], 
                                     psf_data["target"][fileNumber,1], 
                                     abs(apertureR), annulusR
                                 )
                             else: # aperture photometry with comp star
                                 tFlux[fileNumber], bg = getFlux(
-                                    sortedallImageData[fileNumber], 
+                                    allImageData[fileNumber],
                                     psf_data["target"][fileNumber,0], 
                                     psf_data["target"][fileNumber,1], 
                                     abs(apertureR), annulusR
                                 )
 
                                 cFlux[fileNumber], bg = getFlux(
-                                    sortedallImageData[fileNumber], 
+                                    allImageData[fileNumber],
                                     psf_data[ckey][fileNumber,0], 
                                     psf_data[ckey][fileNumber,1], 
                                     abs(apertureR), annulusR
@@ -2825,12 +2825,12 @@ def main():
                 hdulWCS.close()  # close stream
                 del hdulWCS
 
-            # imwidth = np.shape(sortedallImageData[0])[1]
-            # imheight = np.shape(sortedallImageData[0])[0]
+            # imwidth = np.shape(allImageData[0])[1]
+            # imheight = np.shape(allImageData[0])[0]
             picframe = 10*(minAperture+minAnnulus)
-            pltx = [max([0,min([finXTargCent[0], finXRefCent[0]])-picframe]), min([np.shape(sortedallImageData[0])[0],max([finXTargCent[0], finXRefCent[0]])+picframe])]
+            pltx = [max([0,min([finXTargCent[0], finXRefCent[0]])-picframe]), min([np.shape(allImageData[0])[0],max([finXTargCent[0], finXRefCent[0]])+picframe])]
             # FORwidth = pltx[1]-pltx[0]
-            plty = [max([0,min([finYTargCent[0], finYRefCent[0]])-picframe]), min([np.shape(sortedallImageData[0])[1],max([finYTargCent[0], finYRefCent[0]])+picframe])]
+            plty = [max([0,min([finYTargCent[0], finYRefCent[0]])-picframe]), min([np.shape(allImageData[0])[1],max([finYTargCent[0], finYRefCent[0]])+picframe])]
             # FORheight = plty[1]-plty[0]
 
             plt_exotic.close()
@@ -2848,9 +2848,9 @@ def main():
                     ref_circle_sky = plt_exotic.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus,
                                                        color='r', fill=False, ls='--', lw=.5)
 
-                med_img = median_filter(sortedallImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
-                norm = ImageNormalize(sortedallImageData[0], interval=ZScaleInterval(), stretch=stretch)
-                plt_exotic.imshow(sortedallImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
+                med_img = median_filter(allImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
+                norm = ImageNormalize(allImageData[0], interval=ZScaleInterval(), stretch=stretch)
+                plt_exotic.imshow(allImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
                 plt_exotic.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
                 ax.add_artist(target_circle)
                 ax.add_artist(target_circle_sky)
@@ -3086,7 +3086,6 @@ def main():
             }
 
         del allImageData
-        del sortedallImageData
 
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

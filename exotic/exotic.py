@@ -1301,12 +1301,17 @@ def variableStarCheck(refx, refy, hdulWCS):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def image_alignment(imagedata):
+def image_alignment(imagedata, roi=0.5):
     log.info("\nAligning your images from FITS files. Please wait.")
     boollist = []
 
     rot = np.zeros(len(imagedata))
     pos = np.zeros((len(imagedata), 2))
+
+    height = imagedata.shape[1]
+    width = imagedata.shape[2]
+    roix = slice(int(width*(0.5-roi/2)),int(width*(0.5+roi/2)))
+    roiy = slice(int(height*(0.5-roi/2)),int(height*(0.5+roi/2)))
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
     # boollist for discarded images to delete .FITS data from airmass and times.
@@ -1316,7 +1321,7 @@ def image_alignment(imagedata):
             log.debug(f"Aligning Image {i + 1} of {len(imagedata)}\r")
             sys.stdout.flush()
             
-            results = aa.find_transform(image_file, imagedata[0])
+            results = aa.find_transform(image_file[roiy,roix], imagedata[0][roiy,roix])
             rot[i] = results[0].rotation
             pos[i] = results[0].translation
 
@@ -1546,7 +1551,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
     mask = (rv > r) & (rv < (r+dr))
     cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
-    dat = np.array(data[yv, xv], dtype=float)
+    dat = np.array(data[yv, xv], dtype=float)    
     dat[dat > cutoff] = np.nan  # ignore pixels brighter than percentile
 
     if debug:
@@ -2154,7 +2159,6 @@ def main():
             if cals == 'y':
 
                 # flats
-                # THIS DOES NOT ACCOUNT FOR CALIBRATING THE FLATS, WHICH COULD BE TAKEN AT A DIFFERENT EXPOSURE TIME
                 if fileorcommandline == 1:
                     flats = user_input("\nDo you have flats? (y/n): ", type_=str, val1='y', val2='n')
 
@@ -2166,19 +2170,17 @@ def main():
                     else:
                         flatsBool = False
 
-                    if flatsBool:
-                        exotic_infoDict['flatsdir'], inputflats = check_imaging_files(exotic_infoDict['flatsdir'], 'flats')
-                        flatsImgList = []
-                        for flatFile in inputflats:
-                            flatData = fits.getdata(flatFile, ext=0)
-                            flatsImgList.append(flatData)
-                        notNormFlat = np.median(flatsImgList, axis=0)
+                if flatsBool:
+                    exotic_infoDict['flatsdir'], inputflats = check_imaging_files(exotic_infoDict['flatsdir'], 'flats')
+                    flatsImgList = []
+                    for flatFile in inputflats:
+                        flatData = fits.getdata(flatFile, ext=0)
+                        flatsImgList.append(flatData)
+                    notNormFlat = np.median(flatsImgList, axis=0)
 
-                        # NORMALIZE
-                        medi = np.median(notNormFlat)
-                        generalFlat = notNormFlat / medi
-                else:
-                    flatsBool = False
+                    # NORMALIZE
+                    medi = np.median(notNormFlat)
+                    generalFlat = notNormFlat / medi
 
                 # darks
                 if fileorcommandline == 1:
@@ -2528,16 +2530,23 @@ def main():
                         yrot = exotic_UIprevTPX*np.sin(arot[j]) + exotic_UIprevTPY*np.cos(arot[j]) - apos[j][1]
                         psf_data["target_align"][j] = [xrot,yrot]
                         psf_data["target"][j] = fit_centroid(sortedallImageData[j], [xrot, yrot], box=10)
-                        
+
                         if j == 0:
                             psf_data["target"][j] = fit_centroid(sortedallImageData[j], [xrot,yrot], box=10)
                         else:
+
                             psf_data["target"][j] = fit_centroid(
                                 sortedallImageData[j], 
                                 [xrot,yrot],
                                 #np.array([xrot+psf_data[ckey][j-1][0],yrot+psf_data[ckey][j-1][1]])*0.5, 
                                 psf_data["target"][j-1][2:],
                                 box=10)
+
+                            diff = psf_data["target"][j] - psf_data["target"][j-1]
+                            dist = (diff[0]**2 + diff[1]**2)**0.5
+                            if dist > 10: # tolerance
+                                psf_data["target"][j] = psf_data["target"][j-1]
+                                # if change in position is greater than threshold, resort to previous psf position
 
                     # apply image alignment transformation
                     xrot = coord[0]*np.cos(arot[j]) - coord[1]*np.sin(arot[j]) - apos[j][0]
@@ -2553,6 +2562,12 @@ def main():
                             #np.array([xrot+psf_data[ckey][j-1][0],yrot+psf_data[ckey][j-1][1]])*0.5, 
                             psf_data[ckey][j-1][2:],
                             box=10)
+
+                        diff = psf_data[ckey][j] - psf_data[ckey][j-1]
+                        dist = (diff[0]**2 + diff[1]**2)**0.5
+                        if dist > 10: # tolerance
+                            psf_data[ckey][j] = psf_data[ckey][j-1]
+                            # if change in position is greater than threshold, resort to previous psf position
 
                     # if j % 20 == 0 and j > 0:
                     #     simg = sortedallImageData[:j].sum(0)
@@ -2686,6 +2701,13 @@ def main():
                         arrayTimes = timesListed[~filtered_data]
                         arrayAirmass = airMassList[~filtered_data]
 
+                        # remove nans
+                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass)
+                        arrayFinalFlux = arrayFinalFlux[~nanmask]
+                        arrayNormUnc = arrayNormUnc[~nanmask]
+                        arrayTimes = arrayTimes[~nanmask]
+                        arrayAirmass = arrayAirmass[~nanmask]
+
                         # -----LM LIGHTCURVE FIT--------------------------------------
                         prior = {
                             'rprs': pDict['rprs'],    # Rp/Rs
@@ -2731,8 +2753,8 @@ def main():
                             'tmid': [lower, upper],
                             'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
 
-                            'a1': [min(0,min(arrayFinalFlux)), 3*max(arrayFinalFlux)],
-                            'a2': [-3, 3]
+                            'a1': [ 0.5*min(arrayFinalFlux), 2*max(arrayFinalFlux)],
+                            'a2': [-1, 1]
                         }
 
                         myfit = lc_fitter(
@@ -2899,7 +2921,10 @@ def main():
                 # resultos = time_barycentre.value
                 # goodTimes = resultos
                 animate_toggle(True)
-                resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
+                try:
+                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
+                except:
+                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'],leap_update=False)
                 goodTimes = resultos[0]
                 animate_toggle()
 

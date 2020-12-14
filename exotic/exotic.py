@@ -2706,6 +2706,7 @@ def main():
 
                         # remove nans
                         nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass)
+                        nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(arrayAirmass) 
                         arrayFinalFlux = arrayFinalFlux[~nanmask]
                         arrayNormUnc = arrayNormUnc[~nanmask]
                         arrayTimes = arrayTimes[~nanmask]
@@ -3296,8 +3297,8 @@ def main():
 
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):
-                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC], 7)},"
-                        f"{round(myfit.dataerr[aavsoC], 7)},{round(goodAirmasses[aavsoC], 7)},"
+                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC]/myfit.parameters['a1'], 7)},"
+                        f"{round(myfit.dataerr[aavsoC]/myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
                         f"{round(myfit.airmass_model[aavsoC], 7)}\n")
 
         log.info("Output File Saved")

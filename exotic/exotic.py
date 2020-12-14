@@ -3299,7 +3299,7 @@ def main():
             for aavsoC in range(0, len(myfit.time)):
                 f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC]/myfit.parameters['a1'], 7)},"
                         f"{round(myfit.dataerr[aavsoC]/myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
-                        f"{round(myfit.airmass_model[aavsoC], 7)}\n")
+                        f"{round(myfit.airmass_model[aavsoC]/myfit.parameters['a1'], 7)}\n")
 
         log.info("Output File Saved")
 

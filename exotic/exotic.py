@@ -1412,7 +1412,7 @@ def find_target(target, hdufile, verbose=False):
     try:
         dateobs = hdu.header['DATE_OBS']
     except:
-        dateobs = hdu.header['DATE-OBS']
+        dateobs = hdu.header['DATE']
 
     # ignore timezone
     if len(dateobs.split('-')) == 4:

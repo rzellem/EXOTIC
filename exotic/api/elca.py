@@ -380,10 +380,10 @@ class lc_fitter(object):
         # final model
         self.create_fit_variables()
 
-    def plot_bestfit(self, nbins=10, phase=True):
+    def plot_bestfit(self, nbins=10, phase=True, title=""):
 
         f = plt.figure( figsize=(12,7) )
-        #f.subplots_adjust(top=0.94,bottom=0.08,left=0.07,right=0.96)
+        f.subplots_adjust(top=0.96,bottom=0.07,left=0.08,right=0.99,hspace=0,wspace=0)
         ax_lc = plt.subplot2grid( (4,5), (0,0), colspan=5,rowspan=3 )
         ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1, sharex=ax_lc )
         axs = [ax_lc, ax_res]
@@ -395,13 +395,18 @@ class lc_fitter(object):
         residbinned, res_errbinned = binner(self.residuals/np.median(self.data), len(self.residuals)//10, self.dataerr/np.median(self.data))
 
         if phase == True:
+            rplabel = r"$(R_p/R_s)^2$ = {:.6f} $\pm$ {:.6f}".format(self.parameters['rprs']**2, 2*self.parameters['rprs']*self.errors['rprs'])
+            tmlabel = r"T$_0$ = {:.5f} $\pm$ {:.5f}".format(self.parameters['tmid'], self.errors['tmid'])
+
             axs[0].errorbar(self.phase, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
-            axs[0].plot(self.phase, self.transit, 'r-', zorder=2)
+            axs[0].plot(self.phase, self.transit, 'r-', zorder=2, label=r"{}, {}".format(rplabel,tmlabel))
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
+            axs[0].legend(loc='best')
 
             axs[1].plot(self.phase, self.residuals/np.median(self.data), marker='o', color='gray', mec='None', markersize=5, ls='none')
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
+            axs[1].grid(True,ls='--')
             axs[1].set_xlabel("Phase")
             axs[1].set_ylabel("Residuals [ADU]")
 
@@ -410,6 +415,8 @@ class lc_fitter(object):
 
             ax_res.set_xlim([min(self.phase), max(self.phase)])
             ax_lc.set_xlim([min(self.phase), max(self.phase)])
+            axs[0].set_title(title)
+
         else:
             axs[0].errorbar(self.time, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
             axs[0].plot(self.time, self.transit, 'r-', zorder=2)
@@ -426,7 +433,6 @@ class lc_fitter(object):
 
             ax_res.set_xlim([min(self.time), max(self.time)])
             ax_lc.set_xlim([min(self.time), max(self.time)])
-        plt.tight_layout()
 
         return f,axs
 

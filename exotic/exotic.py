@@ -187,8 +187,8 @@ log = logging.getLogger(__name__)
 
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
-    #data = savgol_filter(ogdata[~nanmask], dt, 2)
-    mdata = median_filter(ogdata[~nanmask], dt)
+    mdata = savgol_filter(ogdata[~nanmask], dt, 2)
+    #mdata = median_filter(ogdata[~nanmask], dt)
     res = ogdata[~nanmask] - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res, 50)) for i in range(100)])
     # std = np.nanstd(res) # biased from large outliers
@@ -1301,7 +1301,7 @@ def variableStarCheck(refx, refy, hdulWCS):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def image_alignment(imagedata, roi=0.5):
+def image_alignment(imagedata, roi=1):
     log.info("\nAligning your images from FITS files. Please wait.")
     boollist = []
 
@@ -2542,10 +2542,10 @@ def main():
                                 psf_data["target"][j-1][2:],
                                 box=10)
 
-                            diff = psf_data["target"][j] - psf_data["target"][j-1]
-                            dist = (diff[0]**2 + diff[1]**2)**0.5
-                            if dist > 10: # tolerance
-                                psf_data["target"][j] = psf_data["target"][j-1]
+                            #diff = psf_data["target"][j][:2] - np.array([xrot,yrot])
+                            #dist = (diff[0]**2 + diff[1]**2)**0.5
+                            #if dist > 25: # tolerance
+                            #    psf_data["target"][j] = psf_data["target"][j-1]
                                 # if change in position is greater than threshold, resort to previous psf position
 
                     # apply image alignment transformation
@@ -2563,10 +2563,11 @@ def main():
                             psf_data[ckey][j-1][2:],
                             box=10)
 
-                        diff = psf_data[ckey][j] - psf_data[ckey][j-1]
-                        dist = (diff[0]**2 + diff[1]**2)**0.5
-                        if dist > 10: # tolerance
-                            psf_data[ckey][j] = psf_data[ckey][j-1]
+                        #diff = psf_data[ckey][j][:2] - np.array([xrot,yrot])
+                        #dist = (diff[0]**2 + diff[1]**2)**0.5
+                        #if dist > 10: # tolerance
+                        #    psf_data[ckey][j] = psf_data[ckey][j-1]
+                        #    print('derp',dist)
                             # if change in position is greater than threshold, resort to previous psf position
 
                     # if j % 20 == 0 and j > 0:
@@ -2694,7 +2695,9 @@ def main():
                                 )
 
                         # remove outliers TODO 
-                        filtered_data = sigma_clip(tFlux/cFlux, sigma=3, dt=15)
+                        dt = np.mean(np.diff(np.sort(timesListed)))
+                        ndt = int(15./24./60./dt)*2+1 # 35 minutes
+                        filtered_data = sigma_clip(tFlux/cFlux, sigma=3, dt=ndt)
                         # plt.plot(arrayTimes, arrayFinalFlux,'k.'); plt.plot(timesListed, median_filter(tFlux/cFlux,21)); plt.show()
                         arrayFinalFlux = (tFlux/cFlux)[~filtered_data]
                         arrayNormUnc = (np.sqrt(tFlux)/cFlux)[~filtered_data]
@@ -2757,15 +2760,19 @@ def main():
                             'a2': [-1, 1]
                         }
 
-                        myfit = lc_fitter(
-                            arrayTimes,
-                            arrayFinalFlux,
-                            arrayNormUnc,
-                            arrayAirmass,
-                            prior,
-                            mybounds,
-                            mode='lm'
-                        )
+                        try:
+                            myfit = lc_fitter(
+                                arrayTimes,
+                                arrayFinalFlux,
+                                arrayNormUnc,
+                                arrayAirmass,
+                                prior,
+                                mybounds,
+                                mode='lm'
+                            )
+                        except:
+                            import pdb; pdb.set_trace()
+
 
                         for k in myfit.bounds.keys():
                             log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))  # , myfit.errors[k]))
@@ -2913,19 +2920,18 @@ def main():
                 log.info("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
                 log.info("Please be patient- this step can take a few minutes.")
 
-                # targetloc = astropy.coordinates.SkyCoord(raStr, decStr, unit=(astropy.units.deg,astropy.units.deg), frame='icrs')
-                # obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit)
-                # timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
-                # ltt_bary = timesToConvert.light_travel_time(targetloc)
-                # time_barycentre = timesToConvert.tdb + ltt_bary
-                # resultos = time_barycentre.value
-                # goodTimes = resultos
                 animate_toggle(True)
                 try:
                     resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
+                    goodTimes = resultos[0]
                 except:
-                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'],leap_update=False)
-                goodTimes = resultos[0]
+                    targetloc = astropy.coordinates.SkyCoord(pDict['ra'], pDict['dec'], unit=(u.deg,u.deg), frame='icrs')
+                    obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit, height=exotic_infoDict['elev'])
+                    timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
+                    ltt_bary = timesToConvert.light_travel_time(targetloc)
+                    time_barycentre = timesToConvert.tdb + ltt_bary
+                    goodTimes = time_barycentre.value
+
                 animate_toggle()
 
             # Centroid position plots

@@ -3213,21 +3213,24 @@ def main():
         log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
                  f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
 
-        comp_ra = None
-        comp_dec = None
+        if bestCompStar:
+            comp_ra = None
+            comp_dec = None
 
-        if bestCompStar and wcs_file:
-            comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
-            comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+            if wcs_file:
+                comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
+                comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+
+            comp_star_dict = [{'ra': str(comp_ra) if comp_ra else comp_ra,
+                               'dec': str(comp_dec) if comp_dec else comp_dec,
+                               'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],
+                               'y': str(best_comp_coords[1]) if best_comp_coords[1] else best_comp_coords[1]}]
+        else:
+            comp_star_dict = []
 
         filter_dict = {'name': exotic_infoDict['filter'],
                        'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
                                 str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
-
-        comp_star_dict = {'ra': str(comp_ra) if comp_ra else comp_ra,
-                          'dec': str(comp_dec) if comp_dec else comp_dec,
-                          'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],
-                          'y': str(best_comp_coords[1]) if best_comp_coords[1] else best_comp_coords[1]}
 
         priors_dict = {'Period': {'value': str(pDict['pPer']), 'uncertainty': str(pDict['pPerUnc']) if pDict['pPerUnc'] else pDict['pPerUnc']},
                        'a/R*': {'value': str(pDict['aRs']), 'uncertainty': str(pDict['aRsUnc']) if pDict['aRsUnc'] else pDict['aRsUnc']},

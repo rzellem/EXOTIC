@@ -3213,10 +3213,10 @@ def main():
         log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
                  f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
 
-        comp_ra = None
-        comp_dec = None
-
         if bestCompStar:
+            comp_ra = None
+            comp_dec = None
+
             if wcs_file:
                 comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
                 comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]

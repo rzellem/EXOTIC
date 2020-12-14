@@ -3220,6 +3220,7 @@ def main():
             if wcs_file:
                 comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
                 comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+
             comp_star_dict = [{'ra': str(comp_ra) if comp_ra else comp_ra,
                                'dec': str(comp_dec) if comp_dec else comp_dec,
                                'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],

@@ -2760,19 +2760,15 @@ def main():
                             'a2': [-1, 1]
                         }
 
-                        try:
-                            myfit = lc_fitter(
-                                arrayTimes,
-                                arrayFinalFlux,
-                                arrayNormUnc,
-                                arrayAirmass,
-                                prior,
-                                mybounds,
-                                mode='lm'
-                            )
-                        except:
-                            import pdb; pdb.set_trace()
-
+                        myfit = lc_fitter(
+                            arrayTimes,
+                            arrayFinalFlux,
+                            arrayNormUnc,
+                            arrayAirmass,
+                            prior,
+                            mybounds,
+                            mode='lm'
+                        )
 
                         for k in myfit.bounds.keys():
                             log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))  # , myfit.errors[k]))

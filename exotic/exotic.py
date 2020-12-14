@@ -2348,9 +2348,9 @@ def main():
                     exotic_infoDict['exposure'] = np.median(exptimes)
 
                 # Recast list as numpy arrays
-                allImageData = np.array(allImageData)
+                allImageData = np.array(allImageData, dtype=np.float32)
                 timesListed = np.array(timesListed)
-                airMassList = np.array(airMassList, dtype=np.float32)
+                airMassList = np.array(airMassList)
 
                 # sorts the times for later plotting use
                 allImageData = allImageData[np.argsort(timeList)]

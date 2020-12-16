@@ -1346,31 +1346,30 @@ def image_alignment(imagedata, roi=1):
 
 
 def get_pixel_scale(hdul, file, header, pixel_init):
+    astrometry_scale = None
+
     if file:
-        for i in range(len(hdul[0].header)):
-            try:
-                if hdul[0].header['COMMENT'][i].split(' ')[0] == 'scale:':
-                    imscalen = float(hdul[0].header['COMMENT'][i].split(' ')[1])
-                    break
-            except:
-                imscalen = -1
-        imagescale = 'Image scale in arc-secs/pixel: {:.2f}'.format(imscalen)
-    elif "IM_SCALE" in header:
-        imscalen = header['IM_SCALE']
-        imscaleunits = header.comments['IM_SCALE']
-        imagescale = imscaleunits + ": " + str(imscalen)
-    elif "PIXSCALE" in header:
-        imscalen = header['PIXSCALE']
-        imscaleunits = header.comments['PIXSCALE']
-        imagescale = imscaleunits + ": " + str(imscalen)
+        astrometry_scale = [key.value.split(' ') for key in hdul[0].header._cards if 'scale:' in str(key.value)]
+
+    if astrometry_scale:
+        image_scale_num = astrometry_scale[0][1]
+        image_scale_units = astrometry_scale[0][2]
+        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
+    elif 'IM_SCALE' in header:
+        image_scale_num = header['IM_SCALE']
+        image_scale_units = header.comments['IM_SCALE']
+        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
+    elif 'PIXSCALE' in header:
+        image_scale_num = header['PIXSCALE']
+        image_scale_units = header.comments['PIXSCALE']
+        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
     elif pixel_init:
-        imagescale = "Image scale: " + str(pixel_init)
+        image_scale = f"Image scale in arc-secs/pixel: {pixel_init}"
     else:
         log.info("Cannot find the pixel scale in the image header.")
-        imscalen = input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ")
-        imagescale = "Image scale: " + str(imscalen)
-        log.debug("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): "+imscalen)
-    return imagescale
+        image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
+        image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
+    return image_scale
 
 
 # Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility

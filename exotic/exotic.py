@@ -1348,9 +1348,12 @@ def image_alignment(imagedata, roi=1):
 def get_pixel_scale(hdul, file, header, pixel_init):
     if file:
         for i in range(len(hdul[0].header)):
-            if hdul[0].header['COMMENT'][i].split(' ')[0] == 'scale:':
-                imscalen = float(hdul[0].header['COMMENT'][i].split(' ')[1])
-                break
+            try:
+                if hdul[0].header['COMMENT'][i].split(' ')[0] == 'scale:':
+                    imscalen = float(hdul[0].header['COMMENT'][i].split(' ')[1])
+                    break
+            except:
+                imscalen = -1
         imagescale = 'Image scale in arc-secs/pixel: {:.2f}'.format(imscalen)
     elif "IM_SCALE" in header:
         imscalen = header['IM_SCALE']

@@ -1180,7 +1180,9 @@ def check_wcs(fits_file, save_directory, plate_opt):
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
         if wcs_exists:
-            print("WARNING: FITS file has WCS in the header. EXOTIC will proceed to utilize WCS in the header.")
+            log.info("Your FITS files have WCS information in their headers. EXOTIC will proceed to use these. "
+                     "NOTE: If you do not trust your WCS coordinates, "
+                     "please restart EXOTIC after enabling plate solutions via astrometry.net.")
             return fits_file
         else:
             return False

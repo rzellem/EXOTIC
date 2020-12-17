@@ -1171,34 +1171,21 @@ def check_wcs(fits_file, save_directory, plate_opt):
         hdulist.close()
         del hdulist
 
+    if plate_opt not in ('y', 'n'):
+        plate_opt = user_input("\nWould you like to upload the your image for a plate solution?"
+                               "\nDISCLAIMER: One of your imaging files will be publicly viewable "
+                               "on nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
+
     if plate_opt == 'y':
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
         if wcs_exists:
-            trust_wcs = user_input("The imaging data from your file has WCS information. Do you trust this? (y/n): ",
-                                   type_=str, val1='y', val2='n')
-
-            if trust_wcs == 'y':
-                return fits_file
-            else:
-                return False
-    else:
-        if wcs_exists:
-            trust_wcs = user_input("The imaging data from your file has WCS information. Do you trust this? (y/n): ",
-                                   type_=str, val1='y', val2='n')
-        else:
-            trust_wcs = 'n'
-
-        if trust_wcs == 'n':
-            opt = user_input("\nWould you like to upload the your image for a plate solution?"
-                             "\nDISCLAIMER: One of your imaging files will be publicly viewable on nova.astrometry.net."
-                             " (y/n): ", type_=str, val1='y', val2='n')
-            if opt == 'y':
-                return get_wcs(fits_file, save_directory)
-            else:
-                return False
-        else:
+            log.info("Your FITS files have WCS information in their headers. EXOTIC will proceed to use these. "
+                     "NOTE: If you do not trust your WCS coordinates, "
+                     "please restart EXOTIC after enabling plate solutions via astrometry.net.")
             return fits_file
+        else:
+            return False
 
 
 def get_wcs(file, directory=""):

@@ -2607,11 +2607,11 @@ def main():
 
                 # If plate solution was generated, use it to check if the comparison stars selected are variable
                 # If yes, skip determining optimal aperture and annulus for that comparison star
-                # if wcs_file:
-                #     log.info("Checking for variability in current comparison star... ")
-                #     if variableStarCheck(round(psf_data[ckey][0, 0]), round(psf_data[ckey][0, 1]), hdulWCS):
-                #         log.info("Current comparison star is variable, proceeding to next star.")
-                #         continue
+                if wcs_file:
+                    log.info("Checking for variability in current comparison star... ")
+                    if variableStarCheck(round(psf_data[ckey][0, 0]), round(psf_data[ckey][0, 1]), hdulWCS):
+                        log.info("Current comparison star is variable, proceeding to next star.")
+                        continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = 1 * np.nanmax([targsigX, targsigY])

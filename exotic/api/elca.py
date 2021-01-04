@@ -408,7 +408,7 @@ class lc_fitter(object):
             axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
             axs[1].grid(True,ls='--')
             axs[1].set_xlabel("Phase")
-            axs[1].set_ylabel("Residuals [ADU]")
+            axs[1].set_ylabel("Residuals")
 
             ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
@@ -426,7 +426,7 @@ class lc_fitter(object):
             axs[1].plot(self.time, self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, mec='None', ls='none')
             axs[1].plot(self.time, np.zeros(len(self.time)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
             axs[1].set_xlabel("Time [day]")
-            axs[1].set_ylabel("Residuals [ADU]")
+            axs[1].set_ylabel("Residuals")
 
             ax_lc.errorbar(timebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
             ax_res.errorbar(timebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)

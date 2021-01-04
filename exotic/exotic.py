@@ -1213,10 +1213,10 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             uncert = 20 / 3600
             # Margins are within 20 arcseconds
             if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
-                log.info("Error: The X Pixel Coordinate entered does not match the right ascension.")
+                log.info("Error: The X Pixel Coordinate entered does not match the target's right ascension.")
                 raise ValueError
             if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
-                log.info("Error: The Y Pixel Coordinate entered does not match the declination.")
+                log.info("Error: The Y Pixel Coordinate entered does not match the target's declination.")
                 raise ValueError
             return pixx, pixy
         except ValueError:
@@ -1513,7 +1513,7 @@ def fit_centroid(data, pos, init=[], box=10, debug=False):
         )
 
     if pars[2] <= 10:
-        log.info(f"amplitude is really low, are you sure there is a star at:{pos}")
+        log.info(f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {pos}?")
 
     return pars
 
@@ -1846,7 +1846,7 @@ def main():
         [] for m in range(10))
 
     timesListed = []  # sorted times of observation
-    fileNumber = 1  # initializes file number to one
+    # fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
     exotic_distFC = 10  # gaussian search area
@@ -2264,232 +2264,225 @@ def main():
             #########################################
 
             # Loop placed to check user-entered x and y target coordinates against WCS.
-            while True:
-                fileNumber = 1
-                allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
-                time_dict = {}
+            # fileNumber = 1
+            allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
+            time_dict = {}
 
-                # ----TIME SORT THE FILES-------------------------------------------------------------
-                for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
+            # ----TIME SORT THE FILES-------------------------------------------------------------
+            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
 
-                    # fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
+                # fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False)  # opens the file
 
-                    # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
-                    # if fitsHead[0].header ['FILTER']== 'Harris-B':
-                    #     #TIME
-                    #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
-                    #     timeList.append(timeVal) #adds to time value list
-                    #     fileNameList.append (fileName)
-                    # fitsHead.close()  # close stream
-                    # del fitsHead
+                # FOR 61'' DATA ONLY: ONLY REDUCE DATA FROM B FILTER
+                # if fitsHead[0].header ['FILTER']== 'Harris-B':
+                #     #TIME
+                #     timeVal = getJulianTime(fitsHead) #gets the julian time registered in the fits header
+                #     timeList.append(timeVal) #adds to time value list
+                #     fileNameList.append (fileName)
+                # fitsHead.close()  # close stream
+                # del fitsHead
 
-                    # Keeps a list of file names
-                    fileNameStr.append(fileName)
+                # Keeps a list of file names
+                fileNameStr.append(fileName)
 
-                    try:
-                        hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-                    except OSError as e:
-                        log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                        fileNameStr.remove(fileName)
-                        if getattr(hdul, "close", None) and callable(hdul.close):
-                            hdul.close()
-                        del hdul
-                        continue
-
-                    image_header = hdul[0].header
-
-                    # TIME
-                    timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
-                    timeList.append(timeVal)  # adds to time value list
-                    fileNameList.append(fileName)
-
-                    # TIME DICT
-                    time_dict[fileName] = (timeVal, image_header)
-
-                    # TIME
-                    currTime = getJulianTime(hdul)
-                    timesListed.append(currTime)
-
-                    # AIRMASS
-                    airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
-                    airMassList.append(airMass)  # adds that airmass value to the list of airmasses
-
-                    # IMAGES
-                    allImageData.append(hdul[0].data)
-
-                    # EXPOSURE_TIME
-                    exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
-                    if exp:
-                        exptimes.append(image_header['EXPTIME'])
-                    else:
-                        exptimes.append(image_header['EXPOSURE'])
-
-                    hdul.close()  # closes the file to avoid using up all of computer's resources
-                    del hdul
-
-                consistent_et = False
-                if len(exptimes) > 0:
-                    consistent_et = all(elem == exptimes[0] for elem in exptimes)
-
-                exptimes = np.array(exptimes)
-
-                if consistent_et:
-                    exotic_infoDict['exposure'] = exptimes[0]
-                else:
-                    exotic_infoDict['exposure'] = np.median(exptimes)
-
-                # Recast list as numpy arrays
-                allImageData = np.array(allImageData, dtype=np.float32)
-                timesListed = np.array(timesListed)
-                airMassList = np.array(airMassList)
-
-                # sorts the times for later plotting use
-                allImageData = allImageData[np.argsort(timeList)]
-                timesListed = timesListed[np.argsort(timeList)]
-                airMassList = airMassList[np.argsort(timeList)]
-
-                # TODO add option to inits file
-                cosmicrayfilter_bool = False
-                if cosmicrayfilter_bool:
-                    log.info("Filtering your data for cosmic rays.")
-                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(allImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
-                    psffwhm = 2.355*(targsigX+targsigY)/2
-                    log.debug(f"FWHM in 1st image: {np.round(psffwhm, 2):.2f} px")
-                    log.debug(f"STDEV before: {np.std(allImageData, 0).mean():.2f}")
-
-                    # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
-
-                    animate_toggle(True)
-
-                    for ii in range(len(allImageData)):
-
-                        # remove nans
-                        nanmask = np.isnan(allImageData[ii])
-
-                        if nanmask.sum() > 0:
-                            bg = generic_filter(allImageData[ii], np.nanmedian, (3, 3))
-                            allImageData[ii][nanmask] = bg[nanmask]
-
-                        mask, clean = detect_cosmics(allImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)
-                        allImageData[ii] = clean
-
-                        # # check for bad columns
-                        # bad_cols = np.abs(np.diff(allImageData[ii],1).mean(0)) > 10
-                        # if bad_cols[-1]:
-                        #     bad_cols = np.append(bad_cols,True)
-                        # else:
-                        #     bad_cols = np.append(bad_cols,False)
-                        # bad_cols = binary_dilation(bad_cols)
-
-                        # #allImageData[ii][:,bad_cols] = np.median(allImageData[ii])
-                        # labels,ngroups = label(bad_cols)
-                        # labeli, counts = np.unique(labels, return_counts=True)
-                        
-                        # if counts.shape[0] > 1:
-                        #     for ii in range(1,labeli[-1]+1):
-                        #         imask = labels == ii # mask block for integration
-                        #         imask2 = binary_dilation(imask)
-                        #         xmask = np.logical_xor(imask,imask2) # mask of neighboring pixels
-                        #         median = allImageData[ii][:,xmask].mean(1)
-                        #         medianm= (np.ones((imask.shape[0],imask.sum())).T * median).T
-                        #         stdev = np.std(allImageData[ii][:,xmask])
-                        #         # fill in bad columns with randomly generated data based on neighboring pixels
-                        #         allImageData[ii][:,imask] = np.random.normal(medianm, stdev, medianm.shape)
-
-                        # TODO move to function
-                        # if ii == 0:
-                        # f,ax = plt_exotic.subplots(1,3,figsize=(18,8))
-                        # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                        # ax[0].set_title("Original Data")
-                        # ax[1].imshow(mask,cmap='binary_r')
-                        # ax[1].set_title("Cosmic Ray Mask")
-                        # ax[2].imshow(np.log10(allImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
-                        # ax[2].set_title("Corrected Image")
-                        # plt_exotic.tight_layout()
-                        # plt_exotic.show()
-
-                    animate_toggle()
-
-                log.debug(f"STDEV after: {np.std(allImageData, 0).mean():.2f}")
-
-                # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
-
-                # Loops through all of the possible aperture and annulus radius
-                # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
-
-                # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
-                # firstImageData = hdul['ext', 0].data  # fits.getdata(timeSortedNames[0], ext=0)
-                firstimagecounter = 0
-                firstImageData = allImageData[firstimagecounter]
-
-                # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
-                while True:
-                    # fit Target in the first image and use it to determine aperture and annulus range
-                    try:
-                        targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY],
-                                                                                                         box=10)
-                        break
-                    # If the first image is a bad one, then move on to the next image
-                    except Exception:
-                        firstimagecounter += 1
-                        firstImageData = allImageData[firstimagecounter]
-
-                # Filter the other data as well
-                allImageData = allImageData[firstimagecounter:]
-                timesListed = timesListed[firstimagecounter:]
-                airMassList = airMassList[firstimagecounter:]
-                # sortedTimeList = sortedTimeList[firstimagecounter:]
-
-                # apply cals correction if applicable
-                if darksBool:
-                    log.info("Dark subtracting images.")
-                    allImageData = allImageData - generalDark
-                elif biasesBool:
-                    log.info("Bias-correcting images.")
-                    allImageData = allImageData - generalBias
-                else:
-                    pass
-
-                if flatsBool:
-                    log.info("Flattening images.")
-                    allImageData = allImageData / generalFlat
-
-                time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
-
-                first_image = min(time_dict, key=lambda k: time_dict[k][0])
-
-                # Reference File w/ smallest time value
-                ref_file = Path(exotic_infoDict['saveplot']) / f'ref_file_{firstimagecounter}_'\
-                                                               f'{Path(first_image).name}'
-
-                # Removes existing file of reference file. For future Python 3.8 update, .unlink(missing_ok=True)
-                # can be added to that will ignore exceptions such as the one below.
                 try:
-                    Path(ref_file).unlink()
-                except FileNotFoundError:
-                    pass
+                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+                except OSError as e:
+                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
+                    fileNameStr.remove(fileName)
+                    if getattr(hdul, "close", None) and callable(hdul.close):
+                        hdul.close()
+                    del hdul
+                    continue
 
-                convertToFITS = fits.PrimaryHDU(data=allImageData[0], header=time_dict[first_image][1])
-                convertToFITS.writeto(ref_file)
-                log.info(f"\nHere is the path to the reference imaging file used by EXOTIC: \n{ref_file}")
-                wcs_file = check_wcs(ref_file, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
-                hdulWCS = None
+                image_header = hdul[0].header
 
-                # Check pixel coordinates by converting to WCS. If not correct, loop over again
-                if wcs_file:
-                    log.info(f"Here is the path to your plate solution: {wcs_file}")
-                    hdulWCS = fits.open(name=wcs_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-                    rafile, decfile = get_radec(hdulWCS)
+                # TIME
+                timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
+                timeList.append(timeVal)  # adds to time value list
+                fileNameList.append(fileName)
 
-                    # Save previously entered x and y pixel coordinates before checking against plate solution
-                    saveUIprevTPX, saveUIprevTPY = exotic_UIprevTPX, exotic_UIprevTPY
-                    exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY, pDict['ra'],
-                                                                              pDict['dec'], rafile, decfile)
-                    # If the coordinates were not changed, do not loop over again
-                    if exotic_UIprevTPX == saveUIprevTPX and exotic_UIprevTPY == saveUIprevTPY:
-                        break
+                # TIME DICT
+                time_dict[fileName] = (timeVal, image_header)
+
+                # TIME
+                currTime = getJulianTime(hdul)
+                timesListed.append(currTime)
+
+                # AIRMASS
+                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
+                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+
+                # IMAGES
+                allImageData.append(hdul[0].data)
+
+                # EXPOSURE_TIME
+                exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
+                if exp:
+                    exptimes.append(image_header['EXPTIME'])
                 else:
+                    exptimes.append(image_header['EXPOSURE'])
+
+                hdul.close()  # closes the file to avoid using up all of computer's resources
+                del hdul
+
+            consistent_et = False
+            if len(exptimes) > 0:
+                consistent_et = all(elem == exptimes[0] for elem in exptimes)
+
+            exptimes = np.array(exptimes)
+
+            if consistent_et:
+                exotic_infoDict['exposure'] = exptimes[0]
+            else:
+                exotic_infoDict['exposure'] = np.median(exptimes)
+
+            # Recast list as numpy arrays
+            allImageData = np.array(allImageData, dtype=np.float32)
+            timesListed = np.array(timesListed)
+            airMassList = np.array(airMassList)
+
+            # sorts the times for later plotting use
+            allImageData = allImageData[np.argsort(timeList)]
+            timesListed = timesListed[np.argsort(timeList)]
+            airMassList = airMassList[np.argsort(timeList)]
+
+            # TODO add option to inits file
+            cosmicrayfilter_bool = False
+            if cosmicrayfilter_bool:
+                log.info("Filtering your data for cosmic rays.")
+                targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(allImageData[0], [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                psffwhm = 2.355*(targsigX+targsigY)/2
+                log.debug(f"FWHM in 1st image: {np.round(psffwhm, 2):.2f} px")
+                log.debug(f"STDEV before: {np.std(allImageData, 0).mean():.2f}")
+
+                # # -------COSMIC RAY FILTERING-----------------------------------------------------------------------
+
+                animate_toggle(True)
+
+                for ii in range(len(allImageData)):
+
+                    # remove nans
+                    nanmask = np.isnan(allImageData[ii])
+
+                    if nanmask.sum() > 0:
+                        bg = generic_filter(allImageData[ii], np.nanmedian, (3, 3))
+                        allImageData[ii][nanmask] = bg[nanmask]
+
+                    mask, clean = detect_cosmics(allImageData[ii], psfmodel='gauss',  psffwhm=psffwhm, psfsize=2*round(psffwhm)+1,  sepmed=False, sigclip = 4.25, niter=2, objlim=10, cleantype='idw', verbose=False)
+                    allImageData[ii] = clean
+
+                    # # check for bad columns
+                    # bad_cols = np.abs(np.diff(allImageData[ii],1).mean(0)) > 10
+                    # if bad_cols[-1]:
+                    #     bad_cols = np.append(bad_cols,True)
+                    # else:
+                    #     bad_cols = np.append(bad_cols,False)
+                    # bad_cols = binary_dilation(bad_cols)
+
+                    # #allImageData[ii][:,bad_cols] = np.median(allImageData[ii])
+                    # labels,ngroups = label(bad_cols)
+                    # labeli, counts = np.unique(labels, return_counts=True)
+
+                    # if counts.shape[0] > 1:
+                    #     for ii in range(1,labeli[-1]+1):
+                    #         imask = labels == ii # mask block for integration
+                    #         imask2 = binary_dilation(imask)
+                    #         xmask = np.logical_xor(imask,imask2) # mask of neighboring pixels
+                    #         median = allImageData[ii][:,xmask].mean(1)
+                    #         medianm= (np.ones((imask.shape[0],imask.sum())).T * median).T
+                    #         stdev = np.std(allImageData[ii][:,xmask])
+                    #         # fill in bad columns with randomly generated data based on neighboring pixels
+                    #         allImageData[ii][:,imask] = np.random.normal(medianm, stdev, medianm.shape)
+
+                    # TODO move to function
+                    # if ii == 0:
+                    # f,ax = plt_exotic.subplots(1,3,figsize=(18,8))
+                    # ax[0].imshow(np.log10(ogdata),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                    # ax[0].set_title("Original Data")
+                    # ax[1].imshow(mask,cmap='binary_r')
+                    # ax[1].set_title("Cosmic Ray Mask")
+                    # ax[2].imshow(np.log10(allImageData[ii]),vmin=np.percentile(np.log10(bg),5), vmax=np.percentile(np.log10(bg),99))
+                    # ax[2].set_title("Corrected Image")
+                    # plt_exotic.tight_layout()
+                    # plt_exotic.show()
+
+                animate_toggle()
+
+            log.debug(f"STDEV after: {np.std(allImageData, 0).mean():.2f}")
+
+            # -------OPTIMAL COMP STAR, APERTURE, AND ANNULUS CALCULATION----------------------------------------
+
+            # Loops through all of the possible aperture and annulus radius
+            # guess at optimal aperture by doing a gaussian fit and going out 3 sigma as an estimate
+
+            # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+            # firstImageData = hdul['ext', 0].data  # fits.getdata(timeSortedNames[0], ext=0)
+            firstimagecounter = 0
+            firstImageData = allImageData[firstimagecounter]
+
+            # Sometimes the first image is a bad one...in that case, we iterate until we do not fail
+            while True:
+                # fit Target in the first image and use it to determine aperture and annulus range
+                try:
+                    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY],
+                                                                                                     box=10)
                     break
+                # If the first image is a bad one, then move on to the next image
+                except Exception:
+                    firstimagecounter += 1
+                    firstImageData = allImageData[firstimagecounter]
+
+            # Filter the other data as well
+            allImageData = allImageData[firstimagecounter:]
+            timesListed = timesListed[firstimagecounter:]
+            airMassList = airMassList[firstimagecounter:]
+            # sortedTimeList = sortedTimeList[firstimagecounter:]
+
+            # apply cals correction if applicable
+            if darksBool:
+                log.info("Dark subtracting images.")
+                allImageData = allImageData - generalDark
+            elif biasesBool:
+                log.info("Bias-correcting images.")
+                allImageData = allImageData - generalBias
+            else:
+                pass
+
+            if flatsBool:
+                log.info("Flattening images.")
+                allImageData = allImageData / generalFlat
+
+            time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
+
+            first_image = min(time_dict, key=lambda k: time_dict[k][0])
+
+            # Reference File w/ smallest time value
+            ref_file = Path(exotic_infoDict['saveplot']) / f'ref_file_{firstimagecounter}_'\
+                                                           f'{Path(first_image).name}'
+
+            # Removes existing file of reference file. For future Python 3.8 update, .unlink(missing_ok=True)
+            # can be added to that will ignore exceptions such as the one below.
+            try:
+                Path(ref_file).unlink()
+            except FileNotFoundError:
+                pass
+
+            convertToFITS = fits.PrimaryHDU(data=allImageData[0], header=time_dict[first_image][1])
+            convertToFITS.writeto(ref_file)
+            log.info(f"\nHere is the path to the reference imaging file used by EXOTIC: \n{ref_file}")
+            wcs_file = check_wcs(ref_file, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
+            hdulWCS = None
+
+            # Check pixel coordinates by converting to WCS. If not correct, loop over again
+            if wcs_file:
+                log.info(f"\nHere is the path to your plate solution: {wcs_file}")
+                hdulWCS = fits.open(name=wcs_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+                rafile, decfile = get_radec(hdulWCS)
+
+                # Checking pixel coordinates against plate solution
+                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY, pDict['ra'],
+                                                                          pDict['dec'], rafile, decfile)
 
             # Image Alignment
             allImageData, boollist, apos, arot = image_alignment(allImageData)
@@ -2607,11 +2600,11 @@ def main():
 
                 # If plate solution was generated, use it to check if the comparison stars selected are variable
                 # If yes, skip determining optimal aperture and annulus for that comparison star
-                # if wcs_file:
-                #     log.info("Checking for variability in current comparison star... ")
-                #     if variableStarCheck(round(psf_data[ckey][0, 0]), round(psf_data[ckey][0, 1]), hdulWCS):
-                #         log.info("Current comparison star is variable, proceeding to next star.")
-                #         continue
+                if wcs_file:
+                    log.info("Checking for variability in current comparison star... ")
+                    if variableStarCheck(round(psf_data[ckey][0, 0]), round(psf_data[ckey][0, 1]), hdulWCS):
+                        log.info("Current comparison star is variable, proceeding to next star.")
+                        continue
 
                 # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
                 aperture_min = 1 * np.nanmax([targsigX, targsigY])

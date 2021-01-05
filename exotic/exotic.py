@@ -2686,7 +2686,7 @@ def main():
                         arrayAirmass = airMassList[~filtered_data]
 
                         # remove nans
-                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | arrayFinalFlux > 0 | arrayNormUnc > 0
+                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | np.greater(arrayFinalFlux, 0) | np.greater(arrayNormUnc, 0)
                         nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(arrayAirmass)
                         if np.sum(~nanmask) == 0:
                             continue
@@ -3097,7 +3097,10 @@ def main():
                 'a2': [-3, 3],
             }
 
-        del allImageData
+        try:
+            del allImageData
+        except:
+            pass
 
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

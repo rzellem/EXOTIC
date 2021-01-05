@@ -1936,7 +1936,6 @@ def main():
         log.info("Complete Reduction Routine")
         log.info("**************************")
 
-        directoryP = ""
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
@@ -2229,8 +2228,11 @@ def main():
             exotic_infoDict['filter'] = user_input("Please enter your filter name from the options at "
                                                    "http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ",
                                                    type_=str)
-            exotic_infoDict['notes'] = user_input("Please enter any observing notes (seeing, weather, etc.): ",
-                                                  type_=str)
+            exotic_infoDict['notes'] = user_input("Please enter any observing notes (seeing, weather, etc.)."
+                                                  "If none, leave blank and press enter: ", type_=str)
+
+        if not exotic_infoDict['notes'].replace(' ', ''):
+            exotic_infoDict['notes'] = "na"
 
         if fileorcommandline == 2:
             diff = False
@@ -2686,7 +2688,7 @@ def main():
                         arrayAirmass = airMassList[~filtered_data]
 
                         # remove nans
-                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | arrayFinalFlux > 0 | arrayNormUnc > 0
+                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
                         nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(arrayAirmass)
                         if np.sum(~nanmask) == 0:
                             continue
@@ -3097,7 +3099,10 @@ def main():
                 'a2': [-3, 3],
             }
 
-        del allImageData
+        try:
+            del allImageData
+        except:
+            pass
 
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

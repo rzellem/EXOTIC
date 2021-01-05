@@ -1936,7 +1936,6 @@ def main():
         log.info("Complete Reduction Routine")
         log.info("**************************")
 
-        directoryP = ""
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,

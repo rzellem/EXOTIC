@@ -2688,7 +2688,7 @@ def main():
                         arrayAirmass = airMassList[~filtered_data]
 
                         # remove nans
-                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | np.greater(arrayFinalFlux, 0) | np.greater(arrayNormUnc, 0)
+                        nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
                         nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(arrayAirmass)
                         if np.sum(~nanmask) == 0:
                             continue

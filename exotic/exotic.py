@@ -2229,8 +2229,11 @@ def main():
             exotic_infoDict['filter'] = user_input("Please enter your filter name from the options at "
                                                    "http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ",
                                                    type_=str)
-            exotic_infoDict['notes'] = user_input("Please enter any observing notes (seeing, weather, etc.): ",
-                                                  type_=str)
+            exotic_infoDict['notes'] = user_input("Please enter any observing notes (seeing, weather, etc.)."
+                                                  "If none, leave blank and press enter: ", type_=str)
+
+        if not exotic_infoDict['notes'].replace(' ', ''):
+            exotic_infoDict['notes'] = "na"
 
         if fileorcommandline == 2:
             diff = False

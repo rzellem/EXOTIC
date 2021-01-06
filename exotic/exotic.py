@@ -559,7 +559,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             log.info("Sorry, not a valid datatype.")
             continue
         if type_ == str and val1 and val2:
-            result = result.lower().replace(' ', '')
+            result = result.lower().strip()
             if result not in (val1, val2):
                 log.info("Sorry, your response was not valid.")
             else:
@@ -807,32 +807,37 @@ class InitializationFile:
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
 def timeConvert(timeList, timeFormat, pDict, info_dict):
-    # if timeFormat is already in BJD_TDB, just do nothing
+
     # Perform appropriate conversion for each time format if needed
-    if timeFormat == "JD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-        timeList = convertedTimes[0]
-    elif timeFormat == "MJD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-        timeList = convertedTimes[0]
+    if timeFormat == 'JD_UTC':
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'],
+                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
+    elif timeFormat == 'MJD_UTC':
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'],
+                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
+    timeList = convertedTimes[0]
+
     return timeList
 
 
 # Convert magnitude units to flux if pre-reduced file not in flux already
 def fluxConvert(fluxList, errorList, fluxFormat):
+
     # If units already in flux, do nothing, perform appropriate conversions to flux otherwise
-    if fluxFormat == "magnitude":
+    if fluxFormat == 'magnitude':
         convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
         fluxList = 10. ** ((-1. * fluxList) / 2.5)
-    if fluxFormat == "millimagnitude":
+    elif fluxFormat == 'millimagnitude':
         convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
         fluxList = 10. ** (-1. * (fluxList / 1000.) / 2.5)
+
     # Use distance from mean of upper/lower error bounds to calculate new sigma values
     positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
     negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
     meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** 0.5
+
     return fluxList, meanErrorList
 
 
@@ -2008,21 +2013,24 @@ def main():
 
             exotic_infoDict['fitsdir'], inputfiles = check_imaging_files(exotic_infoDict['fitsdir'], 'imaging')
         else:
-            datafile = user_input("Enter the path and filename of your data file: ", type_=str)
-            if datafile == 'ok':
-                datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                log.debug("Hello, Rob.")
-                # datafile = "/Users/rzellem/Downloads/fluxorama.csv
-            try:
-                initf = open(datafile, 'r')
-            except FileNotFoundError:
-                log.info("ERROR: Data file not found. Please try again.")
-                sys.exit()
+            while True:
+                try:
+                    data_file = user_input("Enter the path and file name of your data file: ", type_=str)
+                    if data_file == "ok":
+                        data_file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
+                        # data_file = "/Users/rzellem/Downloads/fluxorama.csv
+                        log.info("Hello, Rob.")
 
-            if fileorcommandline == 1:
-                exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
+                    data_file = Path(data_file)
 
-            processeddata = initf.readlines()
+                    if data_file.is_file():
+                        break
+                    else:
+                        raise FileNotFoundError
+                except FileNotFoundError:
+                    log.info("Error: Data file not found. Please try again.")
+
+            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time (seconds): ", type_=int)
 
         if fileorcommandline == 1:
             exotic_infoDict['saveplot'] = user_input("Enter the directory to save the results and plots into "
@@ -2224,7 +2232,7 @@ def main():
                                                       "(or type N/A if only 1 observer code): ", type_=str)
             exotic_infoDict['ctype'] = user_input("Please enter your camera type (CCD or DSLR): ", type_=str)
             exotic_infoDict['pixelbin'] = user_input("Please enter your pixel binning: ", type_=str)
-            # infoDict['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
+            # exotic_infoDict['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
             exotic_infoDict['filter'] = user_input("Please enter your filter name from the options at "
                                                    "http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ",
                                                    type_=str)
@@ -2765,7 +2773,7 @@ def main():
                         resstd = myfit.residuals.std()/np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min
                             bestCompStar = compCounter + 1
-                            best_comp_coords = compStarList[compCounter]
+                            comp_coords = compStarList[compCounter]
                             minSTD = resstd  # set the minimum standard deviation to that
 
                             arrayNormUnc = arrayNormUnc * np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
@@ -2810,7 +2818,6 @@ def main():
                 log.info('Optimal Annulus: ' + str(minAnnulus))
                 log.info('********************************************\n')
                 bestCompStar = None
-                best_comp_coords = [None, None]
 
             else:
                 log.info('\n*********************************************')
@@ -2984,14 +2991,18 @@ def main():
             log.info("Output File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
-            for i in processeddata:
-                try:
-                    goodTimes.append(float(i.split(",")[0]))
-                    goodFluxes.append(float(i.split(",")[1]))
-                    goodNormUnc.append(float(i.split(",")[2]))
-                    goodAirmasses.append(float(i.split(",")[3]))
-                except ValueError:
-                    continue
+            bestCompStar = None
+
+            with open(data_file, 'r') as f:
+                for processed_data in f:
+                    try:
+                        processed_data = processed_data.split(',')
+                        goodTimes.append(float(processed_data[0]))
+                        goodFluxes.append(float(processed_data[1]))
+                        goodNormUnc.append(float(processed_data[2]))
+                        goodAirmasses.append(float(processed_data[3]))
+                    except ValueError:
+                        continue
 
             goodTimes = np.array(goodTimes)
             goodFluxes = np.array(goodFluxes)
@@ -2999,40 +3010,38 @@ def main():
             goodAirmasses = np.array(goodAirmasses)
 
             # Ask user for time format and convert it if not in BJD_TDB
-            validTimeFormats = ['BJD_TDB', "MJD_UTC", "JD_UTC"]
-            formatEntered = False
-            log.info("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
-            while not formatEntered:
-                timeFormat = user_input("Which of the following time formats is your data file stored in? "
-                                        "(Type q to quit)\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
-                if (timeFormat.upper()).strip() == 'Q':
-                    sys.exit()
-                elif (timeFormat.upper()).strip() not in validTimeFormats:
+            log.info("NOTE: If your file is not in one of the following formats, "
+                     "please re-reduce your data into one of the time formats recognized by EXOTIC.")
+
+            while True:
+                time_format = user_input("Which of the following time formats is your data file stored in? "
+                                         "\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
+                time_format = time_format.upper().strip()
+
+                if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
                     log.info("Invalid entry; please try again.")
                 else:
-                    formatEntered = True
-            timeFormat = (timeFormat.upper()).strip()
-            goodTimes = timeConvert(goodTimes, timeFormat, pDict, exotic_infoDict)
+                    break
 
-            #Ask user for flux units and convert to flux if in magnitude/millimagnitude
-            validFluxFormats = ['flux', "magnitude", "millimagnitude"]
-            formatEntered = False
-            log.info("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
-            while not formatEntered:
-                fluxFormat = user_input("Which of the following units of flux is your data file stored in? "
-                                        "(Type q to quit)\nflux / magnitude / millimagnitude: ", type_=str)
-                if (fluxFormat.upper()).strip() == 'Q':
-                    sys.exit()
-                elif (fluxFormat.lower()).strip() not in validFluxFormats:
+            if time_format != 'BJD_TDB':
+                goodTimes = timeConvert(goodTimes, time_format, pDict, exotic_infoDict)
+
+            # Ask user for flux units and convert to flux if in magnitude/millimagnitude
+            log.info("NOTE: If your file is not in one of the following formats, "
+                     "please re-reduce your data into one of the time formats recognized by EXOTIC.")
+
+            while True:
+                flux_format = user_input("Which of the following units of flux is your data file stored in? "
+                                         "\nflux / magnitude / millimagnitude: ", type_=str)
+                flux_format = flux_format.lower().strip()
+
+                if flux_format not in ['flux', 'magnitude', 'millimagnitude']:
                     log.info("Invalid entry; please try again.")
                 else:
-                    formatEntered = True
-            fluxFormat = (fluxFormat.lower()).strip()
-            if fluxFormat != "flux":
-                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, fluxFormat)
+                    break
 
-            bjdMidTOld = goodTimes[0]
-            standardDev1 = np.std(goodFluxes)
+            if flux_format != 'flux':
+                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, flux_format)
 
         log.info("\n")
         log.info("****************************************")
@@ -3099,10 +3108,8 @@ def main():
                 'a2': [-3, 3],
             }
 
-        try:
+        if fitsortext == 1:
             del allImageData
-        except:
-            pass
 
         # fitting method in elca.py
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')
@@ -3236,15 +3243,15 @@ def main():
             comp_dec = None
 
             if wcs_file:
-                comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
-                comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+                comp_ra = rafile[comp_coords[1]][comp_coords[0]]
+                comp_dec = decfile[comp_coords[1]][comp_coords[0]]
 
-            comp_star_dict = [{'ra': str(comp_ra) if comp_ra else comp_ra,
-                               'dec': str(comp_dec) if comp_dec else comp_dec,
-                               'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],
-                               'y': str(best_comp_coords[1]) if best_comp_coords[1] else best_comp_coords[1]}]
+            comp_star = [{'ra': str(comp_ra) if comp_ra else comp_ra,
+                          'dec': str(comp_dec) if comp_dec else comp_dec,
+                          'x': str(comp_coords[0]) if comp_coords[0] else comp_coords[0],
+                          'y': str(comp_coords[1]) if comp_coords[1] else comp_coords[1]}]
         else:
-            comp_star_dict = []
+            comp_star = []
 
         filter_dict = {'name': exotic_infoDict['filter'],
                        'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
@@ -3278,7 +3285,7 @@ def main():
                     f"#BINNING={exotic_infoDict['pixelbin']}\n"  # user input
                     f"#EXPOSURE_TIME={exotic_infoDict['exposure']}\n"  # UI
                     f"#FILTER-XC={json.dumps(filter_dict)}\n"
-                    f"#COMP_STAR-XC={json.dumps(comp_star_dict)}\n"
+                    f"#COMP_STAR-XC={json.dumps(comp_star)}\n"
                     f"#NOTES={exotic_infoDict['notes']}\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed

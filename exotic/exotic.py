@@ -171,9 +171,6 @@ animate_toggle()  # CLOSE PRELOAD ANIMATION
 # ################### START PROPERTIES/SETTINGS ############################# #
 # GLOBALS (set in main before method calls)
 exotic_infoDict = dict()
-exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
-exotic_distFC = 0
-exotic_ax1 = plt_exotic.figure()  # placeholder
 
 # SETTINGS
 plt_exotic.style.use(astropy_mpl_style)
@@ -537,7 +534,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         am = float(hdul[0].header['AIRMASS'])
     elif 'TELALT' in hdul[0].header:
         alt = float(hdul[0].header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((PI / 180) * (90.0 - alt))
+        cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / cosam
     else:
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
@@ -1652,48 +1649,35 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt_exotic.close()
 
 
-def realTimeReduce(i, target_name):
+def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
+                   exotic_UIprevRPX, exotic_UIprevRPY):
+
     targetFluxVals = []
     referenceFluxVals = []
     normalizedFluxVals = []
     fileNameList = []
-    timeSortedNames = []
     timeList = []
-    timesListed = []
-
-    # -------TIME SORT THE FILES--------------------------------------------------------------------------------
-    directoryP = ""
-    directToWatch = user_input("Enter the Directory Path where .FITS or .FTS Image Files are located: ", type_=str)
-    # Add / to end of directory if user does not input it
-    if directToWatch[-1] != "/":
-        directToWatch += "/"
-    directoryP = directToWatch
-
-    while len(g.glob(directoryP)) == 0:
-        log.info(f"Error: .FITS files not found in {directoryP}")
-        directToWatch = user_input("Enter the Directory Path where FITS Image Files are located: ", type_=str)
-        # Add / to end of directory if user does not input it
-        if directToWatch[-1] != "/":
-            directToWatch += "/"
-        directoryP = directToWatch
 
     fileNumber = 1
-    for fileName in g.glob(directoryP):  # Loop through all the fits files and time sorts
-        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+
+    for file_name in real_time_imgs:  # Loop through all the fits files and time sorts
+        hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+
         # TIME
-        timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
+        timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
         timeList.append(timeVal)  # adds to time value list
-        fileNameList.append(fileName)
-        fitsHead.close()  # close stream
-        del fitsHead
+        fileNameList.append(file_name)
+
+        hdul.close()  # close stream
+        del hdul
 
     # Time sorts the file names based on the fits file header
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
 
-    # sorts the times for later plotting use
-    # sortedTimeList = sorted(timeList)
+    # Time sorts file
+    timeList = np.array(timeList)
+    timeList = timeList[np.argsort(np.array(timeList))]
 
-    # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
@@ -1708,14 +1692,9 @@ def realTimeReduce(i, target_name):
     for imageFile in timeSortedNames:
 
         hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-        # Extracts data from the image file and puts it in a 2D numpy array: imageData
-        currTime = getJulianTime(hdul)
-        hdul[0].data.scale('float32')
-        imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
-        header = hdul[0].header  # fits.getheader(imageFile)
 
-        hdul.close()  # close the stream
-        del hdul
+        # Extracts data from the image file and puts it in a 2D numpy array: imageData
+        imageData = fits.getdata(imageFile, ext=0)
 
         # Find the target star in the image and get its pixel coordinates if it is the first file
         if fileNumber == 1:
@@ -1739,18 +1718,18 @@ def realTimeReduce(i, target_name):
 
         # --------GAUSSIAN FIT AND CENTROIDING----------------------------------------------
 
-        txmin = int(prevTPX) - exotic_distFC  # left
-        txmax = int(prevTPX) + exotic_distFC  # right
-        tymin = int(prevTPY) - exotic_distFC  # top
-        tymax = int(prevTPY) + exotic_distFC  # bottom
+        txmin = int(prevTPX) - distFC  # left
+        txmax = int(prevTPX) + distFC  # right
+        tymin = int(prevTPY) - distFC  # top
+        tymax = int(prevTPY) + distFC  # bottom
 
         targSearchA = imageData[tymin:tymax, txmin:txmax]
 
         # Set reference search area
-        rxmin = int(prevRPX) - exotic_distFC  # left
-        rxmax = int(prevRPX) + exotic_distFC  # right
-        rymin = int(prevRPY) - exotic_distFC  # top
-        rymax = int(prevRPY) + exotic_distFC  # bottom
+        rxmin = int(prevRPX) - distFC  # left
+        rxmax = int(prevRPX) + distFC  # right
+        rymin = int(prevRPY) - distFC  # top
+        rymax = int(prevRPY) + distFC  # bottom
 
         refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
@@ -1783,9 +1762,6 @@ def realTimeReduce(i, target_name):
 
         normalizedFluxVals.append((tFluxVal / rFluxVal))
 
-        # TIME
-        timesListed.append(currTime)
-
         # UPDATE PIXEL COORDINATES and SIGMAS
         # target
         prevTPX = currTPX
@@ -1796,19 +1772,20 @@ def realTimeReduce(i, target_name):
         prevRPX = currRPX
         prevRPY = currRPY
         prevRSigX = rsigX
-        prevTSigY = rsigY
+        prevRSigY = rsigY
 
         # UPDATE FILE COUNT
         prevImageData = imageData
-        fileNumber = fileNumber + 1
+        fileNumber += 1
 
-    # EXIT THE FILE LOOP
+        hdul.close()
+        del hdul
 
-    exotic_ax1.clear()
-    exotic_ax1.set_title(target_name)
-    exotic_ax1.set_ylabel('Normalized Flux')
-    exotic_ax1.set_xlabel('Time (jd)')
-    exotic_ax1.plot(timesListed, normalizedFluxVals, 'bo')
+    ax.clear()
+    ax.set_title(target_name)
+    ax.set_ylabel('Normalized Flux')
+    ax.set_xlabel('Time (jd)')
+    ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
 def parse_args():
@@ -1840,22 +1817,15 @@ def main():
 
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
-    global exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
-    global exotic_distFC
-    global exotic_ax1
 
-    targetFluxVals, referenceFluxVals, normalizedFluxVals, targUncertanties, refUncertanties, timeList, phasesList, airMassList = (
-        [] for l in range(8))
+    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
 
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
 
-    timesListed = []  # sorted times of observation
-    # fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
-    exotic_distFC = 10  # gaussian search area
-    context = {}
+    distFC = 10  # gaussian search area
 
     # ---USER INPUTS--------------------------------------------------------------------------
     if args.realtime:
@@ -1876,15 +1846,10 @@ def main():
         log.info("**************************************************************\n")
 
         if not args.realtime:
-            directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
+            real_time_dir = user_input("Enter the Directory Path of imaging files: ", type_=str)
         else:
-            directToWatch = args.realtime
-        directoryP = ""
-        directoryP = directToWatch
-        directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
-
-        # targetName = str(input("Please Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-        # log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
+            real_time_dir = args.realtime
+        real_time_dir, real_time_imgs = check_imaging_files(real_time_dir, 'imaging')
 
         while True:
             targetName = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and "
@@ -1906,13 +1871,10 @@ def main():
                 break
 
         while True:
-            try:
-                carryOn = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
-                if carryOn != 'continue':
-                    raise ValueError
-                break
-            except ValueError:
+            carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
+            if carry_on != 'continue':
                 continue
+            break
 
         exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
         exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
@@ -1923,12 +1885,14 @@ def main():
         log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
 
         fig = plt_exotic.figure()
-        exotic_ax1 = fig.add_subplot(1, 1, 1)
-        exotic_ax1.set_title(targetName)
-        exotic_ax1.set_ylabel('Normalized Flux')
-        exotic_ax1.set_xlabel('Time (jd)')
+        ax = fig.add_subplot(1, 1, 1)
+        ax.set_title(targetName)
+        ax.set_ylabel('Normalized Flux')
+        ax.set_xlabel('Time (jd)')
 
-        anim = FuncAnimation(fig, realTimeReduce, fargs=targetName, interval=15000)  # refresh every 15 seconds
+        anim = FuncAnimation(fig, realTimeReduce,
+                             fargs=(targetName, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
+                                    exotic_UIprevRPX, exotic_UIprevRPY), interval=15000)  # refresh every 15 seconds
         plt_exotic.show()
 
     ###########################
@@ -2275,7 +2239,7 @@ def main():
 
             # Loop placed to check user-entered x and y target coordinates against WCS.
             # fileNumber = 1
-            allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
+            allImageData, fileNameList, timeList, airMassList, fileNameStr, exptimes = [], [], [], [], [], []
             time_dict = {}
 
             # ----TIME SORT THE FILES-------------------------------------------------------------
@@ -2307,17 +2271,14 @@ def main():
 
                 image_header = hdul[0].header
 
-                # TIME
-                timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
-                timeList.append(timeVal)  # adds to time value list
                 fileNameList.append(fileName)
+
+                # TIME
+                timeVal = getJulianTime(hdul)
+                timeList.append(timeVal)
 
                 # TIME DICT
                 time_dict[fileName] = (timeVal, image_header)
-
-                # TIME
-                currTime = getJulianTime(hdul)
-                timesListed.append(currTime)
 
                 # AIRMASS
                 airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
@@ -2349,13 +2310,13 @@ def main():
 
             # Recast list as numpy arrays
             allImageData = np.array(allImageData, dtype=np.float32)
-            timesListed = np.array(timesListed)
+            timeList = np.array(timeList)
             airMassList = np.array(airMassList)
 
             # sorts the times for later plotting use
             allImageData = allImageData[np.argsort(timeList)]
-            timesListed = timesListed[np.argsort(timeList)]
             airMassList = airMassList[np.argsort(timeList)]
+            timeList = timeList[np.argsort(timeList)]
 
             # TODO add option to inits file
             cosmicrayfilter_bool = False
@@ -2445,7 +2406,7 @@ def main():
 
             # Filter the other data as well
             allImageData = allImageData[firstimagecounter:]
-            timesListed = timesListed[firstimagecounter:]
+            timeList = timeList[firstimagecounter:]
             airMassList = airMassList[firstimagecounter:]
             # sortedTimeList = sortedTimeList[firstimagecounter:]
 
@@ -2463,7 +2424,7 @@ def main():
                 log.info("Flattening images.")
                 allImageData = allImageData / generalFlat
 
-            time_dict = {k: v for k, v in time_dict.items() if v[0] in timesListed}
+            time_dict = {k: v for k, v in time_dict.items() if v[0] in timeList}
 
             first_image = min(time_dict, key=lambda k: time_dict[k][0])
 
@@ -2496,7 +2457,7 @@ def main():
 
             # Image Alignment
             allImageData, boollist, apos, arot = image_alignment(allImageData)
-            timesListed = np.array(timesListed)[boollist]
+            timeList = np.array(timeList)[boollist]
             airMassList = np.array(airMassList)[boollist]
 
             # alloc psf fitting param
@@ -2686,13 +2647,13 @@ def main():
                                 )
 
                         # remove outliers TODO 
-                        dt = np.mean(np.diff(np.sort(timesListed)))
+                        dt = np.mean(np.diff(np.sort(timeList)))
                         ndt = int(15./24./60./dt)*2+1 # 35 minutes
                         filtered_data = sigma_clip(tFlux/cFlux, sigma=3, dt=ndt)
-                        # plt.plot(arrayTimes, arrayFinalFlux,'k.'); plt.plot(timesListed, median_filter(tFlux/cFlux,21)); plt.show()
+                        # plt.plot(arrayTimes, arrayFinalFlux,'k.'); plt.plot(timeList, median_filter(tFlux/cFlux,21)); plt.show()
                         arrayFinalFlux = (tFlux/cFlux)[~filtered_data]
                         arrayNormUnc = (np.sqrt(tFlux)/cFlux)[~filtered_data]
-                        arrayTimes = timesListed[~filtered_data]
+                        arrayTimes = timeList[~filtered_data]
                         arrayAirmass = airMassList[~filtered_data]
 
                         # remove nans
@@ -2993,7 +2954,7 @@ def main():
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar = None
 
-            with open(data_file, 'r') as f:
+            with data_file.open('r') as f:
                 for processed_data in f:
                     try:
                         processed_data = processed_data.split(',')

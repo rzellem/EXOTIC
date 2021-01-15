@@ -1789,12 +1789,29 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user inputs.")
-    parser.add_argument('-r', '--realtime', default='', type=str, help="using real-time reduction")
-    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file")
-    parser.add_argument('-o', '--options', nargs='+', default='', type=str,
-                        choices=['prereduced', 'reduce', 'override'],
-                        help="added options to inits.json file",)
+    parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
+    # Will change the realtime below to accept a JSON file in a future update.
+    parser.add_argument('-rt', '--realtime',
+                        default='', type=str,
+                        help="Plots transit in real-time while observing with a telescope. "
+                             "Must include path to directory with imaging files as an argument.")
+    parser.add_argument('-red', '--reduce',
+                        default='', type=str,
+                        help="Performs aperture photometry on FITS files and a reduction on dataset. "
+                             "Must include path to JSON file as an argument.")
+    parser.add_argument('-pre', '--prereduced',
+                        default='', type=str,
+                        help="Performs a reduction on dataset using the nested sampler only. "
+                             "Must include path to JSON file as an argument.")
+    parser.add_argument('-ov', '--override',
+                        action='store_true',
+                        help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
+                             "Can be used an additional argument with reduce and prereduced. Do not combine with the "
+                             "-nea, --nasaexoarch argument.")
+    parser.add_argument('-nea', '--nasaexoarch',
+                        action='store_true',
+                        help="Adopts all the NASA Exoplanet Archive planetary parameters. Can be used an additional "
+                             "argument with reduce and prereduced. Do not combine with the -ov, --override argument.")
     return parser.parse_args()
 
 
@@ -1829,18 +1846,18 @@ def main():
 
     # ---USER INPUTS--------------------------------------------------------------------------
     if args.realtime:
-        realTimeAns = 1
-    elif not args.init:
-        realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
-                                 type_=int, val1=1, val2=2)
+        reduction_opt = 1
+    elif args.reduce or args.prereduced:
+        reduction_opt = 2
     else:
-        realTimeAns = 2
+        reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+                                   type_=int, val1=1, val2=2)
 
     #############################
     # Real Time Reduction Routine
     #############################
 
-    if realTimeAns == 1:
+    if reduction_opt == 1:
         log.info("\n**************************************************************")
         log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log.info("**************************************************************\n")
@@ -1905,6 +1922,7 @@ def main():
         log.info("Complete Reduction Routine")
         log.info("**************************")
 
+        init_path = None
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
@@ -1918,16 +1936,17 @@ def main():
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
-        if not args.options:
-            fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                    "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+        if args.reduce:
+            fitsortext = 1
+            init_path = args.reduce
+        elif args.prereduced:
+            fitsortext = 2
+            init_path = args.prereduced
         else:
-            if 'reduce' in args.options:
-                fitsortext = 1
-            else:
-                fitsortext = 2
+            fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
+                                "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
 
-        if not args.init:
+        if not args.reduce and not args.prereduced:
             fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
                                            "Enter '1' to use the Command Line or '2' to use an input file: ",
                                            type_=int, val1=1, val2=2)
@@ -1936,7 +1955,7 @@ def main():
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict, args.init)
+            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict, init_path)
             init_obj = InitializationFile(exotic_infoDict, userpDict['pName'])
             exotic_infoDict, userpDict['pName'] = init_obj.get_info()
 
@@ -2026,19 +2045,19 @@ def main():
                 if planetnameconfirm == 1:
                     break
 
-        if 'override' in args.options:
-            CandidatePlanetBool = False
-            pDict = userpDict
-        else:
+        if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+        else:
+            pDict = userpDict
+            CandidatePlanetBool = False
 
         # observation date
         if fileorcommandline == 1:
             exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
 
         # Using a / in your date can screw up the file paths- this will check user's date
-        while "/" in exotic_infoDict['date']:
+        while '/' in exotic_infoDict['date']:
             log.info("Do not use / in your date. Please try again.")
             exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
 
@@ -2207,17 +2226,19 @@ def main():
             exotic_infoDict['notes'] = "na"
 
         if fileorcommandline == 2:
-            diff = False
-
-            userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
-
-            if not CandidatePlanetBool:
-                if 'override' not in args.options:
-                    diff = check_parameters(userpDict, pDict)
-            if diff:
-                pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+            if args.nasaexoarch or args.override:
+                pass
             else:
-                pDict = userpDict
+                diff = False
+
+                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+
+                if not CandidatePlanetBool:
+                    diff = check_parameters(userpDict, pDict)
+                if diff:
+                    pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+                else:
+                    pDict = userpDict
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 

@@ -1794,24 +1794,25 @@ def parse_args():
     parser.add_argument('-rt', '--realtime',
                         default='', type=str,
                         help="Plots transit in real-time while observing with a telescope. "
-                             "Must include path to directory with imaging files as an argument.")
+                             "An initialization file (e.g., inits.json) is required to use this command.")
     parser.add_argument('-red', '--reduce',
                         default='', type=str,
                         help="Performs aperture photometry on FITS files and a reduction on dataset. "
-                             "Must include path to JSON file as an argument.")
+                             "An initialization file (e.g., inits.json) is required to use this command.")
     parser.add_argument('-pre', '--prereduced',
                         default='', type=str,
                         help="Performs a reduction on dataset using the nested sampler only. "
-                             "Must include path to JSON file as an argument.")
+                             "An initialization file (e.g., inits.json) is required to use this command.")
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
-                             "Can be used an additional argument with reduce and prereduced. Do not combine with the "
-                             "-nea, --nasaexoarch argument.")
+                             "Can be used an additional argument with -red, --reduce and -pre, --prereduced. "
+                             "Do not combine with the -nea, --nasaexoarch argument.")
     parser.add_argument('-nea', '--nasaexoarch',
                         action='store_true',
                         help="Adopts all the NASA Exoplanet Archive planetary parameters. Can be used an additional "
-                             "argument with reduce and prereduced. Do not combine with the -ov, --override argument.")
+                             "argument with -red, --reduce and -pre, --prereduced. Do not combine with the "
+                             "-ov, --override argument.")
     return parser.parse_args()
 
 
@@ -2226,8 +2227,10 @@ def main():
             exotic_infoDict['notes'] = "na"
 
         if fileorcommandline == 2:
-            if args.nasaexoarch or args.override:
+            if args.nasaexoarch:
                 pass
+            elif args.override:
+                pDict['ra'], pDict['dec'] = radec_hours_to_degree(pDict['ra'], pDict['dec'])
             else:
                 diff = False
 

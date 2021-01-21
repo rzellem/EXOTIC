@@ -470,7 +470,6 @@ if __name__ == "__main__":
     data += np.random.normal(0, prior['a1']*250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
 
-
     # add bounds for free parameters only
     mybounds = {
         'rprs':[0,0.1],

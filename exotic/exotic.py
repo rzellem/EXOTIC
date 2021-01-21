@@ -2351,7 +2351,7 @@ def main():
             #########################################
 
             # Loop placed to check user-entered x and y target coordinates against WCS.
-            allImageData, timeList, fileNameList, timesListed, airMassList, fileNameStr, exptimes = [], [], [], [], [], [], []
+            allImageData, timeList, fileNameList, airMassList, fileNameStr, exptimes = [], [], [], [], [], []
             time_dict = {}
 
             # alloc psf fitting param
@@ -2361,7 +2361,7 @@ def main():
                 'target_align':np.zeros((len(inputfiles), 2)) # image alignment estimate
             }
 
-            # aperture sizes
+            # aperture sizes in stdev (sigma) of PSF
             apers = np.linspace(2,6,10)
 
             aper_data = {
@@ -2377,6 +2377,7 @@ def main():
                 aper_data[ckey+"_bg"] = np.zeros((len(inputfiles),len(apers)))
 
             # TODO filter input files to get good reference for image alignment
+
             # time sort images
             times = []
             for i, fileName in enumerate(inputfiles):  # Loop through all the fits files in the directory and executes data reduction
@@ -2402,7 +2403,7 @@ def main():
             inputfiles = np.array(inputfiles)[si]
 
             # open files, calibrate, align, photometry
-            for i, fileName in enumerate(inputfiles):  # Loop through all the fits files in the directory and executes data reduction
+            for i, fileName in enumerate(inputfiles):
 
                 # Keeps a list of file names
                 fileNameStr.append(fileName)
@@ -2555,7 +2556,6 @@ def main():
                 resstd = myfit.residuals.std()/np.median(myfit.data)
                 if minSTD > resstd:  # If the standard deviation is less than the previous min
                     bestCompStar = j + 1
-                    best_comp_coords = coord
                     minSTD = resstd
                     minAperture = 0
                     minAnnulus = 15*sigma
@@ -2565,13 +2565,11 @@ def main():
                     goodFluxes = np.copy(myfit.data)
                     goodNormUnc = np.copy(myfit.dataerr)
                     nonBJDTimes = np.copy(myfit.time)
-                    nonBJDPhases = np.copy(myfit.phase)
                     goodAirmasses = np.copy(myfit.airmass)
                     goodTargets = tFlux
                     goodReferences = cFlux
                     goodTUnc = tFlux**0.5
                     goodRUnc = cFlux**0.5
-                    goodResids = myfit.residuals
                     bestlmfit = myfit
 
                     finXTargCent = psf_data["target"][:,0]

@@ -539,7 +539,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         am = float(hdul[0].header['AIRMASS'])
     elif 'TELALT' in hdul[0].header:
         alt = float(hdul[0].header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((PI / 180) * (90.0 - alt))
+        cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / cosam
     else:
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
@@ -561,7 +561,7 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             log.info("Sorry, not a valid datatype.")
             continue
         if type_ == str and val1 and val2:
-            result = result.lower().replace(' ', '')
+            result = result.lower().strip()
             if result not in (val1, val2):
                 log.info("Sorry, your response was not valid.")
             else:
@@ -809,32 +809,37 @@ class InitializationFile:
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
 def timeConvert(timeList, timeFormat, pDict, info_dict):
-    # if timeFormat is already in BJD_TDB, just do nothing
+
     # Perform appropriate conversion for each time format if needed
-    if timeFormat == "JD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-        timeList = convertedTimes[0]
-    elif timeFormat == "MJD_UTC":
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'], lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-        timeList = convertedTimes[0]
+    if timeFormat == 'JD_UTC':
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'],
+                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
+    elif timeFormat == 'MJD_UTC':
+        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'],
+                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
+    timeList = convertedTimes[0]
+
     return timeList
 
 
 # Convert magnitude units to flux if pre-reduced file not in flux already
 def fluxConvert(fluxList, errorList, fluxFormat):
+
     # If units already in flux, do nothing, perform appropriate conversions to flux otherwise
-    if fluxFormat == "magnitude":
+    if fluxFormat == 'magnitude':
         convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
         fluxList = 10. ** ((-1. * fluxList) / 2.5)
-    if fluxFormat == "millimagnitude":
+    elif fluxFormat == 'millimagnitude':
         convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
         convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
         fluxList = 10. ** (-1. * (fluxList / 1000.) / 2.5)
+
     # Use distance from mean of upper/lower error bounds to calculate new sigma values
     positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
     negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
     meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** 0.5
+
     return fluxList, meanErrorList
 
 
@@ -1515,7 +1520,6 @@ def fit_centroid(data, pos, init=[], box=10, debug=False):
         )
 
     if pars[2] <= 10:
-        import pdb; pdb.set_trace()
         log.info(f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos,2)}?")
 
     return pars
@@ -1650,48 +1654,35 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
-def realTimeReduce(i, target_name):
+def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
+                   exotic_UIprevRPX, exotic_UIprevRPY):
+
     targetFluxVals = []
     referenceFluxVals = []
     normalizedFluxVals = []
     fileNameList = []
-    timeSortedNames = []
     timeList = []
-    timesListed = []
-
-    # -------TIME SORT THE FILES--------------------------------------------------------------------------------
-    directoryP = ""
-    directToWatch = user_input("Enter the Directory Path where .FITS or .FTS Image Files are located: ", type_=str)
-    # Add / to end of directory if user does not input it
-    if directToWatch[-1] != "/":
-        directToWatch += "/"
-    directoryP = directToWatch
-
-    while len(g.glob(directoryP)) == 0:
-        log.info(f"Error: .FITS files not found in {directoryP}")
-        directToWatch = user_input("Enter the Directory Path where FITS Image Files are located: ", type_=str)
-        # Add / to end of directory if user does not input it
-        if directToWatch[-1] != "/":
-            directToWatch += "/"
-        directoryP = directToWatch
 
     fileNumber = 1
-    for fileName in g.glob(directoryP):  # Loop through all the fits files and time sorts
-        fitsHead = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+
+    for file_name in real_time_imgs:  # Loop through all the fits files and time sorts
+        hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+
         # TIME
-        timeVal = getJulianTime(fitsHead)  # gets the julian time registered in the fits header
+        timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
         timeList.append(timeVal)  # adds to time value list
-        fileNameList.append(fileName)
-        fitsHead.close()  # close stream
-        del fitsHead
+        fileNameList.append(file_name)
+
+        hdul.close()  # close stream
+        del hdul
 
     # Time sorts the file names based on the fits file header
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
 
-    # sorts the times for later plotting use
-    # sortedTimeList = sorted(timeList)
+    # Time sorts file
+    timeList = np.array(timeList)
+    timeList = timeList[np.argsort(np.array(timeList))]
 
-    # hdul = fits.open(name=timeSortedNames[0], memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
 
@@ -1706,14 +1697,9 @@ def realTimeReduce(i, target_name):
     for imageFile in timeSortedNames:
 
         hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-        # Extracts data from the image file and puts it in a 2D numpy array: imageData
-        currTime = getJulianTime(hdul)
-        hdul[0].data.scale('float32')
-        imageData = hdul['ext', 0].data  # fits.getdata(imageFile, ext=0)
-        header = hdul[0].header  # fits.getheader(imageFile)
 
-        hdul.close()  # close the stream
-        del hdul
+        # Extracts data from the image file and puts it in a 2D numpy array: imageData
+        imageData = fits.getdata(imageFile, ext=0)
 
         # Find the target star in the image and get its pixel coordinates if it is the first file
         if fileNumber == 1:
@@ -1737,18 +1723,18 @@ def realTimeReduce(i, target_name):
 
         # --------GAUSSIAN FIT AND CENTROIDING----------------------------------------------
 
-        txmin = int(prevTPX) - exotic_distFC  # left
-        txmax = int(prevTPX) + exotic_distFC  # right
-        tymin = int(prevTPY) - exotic_distFC  # top
-        tymax = int(prevTPY) + exotic_distFC  # bottom
+        txmin = int(prevTPX) - distFC  # left
+        txmax = int(prevTPX) + distFC  # right
+        tymin = int(prevTPY) - distFC  # top
+        tymax = int(prevTPY) + distFC  # bottom
 
         targSearchA = imageData[tymin:tymax, txmin:txmax]
 
         # Set reference search area
-        rxmin = int(prevRPX) - exotic_distFC  # left
-        rxmax = int(prevRPX) + exotic_distFC  # right
-        rymin = int(prevRPY) - exotic_distFC  # top
-        rymax = int(prevRPY) + exotic_distFC  # bottom
+        rxmin = int(prevRPX) - distFC  # left
+        rxmax = int(prevRPX) + distFC  # right
+        rymin = int(prevRPY) - distFC  # top
+        rymax = int(prevRPY) + distFC  # bottom
 
         refSearchA = imageData[rymin:rymax, rxmin:rxmax]
 
@@ -1781,9 +1767,6 @@ def realTimeReduce(i, target_name):
 
         normalizedFluxVals.append((tFluxVal / rFluxVal))
 
-        # TIME
-        timesListed.append(currTime)
-
         # UPDATE PIXEL COORDINATES and SIGMAS
         # target
         prevTPX = currTPX
@@ -1794,19 +1777,20 @@ def realTimeReduce(i, target_name):
         prevRPX = currRPX
         prevRPY = currRPY
         prevRSigX = rsigX
-        prevTSigY = rsigY
+        prevRSigY = rsigY
 
         # UPDATE FILE COUNT
         prevImageData = imageData
-        fileNumber = fileNumber + 1
+        fileNumber += 1
 
-    # EXIT THE FILE LOOP
+        hdul.close()
+        del hdul
 
-    exotic_ax1.clear()
-    exotic_ax1.set_title(target_name)
-    exotic_ax1.set_ylabel('Normalized Flux')
-    exotic_ax1.set_xlabel('Time (jd)')
-    exotic_ax1.plot(timesListed, normalizedFluxVals, 'bo')
+    ax.clear()
+    ax.set_title(target_name)
+    ax.set_ylabel('Normalized Flux')
+    ax.set_xlabel('Time (jd)')
+    ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
@@ -1880,12 +1864,30 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Start exotic with an initialization file to bypass all user inputs.")
-    parser.add_argument('-r', '--realtime', default='', type=str, help="using real-time reduction")
-    parser.add_argument('-i', '--init', default='', type=str, help="entering inits.json file")
-    parser.add_argument('-o', '--options', nargs='+', default='', type=str,
-                        choices=['prereduced', 'reduce', 'override'],
-                        help="added options to inits.json file",)
+    parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
+    # Will change the realtime below to accept a JSON file in a future update.
+    parser.add_argument('-rt', '--realtime',
+                        default='', type=str,
+                        help="Plots transit in real-time while observing with a telescope. "
+                             "An initialization file (e.g., inits.json) is required to use this command.")
+    parser.add_argument('-red', '--reduce',
+                        default='', type=str,
+                        help="Performs aperture photometry on FITS files and a reduction on dataset. "
+                             "An initialization file (e.g., inits.json) is required to use this command.")
+    parser.add_argument('-pre', '--prereduced',
+                        default='', type=str,
+                        help="Performs a reduction on dataset using the nested sampler only. "
+                             "An initialization file (e.g., inits.json) is required to use this command.")
+    parser.add_argument('-ov', '--override',
+                        action='store_true',
+                        help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
+                             "Can be used an additional argument with -red, --reduce and -pre, --prereduced. "
+                             "Do not combine with the -nea, --nasaexoarch argument.")
+    parser.add_argument('-nea', '--nasaexoarch',
+                        action='store_true',
+                        help="Adopts all the NASA Exoplanet Archive planetary parameters. Can be used an additional "
+                             "argument with -red, --reduce and -pre, --prereduced. Do not combine with the "
+                             "-ov, --override argument.")
     return parser.parse_args()
 
 
@@ -1908,51 +1910,39 @@ def main():
 
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
-    global exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
-    global exotic_distFC
-    global exotic_ax1
 
-    targetFluxVals, referenceFluxVals, normalizedFluxVals, targUncertanties, refUncertanties, timeList, phasesList, airMassList = (
-        [] for l in range(8))
+    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
 
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
 
-    timesListed = []  # sorted times of observation
-    # fileNumber = 1  # initializes file number to one
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     minChi2 = 100000
-    exotic_distFC = 10  # gaussian search area
-    context = {}
+    distFC = 10  # gaussian search area
 
     # ---USER INPUTS--------------------------------------------------------------------------
     if args.realtime:
-        realTimeAns = 1
-    elif not args.init:
-        realTimeAns = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
-                                 type_=int, val1=1, val2=2)
+        reduction_opt = 1
+    elif args.reduce or args.prereduced:
+        reduction_opt = 2
     else:
-        realTimeAns = 2
+        reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+                                   type_=int, val1=1, val2=2)
 
     #############################
     # Real Time Reduction Routine
     #############################
 
-    if realTimeAns == 1:
+    if reduction_opt == 1:
         log.info("\n**************************************************************")
         log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log.info("**************************************************************\n")
 
         if not args.realtime:
-            directToWatch = user_input("Enter the Directory Path of imaging files: ", type_=str)
+            real_time_dir = user_input("Enter the Directory Path of imaging files: ", type_=str)
         else:
-            directToWatch = args.realtime
-        directoryP = ""
-        directoryP = directToWatch
-        directToWatch, inputfiles = check_imaging_files(directToWatch, 'imaging')
-
-        # targetName = str(input("Please Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "))
-        # log.debug("Enter the Planet Name. Make sure it matches the case sensitive name used on Exoplanet Archive (https://exoplanetarchive.ipac.caltech.edu/index.html): "+targetName)
+            real_time_dir = args.realtime
+        real_time_dir, real_time_imgs = check_imaging_files(real_time_dir, 'imaging')
 
         while True:
             targetName = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and "
@@ -1974,13 +1964,10 @@ def main():
                 break
 
         while True:
-            try:
-                carryOn = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
-                if carryOn != 'continue':
-                    raise ValueError
-                break
-            except ValueError:
+            carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
+            if carry_on != 'continue':
                 continue
+            break
 
         exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
         exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
@@ -1991,12 +1978,14 @@ def main():
         log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
 
         fig = plt.figure()
-        exotic_ax1 = fig.add_subplot(1, 1, 1)
-        exotic_ax1.set_title(targetName)
-        exotic_ax1.set_ylabel('Normalized Flux')
-        exotic_ax1.set_xlabel('Time (jd)')
+        ax = fig.add_subplot(1, 1, 1)
+        ax.set_title(targetName)
+        ax.set_ylabel('Normalized Flux')
+        ax.set_xlabel('Time (jd)')
 
-        anim = FuncAnimation(fig, realTimeReduce, fargs=targetName, interval=15000)  # refresh every 15 seconds
+        anim = FuncAnimation(fig, realTimeReduce,
+                             fargs=(targetName, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
+                                    exotic_UIprevRPX, exotic_UIprevRPY), interval=15000)  # refresh every 15 seconds
         plt.show()
 
     ###########################
@@ -2009,6 +1998,7 @@ def main():
         log.info("Complete Reduction Routine")
         log.info("**************************")
 
+        init_path = None
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
@@ -2022,16 +2012,17 @@ def main():
                      'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                      'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
-        if not args.options:
-            fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                    "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+        if args.reduce:
+            fitsortext = 1
+            init_path = args.reduce
+        elif args.prereduced:
+            fitsortext = 2
+            init_path = args.prereduced
         else:
-            if 'reduce' in args.options:
-                fitsortext = 1
-            else:
-                fitsortext = 2
+            fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
+                                "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
 
-        if not args.init:
+        if not args.reduce and not args.prereduced:
             fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
                                            "Enter '1' to use the Command Line or '2' to use an input file: ",
                                            type_=int, val1=1, val2=2)
@@ -2040,7 +2031,7 @@ def main():
 
         # Read in input file rather than using the command line
         if fileorcommandline == 2:
-            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict, args.init)
+            exotic_infoDict, userpDict = get_initialization_file(exotic_infoDict, userpDict, init_path)
             init_obj = InitializationFile(exotic_infoDict, userpDict['pName'])
             exotic_infoDict, userpDict['pName'] = init_obj.get_info()
 
@@ -2081,21 +2072,24 @@ def main():
 
             exotic_infoDict['fitsdir'], inputfiles = check_imaging_files(exotic_infoDict['fitsdir'], 'imaging')
         else:
-            datafile = user_input("Enter the path and filename of your data file: ", type_=str)
-            if datafile == 'ok':
-                datafile = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                log.debug("Hello, Rob.")
-                # datafile = "/Users/rzellem/Downloads/fluxorama.csv
-            try:
-                initf = open(datafile, 'r')
-            except FileNotFoundError:
-                log.info("ERROR: Data file not found. Please try again.")
-                sys.exit()
+            while True:
+                try:
+                    data_file = user_input("Enter the path and file name of your data file: ", type_=str)
+                    if data_file == "ok":
+                        data_file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
+                        # data_file = "/Users/rzellem/Downloads/fluxorama.csv
+                        log.info("Hello, Rob.")
 
-            if fileorcommandline == 1:
-                exotic_infoDict['exposure'] = user_input("Please enter your image exposure time in seconds: ", type_=int)
+                    data_file = Path(data_file)
 
-            processeddata = initf.readlines()
+                    if data_file.is_file():
+                        break
+                    else:
+                        raise FileNotFoundError
+                except FileNotFoundError:
+                    log.info("Error: Data file not found. Please try again.")
+
+            exotic_infoDict['exposure'] = user_input("Please enter your image exposure time (seconds): ", type_=int)
 
         if fileorcommandline == 1:
             exotic_infoDict['saveplot'] = user_input("Enter the directory to save the results and plots into "
@@ -2127,19 +2121,19 @@ def main():
                 if planetnameconfirm == 1:
                     break
 
-        if 'override' in args.options:
-            CandidatePlanetBool = False
-            pDict = userpDict
-        else:
+        if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+        else:
+            pDict = userpDict
+            CandidatePlanetBool = False
 
         # observation date
         if fileorcommandline == 1:
             exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
 
         # Using a / in your date can screw up the file paths- this will check user's date
-        while "/" in exotic_infoDict['date']:
+        while '/' in exotic_infoDict['date']:
             log.info("Do not use / in your date. Please try again.")
             exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
 
@@ -2297,7 +2291,7 @@ def main():
                                                       "(or type N/A if only 1 observer code): ", type_=str)
             exotic_infoDict['ctype'] = user_input("Please enter your camera type (CCD or DSLR): ", type_=str)
             exotic_infoDict['pixelbin'] = user_input("Please enter your pixel binning: ", type_=str)
-            # infoDict['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
+            # exotic_infoDict['exposure'] = user_input("Please enter your exposure time (seconds): ", type_=int)
             exotic_infoDict['filter'] = user_input("Please enter your filter name from the options at "
                                                    "http://astroutils.astronomy.ohio-state.edu/exofast/limbdark.shtml: ",
                                                    type_=str)
@@ -2308,17 +2302,21 @@ def main():
             exotic_infoDict['notes'] = "na"
 
         if fileorcommandline == 2:
-            diff = False
-
-            userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
-
-            if not CandidatePlanetBool:
-                if 'override' not in args.options:
-                    diff = check_parameters(userpDict, pDict)
-            if diff:
-                pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+            if args.nasaexoarch:
+                pass
+            elif args.override:
+                pDict['ra'], pDict['dec'] = radec_hours_to_degree(pDict['ra'], pDict['dec'])
             else:
-                pDict = userpDict
+                diff = False
+
+                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+
+                if not CandidatePlanetBool:
+                    diff = check_parameters(userpDict, pDict)
+                if diff:
+                    pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+                else:
+                    pDict = userpDict
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
@@ -2421,17 +2419,14 @@ def main():
 
                 image_header = hdul[0].header
 
-                # TIME
-                timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
-                timeList.append(timeVal)  # adds to time value list
                 fileNameList.append(fileName)
+
+                # TIME
+                timeVal = getJulianTime(hdul)
+                timeList.append(timeVal)
 
                 # TIME DICT
                 time_dict[fileName] = (timeVal, image_header)
-
-                # TIME
-                currTime = getJulianTime(hdul)
-                timesListed.append(currTime)
 
                 # AIRMASS
                 airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
@@ -2532,7 +2527,7 @@ def main():
                 log.error("No images to fit...check reference image for alignment (first image of sequence)")
 
             # convert to numpy arrays
-            times = np.array(timesListed)[~badmask]
+            times = np.array(timeList)[~badmask]
             airmass = np.array(airMassList)[~badmask]
             psf_data["target"] = psf_data["target"][~badmask]
             psf_data["target_align"] = psf_data["target_align"][~badmask]
@@ -2680,7 +2675,6 @@ def main():
                 #log.info('Optimal Annulus: ' + str(minAnnulus))
                 log.info('********************************************\n')
                 bestCompStar = None
-                best_comp_coords = [None, None]
 
             else:
                 log.info('*********************************************')
@@ -2789,6 +2783,7 @@ def main():
             goodFluxes = goodFluxes[si][gi]
             goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = goodAirmasses[si][gi]
+
             # if flatsBool:
             #     log.info("Flattening images.")
             #     allImageData = allImageData / generalFlat
@@ -3419,14 +3414,18 @@ def main():
             log.info("Output File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
-            for i in processeddata:
-                try:
-                    goodTimes.append(float(i.split(",")[0]))
-                    goodFluxes.append(float(i.split(",")[1]))
-                    goodNormUnc.append(float(i.split(",")[2]))
-                    goodAirmasses.append(float(i.split(",")[3]))
-                except ValueError:
-                    continue
+            bestCompStar = None
+
+            with data_file.open('r') as f:
+                for processed_data in f:
+                    try:
+                        processed_data = processed_data.split(',')
+                        goodTimes.append(float(processed_data[0]))
+                        goodFluxes.append(float(processed_data[1]))
+                        goodNormUnc.append(float(processed_data[2]))
+                        goodAirmasses.append(float(processed_data[3]))
+                    except ValueError:
+                        continue
 
             goodTimes = np.array(goodTimes)
             goodFluxes = np.array(goodFluxes)
@@ -3434,40 +3433,38 @@ def main():
             goodAirmasses = np.array(goodAirmasses)
 
             # Ask user for time format and convert it if not in BJD_TDB
-            validTimeFormats = ['BJD_TDB', "MJD_UTC", "JD_UTC"]
-            formatEntered = False
-            log.info("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
-            while not formatEntered:
-                timeFormat = user_input("Which of the following time formats is your data file stored in? "
-                                        "(Type q to quit)\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
-                if (timeFormat.upper()).strip() == 'Q':
-                    sys.exit()
-                elif (timeFormat.upper()).strip() not in validTimeFormats:
+            log.info("NOTE: If your file is not in one of the following formats, "
+                     "please re-reduce your data into one of the time formats recognized by EXOTIC.")
+
+            while True:
+                time_format = user_input("Which of the following time formats is your data file stored in? "
+                                         "\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
+                time_format = time_format.upper().strip()
+
+                if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
                     log.info("Invalid entry; please try again.")
                 else:
-                    formatEntered = True
-            timeFormat = (timeFormat.upper()).strip()
-            goodTimes = timeConvert(goodTimes, timeFormat, pDict, exotic_infoDict)
+                    break
 
-            #Ask user for flux units and convert to flux if in magnitude/millimagnitude
-            validFluxFormats = ['flux', "magnitude", "millimagnitude"]
-            formatEntered = False
-            log.info("NOTE: If your file is not in one of the following formats, please re-reduce your data into one of the time formats recognized by EXOTIC.")
-            while not formatEntered:
-                fluxFormat = user_input("Which of the following units of flux is your data file stored in? "
-                                        "(Type q to quit)\nflux / magnitude / millimagnitude: ", type_=str)
-                if (fluxFormat.upper()).strip() == 'Q':
-                    sys.exit()
-                elif (fluxFormat.lower()).strip() not in validFluxFormats:
+            if time_format != 'BJD_TDB':
+                goodTimes = timeConvert(goodTimes, time_format, pDict, exotic_infoDict)
+
+            # Ask user for flux units and convert to flux if in magnitude/millimagnitude
+            log.info("NOTE: If your file is not in one of the following formats, "
+                     "please re-reduce your data into one of the time formats recognized by EXOTIC.")
+
+            while True:
+                flux_format = user_input("Which of the following units of flux is your data file stored in? "
+                                         "\nflux / magnitude / millimagnitude: ", type_=str)
+                flux_format = flux_format.lower().strip()
+
+                if flux_format not in ['flux', 'magnitude', 'millimagnitude']:
                     log.info("Invalid entry; please try again.")
                 else:
-                    formatEntered = True
-            fluxFormat = (fluxFormat.lower()).strip()
-            if fluxFormat != "flux":
-                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, fluxFormat)
+                    break
 
-            bjdMidTOld = goodTimes[0]
-            standardDev1 = np.std(goodFluxes)
+            if flux_format != 'flux':
+                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, flux_format)
 
         # for k in myfit.bounds.keys():
         #     print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
@@ -3598,15 +3595,15 @@ def main():
             comp_dec = None
 
             if wcs_file:
-                comp_ra = rafile[best_comp_coords[1]][best_comp_coords[0]]
-                comp_dec = decfile[best_comp_coords[1]][best_comp_coords[0]]
+                comp_ra = rafile[comp_coords[1]][comp_coords[0]]
+                comp_dec = decfile[comp_coords[1]][comp_coords[0]]
 
-            comp_star_dict = [{'ra': str(comp_ra) if comp_ra else comp_ra,
-                               'dec': str(comp_dec) if comp_dec else comp_dec,
-                               'x': str(best_comp_coords[0]) if best_comp_coords[0] else best_comp_coords[0],
-                               'y': str(best_comp_coords[1]) if best_comp_coords[1] else best_comp_coords[1]}]
+            comp_star = [{'ra': str(comp_ra) if comp_ra else comp_ra,
+                          'dec': str(comp_dec) if comp_dec else comp_dec,
+                          'x': str(comp_coords[0]) if comp_coords[0] else comp_coords[0],
+                          'y': str(comp_coords[1]) if comp_coords[1] else comp_coords[1]}]
         else:
-            comp_star_dict = []
+            comp_star = []
 
         filter_dict = {'name': exotic_infoDict['filter'],
                        'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
@@ -3640,7 +3637,7 @@ def main():
                     f"#BINNING={exotic_infoDict['pixelbin']}\n"  # user input
                     f"#EXPOSURE_TIME={exotic_infoDict.get('exposure',-1)}\n"  # UI
                     f"#FILTER-XC={json.dumps(filter_dict)}\n"
-                    f"#COMP_STAR-XC={json.dumps(comp_star_dict)}\n"
+                    f"#COMP_STAR-XC={json.dumps(comp_star)}\n"
                     f"#NOTES={exotic_infoDict['notes']}\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed

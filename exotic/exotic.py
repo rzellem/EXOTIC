@@ -1210,7 +1210,7 @@ def get_radec(hdulWCSrd):
     xaxis = np.arange(hdulWCSrd[0].header['NAXIS1'])
     yaxis = np.arange(hdulWCSrd[0].header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
-    return wcsheader.all_pix2world(x, y, 0)
+    return wcsheader.all_pix2world(x, y, 1)
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
@@ -1227,11 +1227,10 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 raise ValueError
             return pixx, pixy
         except ValueError:
-            repixopt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ",
-                                  type_=str, val1='y', val2='n')
+            opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, val1='y', val2='n')
 
             # User wants to change their coordinates
-            if repixopt == 'y':
+            if opt == 'y':
                 # Checks for the closest pixel location in ralist and declist for expected ra and dec
                 dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
                 pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
@@ -1295,55 +1294,45 @@ def variableStarCheck(refx, refy, hdulWCS):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def image_alignment(imagedata, roi=1):
-    log.info("\nAligning your images from FITS files. Please wait.")
-    boollist = []
+def image_alignment(image_data, num_images, file_name, count, roi=1):
 
-    rot = np.zeros(len(imagedata))
-    pos = np.zeros((len(imagedata), 2))
+    rot = np.zeros(len(image_data))
+    pos = np.zeros((len(image_data), 2))
 
-    height = imagedata.shape[1]
-    width = imagedata.shape[2]
-    roix = slice(int(width*(0.5-roi/2)),int(width*(0.5+roi/2)))
-    roiy = slice(int(height*(0.5-roi/2)),int(height*(0.5+roi/2)))
+    height = image_data.shape[1]
+    width = image_data.shape[2]
+    roix = slice(int(width*(0.5-roi/2)), int(width*(0.5+roi/2)))
+    roiy = slice(int(height*(0.5-roi/2)), int(height*(0.5+roi/2)))
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
-    # boollist for discarded images to delete .FITS data from airmass and times.
-    for i, image_file in enumerate(imagedata):
-        try:
-            sys.stdout.write(f"Aligning Image {i + 1} of {len(imagedata)}\r")
-            log.debug(f"Aligning Image {i + 1} of {len(imagedata)}\r")
-            sys.stdout.flush()
-            
-            results = aa.find_transform(image_file[roiy,roix], imagedata[0][roiy,roix])
-            rot[i] = results[0].rotation
-            pos[i] = results[0].translation
+    # aligned_bool for discarded images to delete .FITS data from airmass and times.
+    try:
+        sys.stdout.write(f"Aligning Image {count + 1} of {num_images}\r")
+        log.debug(f"Aligning Image {count + 1} of {num_images}\r")
+        sys.stdout.flush()
 
-            # imagedata[i], footprint = aa.register(image_file, imagedata[0])
-            boollist.append(True)
-        except Exception as ee:
-            log.info(ee)
-            log.info(f"Image {i + 1} of {len(imagedata)} failed to align")
-            boollist.append(False)
+        results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
+        rot[1] = results[0].rotation
+        pos[1] = results[0].translation
 
-    if np.sum(boollist) < 0.5*len(boollist):
-        log.info("Image alignment failed, resorting to no alignment...")
-        boollist = np.ones(len(imagedata)).astype(bool)
-        rot = np.zeros(len(imagedata))
-        pos = np.zeros((len(imagedata), 2))
-    else:
-        pos = pos[boollist]
-        rot = rot[boollist]
-        imagedata = imagedata[boollist]
+        aligned_bool = True
+    except Exception as ee:
+        log.info(ee)
+        log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
 
-    return imagedata, boollist, pos, rot
+        rot = np.zeros(len(image_data))
+        pos = np.zeros((len(image_data), 2))
+
+        aligned_bool = False
+
+    return aligned_bool, pos, rot
 
 
-def get_pixel_scale(hdul, file, header, pixel_init):
+def get_pixel_scale(wcs_header, header, pixel_init):
     astrometry_scale = None
 
-    if file:
-        astrometry_scale = [key.value.split(' ') for key in hdul[0].header._cards if 'scale:' in str(key.value)]
+    if wcs_header:
+        astrometry_scale = [key.value.split(' ') for key in wcs_header._cards if 'scale:' in str(key.value)]
 
     if astrometry_scale:
         image_scale_num = astrometry_scale[0][1]
@@ -1758,11 +1747,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         currRPY = ry
 
         # gets the flux value of the target star and
-        tFluxVal, tTotCts = getFlux(imageData, currTPX, currTPY, apertureR, annulusR)
+        tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR)
         targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
 
         # gets the flux value of the reference star and subracts the background light
-        rFluxVal, rTotCts = getFlux(imageData, currRPX, currRPY, apertureR, annulusR)
+        rFluxVal, rTotCts = aperPhot(imageData, currRPX, currRPY, apertureR, annulusR)
         referenceFluxVals.append(rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
 
         normalizedFluxVals.append((tFluxVal / rFluxVal))
@@ -1860,7 +1849,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     )
 
     return myfit
-
 
 
 def parse_args():
@@ -1998,7 +1986,7 @@ def main():
         log.info("Complete Reduction Routine")
         log.info("**************************")
 
-        init_path = None
+        init_path, wcs_file = None, None
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
@@ -2352,7 +2340,56 @@ def main():
 
             # Loop placed to check user-entered x and y target coordinates against WCS.
             allImageData, timeList, fileNameList, airMassList, fileNameStr, exptimes = [], [], [], [], [], []
-            time_dict = {}
+
+            # TODO filter input files to get good reference for image alignment
+
+            # time sort images
+            times = []
+            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
+                try:
+                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+                except OSError as e:
+                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
+                    fileNameStr.remove(fileName)
+                    if getattr(hdul, "close", None) and callable(hdul.close):
+                        hdul.close()
+                    del hdul
+                    continue
+
+                # TIME
+                times.append(getJulianTime(hdul))
+
+                # close file + delete from memory
+                hdul.close()
+                del hdul
+
+            si = np.argsort(times)
+            inputfiles = np.array(inputfiles)[si]
+
+            wcs_file = check_wcs(inputfiles[0], exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
+            hdul_wcs, wcs_header = None, None
+
+            if wcs_file:
+                log.info(f"\nHere is the path to your plate solution: {wcs_file}")
+                hdul_wcs = fits.open(name=wcs_file, memmap=False, cache=False, lazy_load_hdus=False,
+                                     ignore_missing_end=True)
+                rafile, decfile = get_radec(hdul_wcs)
+                wcs_header = hdul_wcs[0].header
+
+                # Checking pixel coordinates against plate solution
+                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
+                                                                          pDict['ra'], pDict['dec'], rafile, decfile)
+
+                for comp in compStarList:
+                    log.info("\nChecking for variability in Comparison Star: \n"
+                             f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
+                    # if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
+                    if variableStarCheck(comp[0], comp[1], hdul_wcs):
+                        log.info("\nCurrent comparison star is variable, proceeding to next star.")
+                        compStarList.remove(comp)
+
+                hdul_wcs.close()
+                del hdul_wcs
 
             # alloc psf fitting param
             psf_data = {
@@ -2375,32 +2412,6 @@ def main():
                 psf_data[ckey+"_align"] = np.zeros((len(inputfiles), 2))
                 aper_data[ckey] = np.zeros((len(inputfiles),len(apers)))
                 aper_data[ckey+"_bg"] = np.zeros((len(inputfiles),len(apers)))
-
-            # TODO filter input files to get good reference for image alignment
-
-            # time sort images
-            times = []
-            for i, fileName in enumerate(inputfiles):  # Loop through all the fits files in the directory and executes data reduction
-
-                try:
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
-                    continue
-
-                # TIME
-                times.append(getJulianTime(hdul))
-
-                # close file + delete from memory
-                hdul.close()
-                del hdul
-
-            si = np.argsort(times)
-            inputfiles = np.array(inputfiles)[si]
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
@@ -2426,9 +2437,6 @@ def main():
                 timeVal = getJulianTime(hdul)
                 timeList.append(timeVal)
 
-                # TIME DICT
-                time_dict[fileName] = (timeVal, image_header)
-
                 # AIRMASS
                 airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
@@ -2445,28 +2453,34 @@ def main():
 
                 # apply cals if applicable
                 if darksBool:
-                    log.info("Dark subtracting images.")
+                    if i == 0:
+                        log.info("Dark subtracting images.")
                     imageData = imageData - generalDark
                 elif biasesBool:
-                    log.info("Bias-correcting images.")
+                    if i == 0:
+                        log.info("Bias-correcting images.")
                     imageData = imageData - generalBias
                 else:
                     pass
 
                 if flatsBool:
-                    log.info("Flattening images.")
-                    generalFlat[generalFlat==0] = 1
+                    if i == 0:
+                        log.info("Flattening images.")
+                    generalFlat[generalFlat == 0] = 1
                     imageData = imageData / generalFlat
 
                 if i == 0:
+                    image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
+
                     log.info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
+
+                    log.info("\nAligning your images from FITS files. Please wait.")
                 
                 # Image Alignment
-                allImageData, boollist, apos, arot = image_alignment(np.array([firstImage, imageData]))
+                aligned_bool, apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
 
-                if np.sum(boollist) != 2:
-                    log.info(f"Image alignment failed, passing on image: {fileName}")
+                if aligned_bool is False:
                     continue
 
                 # Fit PSF for target star
@@ -2592,8 +2606,6 @@ def main():
 
                 resstd = myfit.residuals.std()/np.median(myfit.data)
                 if minSTD > resstd:  # If the standard deviation is less than the previous min
-                    bestCompStar = j + 1
-                    best_comp_coords = coord
                     minSTD = resstd
                     minAperture = -aper
                     minAnnulus = 15*sigma
@@ -2633,7 +2645,7 @@ def main():
                     resstd = myfit.residuals.std()/np.median(myfit.data)
                     if minSTD > resstd:  # If the standard deviation is less than the previous min
                         bestCompStar = j + 1
-                        best_comp_coords = coord
+                        comp_coords = coord
                         minSTD = resstd
                         minAperture = aper
                         minAnnulus = 15*sigma
@@ -3274,7 +3286,6 @@ def main():
             #convertToFITS = fits.PrimaryHDU(data=allImageData[0], header=time_dict[first_image][1])
             #convertToFITS.writeto(ref_file)
             #log.info(f"\nHere is the path to the reference imaging file used by EXOTIC: \n{ref_file}")
-            wcs_file = ""
             #wcs_file = check_wcs(ref_file, exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
             #hdulWCS = None
 
@@ -3297,8 +3308,8 @@ def main():
             # imwidth = np.shape(allImageData[0])[1]
             # imheight = np.shape(allImageData[0])[0]
             picframe = 10*(minAperture+15*sigma)
-            pltx = [max([0,min([finXTargCent[0], finXRefCent[0]])-picframe]), min([np.shape(allImageData[0])[0],max([finXTargCent[0], finXRefCent[0]])+picframe])]
-            plty = [max([0,min([finYTargCent[0], finYRefCent[0]])-picframe]), min([np.shape(allImageData[0])[1],max([finYTargCent[0], finYRefCent[0]])+picframe])]
+            pltx = [max([0,min([finXTargCent[0], finXRefCent[0]])-picframe]), min([np.shape(firstImage)[0],max([finXTargCent[0], finXRefCent[0]])+picframe])]
+            plty = [max([0,min([finYTargCent[0], finYRefCent[0]])-picframe]), min([np.shape(firstImage)[1],max([finYTargCent[0], finYRefCent[0]])+picframe])]
             plt.close()
 
             for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
@@ -3310,9 +3321,9 @@ def main():
                     ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
                     ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
 
-                med_img = median_filter(allImageData[0], (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
-                norm = ImageNormalize(allImageData[0], interval=ZScaleInterval(), stretch=stretch)
-                plt.imshow(allImageData[0], norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
+                med_img = median_filter(firstImage, (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
+                norm = ImageNormalize(firstImage, interval=ZScaleInterval(), stretch=stretch)
+                plt.imshow(firstImage, norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
                 plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
                 ax.add_artist(target_circle)
                 ax.add_artist(target_circle_sky)
@@ -3322,7 +3333,7 @@ def main():
                     plt.plot(finXRefCent[0], finYRefCent[0], '+r')
                 plt.xlabel("x-axis [pixel]")
                 plt.ylabel("y-axis [pixel]")
-                plt.title("FOV for {} ({})".format(pDict['pName'], exotic_infoDict['pixel_scale']))
+                plt.title(f"FOV for {pDict['pName']} ({image_scale})")
                 plt.xlim(pltx[0], pltx[1])
                 plt.ylim(plty[0], plty[1])
                 ax.grid(False)
@@ -3341,7 +3352,7 @@ def main():
                                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt.close()
 
-            log.info(f"FOV file saved as: {exotic_infoDict['saveplot']}/FOV_{pDict['pName']}_"
+            log.info(f"\nFOV file saved as: {exotic_infoDict['saveplot']}/FOV_{pDict['pName']}_"
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Centroid position plots
@@ -3409,7 +3420,7 @@ def main():
                 for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
                     f.write(f"{round(ti, 8)},{round(fi, 7)},{round(erri, 6)},{round(ami, 2)}\n")
 
-            log.info("Output File Saved")
+            log.info("\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar = None

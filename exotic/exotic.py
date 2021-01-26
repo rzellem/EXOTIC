@@ -467,59 +467,58 @@ class NASAExoplanetArchive:
 # Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE
 # Find separate funciton in code that does julian conversion to BJD_TDB
 # Method that gets and returns the julian time of the observation
-def getJulianTime(hdul):
+def getJulianTime(header):
     exptime_offset = 0
-    imageheader = hdul[0].header
 
-    exp = imageheader.get('EXPTIME')  # checking for variation in .fits header format
+    exp = header.get('EXPTIME')  # checking for variation in .fits header format
     if exp:
         exp = exp
     else:
-        exp = imageheader.get('EXPOSURE')
+        exp = header.get('EXPOSURE')
 
     # Grab the BJD first
-    if 'BJD_TDB' in hdul[0].header:
-        julianTime = float(hdul[0].header['BJD_TDB'])
+    if 'BJD_TDB' in header:
+        julianTime = float(header['BJD_TDB'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['BJD_TDB']:
+        if "start" in header.comments['BJD_TDB']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-    elif 'BJD' in hdul[0].header:
-        julianTime = float(hdul[0].header['BJD'])
+    elif 'BJD' in header:
+        julianTime = float(header['BJD'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['BJD']:
+        if "start" in header.comments['BJD']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # then the DATE-OBS
-    elif "UT-OBS" in hdul[0].header:
-        gDateTime = hdul[0].header['UT-OBS']  # gets the gregorian date and time from the fits file header
+    elif "UT-OBS" in header:
+        gDateTime = header['UT-OBS']  # gets the gregorian date and time from the fits file header
         dt = dup.parse(gDateTime)
         atime = astropy.time.Time(dt)
         julianTime = atime.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['UT-OBS']:
+        if "start" in header.comments['UT-OBS']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then Julian Date
-    elif 'JULIAN' in hdul[0].header:
-        julianTime = float(hdul[0].header['JULIAN'])
+    elif 'JULIAN' in header:
+        julianTime = float(header['JULIAN'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['JULIAN']:
+        if "start" in header.comments['JULIAN']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
-    elif "MJD-OBS" in hdul[0].header:
-        julianTime = float(hdul[0].header["MJD-OBS"]) + 2400000.5
+    elif "MJD-OBS" in header:
+        julianTime = float(header["MJD-OBS"]) + 2400000.5
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['MJD-OBS']:
+        if "start" in header.comments['MJD-OBS']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     else:
-        if 'T' in hdul[0].header['DATE-OBS']:
-            gDateTime = hdul[0].header['DATE-OBS']  # gets the gregorian date and time from the fits file header
+        if 'T' in header['DATE-OBS']:
+            gDateTime = header['DATE-OBS']  # gets the gregorian date and time from the fits file header
         else:
-            gDateTime = "{}T{}".format(hdul[0].header['DATE-OBS'], hdul[0].header['TIME-OBS'])
+            gDateTime = "{}T{}".format(header['DATE-OBS'], header['TIME-OBS'])
 
         dt = dup.parse(gDateTime)
         atime = astropy.time.Time(dt)
         julianTime = atime.jd
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in hdul[0].header.comments['DATE-OBS']:
+        if "start" in header.comments['DATE-OBS']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
 
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
@@ -546,7 +545,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
 
         location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
-        atime = astropy.time.Time(getJulianTime(hdul), format='jd', scale='utc', location=location)
+        atime = astropy.time.Time(getJulianTime(hdul[0].header), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
         am = float(pointingAltAz.secz)
     return am
@@ -1171,12 +1170,9 @@ class LimbDarkening:
 def check_wcs(fits_file, save_directory, plate_opt):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=FITSFixedWarning)
-        hdulist = fits.open(name=fits_file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-        header = hdulist[0].header
-        wcsheader = WCS(header)
-        wcs_exists = wcsheader.is_celestial
-        hdulist.close()
-        del hdulist
+        header = fits.getheader(filename=fits_file)
+        wcs_header = WCS(header)
+        wcs_exists = wcs_header.is_celestial
 
     if plate_opt not in ('y', 'n'):
         plate_opt = user_input("\nWould you like to upload the your image for a plate solution?"
@@ -1205,12 +1201,12 @@ def get_wcs(file, directory=""):
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
-def get_radec(hdulWCSrd):
-    wcsheader = WCS(hdulWCSrd[0].header)
-    xaxis = np.arange(hdulWCSrd[0].header['NAXIS1'])
-    yaxis = np.arange(hdulWCSrd[0].header['NAXIS2'])
+def get_radec(header):
+    wcs_header = WCS(header)
+    xaxis = np.arange(header['NAXIS1'])
+    yaxis = np.arange(header['NAXIS2'])
     x, y = np.meshgrid(xaxis, yaxis)
-    return wcsheader.all_pix2world(x, y, 1)
+    return wcs_header.all_pix2world(x, y, 1)
 
 
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
@@ -1252,9 +1248,9 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 
 
 # Checks if comparison star is variable via querying SIMBAD
-def variableStarCheck(refx, refy, hdulWCS):
+def variableStarCheck(refx, refy, header):
     # Read in WCS data from plate solution file and convert comparison star coordinates from pixel to WCS
-    w = WCS(hdulWCS[0].header)
+    w = WCS(header)
     world = w.wcs_pix2world(np.array([[refx, refy]], dtype=np.float64), 1)
     ra = world[0][0]
     dec = world[0][1]
@@ -1654,16 +1650,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
     fileNumber = 1
 
-    for file_name in real_time_imgs:  # Loop through all the fits files and time sorts
-        hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-
-        # TIME
-        timeVal = getJulianTime(hdul)  # gets the julian time registered in the fits header
-        timeList.append(timeVal)  # adds to time value list
+    for file_name in real_time_imgs:
+        header = fits.getheader(filename=file_name)
+        timeVal = getJulianTime(header)
+        timeList.append(timeVal)
         fileNameList.append(file_name)
-
-        hdul.close()  # close stream
-        del hdul
 
     # Time sorts the file names based on the fits file header
     timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
@@ -2347,34 +2338,21 @@ def main():
             times = []
             for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
                 try:
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+                    header = fits.getheader(filename=fileName)
+                    times.append(getJulianTime(header))
                 except OSError as e:
                     log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
                     fileNameStr.remove(fileName)
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
-                    continue
-
-                # TIME
-                times.append(getJulianTime(hdul))
-
-                # close file + delete from memory
-                hdul.close()
-                del hdul
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
 
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
-            hdul_wcs, wcs_header = None, None
 
             if wcs_file:
                 log.info(f"\nHere is the path to your plate solution: {wcs_file}")
-                hdul_wcs = fits.open(name=wcs_file, memmap=False, cache=False, lazy_load_hdus=False,
-                                     ignore_missing_end=True)
-                rafile, decfile = get_radec(hdul_wcs)
-                wcs_header = hdul_wcs[0].header
+                wcs_header = fits.getheader(filename=wcs_file)
+                rafile, decfile = get_radec(wcs_header)
 
                 # Checking pixel coordinates against plate solution
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
@@ -2384,12 +2362,9 @@ def main():
                     log.info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
                     # if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
-                    if variableStarCheck(comp[0], comp[1], hdul_wcs):
+                    if variableStarCheck(comp[0], comp[1], wcs_header):
                         log.info("\nCurrent comparison star is variable, proceeding to next star.")
                         compStarList.remove(comp)
-
-                hdul_wcs.close()
-                del hdul_wcs
 
             # alloc psf fitting param
             psf_data = {
@@ -2434,7 +2409,7 @@ def main():
                 fileNameList.append(fileName)
 
                 # TIME
-                timeVal = getJulianTime(hdul)
+                timeVal = getJulianTime(image_header)
                 timeList.append(timeVal)
 
                 # AIRMASS

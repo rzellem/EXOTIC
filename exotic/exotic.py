@@ -2765,6 +2765,9 @@ def main():
             ndt = int(30./24./60./dt)*2+1 # ~30 minutes
             gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt) # good indexs
 
+            # scale uncertainties so red-chi2 ~ 1
+            goodNormUnc[si][gi] *= np.sqrt(bestlmfit.chi2 / bestlmfit.data.shape[0])
+
             # final light curve fit
             myfit = lc_fitter(goodTimes[si][gi], goodFluxes[si][gi], goodNormUnc[si][gi], goodAirmasses[si][gi], prior, mybounds, mode='ns')
             myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)

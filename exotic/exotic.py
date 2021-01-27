@@ -1248,12 +1248,8 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 
 
 # Checks if comparison star is variable via querying SIMBAD
-def variableStarCheck(refx, refy, header):
-    # Read in WCS data from plate solution file and convert comparison star coordinates from pixel to WCS
-    w = WCS(header)
-    world = w.wcs_pix2world(np.array([[refx, refy]], dtype=np.float64), 1)
-    ra = world[0][0]
-    dec = world[0][1]
+def variableStarCheck(ra, dec):
+    # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
 
     # Query GAIA first to check for variability using the phot_variable_flag trait
@@ -2368,8 +2364,7 @@ def main():
                 for comp in compStarList:
                     log.info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    # if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
-                    if variableStarCheck(comp[0], comp[1], wcs_header):
+                    if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
                         log.info("\nCurrent comparison star is variable, proceeding to next star.")
                         compStarList.remove(comp)
 

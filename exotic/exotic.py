@@ -2528,6 +2528,18 @@ def main():
             psf_data["target_align"] = psf_data["target_align"][~badmask]
             si = np.argsort(times)
 
+            # exposure time
+            consistent_et = False
+            if len(exptimes) > 0:
+                consistent_et = all(elem == exptimes[0] for elem in exptimes)
+
+            exptimes = np.array(exptimes)
+
+            if consistent_et:
+                exotic_infoDict['exposure'] = exptimes[0]
+            else:
+                exotic_infoDict['exposure'] = np.median(exptimes)
+
             # PSF flux
             tFlux = 2*np.pi*psf_data['target'][:,2]*psf_data['target'][:,3]*psf_data['target'][:,4]
 

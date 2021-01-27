@@ -2453,7 +2453,7 @@ def main():
                     imageData = imageData / generalFlat
 
                 if i == 0:
-                    image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
+                    image_scale = 0.25 #get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
                     log.info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
@@ -2741,8 +2741,8 @@ def main():
 
             phase = (goodTimes-prior['tmid'])/prior['per']
             prior['tmid'] = pDict['midT'] + np.floor(phase).max()*prior['per']
-            upper = pDict['midT'] + 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+25*pDict['pPerUnc'])
-            lower = pDict['midT'] - 25*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-25*pDict['pPerUnc'])
+            upper = pDict['midT'] + 35*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']+35*pDict['pPerUnc'])
+            lower = pDict['midT'] - 35*pDict['midTUnc'] + np.floor(phase).max()*(pDict['pPer']-35*pDict['pPerUnc'])
 
             if np.floor(phase).max()-np.floor(phase).min() == 0:
                 log.info("ERROR: Estimated mid-transit not in observation range (check priors or observation time)")
@@ -2750,23 +2750,14 @@ def main():
                 log.info(f"  end:{goodTimes.max()}")
                 log.info(f"prior:{prior['tmid']}")
 
-            try:
-                mybounds = {
-                    'rprs': [pDict['rprs']-5*pDict['rprsUnc'], pDict['rprs']*1.25],
-                    'tmid': [max(lower, goodTimes.min()), min(goodTimes.max(), upper)],
-                    'ars': [pDict['aRs']-1, pDict['aRs']+1],
+            mybounds = {
+                'rprs': [0, pDict['rprs']*1.25],
+                'tmid': [lower, upper],
+                'ars': [pDict['aRs']-1, pDict['aRs']+1],
 
-                    'a1': [bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
-                    'a2': [bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
-                }
-            except:
-                mybounds = {
-                    'rprs': [pDict['rprs']-3*pDict['rprsUnc'], pDict['rprs']*1.25],
-                    'tmid': [max(lower, goodTimes.min()), min(goodTimes.max(), upper)],
-                    'ars': [pDict['aRs']-10*pDict['aRsUnc'], pDict['aRs']+10*pDict['aRsUnc']],
-                    'a1': [ min(0,np.nanmin(goodFluxes)), 3*np.nanmax(goodFluxes)],
-                    'a2': [-3, 3],
-                }
+                'a1': [bestlmfit.parameters['a1']*0.75, bestlmfit.parameters['a1']*1.25],
+                'a2': [bestlmfit.parameters['a2']-0.25, bestlmfit.parameters['a2']+0.25],
+            }
 
             # sigma clip
             si = np.argsort(goodTimes)

@@ -40,6 +40,7 @@ import logging
 import requests
 from json import dumps
 from pathlib import Path
+from astropy.io.fits import PrimaryHDU, getdata, getheader
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
@@ -79,8 +80,8 @@ class PlateSolution:
             return PlateSolution.fail('Submission ID')
 
         job_url = self._get_url(f"jobs/{job_id}")
-        download_url = self.apiurl.replace("/api/", f"/new_fits_file/{job_id}/")
-        wcs_file = Path(self.directory) / "wcs_image.fits"
+        download_url = self.apiurl.replace("/api/", f"/wcs_file/{job_id}/")
+        wcs_file = Path(self.directory) / "wcs.fits"
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
             return PlateSolution.fail('Job Status')
@@ -134,8 +135,10 @@ class PlateSolution:
         r = requests.get(job_url)
         if r.json()['status'] == 'success':
             r = requests.get(download_url)
-            with open(wcs_file, 'wb') as f:
+            with wcs_file.open('wb') as f:
                 f.write(r.content)
+            hdu = PrimaryHDU(data=getdata(filename=self.file), header=getheader(filename=wcs_file))
+            hdu.writeto(wcs_file, overwrite=True)
             return wcs_file
         return False
 

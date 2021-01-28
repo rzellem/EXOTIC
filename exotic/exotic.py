@@ -1511,19 +1511,22 @@ def fit_centroid(data, pos, init=[], box=10, debug=False):
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
-def aperPhot(data, xc, yc, r=5, dr=5):
+def aperPhot(data, xc, yc, r=5, dr=5, gain=1):
 
     if dr > 0:
-        bgflux = skybg_phot(data, xc, yc, r+2, dr)
+        bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r+2, dr)
     else:
-        bgflux = 0
+        bgflux, sigmabg, Nbg = 0, 0
     positions = [(xc, yc)]
     bdata = data-bgflux
 
     apertures = CircularAperture(positions, r=r)
-    phot_table = aperture_photometry(bdata, apertures, method='exact')
+    phot_table = aperture_photometry(bdata/gain, apertures, method='exact')
 
-    return float(phot_table['aperture_sum']), bgflux
+    # https: // wise2.ipac.caltech.edu / staff / fmasci / ApPhotUncert.pdf
+    uncertainty = np.sqrt(phot_table['aperture_sum']/gain + (apertures.area + (np.pi/2.)* (apertures.area**2.)/Nbg)*sigmabg**2.)
+
+    return float(phot_table['aperture_sum']), uncertainty, bgflux
 
 
 def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
@@ -1565,7 +1568,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
         ax[0, 1].set_title("Sky Annulus")
         plt.tight_layout()
         plt.show()
-    return mode(dat.flatten(), nan_policy='omit').mode[0]
+    return mode(dat.flatten(), nan_policy='omit').mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
 # Mid-Transit Time Prior Helper Functions
@@ -1643,8 +1646,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
                    exotic_UIprevRPX, exotic_UIprevRPY):
 
     targetFluxVals = []
+    targetFluxVals_err = []
     referenceFluxVals = []
+    referenceFluxVals_err = []
     normalizedFluxVals = []
+    normalizedFluxVals_err = []
     fileNameList = []
     timeList = []
 
@@ -1665,6 +1671,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
     # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
     firstImageData = fits.getdata(timeSortedNames[0], ext=0)
+    firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
+    try:
+        gain = firstImageHeader['GAIN']
+    except:
+        gain = user_input("Please enter the gain of your camera [electrons/count]: ", type_=float)
 
     # fit first image
     targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
@@ -1738,14 +1749,17 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         currRPY = ry
 
         # gets the flux value of the target star and
-        tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR)
+        tFluxVal, tFluxVal_err, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR, gain)
         targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
+        targetFluxVals_err.append(tFluxVal_err)  # adds tFluxVal to the total list of flux values of target star
 
-        # gets the flux value of the reference star and subracts the background light
-        rFluxVal, rTotCts = aperPhot(imageData, currRPX, currRPY, apertureR, annulusR)
+        # gets the flux value of the reference star and subtracts the background light
+        rFluxVal, rFluxVal_err, rTotCts = aperPhot(imageData, currRPX, currRPY, apertureR, annulusR, gain)
         referenceFluxVals.append(rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
+        referenceFluxVals_err.append(rFluxVal_err)  # adds rFluxVal to the total list of flux values of reference star
 
         normalizedFluxVals.append((tFluxVal / rFluxVal))
+        normalizedFluxVals_err.append(np.sqrt((tFluxVal_err / rFluxVal) ** 2. + (rFluxVal_err * tFluxVal / rFluxVal ** 2.) ** 2.))
 
         # UPDATE PIXEL COORDINATES and SIGMAS
         # target
@@ -1770,10 +1784,10 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (jd)')
-    ax.plot(timeList, normalizedFluxVals, 'bo')
+    ax.errorbar(timeList, normalizedFluxVals, yerr=normalizedFluxVals_err, fmt='bo')
 
 
-def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
+def fit_lightcurve(times, tFlux, tFlux_err, cFlux, cFlux_err, airmass, ld, pDict):
 
     # remove outliers
     si = np.argsort(times)
@@ -1782,10 +1796,16 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     filtered_data = sigma_clip((tFlux/cFlux)[si], sigma=3, dt=ndt)
     arrayFinalFlux = (tFlux/cFlux)[si][~filtered_data]
     f1 = tFlux[si][~filtered_data]
-    sigf1 = f1**0.5
+    if np.all(np.array(tFlux_err)==1):
+        sigf1 = f1**0.5
+    else:
+        sigf1 = tFlux_err[si][~filtered_data]
     f2 = cFlux[si][~filtered_data]
-    sigf2 = f2**0.5
-    if np.sum(cFlux) == len(cFlux):
+    if np.all(np.array(cFlux_err)==1):
+        sigf2 = f2**0.5
+    else:
+        sigf2 = cFlux_err[si][~filtered_data]
+    if np.sum(cFlux) == 0:
         arrayNormUnc = sigf1
     else:
         arrayNormUnc = np.sqrt( (sigf1/f2)**2 + (sigf2*f1/f2**2)**2 )
@@ -2386,6 +2406,7 @@ def main():
 
             aper_data = {
                 'target':np.zeros((len(inputfiles),len(apers), len(annuli))),
+                'target_err': np.zeros((len(inputfiles), len(apers), len(annuli))),
                 'target_bg':np.zeros((len(inputfiles), len(apers), len(annuli)))
             }
 
@@ -2394,6 +2415,7 @@ def main():
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 psf_data[ckey+"_align"] = np.zeros((len(inputfiles), 2))
                 aper_data[ckey] = np.zeros((len(inputfiles),len(apers), len(annuli)))
+                aper_data[ckey + "_err"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[ckey+"_bg"] = np.zeros((len(inputfiles),len(apers), len(annuli)))
 
             # open files, calibrate, align, photometry
@@ -2457,6 +2479,10 @@ def main():
 
                     log.info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
+                    try:
+                        gain = image_header['GAIN']
+                    except:
+                        gain = user_input("Please enter the gain of your camera [electrons/count]: ", type_=float)
 
                     log.info("\nAligning your images from FITS files. Please wait.")
                 
@@ -2504,18 +2530,18 @@ def main():
 
                 for a, aper in enumerate(apers):
                     for an, annulus in enumerate(annuli):
-                        aper_data["target"][i][a][an],aper_data["target_bg"][i][a][an] = aperPhot( imageData,
+                        aper_data["target"][i][a][an],aper_data["target_err"][i][a][an],aper_data["target_bg"][i][a][an] = aperPhot( imageData,
                             psf_data["target"][i,0],
                             psf_data["target"][i,1],
-                            aper, annulus )
+                            aper, annulus, gain)
 
                         # loop through comp stars
                         for j,coord in enumerate(compStarList):
                             ckey = "comp{}".format(j+1)
-                            aper_data[ckey][i][a][an], aper_data[ckey+"_bg"][i][a][an] = aperPhot( imageData,
+                            aper_data[ckey][i][a][an], aper_data[ckey+"_err"][i][a][an], aper_data[ckey+"_bg"][i][a][an] = aperPhot( imageData,
                                         psf_data[ckey][i,0],
                                         psf_data[ckey][i,1],
-                                        aper, annulus )
+                                        aper, annulus, gain )
 
                 # close file + delete from memory
                 hdul.close()
@@ -2543,9 +2569,7 @@ def main():
                 psf_data[ckey+"_align"] = psf_data[ckey][~badmask]
 
                 cFlux = 2*np.pi*psf_data[ckey][:,2]*psf_data[ckey][:,3]*psf_data[ckey][:,4]
-
-                myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
-
+                myfit = fit_lightcurve(times, tFlux, np.ones(len(tFlux)), cFlux, np.ones(len(cFlux)), airmass, ld, pDict)
                 for k in myfit.bounds.keys():
                     log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
 
@@ -2581,9 +2605,10 @@ def main():
 
                 for an, annulus in enumerate(annuli):
                     tFlux = aper_data['target'][:,a,an]
+                    tFlux_err = aper_data['target_err'][:,a,an]
 
                     # fit without a comparison star
-                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape), airmass, ld, pDict)
+                    myfit = fit_lightcurve(times, tFlux, tFlux_err, np.ones(tFlux.shape), np.zeros(tFlux.shape), airmass, ld, pDict)
 
                     for k in myfit.bounds.keys():
                         log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
@@ -2620,8 +2645,9 @@ def main():
                     for j,coord in enumerate(compStarList):
                         ckey = "comp{}".format(j+1)
                         cFlux = aper_data[ckey][:,a,an]
+                        cFlux_err = aper_data[ckey+"_err"][:, a, an]
 
-                        myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                        myfit = fit_lightcurve(times, tFlux, tFlux_err, cFlux, cFlux_err, airmass, ld, pDict)
 
                         for k in myfit.bounds.keys():
                             log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
@@ -2764,14 +2790,13 @@ def main():
             dt = np.mean(np.diff(np.sort(goodTimes)))
             ndt = int(30./24./60./dt)*2+1 # ~30 minutes
             gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt) # good indexs
-
             # scale uncertainties so red-chi2 ~ 1
             goodNormUnc[si][gi] *= np.sqrt(bestlmfit.chi2 / bestlmfit.data.shape[0])
 
             # final light curve fit
             myfit = lc_fitter(goodTimes[si][gi], goodFluxes[si][gi], goodNormUnc[si][gi], goodAirmasses[si][gi], prior, mybounds, mode='ns')
-            myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
-            myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
+            # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
+            # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 
             goodTimes = goodTimes[si][gi]
             goodFluxes = goodFluxes[si][gi]

@@ -2718,10 +2718,10 @@ def main():
             gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt) # good indexs
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
-            airmass_model = bestlmfit.parameters['a1'] * np.exp(bestlmfit.parameters['a2'] * goodAirmasses[si][gi])
-            detrended_model = bestlmfit.model / airmass_model
+            airmass_model = bestlmfit.airmass_model
+            detrended_model = bestlmfit.transit
             OOT = (detrended_model == 1)  # find out-of-transit portion of the lightcurve
-            OOTscatter = np.std((goodFluxes[si][gi] / airmass_model)[OOT])  # calculate the scatter in the data
+            OOTscatter = np.std((bestlmfit.data / airmass_model)[OOT])  # calculate the scatter in the data
             goodNormUnc = OOTscatter * airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
 
             goodTimes = goodTimes[si][gi]

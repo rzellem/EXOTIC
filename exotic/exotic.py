@@ -2711,11 +2711,13 @@ def main():
             gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt) # good indexs
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
-            airmass_model = bestlmfit.parameters['a1'] * np.exp(bestlmfit.parameters['a2'] * goodAirmasses[si][gi])
-            detrended_model = bestlmfit.model / airmass_model
-            OOT = (detrended_model == 1)  # find out-of-transit portion of the lightcurve
-            OOTscatter = np.std((goodFluxes[si][gi] / airmass_model)[OOT])  # calculate the scatter in the data
-            goodNormUnc = OOTscatter * airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
+            OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
+            OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
+            goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
+
+            # Normalize by OOT per AAVSO Database upload requirements
+            goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes[OOT])
+            goodFluxes = goodFluxes / np.nanmedian(goodFluxes[OOT])
 
             goodTimes = goodTimes[si][gi]
             goodFluxes = goodFluxes[si][gi]
@@ -2902,32 +2904,18 @@ def main():
         # NESTED SAMPLING FITTING
         ##########################
 
-        if fitsortext == 1:
-            prior = {
-                'rprs': pDict['rprs'],  # Rp/Rs
-                'ars': pDict['aRs'],  # a/Rs
-                'per': pDict['pPer'],  # Period [day]
-                'inc': pDict['inc'],  # Inclination [deg]
-                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
-                'ecc': pDict['ecc'],  # Eccentricity
-                'omega': 0,  # Arg of periastron
-                'tmid': pDict['midT'],  # time of mid transit [day]
-                'a1': bestlmfit.parameters['a1'],  # mid Flux
-                'a2': bestlmfit.parameters['a2'],  # Flux lower bound
-            }
-        else:
-            prior = {
-                'rprs': pDict['rprs'],  # Rp/Rs
-                'ars': pDict['aRs'],  # a/Rs
-                'per': pDict['pPer'],  # Period [day]
-                'inc': pDict['inc'],  # Inclination [deg]
-                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
-                'ecc': pDict['ecc'],  # Eccentricity
-                'omega': 0,  # Arg of periastron
-                'tmid': pDict['midT'],  # time of mid transit [day]
-                'a1': goodFluxes.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
-                'a2': 0,  # Flux lower bound
-            }
+        prior = {
+            'rprs': pDict['rprs'],  # Rp/Rs
+            'ars': pDict['aRs'],  # a/Rs
+            'per': pDict['pPer'],  # Period [day]
+            'inc': pDict['inc'],  # Inclination [deg]
+            'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
+            'ecc': pDict['ecc'],  # Eccentricity
+            'omega': 0,  # Arg of periastron
+            'tmid': pDict['midT'],  # time of mid transit [day]
+            'a1': goodFluxes.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
+            'a2': 0,  # Flux lower bound
+        }
 
         phase = (goodTimes - prior['tmid']) / prior['per']
         prior['tmid'] = pDict['midT'] + np.floor(phase).max() * prior['per']
@@ -2940,22 +2928,13 @@ def main():
             log.info(f"  end:{goodTimes.max()}")
             log.info(f"prior:{prior['tmid']}")
 
-        if fitsortext == 1:
-            mybounds = {
-                'rprs': [0, pDict['rprs'] * 1.25],
-                'tmid': [lower, upper],
-                'ars': [pDict['aRs'] - 1, pDict['aRs'] + 1],
-                'a1': [bestlmfit.parameters['a1'] * 0.75, bestlmfit.parameters['a1'] * 1.25],
-                'a2': [bestlmfit.parameters['a2'] - 0.25, bestlmfit.parameters['a2'] + 0.25],
-            }
-        else:
-            mybounds = {
-                'rprs': [0, pDict['rprs'] * 1.25],
-                'tmid': [lower, upper],
-                'ars': [pDict['aRs'] - 1, pDict['aRs'] + 1],
-                'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
-                'a2': [-3, 3],
-            }
+        mybounds = {
+            'rprs': [0, pDict['rprs'] * 1.25],
+            'tmid': [lower, upper],
+            'ars': [pDict['aRs'] - 1, pDict['aRs'] + 1],
+            'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
+            'a2': [-3, 3],
+        }
 
         # final light curve fit
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

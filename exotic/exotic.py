@@ -170,13 +170,6 @@ except ImportError:  # package import
 animate_toggle()  # CLOSE PRELOAD ANIMATION
 # -- IMPORTS END --------------------------------------------------------------
 
-# ################### START PROPERTIES/SETTINGS ############################# #
-# GLOBALS (set in main before method calls)
-exotic_infoDict = dict()
-exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
-exotic_distFC = 0
-exotic_ax1 = plt.figure()  # placeholder
-
 # SETTINGS
 plt.style.use(astropy_mpl_style)
 # To increase memory allocation for EXOTIC; allows for more fits files

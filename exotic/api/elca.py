@@ -207,7 +207,6 @@ def transit(time, values):
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
     return model
 
-
 def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid) / pPeriod
     return phase - int(np.nanmin(phase))
@@ -389,17 +388,18 @@ class lc_fitter(object):
         axs = [ax_lc, ax_res]
 
         dt = (max(self.time) - min(self.time))/nbins
-        phasebinned = binner(self.phase, len(self.phase)//10)
-        timebinned = binner(self.time, len(self.time)//10)
-        databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.detrendederr)
-        residbinned, res_errbinned = binner(self.residuals/np.median(self.data), len(self.residuals)//10, self.dataerr/np.median(self.data))
+        si = np.argsort(self.time)
+        phasebinned = binner(self.phase[si], len(self.phase)//10)
+        timebinned = binner(self.time[si], len(self.time)//10)
+        databinned, errbinned = binner(self.detrended[si], len(self.detrended)//10, self.detrendederr[si])
+        residbinned, res_errbinned = binner(self.residuals[si]/np.median(self.data), len(self.residuals)//10, self.dataerr[si]/np.median(self.data))
 
         if phase == True:
             rplabel = r"$(R_p/R_s)^2$ = {:.6f} $\pm$ {:.6f}".format(self.parameters['rprs']**2, 2*self.parameters['rprs']*self.errors['rprs'])
             tmlabel = r"T$_0$ = {:.5f} $\pm$ {:.5f}".format(self.parameters['tmid'], self.errors['tmid'])
 
             axs[0].errorbar(self.phase, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
-            axs[0].plot(self.phase, self.transit, 'r-', zorder=2, label=r"{}, {}".format(rplabel,tmlabel))
+            axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=2, label=r"{}, {}".format(rplabel,tmlabel))
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
             axs[0].legend(loc='best')
@@ -419,7 +419,7 @@ class lc_fitter(object):
 
         else:
             axs[0].errorbar(self.time, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
-            axs[0].plot(self.time, self.transit, 'r-', zorder=2)
+            axs[0].plot(self.time[si], self.transit[si], 'r-', zorder=2)
             axs[0].set_ylabel("Relative Flux")
             axs[0].grid(True,ls='--')
 
@@ -469,7 +469,6 @@ if __name__ == "__main__":
     data = transit(time, prior)*prior['a1']*np.exp(prior['a2']*airmass)
     data += np.random.normal(0, prior['a1']*250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
-
 
     # add bounds for free parameters only
     mybounds = {

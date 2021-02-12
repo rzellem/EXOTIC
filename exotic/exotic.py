@@ -2455,6 +2455,9 @@ def main():
 
                 if aligned_bool is False:
                     continue
+                
+                if np.isclose((apos[1]**2).sum()**0.5,0):
+                    print(fileName, "no alignment")
 
                 # Fit PSF for target star
                 xrot = exotic_UIprevTPX*np.cos(arot[1]) - exotic_UIprevTPY*np.sin(arot[1]) - apos[1][0]
@@ -2542,7 +2545,7 @@ def main():
             for j,coord in enumerate(compStarList):
                 ckey = "comp{}".format(j+1)
                 psf_data[ckey] = psf_data[ckey][~badmask]
-                psf_data[ckey+"_align"] = psf_data[ckey][~badmask]
+                psf_data[ckey+"_align"] = psf_data[ckey+"_align"][~badmask]
 
                 cFlux = 2*np.pi*psf_data[ckey][:,2]*psf_data[ckey][:,3]*psf_data[ckey][:,4]
                 myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)

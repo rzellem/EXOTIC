@@ -1160,6 +1160,22 @@ class LimbDarkening:
         log.debug(f"{ld_params['LD'][3][0]} +/- + {ld_params['ERR'][3][0]}")
 
 
+def corruption_check(files):
+    valid_files = []
+    for file in files:
+        try:
+            hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+            valid_files.append(file)
+        except OSError as e:
+            log.info(f"Found corrupted file and removing from reduction: {file}, ({e})")
+        finally:
+            if getattr(hdul, "close", None) and callable(hdul.close):
+                hdul.close()
+            del hdul
+
+    return valid_files
+
+
 def check_wcs(fits_file, save_directory, plate_opt):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=FITSFixedWarning)
@@ -2326,23 +2342,34 @@ def main():
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            # Loop placed to check user-entered x and y target coordinates against WCS.
-            allImageData, timeList, fileNameList, airMassList, fileNameStr, exptimes = [], [], [], [], [], []
+            allImageData, timeList, airMassList, exptimes = [], [], [], []
 
             # TODO filter input files to get good reference for image alignment
 
+            inputfiles = corruption_check(inputfiles)
+
             # time sort images
             times = []
-            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
-                try:
-                    header = fits.getheader(filename=fileName)
-                    times.append(getJulianTime(header))
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
+            for file in inputfiles:
+                header = fits.getheader(filename=file)
+                times.append(getJulianTime(header))
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+
+            # fit target in the first image and use it to determine aperture and annulus range
+            inc = 0
+            for file in inputfiles:
+                first_image = fits.getdata(file)
+                try:
+                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    break
+                except Exception:
+                    inc += 1
+                finally:
+                    del first_image, args
+
+            inputfiles = inputfiles[inc:]
 
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
 
@@ -2388,23 +2415,9 @@ def main():
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
-
-                # Keeps a list of file names
-                fileNameStr.append(fileName)
-
-                try:
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
-                    continue
+                hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
 
                 image_header = hdul[0].header
-
-                fileNameList.append(fileName)
 
                 # TIME
                 timeVal = getJulianTime(image_header)

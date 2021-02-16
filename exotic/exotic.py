@@ -2468,6 +2468,9 @@ def main():
 
                 if aligned_bool is False:
                     continue
+                
+                if np.isclose((apos[1]**2).sum()**0.5,0):
+                    print(fileName, "no alignment")
 
                 # Fit PSF for target star
                 xrot = exotic_UIprevTPX*np.cos(arot[1]) - exotic_UIprevTPY*np.sin(arot[1]) - apos[1][0]
@@ -2555,7 +2558,7 @@ def main():
             for j,coord in enumerate(compStarList):
                 ckey = "comp{}".format(j+1)
                 psf_data[ckey] = psf_data[ckey][~badmask]
-                psf_data[ckey+"_align"] = psf_data[ckey][~badmask]
+                psf_data[ckey+"_align"] = psf_data[ckey+"_align"][~badmask]
 
                 cFlux = 2*np.pi*psf_data[ckey][:,2]*psf_data[ckey][:,3]*psf_data[ckey][:,4]
                 myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
@@ -3045,7 +3048,7 @@ def main():
 
         log.info("\n*********************************************************")
         log.info("FINAL PLANETARY PARAMETERS\n")
-        log.info(f"              Mid-Transit Time [BJD]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
+        log.info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log.info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log.info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
         log.info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
@@ -3059,11 +3062,12 @@ def main():
 
         params_file = Path(exotic_infoDict['saveplot']) / f"FinalParams_{pDict['pName']}_{exotic_infoDict['date']}.json"
         params_num = {
-            "Mid-Transit Time": f"{round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])} (BJD)",
-            "Ratio of Planet to Stellar Radius": f"{round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])} (Rp/Rs)",
-            "Transit depth uncertainty": f"{round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} %",
-            "Airmass coefficient 1": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
-            "Airmass coefficient 2": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
+            "Mid-Transit Time (Tmid)": f"{round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])} BJD_TDB",
+            "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}",
+            "Transit depth (Rp/Rs)^2": f"{round_to_2(100.*(myfit.parameters['rprs']**2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]",
+            "Semi Major Axis/Star Radius (a/Rs)":f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
+            "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
+            "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %"
         }
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}

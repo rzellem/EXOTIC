@@ -2764,6 +2764,7 @@ def main():
                 for text in l.get_texts():
                     text.set_color("white")
                 apos = '\''
+                Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
                 plt.savefig(Path(exotic_infoDict['saveplot']) /
                                    f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
@@ -2997,12 +2998,13 @@ def main():
         f.subplots_adjust(hspace=0)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
         try:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except AttributeError:
+        except:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()

@@ -1790,7 +1790,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (jd)')
-    ax.plot(timeList, normalizedFluxVals, fmt='bo')
+    ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):

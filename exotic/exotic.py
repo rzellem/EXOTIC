@@ -1644,6 +1644,20 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
+def psf_format(data, pos, init=[]):
+    target = fit_centroid(data, pos, init=init, box=10)
+
+    return {
+        'x': target[0],
+        'y': target[1],
+        'amp': target[2],
+        'sig_x': target[3],
+        'sig_y': target[4],
+        'rot': target[5],
+        'off': target[6]
+    }
+
+
 def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
                    exotic_UIprevRPX, exotic_UIprevRPY):
 
@@ -1673,11 +1687,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
 
     # fit first image
-    targ = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
-    ref = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
+    targ = psf_format(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY])
+    ref = psf_format(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY])
 
     # just use one aperture and annulus
-    apertureR = 3 * max(targ[3], targ[4])
+    apertureR = 3 * max(targ['sig_x'], targ['sig_y'])
     annulusR = 10
 
     for imageFile in timeSortedNames:
@@ -1691,7 +1705,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         if fileNumber == 1:
             # Initializing the star location guess as the user inputted pixel coordinates
             prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
-            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ[3], targ[4], ref[3], ref[4]
+            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ['sig_x'], targ['sig_y'], ref['sig_x'], ref['sig_y']
 
             prevImageData = imageData  # no shift should be registered
 
@@ -1730,18 +1744,18 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
-        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
-        tpsfFlux = 2*PI*tamplitude*tsigX*tsigY
-        currTPX = tx
-        currTPY = ty
+        targ = psf_format(imageData, [prevTPX, prevTPY], init=myPriors)
+        tpsfFlux = 2*PI*targ['amp']*targ['sig_x']*targ['sig_y']
+        currTPX = targ['x']
+        currTPY = targ['y']
 
         # Fits Centroid for Reference
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
-        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
-        rpsfFlux = 2*PI*ramplitude*rsigX*rsigY
-        currRPX = rx
-        currRPY = ry
+        ref = psf_format(imageData, [prevRPX, prevRPY], init=myRefPriors)
+        rpsfFlux = 2*PI*ref['amp']*ref['sig_x']*ref['sig_y']
+        currRPX = ref['x']
+        currRPY = ref['y']
 
         # gets the flux value of the target star and
         tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR)
@@ -1757,13 +1771,13 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         # target
         prevTPX = currTPX
         prevTPY = currTPY
-        prevTSigX = tsigX
-        prevTSigY = tsigY
+        prevTSigX = targ['sig_x']
+        prevTSigY = targ['sig_y']
         # reference
         prevRPX = currRPX
         prevRPY = currRPY
-        prevRSigX = rsigX
-        prevRSigY = rsigY
+        prevRSigX = ref['sig_x']
+        prevRSigY = ref['sig_y']
 
         # UPDATE FILE COUNT
         prevImageData = imageData

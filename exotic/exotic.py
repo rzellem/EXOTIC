@@ -1160,6 +1160,22 @@ class LimbDarkening:
         log.debug(f"{ld_params['LD'][3][0]} +/- + {ld_params['ERR'][3][0]}")
 
 
+def corruption_check(files):
+    valid_files = []
+    for file in files:
+        try:
+            hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+            valid_files.append(file)
+        except OSError as e:
+            log.info(f"Found corrupted file and removing from reduction: {file}, ({e})")
+        finally:
+            if getattr(hdul, "close", None) and callable(hdul.close):
+                hdul.close()
+            del hdul
+
+    return valid_files
+
+
 def check_wcs(fits_file, save_directory, plate_opt):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=FITSFixedWarning)
@@ -1343,14 +1359,14 @@ def get_pixel_scale(wcs_header, header, pixel_init):
 # Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
 def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
     return (f"#FILTER={exotic_infoDict['filter']}\n"
-            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']} +/- {pdict['aRsUnc']}"
-            f",inc={pdict['inc']} +/- {pdict['incUnc']},ecc={pdict['ecc']}"
-            f",u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
-            f",u3={ld_3[0]} +/- {ld_3[1]}\n"
-            f"#RESULTS=Tc={round(my_fit.parameters['tmid'], 8)} +/- {round(my_fit.errors['tmid'], 8)}"		
-            f",Rp/R*={round(my_fit.parameters['rprs'], 6)} +/- {round(my_fit.errors['rprs'], 6)}"		
-            f",Am1={round(my_fit.parameters['a1'], 5)} +/- {round(my_fit.errors['a1'], 5)}"		
-            f",Am2={round(my_fit.parameters['a2'], 5)} +/- {round(my_fit.errors['a2'], 5)}\n")
+            f"#PRIORS=Period={round_to_2(pdict['pPer'],pdict['pPerUnc'])} +/- {round_to_2(pdict['pPerUnc'])},a/R*={round_to_2(pdict['aRs'],pdict['aRsUnc'])} +/- {round_to_2(pdict['aRsUnc'])}"
+            f",inc={round_to_2(pdict['inc'],pdict['incUnc'])} +/- {round_to_2(pdict['incUnc'])},ecc={round_to_2(pdict['ecc'])}"
+            f",u0={round_to_2(ld_0[0],ld_0[1])} +/- {round_to_2(ld_0[1])},u1={round_to_2(ld_1[0],ld_1[1])} +/- {round_to_2(ld_1[1])},u2={round_to_2(ld_2[0],ld_2[1])} +/- {round_to_2(ld_2[1])}"
+            f",u3={round_to_2(ld_3[0],ld_3[1])} +/- {round_to_2(ld_3[1])}\n"
+            f"#RESULTS=Tc={round_to_2(my_fit.parameters['tmid'], my_fit.errors['tmid'])} +/- {round_to_2(my_fit.errors['tmid'])}"		
+            f",Rp/R*={round_to_2(my_fit.parameters['rprs'], my_fit.errors['rprs'])} +/- {round_to_2(my_fit.errors['rprs'])}"		
+            f",Am1={round_to_2(my_fit.parameters['a1'], my_fit.errors['a1'])} +/- {round_to_2(my_fit.errors['a1'])}"		
+            f",Am2={round_to_2(my_fit.parameters['a2'], my_fit.errors['a2'])} +/- {round_to_2(my_fit.errors['a2'])}\n")
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
 def find_target(target, hdufile, verbose=False):
@@ -1628,6 +1644,20 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
+def psf_format(data, pos, init=[]):
+    target = fit_centroid(data, pos, init=init, box=10)
+
+    return {
+        'x': target[0],
+        'y': target[1],
+        'amp': target[2],
+        'sig_x': target[3],
+        'sig_y': target[4],
+        'rot': target[5],
+        'off': target[6]
+    }
+
+
 def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
                    exotic_UIprevRPX, exotic_UIprevRPY):
 
@@ -1657,11 +1687,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
 
     # fit first image
-    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
-    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
+    targ = psf_format(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY])
+    ref = psf_format(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY])
 
     # just use one aperture and annulus
-    apertureR = 3 * max(targsigX, targsigY)
+    apertureR = 3 * max(targ['sig_x'], targ['sig_y'])
     annulusR = 10
 
     for imageFile in timeSortedNames:
@@ -1675,7 +1705,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         if fileNumber == 1:
             # Initializing the star location guess as the user inputted pixel coordinates
             prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
-            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
+            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ['sig_x'], targ['sig_y'], ref['sig_x'], ref['sig_y']
 
             prevImageData = imageData  # no shift should be registered
 
@@ -1714,18 +1744,18 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
-        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
-        tpsfFlux = 2*PI*tamplitude*tsigX*tsigY
-        currTPX = tx
-        currTPY = ty
+        targ = psf_format(imageData, [prevTPX, prevTPY], init=myPriors)
+        tpsfFlux = 2*PI*targ['amp']*targ['sig_x']*targ['sig_y']
+        currTPX = targ['x']
+        currTPY = targ['y']
 
         # Fits Centroid for Reference
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
-        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
-        rpsfFlux = 2*PI*ramplitude*rsigX*rsigY
-        currRPX = rx
-        currRPY = ry
+        ref = psf_format(imageData, [prevRPX, prevRPY], init=myRefPriors)
+        rpsfFlux = 2*PI*ref['amp']*ref['sig_x']*ref['sig_y']
+        currRPX = ref['x']
+        currRPY = ref['y']
 
         # gets the flux value of the target star and
         tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR)
@@ -1741,13 +1771,13 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         # target
         prevTPX = currTPX
         prevTPY = currTPY
-        prevTSigX = tsigX
-        prevTSigY = tsigY
+        prevTSigX = targ['sig_x']
+        prevTSigY = targ['sig_y']
         # reference
         prevRPX = currRPX
         prevRPY = currRPY
-        prevRSigX = rsigX
-        prevRSigY = rsigY
+        prevRSigX = ref['sig_x']
+        prevRSigY = ref['sig_y']
 
         # UPDATE FILE COUNT
         prevImageData = imageData
@@ -1760,7 +1790,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (jd)')
-    ax.plot(timeList, normalizedFluxVals, fmt='bo')
+    ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
@@ -1841,7 +1871,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
-    # Will change the realtime below to accept a JSON file in a future update.
     parser.add_argument('-rt', '--realtime',
                         default='', type=str,
                         help="Plots transit in real-time while observing with a telescope. "
@@ -1917,13 +1946,23 @@ def main():
         if not args.realtime:
             real_time_dir = user_input("Enter the Directory Path of imaging files: ", type_=str)
         else:
-            real_time_dir = args.realtime
+            real_time = Path(args.realtime)
+            with real_time.open('r') as json_file:
+                info = json.load(json_file)
+                real_time_dir = info['user_info']['Directory with FITS files']
+                targetName = info['planetary_parameters']['Planet Name']
+                exotic_UIprevTPX = info['user_info']['Target Star X & Y Pixel'][0]
+                exotic_UIprevTPY = info['user_info']['Target Star X & Y Pixel'][1]
+                exotic_UIprevRPX = info['user_info']['Comparison Star(s) X & Y Pixel'][0][0]
+                exotic_UIprevRPY = info['user_info']['Comparison Star(s) X & Y Pixel'][0][1]
+
         real_time_dir, real_time_imgs = check_imaging_files(real_time_dir, 'imaging')
 
         while True:
-            targetName = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and "
-                                    "spacing used on Exoplanet Archive "
-                                    "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
+            if not targetName:
+                targetName = user_input("\nPlease enter the Planet Name. Make sure it matches "
+                                        "the case sensitive name and spacing used on Exoplanet Archive "
+                                        "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
             if not targetName[-2].isspace():
                 log.info("The convention on the NASA Exoplanet Archive "
@@ -1938,6 +1977,8 @@ def main():
                 break
             if planetnameconfirm == 1:
                 break
+            else:
+                targetName = ''
 
         while True:
             carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
@@ -1945,10 +1986,11 @@ def main():
                 continue
             break
 
-        exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
-        exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
-        exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
-        exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
+        if not args.realtime:
+            exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
+            exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
+            exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
+            exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
         log.info("Real Time Plotting ('Control + C' or close the plot to quit)")
         log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
@@ -2326,23 +2368,34 @@ def main():
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            # Loop placed to check user-entered x and y target coordinates against WCS.
-            allImageData, timeList, fileNameList, airMassList, fileNameStr, exptimes = [], [], [], [], [], []
+            allImageData, timeList, airMassList, exptimes = [], [], [], []
 
             # TODO filter input files to get good reference for image alignment
 
+            inputfiles = corruption_check(inputfiles)
+
             # time sort images
             times = []
-            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
-                try:
-                    header = fits.getheader(filename=fileName)
-                    times.append(getJulianTime(header))
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
+            for file in inputfiles:
+                header = fits.getheader(filename=file)
+                times.append(getJulianTime(header))
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+
+            # fit target in the first image and use it to determine aperture and annulus range
+            inc = 0
+            for file in inputfiles:
+                first_image = fits.getdata(file, ext=0)
+                try:
+                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    break
+                except Exception:
+                    inc += 1
+                finally:
+                    del first_image, args
+
+            inputfiles = inputfiles[inc:]
 
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
 
@@ -2388,23 +2441,9 @@ def main():
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
-
-                # Keeps a list of file names
-                fileNameStr.append(fileName)
-
-                try:
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
-                    continue
+                hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
 
                 image_header = hdul[0].header
-
-                fileNameList.append(fileName)
 
                 # TIME
                 timeVal = getJulianTime(image_header)
@@ -2455,6 +2494,9 @@ def main():
 
                 if aligned_bool is False:
                     continue
+                
+                if np.isclose((apos[1]**2).sum()**0.5,0):
+                    print(fileName, "no alignment")
 
                 # Fit PSF for target star
                 xrot = exotic_UIprevTPX*np.cos(arot[1]) - exotic_UIprevTPY*np.sin(arot[1]) - apos[1][0]
@@ -2542,7 +2584,7 @@ def main():
             for j,coord in enumerate(compStarList):
                 ckey = "comp{}".format(j+1)
                 psf_data[ckey] = psf_data[ckey][~badmask]
-                psf_data[ckey+"_align"] = psf_data[ckey][~badmask]
+                psf_data[ckey+"_align"] = psf_data[ckey+"_align"][~badmask]
 
                 cFlux = 2*np.pi*psf_data[ckey][:,2]*psf_data[ckey][:,3]*psf_data[ckey][:,4]
                 myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
@@ -2761,6 +2803,7 @@ def main():
                 for text in l.get_texts():
                     text.set_color("white")
                 apos = '\''
+                Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
                 plt.savefig(Path(exotic_infoDict['saveplot']) /
                                    f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
@@ -2994,12 +3037,13 @@ def main():
         f.subplots_adjust(hspace=0)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
         try:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except AttributeError:
+        except:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()
@@ -3032,7 +3076,7 @@ def main():
 
         log.info("\n*********************************************************")
         log.info("FINAL PLANETARY PARAMETERS\n")
-        log.info(f"              Mid-Transit Time [BJD]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
+        log.info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log.info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log.info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
         log.info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
@@ -3046,11 +3090,12 @@ def main():
 
         params_file = Path(exotic_infoDict['saveplot']) / f"FinalParams_{pDict['pName']}_{exotic_infoDict['date']}.json"
         params_num = {
-            "Mid-Transit Time": f"{round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])} (BJD)",
-            "Ratio of Planet to Stellar Radius": f"{round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])} (Rp/Rs)",
-            "Transit depth uncertainty": f"{round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} %",
-            "Airmass coefficient 1": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
-            "Airmass coefficient 2": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
+            "Mid-Transit Time (Tmid)": f"{round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])} BJD_TDB",
+            "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}",
+            "Transit depth (Rp/Rs)^2": f"{round_to_2(100.*(myfit.parameters['rprs']**2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]",
+            "Semi Major Axis/Star Radius (a/Rs)":f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
+            "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
+            "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %"
         }
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
@@ -3081,19 +3126,21 @@ def main():
                        'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
                                 str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
 
-        priors_dict = {'Period': {'value': str(pDict['pPer']), 'uncertainty': str(pDict['pPerUnc']) if pDict['pPerUnc'] else pDict['pPerUnc']},
-                       'a/R*': {'value': str(pDict['aRs']), 'uncertainty': str(pDict['aRsUnc']) if pDict['aRsUnc'] else pDict['aRsUnc']},
-                       'inc': {'value': str(pDict['inc']), 'uncertainty': str(pDict['incUnc']) if pDict['incUnc'] else pDict['incUnc']},
-                       'ecc': {'value': str(pDict['ecc']), 'uncertainty': None},
-                       'u0': {'value': str(ld0[0]), 'uncertainty': str(ld0[1])},
-                       'u1': {'value': str(ld1[0]), 'uncertainty': str(ld1[1])},
-                       'u2': {'value': str(ld2[0]), 'uncertainty': str(ld2[1])},
-                       'u3': {'value': str(ld3[0]), 'uncertainty': str(ld3[1])}}
+        priors_dict = {'Period': {'value': str(round_to_2(pDict['pPer'],pDict['pPerUnc'])), 'uncertainty': str(round_to_2(pDict['pPerUnc'])) if pDict['pPerUnc'] else pDict['pPerUnc']},
+                       'a/R*': {'value': str(round_to_2(pDict['aRs'],pDict['aRsUnc'])), 'uncertainty': str(round_to_2(pDict['aRsUnc'])) if pDict['aRsUnc'] else pDict['aRsUnc']},
+                       'inc': {'value': str(round_to_2(pDict['inc'],pDict['incUnc'])), 'uncertainty': str(round_to_2(pDict['incUnc'])) if pDict['incUnc'] else pDict['incUnc']},
+                       'ecc': {'value': str(round_to_2(pDict['ecc'])), 'uncertainty': None},
+                       'u0': {'value': str(round_to_2(ld0[0],ld0[1])), 'uncertainty': str(round_to_2(ld0[1]))},
+                       'u1': {'value': str(round_to_2(ld1[0],ld1[1])), 'uncertainty': str(round_to_2(ld1[1]))},
+                       'u2': {'value': str(round_to_2(ld2[0],ld2[1])), 'uncertainty': str(round_to_2(ld2[1]))},
+                       'u3': {'value': str(round_to_2(ld3[0],ld3[1])), 'uncertainty': str(round_to_2(ld3[1]))}}
 
-        results_dict = {'Tc': {'value': str(round(myfit.parameters['tmid'], 8)), 'uncertainty': str(round(myfit.errors['tmid'], 8))},
-                        'Rp/R*': {'value': str(round(myfit.parameters['rprs'], 6)), 'uncertainty': str(round(myfit.errors['rprs'], 6))},
-                        'Am1': {'value': str(round(myfit.parameters['a1'], 5)), 'uncertainty': str(round(myfit.errors['a1'], 5))},
-                        'Am2': {'value': str(round(myfit.parameters['a2'], 5)), 'uncertainty': str(round(myfit.errors['a2'], 5))}}
+        round_to_2(myfit.parameters['a1'], myfit.errors['a1'])
+
+        results_dict = {'Tc': {'value': str(round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])), 'uncertainty': str(round_to_2(myfit.errors['tmid']))},
+                        'Rp/R*': {'value': str(round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])), 'uncertainty': str(round_to_2(myfit.errors['rprs']))},
+                        'Am1': {'value': str(round_to_2(myfit.parameters['a1'], myfit.errors['a1'])), 'uncertainty': str(round_to_2(myfit.errors['a1']))},
+                        'Am2': {'value': str(round_to_2(myfit.parameters['a2'], myfit.errors['a2'])), 'uncertainty': str(round_to_2(myfit.errors['a2']))}}
 
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:

@@ -1359,14 +1359,14 @@ def get_pixel_scale(wcs_header, header, pixel_init):
 # Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
 def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
     return (f"#FILTER={exotic_infoDict['filter']}\n"
-            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']} +/- {pdict['aRsUnc']}"
-            f",inc={pdict['inc']} +/- {pdict['incUnc']},ecc={pdict['ecc']}"
-            f",u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
-            f",u3={ld_3[0]} +/- {ld_3[1]}\n"
-            f"#RESULTS=Tc={round(my_fit.parameters['tmid'], 8)} +/- {round(my_fit.errors['tmid'], 8)}"		
-            f",Rp/R*={round(my_fit.parameters['rprs'], 6)} +/- {round(my_fit.errors['rprs'], 6)}"		
-            f",Am1={round(my_fit.parameters['a1'], 5)} +/- {round(my_fit.errors['a1'], 5)}"		
-            f",Am2={round(my_fit.parameters['a2'], 5)} +/- {round(my_fit.errors['a2'], 5)}\n")
+            f"#PRIORS=Period={round_to_2(pdict['pPer'],pdict['pPerUnc'])} +/- {round_to_2(pdict['pPerUnc'])},a/R*={round_to_2(pdict['aRs'],pdict['aRsUnc'])} +/- {round_to_2(pdict['aRsUnc'])}"
+            f",inc={round_to_2(pdict['inc'],pdict['incUnc'])} +/- {round_to_2(pdict['incUnc'])},ecc={round_to_2(pdict['ecc'])}"
+            f",u0={round_to_2(ld_0[0],ld_0[1])} +/- {round_to_2(ld_0[1])},u1={round_to_2(ld_1[0],ld_1[1])} +/- {round_to_2(ld_1[1])},u2={round_to_2(ld_2[0],ld_2[1])} +/- {round_to_2(ld_2[1])}"
+            f",u3={round_to_2(ld_3[0],ld_3[1])} +/- {round_to_2(ld_3[1])}\n"
+            f"#RESULTS=Tc={round_to_2(my_fit.parameters['tmid'], my_fit.errors['tmid'])} +/- {round_to_2(my_fit.errors['tmid'])}"		
+            f",Rp/R*={round_to_2(my_fit.parameters['rprs'], my_fit.errors['rprs'])} +/- {round_to_2(my_fit.errors['rprs'])}"		
+            f",Am1={round_to_2(my_fit.parameters['a1'], my_fit.errors['a1'])} +/- {round_to_2(my_fit.errors['a1'])}"		
+            f",Am2={round_to_2(my_fit.parameters['a2'], my_fit.errors['a2'])} +/- {round_to_2(my_fit.errors['a2'])}\n")
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
 def find_target(target, hdufile, verbose=False):
@@ -2803,6 +2803,7 @@ def main():
                 for text in l.get_texts():
                     text.set_color("white")
                 apos = '\''
+                Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
                 plt.savefig(Path(exotic_infoDict['saveplot']) /
                                    f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
@@ -3036,12 +3037,13 @@ def main():
         f.subplots_adjust(hspace=0)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
         try:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except AttributeError:
+        except:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()
@@ -3124,19 +3126,21 @@ def main():
                        'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
                                 str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
 
-        priors_dict = {'Period': {'value': str(pDict['pPer']), 'uncertainty': str(pDict['pPerUnc']) if pDict['pPerUnc'] else pDict['pPerUnc']},
-                       'a/R*': {'value': str(pDict['aRs']), 'uncertainty': str(pDict['aRsUnc']) if pDict['aRsUnc'] else pDict['aRsUnc']},
-                       'inc': {'value': str(pDict['inc']), 'uncertainty': str(pDict['incUnc']) if pDict['incUnc'] else pDict['incUnc']},
-                       'ecc': {'value': str(pDict['ecc']), 'uncertainty': None},
-                       'u0': {'value': str(ld0[0]), 'uncertainty': str(ld0[1])},
-                       'u1': {'value': str(ld1[0]), 'uncertainty': str(ld1[1])},
-                       'u2': {'value': str(ld2[0]), 'uncertainty': str(ld2[1])},
-                       'u3': {'value': str(ld3[0]), 'uncertainty': str(ld3[1])}}
+        priors_dict = {'Period': {'value': str(round_to_2(pDict['pPer'],pDict['pPerUnc'])), 'uncertainty': str(round_to_2(pDict['pPerUnc'])) if pDict['pPerUnc'] else pDict['pPerUnc']},
+                       'a/R*': {'value': str(round_to_2(pDict['aRs'],pDict['aRsUnc'])), 'uncertainty': str(round_to_2(pDict['aRsUnc'])) if pDict['aRsUnc'] else pDict['aRsUnc']},
+                       'inc': {'value': str(round_to_2(pDict['inc'],pDict['incUnc'])), 'uncertainty': str(round_to_2(pDict['incUnc'])) if pDict['incUnc'] else pDict['incUnc']},
+                       'ecc': {'value': str(round_to_2(pDict['ecc'])), 'uncertainty': None},
+                       'u0': {'value': str(round_to_2(ld0[0],ld0[1])), 'uncertainty': str(round_to_2(ld0[1]))},
+                       'u1': {'value': str(round_to_2(ld1[0],ld1[1])), 'uncertainty': str(round_to_2(ld1[1]))},
+                       'u2': {'value': str(round_to_2(ld2[0],ld2[1])), 'uncertainty': str(round_to_2(ld2[1]))},
+                       'u3': {'value': str(round_to_2(ld3[0],ld3[1])), 'uncertainty': str(round_to_2(ld3[1]))}}
 
-        results_dict = {'Tc': {'value': str(round(myfit.parameters['tmid'], 8)), 'uncertainty': str(round(myfit.errors['tmid'], 8))},
-                        'Rp/R*': {'value': str(round(myfit.parameters['rprs'], 6)), 'uncertainty': str(round(myfit.errors['rprs'], 6))},
-                        'Am1': {'value': str(round(myfit.parameters['a1'], 5)), 'uncertainty': str(round(myfit.errors['a1'], 5))},
-                        'Am2': {'value': str(round(myfit.parameters['a2'], 5)), 'uncertainty': str(round(myfit.errors['a2'], 5))}}
+        round_to_2(myfit.parameters['a1'], myfit.errors['a1'])
+
+        results_dict = {'Tc': {'value': str(round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])), 'uncertainty': str(round_to_2(myfit.errors['tmid']))},
+                        'Rp/R*': {'value': str(round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])), 'uncertainty': str(round_to_2(myfit.errors['rprs']))},
+                        'Am1': {'value': str(round_to_2(myfit.parameters['a1'], myfit.errors['a1'])), 'uncertainty': str(round_to_2(myfit.errors['a1']))},
+                        'Am2': {'value': str(round_to_2(myfit.parameters['a2'], myfit.errors['a2'])), 'uncertainty': str(round_to_2(myfit.errors['a2']))}}
 
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:

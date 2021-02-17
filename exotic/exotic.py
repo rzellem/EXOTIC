@@ -1673,11 +1673,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
 
     # fit first image
-    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
-    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
+    targ = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+    ref = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
 
     # just use one aperture and annulus
-    apertureR = 3 * max(targsigX, targsigY)
+    apertureR = 3 * max(targ[3], targ[4])
     annulusR = 10
 
     for imageFile in timeSortedNames:
@@ -1691,7 +1691,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         if fileNumber == 1:
             # Initializing the star location guess as the user inputted pixel coordinates
             prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
-            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
+            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ[3], targ[4], ref[3], ref[4]
 
             prevImageData = imageData  # no shift should be registered
 
@@ -1857,7 +1857,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
-    # Will change the realtime below to accept a JSON file in a future update.
     parser.add_argument('-rt', '--realtime',
                         default='', type=str,
                         help="Plots transit in real-time while observing with a telescope. "
@@ -1933,13 +1932,23 @@ def main():
         if not args.realtime:
             real_time_dir = user_input("Enter the Directory Path of imaging files: ", type_=str)
         else:
-            real_time_dir = args.realtime
+            real_time = Path(args.realtime)
+            with real_time.open('r') as json_file:
+                info = json.load(json_file)
+                real_time_dir = info['user_info']['Directory with FITS files']
+                targetName = info['planetary_parameters']['Planet Name']
+                exotic_UIprevTPX = info['user_info']['Target Star X & Y Pixel'][0]
+                exotic_UIprevTPY = info['user_info']['Target Star X & Y Pixel'][1]
+                exotic_UIprevRPX = info['user_info']['Comparison Star(s) X & Y Pixel'][0][0]
+                exotic_UIprevRPY = info['user_info']['Comparison Star(s) X & Y Pixel'][0][1]
+
         real_time_dir, real_time_imgs = check_imaging_files(real_time_dir, 'imaging')
 
         while True:
-            targetName = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and "
-                                    "spacing used on Exoplanet Archive "
-                                    "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
+            if not targetName:
+                targetName = user_input("\nPlease enter the Planet Name. Make sure it matches "
+                                        "the case sensitive name and spacing used on Exoplanet Archive "
+                                        "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
             if not targetName[-2].isspace():
                 log.info("The convention on the NASA Exoplanet Archive "
@@ -1954,6 +1963,8 @@ def main():
                 break
             if planetnameconfirm == 1:
                 break
+            else:
+                targetName = ''
 
         while True:
             carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
@@ -1961,10 +1972,11 @@ def main():
                 continue
             break
 
-        exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
-        exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
-        exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
-        exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
+        if not args.realtime:
+            exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
+            exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
+            exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
+            exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
         log.info("Real Time Plotting ('Control + C' or close the plot to quit)")
         log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
@@ -2360,7 +2372,7 @@ def main():
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
             for file in inputfiles:
-                first_image = fits.getdata(file)
+                first_image = fits.getdata(file, ext=0)
                 try:
                     args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
                     break

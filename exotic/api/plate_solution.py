@@ -36,15 +36,12 @@
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
 
-import logging
 import requests
 from json import dumps
 from pathlib import Path
 from astropy.io.fits import PrimaryHDU, getdata, getheader
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
-
-log = logging.getLogger(__name__)
 
 
 def is_false(value):
@@ -86,7 +83,7 @@ class PlateSolution:
         if not wcs_file:
             return PlateSolution.fail('Job Status')
         else:
-            log.info("WCS file creation successful.")
+            print("WCS file creation successful.")
             return wcs_file
 
     def _get_url(self, service):
@@ -98,7 +95,9 @@ class PlateSolution:
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
         r = requests.post(self._get_url('login'), data={'request-json': dumps(self.apikey)})
-        if r.json()['status'] == 'success':
+        if r.status_code >= 500:
+            return False
+        elif r.json()['status'] == 'success':
             return r.json()['session']
         return False
 
@@ -144,7 +143,6 @@ class PlateSolution:
 
     @staticmethod
     def fail(error_type):
-        log.info("")
-        log.info("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net"
-                 f" due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
+        print("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net"
+              f" due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
         return False

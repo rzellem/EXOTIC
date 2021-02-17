@@ -1274,8 +1274,12 @@ def variableStarCheck(ra, dec):
 
     # Query GAIA first to check for variability using the phot_variable_flag trait
     radius = u.Quantity(20.0, u.arcsec)
-    gaiaQuery = Gaia.cone_search_async(sample, radius)
-    gaiaResult = gaiaQuery.get_results()
+    try:
+        gaiaQuery = Gaia.cone_search_async(sample, radius)
+        gaiaResult = gaiaQuery.get_results()
+    except Exception:
+        log.info("Not able to query information from Simbad.")
+        return False
 
     # Individually go through the phot_variable_flag indicator for each star to see if variable or not
     variableFlagList = gaiaResult.columns["phot_variable_flag"]

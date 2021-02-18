@@ -148,9 +148,9 @@ try:  # science constants
 except ImportError:
     from .constants import *
 try:  # light curve numerics
-    from .api.elca import lc_fitter, binner
+    from .api.elca import lc_fitter, binner, transit
 except ImportError:  # package import
-    from api.elca import lc_fitter, binner
+    from api.elca import lc_fitter, binner, transit
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
@@ -3033,6 +3033,20 @@ def main():
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 
+        # estimate transit duration
+        pars = dict(**myfit.parameters)
+        times = np.linspace(np.min(myfit.time), np.max(myfit.time), 1000)
+        dt = np.diff(times).mean()
+        durs = []
+        for r in range(1000):
+            # randomize parameters
+            for k in myfit.errors:
+                pars[k] = np.random.normal(myfit.parameters[k], myfit.errors[k])
+
+            data = transit(times, pars)
+            tmask = data < 1
+            durs.append(tmask.sum()*dt)
+
         ########################
         # PLOT FINAL LIGHT CURVE
         ########################
@@ -3147,6 +3161,8 @@ def main():
             f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log.info(
             f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        log.info(
+            f"              Transit Duration [day]: {np.mean(durs):.5f} +/- {np.std(durs):.5f}")
         log.info("*********************************************************")
 
         ##########
@@ -3161,7 +3177,8 @@ def main():
             "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
             "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
-            "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %"
+            "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %",
+            "Transit Duration (day)":f"{np.mean(durs):.5f} +/- {np.std(durs):.5f}" 
         }
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 

@@ -3232,7 +3232,9 @@ def main():
                         'Am1': {'value': str(round_to_2(myfit.parameters['a1'], myfit.errors['a1'])),
                                 'uncertainty': str(round_to_2(myfit.errors['a1']))},
                         'Am2': {'value': str(round_to_2(myfit.parameters['a2'], myfit.errors['a2'])),
-                                'uncertainty': str(round_to_2(myfit.errors['a2']))}}
+                                'uncertainty': str(round_to_2(myfit.errors['a2']))},
+                        'Duration':{'value':np.round(np.mean(durs),5),
+                                    'uncertainty':np.round(np.std(durs),5)}}
 
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:

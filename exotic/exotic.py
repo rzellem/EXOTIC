@@ -89,7 +89,8 @@ if __name__ == "__main__":
 import argparse
 # Image alignment import
 import astroalign as aa
-aa.PIXEL_TOL=1
+
+aa.PIXEL_TOL = 1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
 from astropy import units as u
@@ -183,13 +184,14 @@ log = logging.getLogger(__name__)
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
     mdata = savgol_filter(ogdata[~nanmask], dt, 2)
-    #mdata = median_filter(ogdata[~nanmask], dt)
+    # mdata = median_filter(ogdata[~nanmask], dt)
     res = ogdata[~nanmask] - mdata
     std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
     # std = np.nanstd(res) # biased from large outliers
-    sigmask = np.abs(res) > sigma*std
+    sigmask = np.abs(res) > sigma * std
     nanmask[~nanmask] = sigmask
     return nanmask
+
 
 def dms_to_dd(dms_in):
     """
@@ -207,6 +209,7 @@ def dms_to_dd(dms_in):
     if float(degrees) < 0.:
         dec = dec * -1.
     return dec
+
 
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
@@ -233,9 +236,9 @@ class NASAExoplanetArchive:
 
         # fancy keys matching inits fil
         if fancy:
-            coord = SkyCoord(ra=self.pl_dict['ra']*u.degree, dec=self.pl_dict['dec']*u.degree)
-            rastr = coord.to_string('hmsdms',sep=':').split(' ')[0]
-            decstr= coord.to_string('hmsdms',sep=':').split(' ')[1]
+            coord = SkyCoord(ra=self.pl_dict['ra'] * u.degree, dec=self.pl_dict['dec'] * u.degree)
+            rastr = coord.to_string('hmsdms', sep=':').split(' ')[0]
+            decstr = coord.to_string('hmsdms', sep=':').split(' ')[1]
 
             flabels = {
                 "Target Star RA": rastr,
@@ -264,7 +267,7 @@ class NASAExoplanetArchive:
                 "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
             }
 
-            return json.dumps(flabels,indent=4)
+            return json.dumps(flabels, indent=4)
 
         return self.planet, candidate, self.pl_dict
 
@@ -354,8 +357,9 @@ class NASAExoplanetArchive:
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
-            target = input(f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and spacing and"
-                           "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
+            target = input(
+                f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and spacing and"
+                "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
             if target.strip().lower() == 'candidate':
                 target = user_input("\nPlease enter candidate planet's name: ", type_=str)
                 return target, True
@@ -389,7 +393,7 @@ class NASAExoplanetArchive:
                                 # Kepler's 3rd law
                                 semi = SA(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
                                 default.loc[default.pl_name == i, k] = semi * AU / (
-                                            ddata.st_rad.values[0] * R_SUN)
+                                        ddata.st_rad.values[0] * R_SUN)
                             elif k == 'pl_orbincl':  # inclination
                                 default.loc[default.pl_name == i, k] = 90
                             elif k == "pl_orbeccen":  # eccentricity
@@ -413,9 +417,9 @@ class NASAExoplanetArchive:
                 rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
             except (KeyError, TypeError):
                 rp = data['pl_radj'] * R_JUP
-                rperr = np.sqrt(np.abs(data['pl_radjerr1']*data['pl_radjerr2'])) * R_JUP
+                rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP
                 rs = data['st_rad'] * R_SUN
-                rserr = np.sqrt(np.abs(data['st_raderr1']*data['st_raderr2'])) * R_SUN
+                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
 
@@ -425,24 +429,24 @@ class NASAExoplanetArchive:
             'pName': data['pl_name'],
             'sName': data['hostname'],
             'pPer': data['pl_orbper'],
-            'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1']*data['pl_orbpererr2'])),
+            'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
 
             'midT': data['pl_tranmid'],
-            'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1']*data['pl_tranmiderr2'])),
+            'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),
             'rprs': rprs,
             'rprsUnc': rprserr,
             'aRs': data['pl_ratdor'],
-            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1',1)*data['pl_ratdorerr2'])),
+            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
             'inc': data['pl_orbincl'],
-            'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1']*data['pl_orbinclerr2'])),
+            'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
 
             'ecc': data.get('pl_orbeccen', 0),
             'teff': data['st_teff'],
             'teffUncPos': data['st_tefferr1'],
             'teffUncNeg': data['st_tefferr2'],
             'met': data['st_met'],
-            'metUncPos': max(0.01,data['st_meterr1']),
-            'metUncNeg': min(-0.01,data['st_meterr2']),
+            'metUncPos': max(0.01, data['st_meterr1']),
+            'metUncNeg': min(-0.01, data['st_meterr2']),
             'logg': data['st_logg'],
             'loggUncPos': data['st_loggerr1'],
             'loggUncNeg': data['st_loggerr2']
@@ -450,9 +454,10 @@ class NASAExoplanetArchive:
 
         if self.pl_dict['aRsUnc'] == 0:
             self.pl_dict['aRsUnc'] = 0.1
-        
+
         if self.pl_dict['incUnc'] == 0:
             self.pl_dict['incUnc'] = 0.1
+
 
 # ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
@@ -475,6 +480,11 @@ def getJulianTime(header):
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in header.comments['BJD_TDB']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+    elif "BJD_TBD" in header:  # looks like TheSky misspells BJD_TDB as BJD_TBD -> hardcoding this common misspelling
+        julianTime = float(header['BJD_TBD'])
+        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
+        if "start" in header.comments['BJD_TBD']:
+            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     elif 'BJD' in header:
         julianTime = float(header['BJD'])
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
@@ -496,7 +506,7 @@ def getJulianTime(header):
         if "start" in header.comments['JULIAN']:
             exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
     # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
-    elif "MJD-OBS" in header:
+    elif ("MJD-OBS" in header) and ("epoch" not in header.comments['MJD-OBS']):
         julianTime = float(header["MJD-OBS"]) + 2400000.5
         # If the time is from the beginning of the observation, then need to calculate mid-exposure time
         if "start" in header.comments['MJD-OBS']:
@@ -520,7 +530,7 @@ def getJulianTime(header):
 
 # Method that gets and returns the current phase of the target
 def getPhase(curTime, pPeriod, tMid):
-    phase = (curTime - tMid - 0.5*pPeriod) / pPeriod % 1
+    phase = (curTime - tMid - 0.5 * pPeriod) / pPeriod % 1
     return phase - 0.5
 
 
@@ -530,14 +540,15 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
     if 'AIRMASS' in hdul[0].header:
         am = float(hdul[0].header['AIRMASS'])
     elif 'TELALT' in hdul[0].header:
-        alt = float(hdul[0].header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
+        alt = float(hdul[0].header[
+                        'TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
         cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / cosam
     else:
         # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
-        pointing = SkyCoord(str(ra)+" "+str(dec), unit=(u.deg, u.deg), frame='icrs')
+        pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
 
-        location = EarthLocation.from_geodetic(lat=lati*u.deg, lon=longit*u.deg, height=elevation)
+        location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
         atime = astropy.time.Time(getJulianTime(hdul[0].header), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
         am = float(pointingAltAz.secz)
@@ -552,14 +563,14 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
         except ValueError:
             log.info("Sorry, not a valid datatype.")
             continue
-        if type_ == str and val1 and val2:
+        if type_ == str and val1 and val2 and val3:
             result = result.lower().strip()
-            if result not in (val1, val2):
+            if result not in (val1, val2, val3):
                 log.info("Sorry, your response was not valid.")
             else:
                 return result
-        elif type_ == int and val1 and val2:
-            if result not in (val1, val2):
+        elif type_ == int and val1 and val2 and val3:
+            if result not in (val1, val2, val3):
                 log.info("Sorry, your response was not valid.")
             else:
                 return result
@@ -801,7 +812,6 @@ class InitializationFile:
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
 def timeConvert(timeList, timeFormat, pDict, info_dict):
-
     # Perform appropriate conversion for each time format if needed
     if timeFormat == 'JD_UTC':
         convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'],
@@ -816,7 +826,6 @@ def timeConvert(timeList, timeFormat, pDict, info_dict):
 
 # Convert magnitude units to flux if pre-reduced file not in flux already
 def fluxConvert(fluxList, errorList, fluxFormat):
-
     # If units already in flux, do nothing, perform appropriate conversions to flux otherwise
     if fluxFormat == 'magnitude':
         convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
@@ -1017,7 +1026,7 @@ def round_to_2(*args):
     if np.floor(y) >= 1.:
         roundval = 2
     else:
-        roundval = -int(np.floor(np.log10(abs(y))))+1
+        roundval = -int(np.floor(np.log10(abs(y)))) + 1
     return round(x, roundval)
 
 
@@ -1032,7 +1041,8 @@ def check_imaging_files(directory, filename):
                 directory = Path(directory)
                 for ext in file_extensions:
                     for file in directory.iterdir():
-                        if file.is_file() and file.name.lower().endswith(ext.lower()) and file.name[0:2] not in ('ref', 'wcs'):
+                        if file.is_file() and file.name.lower().endswith(ext.lower()) and file.name[0:2] not in (
+                        'ref', 'wcs'):
                             input_files.append(str(file))
                     if input_files:
                         return directory, input_files
@@ -1087,7 +1097,7 @@ class LimbDarkening:
                     self._custom()
             else:
                 self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.wl_min*1000, self.wl_max*1000
+        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.wl_min * 1000, self.wl_max * 1000
 
     def _standard_list(self):
         log.info("\n\n***************************")
@@ -1158,6 +1168,22 @@ class LimbDarkening:
         log.debug(f"{ld_params['LD'][1][0]} +/- + {ld_params['ERR'][1][0]}")
         log.debug(f"{ld_params['LD'][2][0]} +/- + {ld_params['ERR'][2][0]}")
         log.debug(f"{ld_params['LD'][3][0]} +/- + {ld_params['ERR'][3][0]}")
+
+
+def corruption_check(files):
+    valid_files = []
+    for file in files:
+        try:
+            hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+            valid_files.append(file)
+        except OSError as e:
+            log.info(f"Found corrupted file and removing from reduction: {file}, ({e})")
+        finally:
+            if getattr(hdul, "close", None) and callable(hdul.close):
+                hdul.close()
+            del hdul
+
+    return valid_files
 
 
 def check_wcs(fits_file, save_directory, plate_opt):
@@ -1243,12 +1269,16 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 # Checks if comparison star is variable via querying SIMBAD
 def variableStarCheck(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
-    sample = SkyCoord(ra*u.deg, dec*u.deg, frame='fk5')
+    sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
 
     # Query GAIA first to check for variability using the phot_variable_flag trait
     radius = u.Quantity(20.0, u.arcsec)
-    gaiaQuery = Gaia.cone_search_async(sample, radius)
-    gaiaResult = gaiaQuery.get_results()
+    try:
+        gaiaQuery = Gaia.cone_search_async(sample, radius)
+        gaiaResult = gaiaQuery.get_results()
+    except Exception:
+        log.info("Not able to query information from Simbad.")
+        return False
 
     # Individually go through the phot_variable_flag indicator for each star to see if variable or not
     variableFlagList = gaiaResult.columns["phot_variable_flag"]
@@ -1265,7 +1295,7 @@ def variableStarCheck(ra, dec):
 
     # query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     # This is a secondary check if GAIA query returns inconclusive results
-    simbad_result = Simbad.query_region(sample, radius=20*u.arcsec)
+    simbad_result = Simbad.query_region(sample, radius=20 * u.arcsec)
     try:
         starName = simbad_result['MAIN_ID'][0].decode("utf-8")
     except:
@@ -1280,14 +1310,13 @@ def variableStarCheck(ra, dec):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def image_alignment(image_data, num_images, file_name, count, roi=1):
-
     rot = np.zeros(len(image_data))
     pos = np.zeros((len(image_data), 2))
 
     height = image_data.shape[1]
     width = image_data.shape[2]
-    roix = slice(int(width*(0.5-roi/2)), int(width*(0.5+roi/2)))
-    roiy = slice(int(height*(0.5-roi/2)), int(height*(0.5+roi/2)))
+    roix = slice(int(width * (0.5 - roi / 2)), int(width * (0.5 + roi / 2)))
+    roiy = slice(int(height * (0.5 - roi / 2)), int(height * (0.5 + roi / 2)))
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
     # aligned_bool for discarded images to delete .FITS data from airmass and times.
@@ -1343,14 +1372,15 @@ def get_pixel_scale(wcs_header, header, pixel_init):
 # Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
 def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
     return (f"#FILTER={exotic_infoDict['filter']}\n"
-            f"#PRIORS=Period={pdict['pPer']} +/- {pdict['pPerUnc']},a/R*={pdict['aRs']} +/- {pdict['aRsUnc']}"
-            f",inc={pdict['inc']} +/- {pdict['incUnc']},ecc={pdict['ecc']}"
-            f",u0={ld_0[0]} +/- {ld_0[1]},u1={ld_1[0]} +/- {ld_1[1]},u2={ld_2[0]} +/- {ld_2[1]}"
-            f",u3={ld_3[0]} +/- {ld_3[1]}\n"
-            f"#RESULTS=Tc={round(my_fit.parameters['tmid'], 8)} +/- {round(my_fit.errors['tmid'], 8)}"		
-            f",Rp/R*={round(my_fit.parameters['rprs'], 6)} +/- {round(my_fit.errors['rprs'], 6)}"		
-            f",Am1={round(my_fit.parameters['a1'], 5)} +/- {round(my_fit.errors['a1'], 5)}"		
-            f",Am2={round(my_fit.parameters['a2'], 5)} +/- {round(my_fit.errors['a2'], 5)}\n")
+            f"#PRIORS=Period={round_to_2(pdict['pPer'], pdict['pPerUnc'])} +/- {round_to_2(pdict['pPerUnc'])},a/R*={round_to_2(pdict['aRs'], pdict['aRsUnc'])} +/- {round_to_2(pdict['aRsUnc'])}"
+            f",inc={round_to_2(pdict['inc'], pdict['incUnc'])} +/- {round_to_2(pdict['incUnc'])},ecc={round_to_2(pdict['ecc'])}"
+            f",u0={round_to_2(ld_0[0], ld_0[1])} +/- {round_to_2(ld_0[1])},u1={round_to_2(ld_1[0], ld_1[1])} +/- {round_to_2(ld_1[1])},u2={round_to_2(ld_2[0], ld_2[1])} +/- {round_to_2(ld_2[1])}"
+            f",u3={round_to_2(ld_3[0], ld_3[1])} +/- {round_to_2(ld_3[1])}\n"
+            f"#RESULTS=Tc={round_to_2(my_fit.parameters['tmid'], my_fit.errors['tmid'])} +/- {round_to_2(my_fit.errors['tmid'])}"
+            f",Rp/R*={round_to_2(my_fit.parameters['rprs'], my_fit.errors['rprs'])} +/- {round_to_2(my_fit.errors['rprs'])}"
+            f",Am1={round_to_2(my_fit.parameters['a1'], my_fit.errors['a1'])} +/- {round_to_2(my_fit.errors['a1'])}"
+            f",Am2={round_to_2(my_fit.parameters['a2'], my_fit.errors['a2'])} +/- {round_to_2(my_fit.errors['a2'])}\n")
+
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
 def find_target(target, hdufile, verbose=False):
@@ -1368,11 +1398,11 @@ def find_target(target, hdufile, verbose=False):
 
     # set up astropy object
     coord = SkyCoord(
-        ra = result['ra'][0]*u.deg,
-        dec = result['dec'][0]*u.deg,
-        distance=1*u.pc, 
-        pm_ra_cosdec=result['pmra'][0]*u.mas/u.yr,
-        pm_dec=result['pmdec'][0]*u.mas/u.yr,
+        ra=result['ra'][0] * u.deg,
+        dec=result['dec'][0] * u.deg,
+        distance=1 * u.pc,
+        pm_ra_cosdec=result['pmra'][0] * u.mas / u.yr,
+        pm_dec=result['pmdec'][0] * u.mas / u.yr,
         frame="icrs",
         obstime=astropy.time.Time("2000-1-1T00:00:00")
     )
@@ -1394,21 +1424,23 @@ def find_target(target, hdufile, verbose=False):
     # wcs coordinate translation
     wcs = WCS(hdu.header)
 
-    pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]],0)
+    pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]], 0)
 
     if verbose:
-        print("Simbad:",result)
-        print("\nObs Date:",t)
+        print("Simbad:", result)
+        print("\nObs Date:", t)
         print("NEW:", coordpm.ra, coordpm.dec)
         print("")
-        print("Target Location:",np.round(pixcoord[0],2))
+        print("Target Location:", np.round(pixcoord[0], 2))
 
     return pixcoord[0]
+
 
 # defines the star point spread function as a 2D Gaussian
 def star_psf(x, y, x0, y0, a, sigx, sigy, b):
     gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
     return gaus
+
 
 # Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
 def estimate_sigma(x, maxidx=-1):
@@ -1421,11 +1453,11 @@ def estimate_sigma(x, maxidx=-1):
 
 
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
-    rx = (x-x0)*np.cos(rot) - (y-y0)*np.sin(rot)
-    ry = (x-x0)*np.sin(rot) + (y-y0)*np.cos(rot)
-    gausx = np.exp(-rx**2 / (2*sigx**2))
-    gausy = np.exp(-ry**2 / (2*sigy**2))
-    return a*gausx*gausy + b
+    rx = (x - x0) * np.cos(rot) - (y - y0) * np.sin(rot)
+    ry = (x - x0) * np.sin(rot) + (y - y0) * np.cos(rot)
+    gausx = np.exp(-rx ** 2 / (2 * sigx ** 2))
+    gausy = np.exp(-ry ** 2 / (2 * sigy ** 2))
+    return a * gausx * gausy + b
 
 
 def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear', method='trf', box=15):
@@ -1433,10 +1465,11 @@ def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear',
 
     def fcn2min(pars):
         model = psf_function(xv, yv, *pars)
-        return (data[yv, xv]-model).flatten()
+        return (data[yv, xv] - model).flatten()
 
     if method == 'trf':
-        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point', method='dogbox', xtol=None, ftol=1e-3, tr_options='exact')
+        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point', method='dogbox',
+                            xtol=None, ftol=1e-3, tr_options='exact')
     else:
         res = least_squares(fcn2min, x0=[*pos, *init], loss=lossfn, jac='3-point', method=method)
     return res.x
@@ -1444,35 +1477,37 @@ def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear',
 
 def mesh_box(pos, box):
     pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
-    x = np.arange(pos[0]-box, pos[0]+box+1)
-    y = np.arange(pos[1]-box, pos[1]+box+1)
+    x = np.arange(pos[0] - box, pos[0] + box + 1)
+    y = np.arange(pos[1] - box, pos[1] + box + 1)
     xv, yv = np.meshgrid(x, y)
     return xv.astype(int), yv.astype(int)
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
 def fit_centroid(data, pos, init=[], box=10, debug=False):
-
     # get sub field in image
     xv, yv = mesh_box(pos, box)
-    
+
     # weighted flux centroid
-    wfx = np.sum(np.unique(xv)*(data[yv, xv].sum(0) - data[yv, xv].sum(0).min()))/np.sum((data[yv, xv].sum(0) - data[yv, xv].sum(0).min()))
-    wfy = np.sum(np.unique(yv)*(data[yv, xv].sum(1) - data[yv, xv].sum(1).min()))/np.sum((data[yv, xv].sum(1) - data[yv, xv].sum(1).min()))
+    wfx = np.sum(np.unique(xv) * (data[yv, xv].sum(0) - data[yv, xv].sum(0).min())) / np.sum(
+        (data[yv, xv].sum(0) - data[yv, xv].sum(0).min()))
+    wfy = np.sum(np.unique(yv) * (data[yv, xv].sum(1) - data[yv, xv].sum(1).min())) / np.sum(
+        (data[yv, xv].sum(1) - data[yv, xv].sum(1).min()))
 
     if len(init) == 5:
         pass
     else:
-        init = [np.nanmax(data[yv, xv])-np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
+        init = [np.nanmax(data[yv, xv]) - np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
 
     try:
         # fit gaussian PSF
         pars = fit_psf(
             data,
             [wfx, wfy],  # position estimate
-            init,    # initial guess: [amp, sigx, sigy, rotation, bg]
-            [wfx-box*0.5, wfy-box*0.5, 0, 0.5, 0.5, -np.pi/4, np.nanmin(data)-1],  # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-            [wfx+box*0.5, wfy+box*0.5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv, xv])+1],  # upper bound
+            init,  # initial guess: [amp, sigx, sigy, rotation, bg]
+            [wfx - box * 0.5, wfy - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(data) - 1],
+            # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+            [wfx + box * 0.5, wfy + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1],  # upper bound
             psf_function=gaussian_psf, method='trf',
             box=box  # only fit a subregion +/- 5 px from centroid
         )
@@ -1481,33 +1516,33 @@ def fit_centroid(data, pos, init=[], box=10, debug=False):
         log.info("  check location of comparison star in the first few images")
         log.info("  fitting parameters are out of bounds")
         log.info(f"  init: {init}")
-        log.info(f" lower: {[wfx - 5, wfy - 5, 0, 0, 0, -np.pi/4, np.nanmin(data) - 1]}")
-        log.info(f" upper: {[wfx + 5, wfy + 5, 1e7, 20, 20, np.pi/4, np.nanmax(data[yv, xv]) + 1]}")
+        log.info(f" lower: {[wfx - 5, wfy - 5, 0, 0, 0, -np.pi / 4, np.nanmin(data) - 1]}")
+        log.info(f" upper: {[wfx + 5, wfy + 5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1]}")
 
         # use LM in unbounded optimization
         pars = fit_psf(
             data, [wfx, wfy], init,
-            [wfx - 5, wfy - 5, 0, 0, 0, -PI/4, np.nanmin(data) - 1],
-            [wfx + 5, wfy + 5, 1e7, 20, 20, PI/4, np.nanmax(data[yv, xv]) + 1],
+            [wfx - 5, wfy - 5, 0, 0, 0, -PI / 4, np.nanmin(data) - 1],
+            [wfx + 5, wfy + 5, 1e7, 20, 20, PI / 4, np.nanmax(data[yv, xv]) + 1],
             psf_function=gaussian_psf,
             box=box, method='lm'
         )
 
     if pars[2] <= 10:
-        log.info(f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos,2)}?")
+        log.info(
+            f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
     return pars
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
 def aperPhot(data, xc, yc, r=5, dr=5):
-
     if dr > 0:
-        bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r+2, dr)
+        bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r + 2, dr)
     else:
         bgflux, sigmabg, Nbg = 0, 0
     positions = [(xc, yc)]
-    bdata = data-bgflux
+    bdata = data - bgflux
 
     apertures = CircularAperture(positions, r=r)
     phot_table = aperture_photometry(bdata, apertures, method='exact')
@@ -1517,9 +1552,9 @@ def aperPhot(data, xc, yc, r=5, dr=5):
 
 def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     # create a crude annulus to mask out bright background pixels
-    xv, yv = mesh_box([xc, yc], np.round(r+dr))
-    rv = ((xv-xc)**2 + (yv-yc)**2)**0.5
-    mask = (rv > r) & (rv < (r+dr))
+    xv, yv = mesh_box([xc, yc], np.round(r + dr))
+    rv = ((xv - xc) ** 2 + (yv - yc) ** 2) ** 0.5
+    mask = (rv > r) & (rv < (r + dr))
     cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     dat = np.array(data[yv, xv], dtype=float)
     dat[dat > cutoff] = np.nan  # ignore pixels brighter than percentile
@@ -1527,9 +1562,9 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     if debug:
         minb = data[yv, xv][mask].min()
         maxb = data[yv, xv][mask].mean() + 3 * data[yv, xv][mask].std()
-        nanmask = np.nan*np.zeros(mask.shape)
+        nanmask = np.nan * np.zeros(mask.shape)
         nanmask[mask] = 1
-        bgsky = data[yv, xv]*nanmask
+        bgsky = data[yv, xv] * nanmask
         cmode = mode(dat.flatten(), nan_policy='omit').mode[0]
         amode = mode(bgsky.flatten(), nan_policy='omit').mode[0]
 
@@ -1541,8 +1576,10 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
         cax = divider.append_axes('right', size='5%', pad=0.05)
         fig.colorbar(im, cax=cax, orientation='vertical')
 
-        ax[1, 0].hist(bgsky.flatten(), label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky), amode), alpha=0.5, bins=np.arange(minb, maxb))
-        ax[1, 0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat), cmode), alpha=0.5, bins=np.arange(minb, maxb))
+        ax[1, 0].hist(bgsky.flatten(), label='Sky Annulus ({:.1f}, {:.1f})'.format(np.nanmedian(bgsky), amode),
+                      alpha=0.5, bins=np.arange(minb, maxb))
+        ax[1, 0].hist(dat.flatten(), label='Clipped ({:.1f}, {:.1f})'.format(np.nanmedian(dat), cmode), alpha=0.5,
+                      bins=np.arange(minb, maxb))
         ax[1, 0].legend(loc='best')
         ax[1, 0].set_title("Sky Background")
         ax[1, 0].set_xlabel("Pixel Value")
@@ -1628,9 +1665,22 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
+def psf_format(data, pos, init=[]):
+    target = fit_centroid(data, pos, init=init, box=10)
+
+    return {
+        'x': target[0],
+        'y': target[1],
+        'amp': target[2],
+        'sig_x': target[3],
+        'sig_y': target[4],
+        'rot': target[5],
+        'off': target[6]
+    }
+
+
 def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
                    exotic_UIprevRPX, exotic_UIprevRPY):
-
     targetFluxVals = []
     referenceFluxVals = []
     normalizedFluxVals = []
@@ -1657,11 +1707,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
 
     # fit first image
-    targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
-    refx, refy, refamplitude, refsigX, refsigY, refrot, refoff = fit_centroid(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY], box=10)
+    targ = psf_format(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY])
+    ref = psf_format(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY])
 
     # just use one aperture and annulus
-    apertureR = 3 * max(targsigX, targsigY)
+    apertureR = 3 * max(targ['sig_x'], targ['sig_y'])
     annulusR = 10
 
     for imageFile in timeSortedNames:
@@ -1675,7 +1725,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         if fileNumber == 1:
             # Initializing the star location guess as the user inputted pixel coordinates
             prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
-            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
+            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ['sig_x'], targ['sig_y'], ref['sig_x'], ref['sig_y']
 
             prevImageData = imageData  # no shift should be registered
 
@@ -1714,18 +1764,18 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
         # Fits Centroid for Target
         myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
-        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, [prevTPX, prevTPY], init=myPriors, box=10)
-        tpsfFlux = 2*PI*tamplitude*tsigX*tsigY
-        currTPX = tx
-        currTPY = ty
+        targ = psf_format(imageData, [prevTPX, prevTPY], init=myPriors)
+        tpsfFlux = 2 * PI * targ['amp'] * targ['sig_x'] * targ['sig_y']
+        currTPX = targ['x']
+        currTPY = targ['y']
 
         # Fits Centroid for Reference
         rGuessAmp = refSearchA.max() - refSearchA.min()
         myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
-        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData, [prevRPX, prevRPY], init=myRefPriors, box=10)
-        rpsfFlux = 2*PI*ramplitude*rsigX*rsigY
-        currRPX = rx
-        currRPY = ry
+        ref = psf_format(imageData, [prevRPX, prevRPY], init=myRefPriors)
+        rpsfFlux = 2 * PI * ref['amp'] * ref['sig_x'] * ref['sig_y']
+        currRPX = ref['x']
+        currRPY = ref['y']
 
         # gets the flux value of the target star and
         tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR)
@@ -1741,13 +1791,13 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         # target
         prevTPX = currTPX
         prevTPY = currTPY
-        prevTSigX = tsigX
-        prevTSigY = tsigY
+        prevTSigX = targ['sig_x']
+        prevTSigY = targ['sig_y']
         # reference
         prevRPX = currRPX
         prevRPY = currRPY
-        prevRSigX = rsigX
-        prevRSigY = rsigY
+        prevRSigX = ref['sig_x']
+        prevRSigY = ref['sig_y']
 
         # UPDATE FILE COUNT
         prevImageData = imageData
@@ -1760,31 +1810,32 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (jd)')
-    ax.plot(timeList, normalizedFluxVals, fmt='bo')
+    ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
-
     # remove outliers
     si = np.argsort(times)
     dt = np.mean(np.diff(np.sort(times)))
-    ndt = int(25./24./60./dt)*2+1
-    filtered_data = sigma_clip((tFlux/cFlux)[si], sigma=3, dt=ndt)
-    arrayFinalFlux = (tFlux/cFlux)[si][~filtered_data]
+    ndt = int(25. / 24. / 60. / dt) * 2 + 1
+    filtered_data = sigma_clip((tFlux / cFlux)[si], sigma=3, dt=ndt)
+    arrayFinalFlux = (tFlux / cFlux)[si][~filtered_data]
     f1 = tFlux[si][~filtered_data]
-    sigf1 = f1**0.5
+    sigf1 = f1 ** 0.5
     f2 = cFlux[si][~filtered_data]
-    sigf2 = f2**0.5
+    sigf2 = f2 ** 0.5
     if np.sum(cFlux) == len(cFlux):
         arrayNormUnc = sigf1
     else:
-        arrayNormUnc = np.sqrt( (sigf1/f2)**2 + (sigf2*f1/f2**2)**2 )
+        arrayNormUnc = np.sqrt((sigf1 / f2) ** 2 + (sigf2 * f1 / f2 ** 2) ** 2)
     arrayTimes = times[si][~filtered_data]
     arrayAirmass = airmass[si][~filtered_data]
 
     # remove nans
-    nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
-    nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(arrayAirmass)
+    nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(
+        arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
+    nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(
+        arrayAirmass)
     arrayFinalFlux = arrayFinalFlux[~nanmask]
     arrayNormUnc = arrayNormUnc[~nanmask]
     arrayTimes = arrayTimes[~nanmask]
@@ -1792,24 +1843,24 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
     # -----LM LIGHTCURVE FIT--------------------------------------
     prior = {
-        'rprs': pDict['rprs'],    # Rp/Rs
-        'ars': pDict['aRs'],      # a/Rs
-        'per': pDict['pPer'],     # Period [day]
-        'inc': pDict['inc'],      # Inclination [deg]
+        'rprs': pDict['rprs'],  # Rp/Rs
+        'ars': pDict['aRs'],  # a/Rs
+        'per': pDict['pPer'],  # Period [day]
+        'inc': pDict['inc'],  # Inclination [deg]
         'u0': ld[0], 'u1': ld[1], 'u2': ld[2], 'u3': ld[3],  # limb darkening (nonlinear)
-        'ecc': pDict['ecc'],     # Eccentricity
-        'omega': 0,              # Arg of periastron
-        'tmid': pDict['midT'],   # time of mid transit [day]
+        'ecc': pDict['ecc'],  # Eccentricity
+        'omega': 0,  # Arg of periastron
+        'tmid': pDict['midT'],  # time of mid transit [day]
         'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
-        'a2': 0,             # Flux lower bound
+        'a2': 0,  # Flux lower bound
     }
 
-    arrayPhases = (arrayTimes-pDict['midT'])/prior['per']
-    prior['tmid'] = pDict['midT'] + np.floor(arrayPhases).max()*prior['per']
-    upper = prior['tmid'] + np.abs(25*pDict['midTUnc'] + np.floor(arrayPhases).max()*25*pDict['pPerUnc'])
-    lower = prior['tmid'] - np.abs(25*pDict['midTUnc'] + np.floor(arrayPhases).max()*25*pDict['pPerUnc'])
+    arrayPhases = (arrayTimes - pDict['midT']) / prior['per']
+    prior['tmid'] = pDict['midT'] + np.floor(arrayPhases).max() * prior['per']
+    upper = prior['tmid'] + np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
+    lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
 
-    if np.floor(arrayPhases).max()-np.floor(arrayPhases).min() == 0:
+    if np.floor(arrayPhases).max() - np.floor(arrayPhases).min() == 0:
         log.info("\nWARNING!")
         log.info(" Estimated mid-transit time is not within the observations")
         log.info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
@@ -1818,11 +1869,11 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         log.info(f" tmid prior:{prior['tmid']}\n")
 
     mybounds = {
-        'rprs': [0, pDict['rprs']*1.25],
+        'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        'ars': [pDict['aRs']-5*pDict['aRsUnc'], pDict['aRs']+5*pDict['aRsUnc']],
+        'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
 
-        'a1': [ 0.5*min(arrayFinalFlux), 2*max(arrayFinalFlux)],
+        'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
 
@@ -1841,7 +1892,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
-    # Will change the realtime below to accept a JSON file in a future update.
     parser.add_argument('-rt', '--realtime',
                         default='', type=str,
                         help="Plots transit in real-time while observing with a telescope. "
@@ -1868,7 +1918,6 @@ def parse_args():
 
 
 def main():
-
     # command line args
     args = parse_args()
 
@@ -1917,13 +1966,23 @@ def main():
         if not args.realtime:
             real_time_dir = user_input("Enter the Directory Path of imaging files: ", type_=str)
         else:
-            real_time_dir = args.realtime
+            real_time = Path(args.realtime)
+            with real_time.open('r') as json_file:
+                info = json.load(json_file)
+                real_time_dir = info['user_info']['Directory with FITS files']
+                targetName = info['planetary_parameters']['Planet Name']
+                exotic_UIprevTPX = info['user_info']['Target Star X & Y Pixel'][0]
+                exotic_UIprevTPY = info['user_info']['Target Star X & Y Pixel'][1]
+                exotic_UIprevRPX = info['user_info']['Comparison Star(s) X & Y Pixel'][0][0]
+                exotic_UIprevRPY = info['user_info']['Comparison Star(s) X & Y Pixel'][0][1]
+
         real_time_dir, real_time_imgs = check_imaging_files(real_time_dir, 'imaging')
 
         while True:
-            targetName = user_input("\nPlease enter the Planet Name. Make sure it matches the case sensitive name and "
-                                    "spacing used on Exoplanet Archive "
-                                    "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
+            if not targetName:
+                targetName = user_input("\nPlease enter the Planet Name. Make sure it matches "
+                                        "the case sensitive name and spacing used on Exoplanet Archive "
+                                        "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
             if not targetName[-2].isspace():
                 log.info("The convention on the NASA Exoplanet Archive "
@@ -1938,6 +1997,8 @@ def main():
                 break
             if planetnameconfirm == 1:
                 break
+            else:
+                targetName = ''
 
         while True:
             carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
@@ -1945,10 +2006,11 @@ def main():
                 continue
             break
 
-        exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
-        exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
-        exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
-        exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
+        if not args.realtime:
+            exotic_UIprevTPX = user_input(f"{targetName} X Pixel Coordinate: ", type_=int)
+            exotic_UIprevTPY = user_input(f"{targetName} Y Pixel Coordinate: ", type_=int)
+            exotic_UIprevRPX = user_input("Comp Star X Pixel Coordinate: ", type_=int)
+            exotic_UIprevRPY = user_input("Comp Star Y Pixel Coordinate: ", type_=int)
 
         log.info("Real Time Plotting ('Control + C' or close the plot to quit)")
         log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
@@ -1978,9 +2040,10 @@ def main():
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
-                    'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None,
-                    'ctype': None, 'pixelbin': None, 'filter': None, 'wl_min': None, 'wl_max': None, 'notes': None,
-                    'tarcoords': None, 'compstars': None, 'plate_opt': None, 'pixel_scale': None}
+                           'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None,
+                           'ctype': None, 'pixelbin': None, 'filter': None, 'wl_min': None, 'wl_max': None,
+                           'notes': None,
+                           'tarcoords': None, 'compstars': None, 'plate_opt': None, 'pixel_scale': None}
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                      'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -1996,7 +2059,7 @@ def main():
             init_path = args.prereduced
         else:
             fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+                                    "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
 
         if not args.reduce and not args.prereduced:
             fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
@@ -2123,7 +2186,8 @@ def main():
                 try:
                     exotic_infoDict['lat'] = exotic_infoDict['lat'].replace(' ', '')
                     if exotic_infoDict['lat'][0] != '+' and exotic_infoDict['lat'][0] != '-':
-                        raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
+                        raise ValueError(
+                            "You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
                     # Convert to float - if latitude is in +/-HH:MM:SS format, convert to a float
                     try:
                         lati = float(exotic_infoDict['lat'])
@@ -2131,7 +2195,8 @@ def main():
                         exotic_infoDict['lat'] = dms_to_dd(exotic_infoDict['lat'])
                         lati = float(exotic_infoDict['lat'])
                     if lati <= -90.00 or lati >= 90.00:
-                        raise ValueError('Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
+                        raise ValueError(
+                            'Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
                     break
                 # check to make sure they have a sign
                 except ValueError as err:
@@ -2149,7 +2214,8 @@ def main():
                 try:
                     exotic_infoDict['long'] = exotic_infoDict['long'].replace(' ', '')
                     if exotic_infoDict['long'][0] != '+' and exotic_infoDict['long'][0] != '-':
-                        raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
+                        raise ValueError(
+                            "You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
                     # Convert to float - if longitude is in +/-HH:MM:SS format, convert to a float
                     try:
                         longit = float(exotic_infoDict['long'])
@@ -2157,7 +2223,8 @@ def main():
                         exotic_infoDict['long'] = dms_to_dd(exotic_infoDict['long'])
                         longit = float(exotic_infoDict['long'])
                     if longit <= -180.00 or longit >= 180.00:
-                        raise ValueError('Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
+                        raise ValueError(
+                            'Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
                     break
                 # check to make sure they have a sign
                 except ValueError as err:
@@ -2246,7 +2313,8 @@ def main():
 
                 if biasesBool:
                     # Add / to end of directory if user does not input it
-                    exotic_infoDict['biasesdir'], inputbiases = check_imaging_files(exotic_infoDict['biasesdir'], 'biases')
+                    exotic_infoDict['biasesdir'], inputbiases = check_imaging_files(exotic_infoDict['biasesdir'],
+                                                                                    'biases')
                     biasesImgList = []
                     for biasFile in inputbiases:
                         biasData = fits.getdata(biasFile, ext=0)
@@ -2301,7 +2369,8 @@ def main():
                                logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
                                wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'],
                                filter_type=exotic_infoDict['filter'])
-        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['wl_min'], exotic_infoDict['wl_max'] = ld_obj.nonlinear_ld()
+        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['wl_min'], exotic_infoDict[
+            'wl_max'] = ld_obj.nonlinear_ld()
         ld = [ld0[0], ld1[0], ld2[0], ld3[0]]
 
         # check for Nans + Zeros
@@ -2326,24 +2395,34 @@ def main():
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            # Loop placed to check user-entered x and y target coordinates against WCS.
-            allImageData, timeList, fileNameList, airMassList, fileNameStr, exptimes = [], [], [], [], [], []
+            allImageData, timeList, airMassList, exptimes = [], [], [], []
 
             # TODO filter input files to get good reference for image alignment
 
+            inputfiles = corruption_check(inputfiles)
+
             # time sort images
             times = []
-            for fileName in inputfiles:  # Loop through all the fits files in the directory and executes data reduction
-                try:
-                    header = fits.getheader(filename=fileName)
-                    times.append(getJulianTime(header))
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
+            for file in inputfiles:
+                header = fits.getheader(filename=file)
+                times.append(getJulianTime(header))
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
 
+            # fit target in the first image and use it to determine aperture and annulus range
+            inc = 0
+            for file in inputfiles:
+                first_image = fits.getdata(file, ext=0)
+                try:
+                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    break
+                except Exception:
+                    inc += 1
+                finally:
+                    del first_image, args
+
+            inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['saveplot'], exotic_infoDict['plate_opt'])
 
             if wcs_file:
@@ -2365,53 +2444,41 @@ def main():
             # alloc psf fitting param
             psf_data = {
                 # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
-                'target':np.zeros((len(inputfiles), 7)),      # PSF fit
-                'target_align':np.zeros((len(inputfiles), 2)) # image alignment estimate
+                'target': np.zeros((len(inputfiles), 7)),  # PSF fit
+                'target_align': np.zeros((len(inputfiles), 2))  # image alignment estimate
             }
 
             # aperture sizes in stdev (sigma) of PSF
-            apers = np.linspace(2,6,10)
-            annuli = np.linspace(6,15,10)
+            apers = np.linspace(2, 6, 10)
+            annuli = np.linspace(6, 15, 10)
 
             aper_data = {
-                'target':np.zeros((len(inputfiles),len(apers), len(annuli))),
+                'target': np.zeros((len(inputfiles), len(apers), len(annuli))),
                 'target_err': np.zeros((len(inputfiles), len(apers), len(annuli))),
-                'target_bg':np.zeros((len(inputfiles), len(apers), len(annuli)))
+                'target_bg': np.zeros((len(inputfiles), len(apers), len(annuli)))
             }
 
-            for i,coord in enumerate(compStarList):
-                ckey = "comp{}".format(i+1)
+            for i, coord in enumerate(compStarList):
+                ckey = "comp{}".format(i + 1)
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
-                psf_data[ckey+"_align"] = np.zeros((len(inputfiles), 2))
-                aper_data[ckey] = np.zeros((len(inputfiles),len(apers), len(annuli)))
-                aper_data[ckey+"_bg"] = np.zeros((len(inputfiles),len(apers), len(annuli)))
+                psf_data[ckey + "_align"] = np.zeros((len(inputfiles), 2))
+                aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
-
-                # Keeps a list of file names
-                fileNameStr.append(fileName)
-
-                try:
-                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-                except OSError as e:
-                    log.info(f"Found corrupted file and removing from reduction: {fileName}, ({e})")
-                    fileNameStr.remove(fileName)
-                    if getattr(hdul, "close", None) and callable(hdul.close):
-                        hdul.close()
-                    del hdul
-                    continue
+                hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
+                                 ignore_missing_end=True)
 
                 image_header = hdul[0].header
-
-                fileNameList.append(fileName)
 
                 # TIME
                 timeVal = getJulianTime(image_header)
                 timeList.append(timeVal)
 
                 # AIRMASS
-                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit, exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
+                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit,
+                                     exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
                 # EXPOSURE_TIME
@@ -2420,7 +2487,7 @@ def main():
                     exptimes.append(image_header['EXPTIME'])
                 else:
                     exptimes.append(image_header['EXPOSURE'])
-                
+
                 # IMAGES
                 imageData = hdul[0].data
 
@@ -2443,79 +2510,85 @@ def main():
                     imageData = imageData / generalFlat
 
                 if i == 0:
-                    image_scale = 0.25 #get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
+                    image_scale = 0.25  # get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
                     log.info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
 
                     log.info("\nAligning your images from FITS files. Please wait.")
-                
+
                 # Image Alignment
-                aligned_bool, apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
+                aligned_bool, apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName,
+                                                           i)
 
                 if aligned_bool is False:
                     continue
-                
-                if np.isclose((apos[1]**2).sum()**0.5,0):
+
+                if np.isclose((apos[1] ** 2).sum() ** 0.5, 0):
                     print(fileName, "no alignment")
 
                 # Fit PSF for target star
-                xrot = exotic_UIprevTPX*np.cos(arot[1]) - exotic_UIprevTPY*np.sin(arot[1]) - apos[1][0]
-                yrot = exotic_UIprevTPX*np.sin(arot[1]) + exotic_UIprevTPY*np.cos(arot[1]) - apos[1][1]
-                psf_data["target_align"][i] = [xrot,yrot]
+                xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
+                yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
+                psf_data["target_align"][i] = [xrot, yrot]
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                 else:
                     psf_data["target"][i] = fit_centroid(
                         imageData,
-                        [xrot,yrot],
-                        psf_data["target"][0][2:], # reference psf in first image
-                        box=10)    
+                        [xrot, yrot],
+                        psf_data["target"][0][2:],  # reference psf in first image
+                        box=10)
 
-                # # fit for the centroids in all images 
-                for j,coord in enumerate(compStarList):
-                    ckey = "comp{}".format(j+1)
+                    # # fit for the centroids in all images
+                for j, coord in enumerate(compStarList):
+                    ckey = "comp{}".format(j + 1)
                     # apply image alignment transformation
-                    xrot = coord[0]*np.cos(arot[1]) - coord[1]*np.sin(arot[1]) - apos[1][0]
-                    yrot = coord[0]*np.sin(arot[1]) + coord[1]*np.cos(arot[1]) - apos[1][1]
-                    psf_data[ckey+"_align"][i] = [xrot,yrot]
+                    xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
+                    yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
+                    psf_data[ckey + "_align"][i] = [xrot, yrot]
 
                     if i == 0:
-                        psf_data[ckey][i] = fit_centroid(imageData, [xrot,yrot], box=10)
+                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                     else:
                         psf_data[ckey][i] = fit_centroid(
                             imageData,
-                            [xrot,yrot],
-                            psf_data[ckey][0][2:], # initialize with psf in first image
+                            [xrot, yrot],
+                            psf_data[ckey][0][2:],  # initialize with psf in first image
                             box=10)
 
                 # aperture photometry
                 if i == 0:
-                    sigma = float((psf_data["target"][0][3]+psf_data["target"][0][4])*0.5)
+                    sigma = float((psf_data["target"][0][3] + psf_data["target"][0][4]) * 0.5)
                     apers *= sigma
                     annuli *= sigma
 
                 for a, aper in enumerate(apers):
                     for an, annulus in enumerate(annuli):
-                        aper_data["target"][i][a][an],aper_data["target_bg"][i][a][an] = aperPhot( imageData,
-                            psf_data["target"][i,0],
-                            psf_data["target"][i,1],
-                            aper, annulus)
+                        aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
+                                                                                                   psf_data["target"][
+                                                                                                       i, 0],
+                                                                                                   psf_data["target"][
+                                                                                                       i, 1],
+                                                                                                   aper, annulus)
 
                         # loop through comp stars
-                        for j,coord in enumerate(compStarList):
-                            ckey = "comp{}".format(j+1)
-                            aper_data[ckey][i][a][an], aper_data[ckey+"_bg"][i][a][an] = aperPhot( imageData,
-                                        psf_data[ckey][i,0],
-                                        psf_data[ckey][i,1],
-                                        aper, annulus)
+                        for j, coord in enumerate(compStarList):
+                            ckey = "comp{}".format(j + 1)
+                            aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
+                                                                                                    psf_data[ckey][
+                                                                                                        i, 0],
+                                                                                                    psf_data[ckey][
+                                                                                                        i, 1],
+                                                                                                    aper, annulus)
 
                 # close file + delete from memory
                 hdul.close()
                 del hdul
 
             # filter bad images
-            badmask = (psf_data["target"][:,0] == 0) | (aper_data["target"][:,0,0] == 0) | np.isnan(aper_data["target"][:,0,0])
+            badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
+                aper_data["target"][:, 0, 0])
             if np.sum(~badmask) == 0:
                 log.error("No images to fit...check reference image for alignment (first image of sequence)")
 
@@ -2539,30 +2612,31 @@ def main():
                 exotic_infoDict['exposure'] = np.median(exptimes)
 
             # PSF flux
-            tFlux = 2*np.pi*psf_data['target'][:,2]*psf_data['target'][:,3]*psf_data['target'][:,4]
+            tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
 
             # loop over comp stars
-            for j,coord in enumerate(compStarList):
-                ckey = "comp{}".format(j+1)
+            for j, coord in enumerate(compStarList):
+                ckey = "comp{}".format(j + 1)
                 psf_data[ckey] = psf_data[ckey][~badmask]
-                psf_data[ckey+"_align"] = psf_data[ckey+"_align"][~badmask]
+                psf_data[ckey + "_align"] = psf_data[ckey + "_align"][~badmask]
 
-                cFlux = 2*np.pi*psf_data[ckey][:,2]*psf_data[ckey][:,3]*psf_data[ckey][:,4]
+                cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
                 myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
                 for k in myfit.bounds.keys():
                     log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
 
-                log.debug('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
-                log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals**2), 6)) + '\n')
+                log.debug('The Residual Standard Deviation is: ' + str(
+                    round(100 * myfit.residuals.std() / np.median(myfit.data), 6)) + "%")
+                log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals ** 2), 6)) + '\n')
 
-                resstd = myfit.residuals.std()/np.median(myfit.data)
+                resstd = myfit.residuals.std() / np.median(myfit.data)
                 if minSTD > resstd:  # If the standard deviation is less than the previous min
                     bestCompStar = j + 1
                     minSTD = resstd
                     minAperture = 0
-                    minAnnulus = 15*sigma
+                    minAnnulus = 15 * sigma
                     arrayNormUnc = myfit.dataerr
-                    
+
                     # sets the lists we want to print to correspond to the optimal aperature
                     goodFluxes = np.copy(myfit.data)
                     goodNormUnc = np.copy(myfit.dataerr)
@@ -2570,21 +2644,21 @@ def main():
                     goodAirmasses = np.copy(myfit.airmass)
                     goodTargets = tFlux
                     goodReferences = cFlux
-                    goodTUnc = tFlux**0.5
-                    goodRUnc = cFlux**0.5
+                    goodTUnc = tFlux ** 0.5
+                    goodRUnc = cFlux ** 0.5
                     bestlmfit = myfit
 
-                    finXTargCent = psf_data["target"][:,0]
-                    finYTargCent = psf_data["target"][:,1]
-                    finXRefCent = psf_data[ckey][:,0]
-                    finYRefCent = psf_data[ckey][:,1]
+                    finXTargCent = psf_data["target"][:, 0]
+                    finYTargCent = psf_data["target"][:, 1]
+                    finXRefCent = psf_data[ckey][:, 0]
+                    finYRefCent = psf_data[ckey][:, 1]
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
 
                 for an, annulus in enumerate(annuli):
-                    tFlux = aper_data['target'][:,a,an]
-                    tFlux_err = aper_data['target_err'][:,a,an]
+                    tFlux = aper_data['target'][:, a, an]
+                    tFlux_err = aper_data['target_err'][:, a, an]
 
                     # fit without a comparison star
                     myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape), airmass, ld, pDict)
@@ -2592,16 +2666,17 @@ def main():
                     for k in myfit.bounds.keys():
                         log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
 
-                    log.debug('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
-                    log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals**2), 6)) + '\n')
+                    log.debug('The Residual Standard Deviation is: ' + str(
+                        round(100 * myfit.residuals.std() / np.median(myfit.data), 6)) + "%")
+                    log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals ** 2), 6)) + '\n')
 
-                    resstd = myfit.residuals.std()/np.median(myfit.data)
+                    resstd = myfit.residuals.std() / np.median(myfit.data)
                     if minSTD > resstd:  # If the standard deviation is less than the previous min
                         minSTD = resstd
                         minAperture = -aper
                         minAnnulus = annulus
                         arrayNormUnc = arrayNormUnc
-                        
+
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
                         goodNormUnc = np.copy(myfit.dataerr)
@@ -2610,30 +2685,31 @@ def main():
                         goodAirmasses = np.copy(myfit.airmass)
                         goodTargets = tFlux
                         goodReferences = cFlux
-                        goodTUnc = tFlux**0.5
-                        goodRUnc = cFlux**0.5
+                        goodTUnc = tFlux ** 0.5
+                        goodRUnc = cFlux ** 0.5
                         goodResids = myfit.residuals
                         bestlmfit = myfit
 
-                        finXTargCent = psf_data["target"][:,0]
-                        finYTargCent = psf_data["target"][:,1]
-                        finXRefCent = psf_data[ckey][:,0]
-                        finYRefCent = psf_data[ckey][:,1]
+                        finXTargCent = psf_data["target"][:, 0]
+                        finYTargCent = psf_data["target"][:, 1]
+                        finXRefCent = psf_data[ckey][:, 0]
+                        finYRefCent = psf_data[ckey][:, 1]
 
                     # try to fit data with comp star
-                    for j,coord in enumerate(compStarList):
-                        ckey = "comp{}".format(j+1)
-                        cFlux = aper_data[ckey][:,a,an]
+                    for j, coord in enumerate(compStarList):
+                        ckey = "comp{}".format(j + 1)
+                        cFlux = aper_data[ckey][:, a, an]
 
                         myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                         for k in myfit.bounds.keys():
                             log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
 
-                        log.debug('The Residual Standard Deviation is: ' + str(round(100*myfit.residuals.std()/np.median(myfit.data), 6))+"%")
-                        log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals**2), 6)) + '\n')
+                        log.debug('The Residual Standard Deviation is: ' + str(
+                            round(100 * myfit.residuals.std() / np.median(myfit.data), 6)) + "%")
+                        log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals ** 2), 6)) + '\n')
 
-                        resstd = myfit.residuals.std()/np.median(myfit.data)
+                        resstd = myfit.residuals.std() / np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min
                             bestCompStar = j + 1
                             comp_coords = coord
@@ -2641,7 +2717,7 @@ def main():
                             minAperture = aper
                             minAnnulus = annulus
                             arrayNormUnc = arrayNormUnc
-                            
+
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = np.copy(myfit.data)
                             goodNormUnc = np.copy(myfit.dataerr)
@@ -2650,15 +2726,15 @@ def main():
                             goodAirmasses = np.copy(myfit.airmass)
                             goodTargets = tFlux
                             goodReferences = cFlux
-                            goodTUnc = tFlux**0.5
-                            goodRUnc = cFlux**0.5
+                            goodTUnc = tFlux ** 0.5
+                            goodRUnc = cFlux ** 0.5
                             goodResids = myfit.residuals
                             bestlmfit = myfit
 
-                            finXTargCent = psf_data["target"][:,0]
-                            finYTargCent = psf_data["target"][:,1]
-                            finXRefCent = psf_data[ckey][:,0]
-                            finYRefCent = psf_data[ckey][:,1]
+                            finXTargCent = psf_data["target"][:, 0]
+                            finYTargCent = psf_data["target"][:, 1]
+                            finXRefCent = psf_data[ckey][:, 0]
+                            finYRefCent = psf_data[ckey][:, 1]
 
             # log best fit
             if minAperture == 0:  # psf
@@ -2672,8 +2748,8 @@ def main():
                 log.info('*********************************************')
                 log.info('Best Comparison Star: None')
                 log.info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log.info('Optimal Aperture: ' + str(abs(np.round(minAperture,2))))
-                log.info('Optimal Annulus: ' + str(np.round(minAnnulus,2)))
+                log.info('Optimal Aperture: ' + str(abs(np.round(minAperture, 2))))
+                log.info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
                 log.info('********************************************\n')
                 bestCompStar = None
 
@@ -2681,12 +2757,12 @@ def main():
                 log.info('*********************************************')
                 log.info('Best Comparison Star: #' + str(bestCompStar))
                 log.info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log.info('Optimal Aperture: ' + str(np.round(minAperture,2)))
-                log.info('Optimal Annulus: ' + str(np.round(minAnnulus,2)))
+                log.info('Optimal Aperture: ' + str(np.round(minAperture, 2)))
+                log.info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
                 log.info('********************************************\n')
 
             # Take the BJD times from the image headers
-            if "BJD_TDB" in image_header or "BJD" in image_header:
+            if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
@@ -2695,10 +2771,12 @@ def main():
 
                 animate_toggle(True)
                 try:
-                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati, longi=longit, alt=exotic_infoDict['elev'])
+                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati,
+                                                       longi=longit, alt=exotic_infoDict['elev'])
                     goodTimes = resultos[0]
                 except:
-                    targetloc = astropy.coordinates.SkyCoord(pDict['ra'], pDict['dec'], unit=(u.deg,u.deg), frame='icrs')
+                    targetloc = astropy.coordinates.SkyCoord(pDict['ra'], pDict['dec'], unit=(u.deg, u.deg),
+                                                             frame='icrs')
                     obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit, height=exotic_infoDict['elev'])
                     timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
                     ltt_bary = timesToConvert.light_travel_time(targetloc)
@@ -2710,8 +2788,8 @@ def main():
             # sigma clip
             si = np.argsort(goodTimes)
             dt = np.mean(np.diff(np.sort(goodTimes)))
-            ndt = int(30./24./60./dt)*2+1 # ~30 minutes
-            gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt) # good indexs
+            ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
+            gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt)  # good indexs
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
@@ -2727,23 +2805,31 @@ def main():
             goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = goodAirmasses[si][gi]
 
-            picframe = 10*(minAperture+15*sigma)
-            pltx = [max([0,min([finXTargCent[0], finXRefCent[0]])-picframe]), min([np.shape(firstImage)[0],max([finXTargCent[0], finXRefCent[0]])+picframe])]
-            plty = [max([0,min([finYTargCent[0], finYRefCent[0]])-picframe]), min([np.shape(firstImage)[1],max([finYTargCent[0], finYRefCent[0]])+picframe])]
+            picframe = 10 * (minAperture + 15 * sigma)
+            pltx = [max([0, min([finXTargCent[0], finXRefCent[0]]) - picframe]),
+                    min([np.shape(firstImage)[0], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
+            plty = [max([0, min([finYTargCent[0], finYRefCent[0]]) - picframe]),
+                    min([np.shape(firstImage)[1], max([finYTargCent[0], finYRefCent[0]]) + picframe])]
             plt.close()
 
             for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
                 fig, ax = plt.subplots()
                 # Draw apertures and sky annuli
-                target_circle = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False, ls='-', label='Target')
-                target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus, color='lime', fill=False, ls='--', lw=.5)
+                target_circle = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False,
+                                           ls='-', label='Target')
+                target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus,
+                                               color='lime', fill=False, ls='--', lw=.5)
                 if minAperture >= 0:
-                    ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False, ls='-.', label='Comp')
-                    ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r', fill=False, ls='--', lw=.5)
+                    ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False,
+                                            ls='-.', label='Comp')
+                    ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r',
+                                                fill=False, ls='--', lw=.5)
 
-                med_img = median_filter(firstImage, (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
+                med_img = median_filter(firstImage, (4, 4))[int(pltx[0]):round(int(pltx[1])),
+                          int(plty[0]):round(int(plty[1]))]
                 norm = ImageNormalize(firstImage, interval=ZScaleInterval(), stretch=stretch)
-                plt.imshow(firstImage, norm=norm, origin='lower', cmap='Greys_r', interpolation=None, vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
+                plt.imshow(firstImage, norm=norm, origin='lower', cmap='Greys_r', interpolation=None,
+                           vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
                 plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
                 ax.add_artist(target_circle)
                 ax.add_artist(target_circle_sky)
@@ -2764,19 +2850,21 @@ def main():
                 for text in l.get_texts():
                     text.set_color("white")
                 apos = '\''
+                Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
                 plt.savefig(Path(exotic_infoDict['saveplot']) /
-                                   f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
-                                   f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
+                            f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
+                            f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
                 plt.savefig(Path(exotic_infoDict['saveplot']) /
-                                   f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
-                                   f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
+                            f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
+                            f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt.close()
 
             log.info(f"\nFOV file saved as: {exotic_infoDict['saveplot']}/FOV_{pDict['pName']}_"
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Centroid position plots
-            plotCentroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi], goodTimes, pDict['pName'], exotic_infoDict['date'])
+            plotCentroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
+                          goodTimes, pDict['pName'], exotic_infoDict['date'])
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
@@ -2806,7 +2894,7 @@ def main():
             # plt.grid(True)
             plt.title(pDict['pName'] + ' Raw Flux Values ' + exotic_infoDict['date'])
             plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
-                               f"TargetRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
+                        f"TargetRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
 
             plt.figure()
@@ -2817,7 +2905,7 @@ def main():
             # plt.grid(True)
             plt.title('Comparison Star Raw Flux Values ' + exotic_infoDict['date'])
             plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
-                               f"CompRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
+                        f"CompRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
 
             # Plots final reduced light curve (after the 3 sigma clip)
@@ -2829,11 +2917,12 @@ def main():
             # plt.grid(True)
             plt.title(pDict['pName'] + ' Normalized Flux vs. Time ' + exotic_infoDict['date'])
             plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
-                               f"NormalizedFluxTime_{pDict['pName']}_{exotic_infoDict['date']}.png")
+                        f"NormalizedFluxTime_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
 
             # Save normalized flux to text file prior to MCMC
-            params_file = Path(exotic_infoDict['saveplot']) / f"NormalizedFlux_{pDict['pName']}_{exotic_infoDict['date']}.txt"
+            params_file = Path(
+                exotic_infoDict['saveplot']) / f"NormalizedFlux_{pDict['pName']}_{exotic_infoDict['date']}.txt"
             with params_file.open('w') as f:
                 f.write("BJD,Norm Flux,Norm Err,AM\n")
 
@@ -2972,12 +3061,14 @@ def main():
         ax_res.tick_params(axis='y', colors='black')
 
         # residual plot
-        ax_res.errorbar(myfit.phase, myfit.residuals/np.median(myfit.data), yerr=myfit.detrendederr, color='gray', marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
+        ax_res.errorbar(myfit.phase, myfit.residuals / np.median(myfit.data), yerr=myfit.detrendederr, color='gray',
+                        marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
         ax_res.plot(myfit.phase, np.zeros(len(myfit.phase)), 'r-', lw=2, alpha=1, zorder=100)
         ax_res.set_ylabel('Residuals')
-        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals/np.median(myfit.data)), 3 * np.nanstd(myfit.residuals/np.median(myfit.data))])
+        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals / np.median(myfit.data)),
+                         3 * np.nanstd(myfit.residuals / np.median(myfit.data))])
 
-        correctedSTD = np.std(myfit.residuals/np.median(myfit.data))
+        correctedSTD = np.std(myfit.residuals / np.median(myfit.data))
         ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
                        marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
         ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
@@ -2985,24 +3076,30 @@ def main():
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
 
-        ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10), binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10),
-                        yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
+        ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10),
+                        binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10),
+                        yerr=
+                        binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[
+                            1],
                         fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
         ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
                        binner(myfit.detrended, len(myfit.detrended) // 10),
-                       yerr=binner(myfit.residuals/np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[1],
+                       yerr=
+                       binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[
+                           1],
                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
 
         # remove vertical whitespace
         f.subplots_adjust(hspace=0)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
+        Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
         try:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except AttributeError:
+        except:
             f.savefig(Path(exotic_infoDict['saveplot']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()
@@ -3020,13 +3117,16 @@ def main():
         plt.close()
 
         # write output to text file
-        params_file = Path(exotic_infoDict['saveplot']) / f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.csv"
+        params_file = Path(
+            exotic_infoDict['saveplot']) / f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.csv"
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {pDict['pName']}\n")
             f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
             phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
 
-            for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(myfit.time, phase, myfit.detrended, myfit.dataerr/myfit.airmass_model, myfit.transit, myfit.airmass_model):
+            for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(myfit.time, phase, myfit.detrended,
+                                                                  myfit.dataerr / myfit.airmass_model, myfit.transit,
+                                                                  myfit.airmass_model):
                 f.write(f"{bjdi}, {phasei}, {fluxi}, {fluxerri}, {modeli}, {ami}\n")
 
         #######################################################################
@@ -3035,12 +3135,18 @@ def main():
 
         log.info("\n*********************************************************")
         log.info("FINAL PLANETARY PARAMETERS\n")
-        log.info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
-        log.info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
-        log.info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
-        log.info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
-        log.info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
-        log.info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals/np.median(myfit.data)))} %")
+        log.info(
+            f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
+        log.info(
+            f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
+        log.info(
+            f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
+        log.info(
+            f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
+        log.info(
+            f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
+        log.info(
+            f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
         log.info("*********************************************************")
 
         ##########
@@ -3051,8 +3157,8 @@ def main():
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])} BJD_TDB",
             "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}",
-            "Transit depth (Rp/Rs)^2": f"{round_to_2(100.*(myfit.parameters['rprs']**2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]",
-            "Semi Major Axis/Star Radius (a/Rs)":f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
+            "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]",
+            "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
             "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %"
@@ -3061,7 +3167,7 @@ def main():
 
         # write output to json file
         with params_file.open('w') as f:
-            json.dump(final_params, f,  indent=4)
+            json.dump(final_params, f, indent=4)
 
         log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
                  f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
@@ -3082,22 +3188,34 @@ def main():
             comp_star = []
 
         filter_dict = {'name': exotic_infoDict['filter'],
-                       'fwhm': [str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
-                                str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
+                       'fwhm': [
+                           str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
+                           str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
 
-        priors_dict = {'Period': {'value': str(pDict['pPer']), 'uncertainty': str(pDict['pPerUnc']) if pDict['pPerUnc'] else pDict['pPerUnc']},
-                       'a/R*': {'value': str(pDict['aRs']), 'uncertainty': str(pDict['aRsUnc']) if pDict['aRsUnc'] else pDict['aRsUnc']},
-                       'inc': {'value': str(pDict['inc']), 'uncertainty': str(pDict['incUnc']) if pDict['incUnc'] else pDict['incUnc']},
-                       'ecc': {'value': str(pDict['ecc']), 'uncertainty': None},
-                       'u0': {'value': str(ld0[0]), 'uncertainty': str(ld0[1])},
-                       'u1': {'value': str(ld1[0]), 'uncertainty': str(ld1[1])},
-                       'u2': {'value': str(ld2[0]), 'uncertainty': str(ld2[1])},
-                       'u3': {'value': str(ld3[0]), 'uncertainty': str(ld3[1])}}
+        priors_dict = {'Period': {'value': str(round_to_2(pDict['pPer'], pDict['pPerUnc'])),
+                                  'uncertainty': str(round_to_2(pDict['pPerUnc'])) if pDict['pPerUnc'] else pDict[
+                                      'pPerUnc']},
+                       'a/R*': {'value': str(round_to_2(pDict['aRs'], pDict['aRsUnc'])),
+                                'uncertainty': str(round_to_2(pDict['aRsUnc'])) if pDict['aRsUnc'] else pDict[
+                                    'aRsUnc']},
+                       'inc': {'value': str(round_to_2(pDict['inc'], pDict['incUnc'])),
+                               'uncertainty': str(round_to_2(pDict['incUnc'])) if pDict['incUnc'] else pDict['incUnc']},
+                       'ecc': {'value': str(round_to_2(pDict['ecc'])), 'uncertainty': None},
+                       'u0': {'value': str(round_to_2(ld0[0], ld0[1])), 'uncertainty': str(round_to_2(ld0[1]))},
+                       'u1': {'value': str(round_to_2(ld1[0], ld1[1])), 'uncertainty': str(round_to_2(ld1[1]))},
+                       'u2': {'value': str(round_to_2(ld2[0], ld2[1])), 'uncertainty': str(round_to_2(ld2[1]))},
+                       'u3': {'value': str(round_to_2(ld3[0], ld3[1])), 'uncertainty': str(round_to_2(ld3[1]))}}
 
-        results_dict = {'Tc': {'value': str(round(myfit.parameters['tmid'], 8)), 'uncertainty': str(round(myfit.errors['tmid'], 8))},
-                        'Rp/R*': {'value': str(round(myfit.parameters['rprs'], 6)), 'uncertainty': str(round(myfit.errors['rprs'], 6))},
-                        'Am1': {'value': str(round(myfit.parameters['a1'], 5)), 'uncertainty': str(round(myfit.errors['a1'], 5))},
-                        'Am2': {'value': str(round(myfit.parameters['a2'], 5)), 'uncertainty': str(round(myfit.errors['a2'], 5))}}
+        round_to_2(myfit.parameters['a1'], myfit.errors['a1'])
+
+        results_dict = {'Tc': {'value': str(round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])),
+                               'uncertainty': str(round_to_2(myfit.errors['tmid']))},
+                        'Rp/R*': {'value': str(round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])),
+                                  'uncertainty': str(round_to_2(myfit.errors['rprs']))},
+                        'Am1': {'value': str(round_to_2(myfit.parameters['a1'], myfit.errors['a1'])),
+                                'uncertainty': str(round_to_2(myfit.errors['a1']))},
+                        'Am2': {'value': str(round_to_2(myfit.parameters['a2'], myfit.errors['a2'])),
+                                'uncertainty': str(round_to_2(myfit.errors['a2']))}}
 
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:
@@ -3111,7 +3229,7 @@ def main():
                     f"#STAR_NAME={pDict['sName']}\n"  # code yields
                     f"#EXOPLANET_NAME={pDict['pName']}\n"  # code yields
                     f"#BINNING={exotic_infoDict['pixelbin']}\n"  # user input
-                    f"#EXPOSURE_TIME={exotic_infoDict.get('exposure',-1)}\n"  # UI
+                    f"#EXPOSURE_TIME={exotic_infoDict.get('exposure', -1)}\n"  # UI
                     f"#FILTER-XC={json.dumps(filter_dict)}\n"
                     f"#COMP_STAR-XC={json.dumps(comp_star)}\n"
                     f"#NOTES={exotic_infoDict['notes']}\n"
@@ -3125,9 +3243,9 @@ def main():
 
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):
-                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC]/myfit.parameters['a1'], 7)},"
-                        f"{round(myfit.dataerr[aavsoC]/myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
-                        f"{round(myfit.airmass_model[aavsoC]/myfit.parameters['a1'], 7)}\n")
+                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
+                        f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
+                        f"{round(myfit.airmass_model[aavsoC] / myfit.parameters['a1'], 7)}\n")
 
         log.info("Output File Saved")
 

@@ -563,14 +563,14 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
         except ValueError:
             log.info("Sorry, not a valid datatype.")
             continue
-        if type_ == str and val1 and val2:
+        if type_ == str and val1 and val2 and val3:
             result = result.lower().strip()
-            if result not in (val1, val2):
+            if result not in (val1, val2, val3):
                 log.info("Sorry, your response was not valid.")
             else:
                 return result
-        elif type_ == int and val1 and val2:
-            if result not in (val1, val2):
+        elif type_ == int and val1 and val2 and val3:
+            if result not in (val1, val2, val3):
                 log.info("Sorry, your response was not valid.")
             else:
                 return result

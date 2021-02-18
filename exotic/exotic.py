@@ -2621,8 +2621,6 @@ def main():
                 psf_data[ckey + "_align"] = psf_data[ckey + "_align"][~badmask]
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                import pdb; pdb.set_trace()
-                print("first")
                 myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
                 for k in myfit.bounds.keys():
                     log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
@@ -2663,9 +2661,6 @@ def main():
                     tFlux_err = aper_data['target_err'][:, a, an]
 
                     # fit without a comparison star
-                    import pdb;
-                    pdb.set_trace()
-                    print("second")
                     myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape), airmass, ld, pDict)
 
                     for k in myfit.bounds.keys():
@@ -2705,9 +2700,6 @@ def main():
                         ckey = "comp{}".format(j + 1)
                         cFlux = aper_data[ckey][:, a, an]
 
-                        import pdb;
-                        pdb.set_trace()
-                        print("third")
                         myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                         for k in myfit.bounds.keys():

@@ -3178,7 +3178,7 @@ def main():
             "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
             "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %",
-            "Transit Duration (day)":f"{np.mean(durs):.5f} +/- {np.std(durs):.5f}" 
+            "Transit Duration (day)":f"{round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}" 
         }
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 

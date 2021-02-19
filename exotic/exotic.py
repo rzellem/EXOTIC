@@ -3162,7 +3162,7 @@ def main():
         log.info(
             f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
         log.info(
-            f"              Transit Duration [day]: {np.mean(durs):.5f} +/- {np.std(durs):.5f}")
+            f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log.info("*********************************************************")
 
         ##########

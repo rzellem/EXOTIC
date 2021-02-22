@@ -1555,7 +1555,12 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     xv, yv = mesh_box([xc, yc], np.round(r + dr))
     rv = ((xv - xc) ** 2 + (yv - yc) ** 2) ** 0.5
     mask = (rv > r) & (rv < (r + dr))
-    cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
+    try:
+        cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
+    except IndexError:
+        log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
+        cutoff = np.nanpercentile(data[yv, xv], ptol)
+
     dat = np.array(data[yv, xv], dtype=float)
     dat[dat > cutoff] = np.nan  # ignore pixels brighter than percentile
 

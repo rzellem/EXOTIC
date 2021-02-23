@@ -119,7 +119,6 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
 
 import numpy as np
 import os
@@ -137,6 +136,7 @@ from scipy.signal import savgol_filter
 from scipy.ndimage import binary_dilation, label
 # cross correlation imports
 from skimage.registration import phase_cross_correlation
+from skimage.transform import rescale
 # error handling for scraper
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
@@ -1313,10 +1313,28 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
     rot = np.zeros(len(image_data))
     pos = np.zeros((len(image_data), 2))
 
+    # crop image to ROI
     height = image_data.shape[1]
     width = image_data.shape[2]
     roix = slice(int(width * (0.5 - roi / 2)), int(width * (0.5 + roi / 2)))
     roiy = slice(int(height * (0.5 - roi / 2)), int(height * (0.5 + roi / 2)))
+
+    # scale data
+    npix = np.product(image_data[0].shape)
+    if npix > 16e6: # 16 Mega Pixel
+        sf = 0.25
+    elif npix > 7.9e6: # ~8 MP
+        sf = 0.33
+    elif npix > 1e6: # more than 1 Mega Pixel
+        sf = 0.5
+    else:
+        sf = 1
+
+    if sf != 1:
+        image_data = np.array([
+            rescale(image_data[0],sf),
+            rescale(image_data[1],sf),
+        ])
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
     # aligned_bool for discarded images to delete .FITS data from airmass and times.

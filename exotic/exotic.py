@@ -1310,7 +1310,6 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
     roiy = slice(int(height*(0.5-roi/2)), int(height*(0.5+roi/2)))
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
-    # aligned_bool for discarded images to delete .FITS data from airmass and times.
     try:
         sys.stdout.write(f"Aligning Image {count + 1} of {num_images}\r")
         log.debug(f"Aligning Image {count + 1} of {num_images}\r")
@@ -1320,7 +1319,6 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
         rot[1] = results[0].rotation
         pos[1] = results[0].translation
 
-        aligned_bool = True
     except Exception as ee:
         log.info(ee)
         log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
@@ -1328,9 +1326,7 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
         rot = np.zeros(len(image_data))
         pos = np.zeros((len(image_data), 2))
 
-        aligned_bool = False
-
-    return aligned_bool, pos, rot
+    return pos, rot
 
 
 def get_pixel_scale(wcs_header, header, pixel_init):
@@ -2494,10 +2490,7 @@ def main():
                     log.info("\nAligning your images from FITS files. Please wait.")
                 
                 # Image Alignment
-                aligned_bool, apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
-
-                if aligned_bool is False:
-                    continue
+                apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
                 
                 if np.isclose((apos[1]**2).sum()**0.5,0):
                     print(fileName, "no alignment")

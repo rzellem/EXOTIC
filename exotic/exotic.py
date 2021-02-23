@@ -2492,12 +2492,17 @@ def main():
                 # Image Alignment
                 apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
                 
-                if np.isclose((apos[1]**2).sum()**0.5,0):
+                if np.isclose((apos[1]**2).sum()**0.5,0) and i != 0:
                     print(fileName, "no alignment")
 
                 # Fit PSF for target star
-                xrot = exotic_UIprevTPX*np.cos(arot[1]) - exotic_UIprevTPY*np.sin(arot[1]) - apos[1][0]
-                yrot = exotic_UIprevTPX*np.sin(arot[1]) + exotic_UIprevTPY*np.cos(arot[1]) - apos[1][1]
+                if 3.0 <= np.abs(arot[1]) <= 3.3:
+                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) + apos[1][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) + apos[1][1]
+                else:
+                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
+
                 psf_data["target_align"][i] = [xrot,yrot]
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
@@ -2508,14 +2513,18 @@ def main():
                         psf_data["target"][0][2:], # reference psf in first image
                         box=10)    
 
-                # # fit for the centroids in all images 
+                # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
                     ckey = "comp{}".format(j+1)
                     # apply image alignment transformation
-                    xrot = coord[0]*np.cos(arot[1]) - coord[1]*np.sin(arot[1]) - apos[1][0]
-                    yrot = coord[0]*np.sin(arot[1]) + coord[1]*np.cos(arot[1]) - apos[1][1]
-                    psf_data[ckey+"_align"][i] = [xrot,yrot]
+                    if 3.0 <= np.abs(arot[1]) <= 3.3:
+                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) + apos[1][0]
+                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) + apos[1][1]
+                    else:
+                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
+                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
 
+                    psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
                         psf_data[ckey][i] = fit_centroid(imageData, [xrot,yrot], box=10)
                     else:

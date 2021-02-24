@@ -1345,7 +1345,7 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
 
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         rot[1] = results[0].rotation
-        pos[1] = results[0].translation
+        pos[1] = results[0].translation/sf
 
         aligned_bool = True
     except Exception as ee:

@@ -1337,7 +1337,6 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
         ])
 
     # Align images from .FITS files and catch exceptions if images can't be aligned.
-    # aligned_bool for discarded images to delete .FITS data from airmass and times.
     try:
         sys.stdout.write(f"Aligning Image {count + 1} of {num_images}\r")
         log.debug(f"Aligning Image {count + 1} of {num_images}\r")
@@ -1347,7 +1346,6 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
         rot[1] = results[0].rotation
         pos[1] = results[0].translation/sf
 
-        aligned_bool = True
     except Exception as ee:
         log.info(ee)
         log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
@@ -1355,9 +1353,7 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
         rot = np.zeros(len(image_data))
         pos = np.zeros((len(image_data), 2))
 
-        aligned_bool = False
-
-    return aligned_bool, pos, rot
+    return pos, rot
 
 
 def get_pixel_scale(wcs_header, header, pixel_init):
@@ -2541,19 +2537,20 @@ def main():
                     log.info("\nAligning your images from FITS files. Please wait.")
 
                 # Image Alignment
-                aligned_bool, apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName,
-                                                           i)
+                apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
 
-                if aligned_bool is False:
-                    continue
-
-                if np.isclose((apos[1] ** 2).sum() ** 0.5, 0):
+                if np.isclose((apos[1]**2).sum()**0.5,0) and i != 0:
                     print(fileName, "no alignment")
 
                 # Fit PSF for target star
-                xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
-                yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
-                psf_data["target_align"][i] = [xrot, yrot]
+                if 3.0 <= np.abs(arot[1]) <= 3.3:
+                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) + apos[1][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) + apos[1][1]
+                else:
+                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
+
+                psf_data["target_align"][i] = [xrot,yrot]
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                 else:
@@ -2563,14 +2560,18 @@ def main():
                         psf_data["target"][0][2:],  # reference psf in first image
                         box=10)
 
-                    # # fit for the centroids in all images
-                for j, coord in enumerate(compStarList):
-                    ckey = "comp{}".format(j + 1)
+                # fit for the centroids in all images
+                for j,coord in enumerate(compStarList):
+                    ckey = "comp{}".format(j+1)
                     # apply image alignment transformation
-                    xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
-                    yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
-                    psf_data[ckey + "_align"][i] = [xrot, yrot]
+                    if 3.0 <= np.abs(arot[1]) <= 3.3:
+                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) + apos[1][0]
+                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) + apos[1][1]
+                    else:
+                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
+                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
 
+                    psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
                         psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                     else:
@@ -3203,7 +3204,7 @@ def main():
             "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
             "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %",
-            "Transit Duration (day)":f"{round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}" 
+            "Transit Duration (day)":f"{round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}"
         }
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 

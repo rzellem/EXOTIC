@@ -2816,6 +2816,8 @@ def main():
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
+            if len(OOT) == 0: # if user does not get any out-of-transit data, normalize by the max data instead
+                OOT = (bestlmfit.transit == np.nanmax(bestlmfit.transit))
             OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
             goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
 
@@ -3283,11 +3285,17 @@ def main():
             # Older formatting, will remove later
             f.write(previous_data_format(pDict, ld0, ld1, ld2, ld3, myfit))
 
+            f.write("# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. This work is supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute.\n"
+                    "# Use of this data is governed by the AAVSO Data Usage Guidelines: aavso.org/data-usage-guidelines\n")
+
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):
-                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
-                        f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
-                        f"{round(myfit.airmass_model[aavsoC] / myfit.parameters['a1'], 7)}\n")
+                # f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
+                #         f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
+                #         f"{round(myfit.airmass_model[aavsoC] / myfit.parameters['a1'], 7)}\n")
+                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC], 7)},"
+                        f"{round(myfit.dataerr[aavsoC], 7)},{round(goodAirmasses[aavsoC], 7)},"
+                        f"{round(myfit.airmass_model[aavsoC], 7)}\n")
 
         log.info("Output File Saved")
 

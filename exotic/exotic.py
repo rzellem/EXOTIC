@@ -119,7 +119,6 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
 
 import numpy as np
 import os
@@ -137,6 +136,7 @@ from scipy.signal import savgol_filter
 from scipy.ndimage import binary_dilation, label
 # cross correlation imports
 from skimage.registration import phase_cross_correlation
+from skimage.transform import rescale
 # error handling for scraper
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
@@ -148,9 +148,9 @@ try:  # science constants
 except ImportError:
     from .constants import *
 try:  # light curve numerics
-    from .api.elca import lc_fitter, binner
+    from .api.elca import lc_fitter, binner, transit
 except ImportError:  # package import
-    from api.elca import lc_fitter, binner
+    from api.elca import lc_fitter, binner, transit
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
@@ -1313,13 +1313,30 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
     rot = np.zeros(len(image_data))
     pos = np.zeros((len(image_data), 2))
 
+    # crop image to ROI
     height = image_data.shape[1]
     width = image_data.shape[2]
     roix = slice(int(width * (0.5 - roi / 2)), int(width * (0.5 + roi / 2)))
     roiy = slice(int(height * (0.5 - roi / 2)), int(height * (0.5 + roi / 2)))
 
+    # scale data
+    npix = np.product(image_data[0].shape)
+    if npix > 16e6: # 16 Mega Pixel
+        sf = 0.25
+    elif npix > 7.9e6: # ~8 MP
+        sf = 0.33
+    elif npix > 1e6: # more than 1 Mega Pixel
+        sf = 0.5
+    else:
+        sf = 1
+
+    if sf != 1:
+        image_data = np.array([
+            rescale(image_data[0],sf),
+            rescale(image_data[1],sf),
+        ])
+
     # Align images from .FITS files and catch exceptions if images can't be aligned.
-    # aligned_bool for discarded images to delete .FITS data from airmass and times.
     try:
         sys.stdout.write(f"Aligning Image {count + 1} of {num_images}\r")
         log.debug(f"Aligning Image {count + 1} of {num_images}\r")
@@ -1327,9 +1344,8 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
 
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         rot[1] = results[0].rotation
-        pos[1] = results[0].translation
+        pos[1] = results[0].translation/sf
 
-        aligned_bool = True
     except Exception as ee:
         log.info(ee)
         log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
@@ -1337,9 +1353,7 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
         rot = np.zeros(len(image_data))
         pos = np.zeros((len(image_data), 2))
 
-        aligned_bool = False
-
-    return aligned_bool, pos, rot
+    return pos, rot
 
 
 def get_pixel_scale(wcs_header, header, pixel_init):
@@ -1555,7 +1569,12 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     xv, yv = mesh_box([xc, yc], np.round(r + dr))
     rv = ((xv - xc) ** 2 + (yv - yc) ** 2) ** 0.5
     mask = (rv > r) & (rv < (r + dr))
-    cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
+    try:
+        cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
+    except IndexError:
+        log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
+        cutoff = np.nanpercentile(data[yv, xv], ptol)
+
     dat = np.array(data[yv, xv], dtype=float)
     dat[dat > cutoff] = np.nan  # ignore pixels brighter than percentile
 
@@ -2518,19 +2537,20 @@ def main():
                     log.info("\nAligning your images from FITS files. Please wait.")
 
                 # Image Alignment
-                aligned_bool, apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName,
-                                                           i)
+                apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
 
-                if aligned_bool is False:
-                    continue
-
-                if np.isclose((apos[1] ** 2).sum() ** 0.5, 0):
+                if np.isclose((apos[1]**2).sum()**0.5,0) and i != 0:
                     print(fileName, "no alignment")
 
                 # Fit PSF for target star
-                xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
-                yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
-                psf_data["target_align"][i] = [xrot, yrot]
+                if 3.0 <= np.abs(arot[1]) <= 3.3:
+                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) + apos[1][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) + apos[1][1]
+                else:
+                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
+
+                psf_data["target_align"][i] = [xrot,yrot]
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                 else:
@@ -2540,14 +2560,18 @@ def main():
                         psf_data["target"][0][2:],  # reference psf in first image
                         box=10)
 
-                    # # fit for the centroids in all images
-                for j, coord in enumerate(compStarList):
-                    ckey = "comp{}".format(j + 1)
+                # fit for the centroids in all images
+                for j,coord in enumerate(compStarList):
+                    ckey = "comp{}".format(j+1)
                     # apply image alignment transformation
-                    xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
-                    yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
-                    psf_data[ckey + "_align"][i] = [xrot, yrot]
+                    if 3.0 <= np.abs(arot[1]) <= 3.3:
+                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) + apos[1][0]
+                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) + apos[1][1]
+                    else:
+                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
+                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
 
+                    psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
                         psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                     else:
@@ -2793,6 +2817,8 @@ def main():
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
+            if len(OOT) == 0: # if user does not get any out-of-transit data, normalize by the max data instead
+                OOT = (bestlmfit.transit == np.nanmax(bestlmfit.transit))
             OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
             goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
 
@@ -3033,6 +3059,20 @@ def main():
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 
+        # estimate transit duration
+        pars = dict(**myfit.parameters)
+        times = np.linspace(np.min(myfit.time), np.max(myfit.time), 1000)
+        dt = np.diff(times).mean()
+        durs = []
+        for r in range(1000):
+            # randomize parameters
+            for k in myfit.errors:
+                pars[k] = np.random.normal(myfit.parameters[k], myfit.errors[k])
+
+            data = transit(times, pars)
+            tmask = data < 1
+            durs.append(tmask.sum()*dt)
+
         ########################
         # PLOT FINAL LIGHT CURVE
         ########################
@@ -3147,6 +3187,8 @@ def main():
             f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log.info(
             f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        log.info(
+            f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log.info("*********************************************************")
 
         ##########
@@ -3161,7 +3203,8 @@ def main():
             "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
             "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
-            "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %"
+            "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %",
+            "Transit Duration (day)":f"{round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}"
         }
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 
@@ -3215,7 +3258,9 @@ def main():
                         'Am1': {'value': str(round_to_2(myfit.parameters['a1'], myfit.errors['a1'])),
                                 'uncertainty': str(round_to_2(myfit.errors['a1']))},
                         'Am2': {'value': str(round_to_2(myfit.parameters['a2'], myfit.errors['a2'])),
-                                'uncertainty': str(round_to_2(myfit.errors['a2']))}}
+                                'uncertainty': str(round_to_2(myfit.errors['a2']))},
+                        'Duration':{'value':str(round_to_2(np.mean(durs))),
+                                    'uncertainty':str(round_to_2(np.std(durs)))}}
 
         params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
         with params_file.open('w') as f:
@@ -3241,11 +3286,17 @@ def main():
             # Older formatting, will remove later
             f.write(previous_data_format(pDict, ld0, ld1, ld2, ld3, myfit))
 
+            f.write("# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. This work is supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute.\n"
+                    "# Use of this data is governed by the AAVSO Data Usage Guidelines: aavso.org/data-usage-guidelines\n")
+
             f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):
-                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
-                        f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
-                        f"{round(myfit.airmass_model[aavsoC] / myfit.parameters['a1'], 7)}\n")
+                # f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
+                #         f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
+                #         f"{round(myfit.airmass_model[aavsoC] / myfit.parameters['a1'], 7)}\n")
+                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC], 7)},"
+                        f"{round(myfit.dataerr[aavsoC], 7)},{round(goodAirmasses[aavsoC], 7)},"
+                        f"{round(myfit.airmass_model[aavsoC], 7)}\n")
 
         log.info("Output File Saved")
 

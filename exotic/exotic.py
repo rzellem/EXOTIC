@@ -87,6 +87,7 @@ if __name__ == "__main__":
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
 import argparse
+from datetime import datetime
 # Image alignment import
 import astroalign as aa
 
@@ -2188,12 +2189,16 @@ def main():
 
         # observation date
         if fileorcommandline == 1:
-            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
+            exotic_infoDict['date'] = user_input("\nPlease enter the Observation Date (DD-Month-YYYY): ", type_=str)
 
-        # Using a / in your date can screw up the file paths- this will check user's date
-        while '/' in exotic_infoDict['date']:
-            log.info("Do not use / in your date. Please try again.")
-            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
+        while True:
+            try:
+                if exotic_infoDict['date'] != datetime.strptime(exotic_infoDict['date'], '%d-%B-%Y').strftime('%d-%B-%Y'):
+                    raise ValueError
+                break
+            except ValueError:
+                log.info('\nThe entered Observation Date format is incorrect.')
+                exotic_infoDict['date'] = user_input("\nPlease enter the Observation Date (DD-Month-YYYY): ", type_=str)
 
         if fitsortext == 1:
             if fileorcommandline == 1:

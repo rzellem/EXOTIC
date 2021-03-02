@@ -1023,7 +1023,7 @@ def round_to_2(*args):
         y = args[0]
     else:
         y = args[1]
-    if np.floor(y) >= 1.:
+    if np.floor(y) >= 1. or y == 0.0:
         roundval = 2
     else:
         roundval = -int(np.floor(np.log10(abs(y)))) + 1

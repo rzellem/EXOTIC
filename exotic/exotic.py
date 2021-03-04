@@ -2484,6 +2484,9 @@ def main():
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
 
+            # TODO move to user input
+            alignmentBool = False
+
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
@@ -2534,13 +2537,14 @@ def main():
                     log.info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
 
-                    log.info("\nAligning your images from FITS files. Please wait.")
+                    #log.info("\nAligning your images from FITS files. Please wait.")
 
                 # Image Alignment
-                apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
-
-                if np.isclose((apos[1]**2).sum()**0.5,0) and i != 0:
-                    print(fileName, "no alignment")
+                if alignmentBool:
+                    apos, arot = image_alignment(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
+                else:
+                    apos = np.array([[0,0],[0,0]])
+                    arot = np.array([0,0])
 
                 # Fit PSF for target star
                 if 3.0 <= np.abs(arot[1]) <= 3.3:
@@ -2554,11 +2558,19 @@ def main():
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                 else:
-                    psf_data["target"][i] = fit_centroid(
-                        imageData,
-                        [xrot, yrot],
-                        psf_data["target"][0][2:],  # reference psf in first image
-                        box=10)
+                    if alignmentBool:
+                        psf_data["target"][i] = fit_centroid(
+                            imageData,
+                            [xrot, yrot],
+                            psf_data["target"][0][2:],  # reference psf in first image
+                            box=10)
+                    else:
+                        # use previous PSF as prior
+                        psf_data["target"][i] = fit_centroid(
+                            imageData,
+                            psf_data["target"][-1][:2],
+                            psf_data["target"][-1][2:],  # reference psf in first image
+                            box=10)
 
                 # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
@@ -2575,11 +2587,19 @@ def main():
                     if i == 0:
                         psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                     else:
-                        psf_data[ckey][i] = fit_centroid(
-                            imageData,
-                            [xrot, yrot],
-                            psf_data[ckey][0][2:],  # initialize with psf in first image
-                            box=10)
+                        if alignmentBool:
+                            psf_data[ckey][i] = fit_centroid(
+                                imageData,
+                                [xrot, yrot],
+                                psf_data[ckey][0][2:],  # initialize with psf in first image
+                                box=10)
+                        else:
+                            # use previous PSF as prior
+                            psf_data[ckey][i] = fit_centroid(
+                                imageData,
+                                psf_data[ckey][-1][:2],
+                                psf_data[ckey][-1][2:],
+                                box=10)
 
                 # aperture photometry
                 if i == 0:

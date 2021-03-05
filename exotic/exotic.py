@@ -1158,7 +1158,7 @@ def round_to_2(*args):
 
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
-    file_extensions = ['.fits', '.fit', '.fts']
+    file_extensions = ['.fits', '.fit', '.fts', '.fz']
     input_files = []
 
     while True:

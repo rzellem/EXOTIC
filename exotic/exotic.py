@@ -537,11 +537,18 @@ def getPhase(curTime, pPeriod, tMid):
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
 def getAirMass(hdul, ra, dec, lati, longit, elevation):
+    # Determine the correct image header extension to use
+    extension = 0
+    image_header = hdul[extension].header
+    while image_header["NAXIS"] == 0:
+        extension += 1
+        image_header = hdul[extension].header
+
     # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
-    if 'AIRMASS' in hdul[0].header:
-        am = float(hdul[0].header['AIRMASS'])
-    elif 'TELALT' in hdul[0].header:
-        alt = float(hdul[0].header[
+    if 'AIRMASS' in hdul[extension].header:
+        am = float(hdul[extension].header['AIRMASS'])
+    elif 'TELALT' in hdul[extension].header:
+        alt = float(hdul[extension].header[
                         'TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
         cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / cosam
@@ -550,7 +557,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
 
         location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
-        atime = astropy.time.Time(getJulianTime(hdul[0].header), format='jd', scale='utc', location=location)
+        atime = astropy.time.Time(getJulianTime(hdul[extension].header), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
         am = float(pointingAltAz.secz)
     return am
@@ -1831,7 +1838,11 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
     timeList = []
 
     for file_name in real_time_imgs:
-        header = fits.getheader(filename=file_name)
+        extension = 0
+        header = fits.getheader(filename=file_name, ext=extension)
+        while header['NAXIS'] == 0:
+            extension += 1
+            header = fits.getheader(filename=file_name, ext=extension)
         timeVal = getJulianTime(header)
         timeList.append(timeVal)
         fileNameList.append(file_name)
@@ -2422,7 +2433,11 @@ def main():
             # time sort images
             times = []
             for file in inputfiles:
-                header = fits.getheader(filename=file)
+                extension = 0
+                header = fits.getheader(filename=file, ext=extension)
+                while header['NAXIS'] == 0:
+                    extension += 1
+                    header = fits.getheader(filename=file, ext=extension)
                 times.append(getJulianTime(header))
 
             si = np.argsort(times)
@@ -2488,7 +2503,11 @@ def main():
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                                  ignore_missing_end=True)
 
-                image_header = hdul[0].header
+                extension = 0
+                image_header = hdul[extension].header
+                while image_header["NAXIS"] == 0:
+                    extension += 1
+                    image_header = hdul[extension].header
 
                 # TIME
                 timeVal = getJulianTime(image_header)
@@ -2507,7 +2526,7 @@ def main():
                     exptimes.append(image_header['EXPOSURE'])
 
                 # IMAGES
-                imageData = hdul[0].data
+                imageData = hdul[extension].data
 
                 # apply cals if applicable
                 if darksBool:

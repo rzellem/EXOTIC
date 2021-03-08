@@ -756,8 +756,6 @@ class InitializationFile:
             self.latitude()
         if self.info['long'] is None:
             self.longitude()
-        if self.info['elev'] is None:
-            self.elevation()
         if self.info['tarcoords'] is None:
             self.target_star_coords()
         if self.info['compstars'] is None:
@@ -792,9 +790,6 @@ class InitializationFile:
     def longitude(self):
         self.info['longitude'] = user_input("Please enter the longitude of where you observed (deg) "
                                             "(Don't forget the sign where East is '+' and West is '-'): ", type_=str)
-
-    def elevation(self):
-        self.info['elev'] = user_input("Please enter the elevation (in meters) of where you observed: ", type_=float)
 
     def target_star_coords(self, pname):
         x_pix = user_input(f"\n{pname} X Pixel Coordinate: ", type_=int)
@@ -931,16 +926,39 @@ def longitude(long):
             long = None
 
 
-def elevation(elev):
+def elevation(elev, lat, long):
     while True:
         try:
             if not elev:
-                elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
-            elev = float(elev)
-            return elev
+                elev = open_elevation(lat, long)
+                if not elev:
+                    log.info("EXOTIC could not retrieve elevation.")
+                    elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
+            return float(elev)
         except ValueError:
             log.info("The entered elevation is incorrect.")
             elev = None
+
+
+def is_false(value):
+    return value is False
+
+
+def result_if_max_retry_count(retry_state):
+    pass
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+       retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
+       retry_error_callback=result_if_max_retry_count)
+def open_elevation(lat, long):
+    query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
+
+    try:
+        r = requests.get(query).json()
+        return r['results'][0]['elevation']
+    except requests.exceptions.RequestException:
+        return False
 
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
@@ -2058,13 +2076,14 @@ def parse_args():
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
-                             "Can be used an additional argument with -red, --reduce and -pre, --prereduced. "
+                             "Can be used as an additional argument with -red, --reduce and -pre, --prereduced. "
                              "Do not combine with the -nea, --nasaexoarch argument.")
     parser.add_argument('-nea', '--nasaexoarch',
                         action='store_true',
-                        help="Adopts all the NASA Exoplanet Archive planetary parameters. Can be used an additional "
-                             "argument with -red, --reduce and -pre, --prereduced. Do not combine with the "
-                             "-ov, --override argument.")
+                        help="Adopts all the NASA Exoplanet Archive planetary parameters from "
+                             "https://exoplanetarchive.ipac.caltech.edu. Can be used as an additional argument with "
+                             "-red, --reduce and -pre, --prereduced. "
+                             "Do not combine with the -ov, --override argument.")
     return parser.parse_args()
 
 
@@ -2264,7 +2283,7 @@ def main():
         if fitsortext == 1:
             exotic_infoDict['lat'] = latitude(exotic_infoDict['lat'])
             exotic_infoDict['long'] = longitude(exotic_infoDict['long'])
-            exotic_infoDict['elev'] = elevation(exotic_infoDict['elev'])
+            exotic_infoDict['elev'] = elevation(exotic_infoDict['elev'], exotic_infoDict['lat'], exotic_infoDict['long'])
 
             # TARGET STAR
             if fileorcommandline == 1:

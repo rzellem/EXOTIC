@@ -90,20 +90,18 @@ class PlateSolution:
         return self.apiurl + service
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
         r = requests.post(self._get_url('login'), data={'request-json': dumps(self.apikey)})
-        if r.status_code >= 500:
+        if r.status_code >= 400:
             return False
         elif r.json()['status'] == 'success':
             return r.json()['session']
         return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
         files = {'file': open(self.file, 'rb')}
@@ -117,8 +115,7 @@ class PlateSolution:
         return False
 
     @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
         r = requests.get(sub_url)
@@ -127,8 +124,7 @@ class PlateSolution:
         return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):
         r = requests.get(job_url)

@@ -87,6 +87,7 @@ if __name__ == "__main__":
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
 import argparse
+from datetime import datetime
 # Image alignment import
 import astroalign as aa
 
@@ -536,11 +537,18 @@ def getPhase(curTime, pPeriod, tMid):
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
 def getAirMass(hdul, ra, dec, lati, longit, elevation):
+    # Determine the correct image header extension to use
+    extension = 0
+    image_header = hdul[extension].header
+    while image_header["NAXIS"] == 0:
+        extension += 1
+        image_header = hdul[extension].header
+
     # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
-    if 'AIRMASS' in hdul[0].header:
-        am = float(hdul[0].header['AIRMASS'])
-    elif 'TELALT' in hdul[0].header:
-        alt = float(hdul[0].header[
+    if 'AIRMASS' in hdul[extension].header:
+        am = float(hdul[extension].header['AIRMASS'])
+    elif 'TELALT' in hdul[extension].header:
+        alt = float(hdul[extension].header[
                         'TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
         cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / cosam
@@ -549,7 +557,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
 
         location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
-        atime = astropy.time.Time(getJulianTime(hdul[0].header), format='jd', scale='utc', location=location)
+        atime = astropy.time.Time(getJulianTime(hdul[extension].header), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
         am = float(pointingAltAz.secz)
     return am
@@ -583,32 +591,53 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             return result
 
 
-def get_save_directory(save_directory):
+def prereduced_file():
     while True:
         try:
-            if save_directory == 'new':
-                save_directory = create_directory()
+            file = user_input("Enter the path and file name of your data file: ", type_=str)
+            if file == "ok":
+                file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
+                # file = "/Users/rzellem/Downloads/fluxorama.csv
+                log.info("Hello, Rob.")
+
+            file = Path(file)
+
+            if file.is_file():
+                return file
             else:
-                if not Path(save_directory).is_dir():
+                raise FileNotFoundError
+        except FileNotFoundError:
+            log.info("Error: Data file not found. Please try again.")
+
+
+def save_directory(directory):
+    while True:
+        try:
+            if not directory:
+                directory = user_input("Enter the directory to save the results and plots into "
+                                       "or type new to create one: ", type_=str)
+            if directory == 'new':
+                directory = create_directory()
+            else:
+                if not Path(directory).is_dir():
                     raise NotADirectoryError
-            return save_directory
+            return directory
         except (NotADirectoryError, OSError):
             log.info("Error: the directory entered does not exist. Please try again. Make sure to follow this "
                      "\nformatting (using whichever directory you choose): /sample-data/results")
-            save_directory = user_input("Enter the directory to save the results and plots into or type "
-                                        "new to create one: ", type_=str)
+            directory = None
 
 
 # Create a save directory within the current working directory
 def create_directory():
-    save_path = ""
+    save_path = Path.cwd()
     while True:
+        directory = user_input("Enter the name for your new directory: ", type_=str)
         try:
-            directory = user_input("Enter the name for your new directory: ", type_=str)
-            save_path = Path.cwd() / directory
+            save_path = save_path / directory
             Path(save_path).mkdir()
         except OSError:
-            log.info(f"Creation of the directory {save_path} failed.")
+            log.info(f"Creation of the directory {save_path}/{directory} failed.")
         else:
             log.info(f"Successfully created the directory {save_path}.")
             return save_path
@@ -728,8 +757,6 @@ class InitializationFile:
             self.latitude()
         if self.info['long'] is None:
             self.longitude()
-        if self.info['elev'] is None:
-            self.elevation()
         if self.info['tarcoords'] is None:
             self.target_star_coords()
         if self.info['compstars'] is None:
@@ -764,9 +791,6 @@ class InitializationFile:
     def longitude(self):
         self.info['longitude'] = user_input("Please enter the longitude of where you observed (deg) "
                                             "(Don't forget the sign where East is '+' and West is '-'): ", type_=str)
-
-    def elevation(self):
-        self.info['elev'] = user_input("Please enter the elevation (in meters) of where you observed: ", type_=float)
 
     def target_star_coords(self, pname):
         x_pix = user_input(f"\n{pname} X Pixel Coordinate: ", type_=int)
@@ -809,6 +833,133 @@ class InitializationFile:
                 break
             if planetnameconfirm == 1:
                 break
+
+
+def planet_name(planet):
+    while True:
+        if not planet:
+            planet = user_input("\nEnter the Planet Name. Make sure it matches the case sensitive name "
+                                "and spacing used on Exoplanet Archive "
+                                "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
+
+        if not planet[-2].isspace():
+            log.info("The convention on the NASA Exoplanet Archive "
+                     "(https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the "
+                     "star name and the planet letter. Please confirm that you have properly "
+                     "input the planet's name."
+                     "\nPlease confirm:"
+                     f"\n  (1) {planet} is correct."
+                     "\n  (2) The planet name needs to be changed.")
+
+            opt = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
+        else:
+            opt = 1
+
+        if opt == 1:
+            return planet
+        planet = None
+
+
+def obs_date(date):
+    while True:
+        try:
+            if not date:
+                date = user_input("\nPlease enter the Observation Date (DD-Month-YYYY): ", type_=str)
+            if date != datetime.strptime(date, '%d-%B-%Y').strftime('%d-%B-%Y'):
+                raise ValueError
+            return date
+        except ValueError:
+            log.info('\nThe entered Observation Date format is incorrect.')
+            date = None
+
+
+def latitude(lat):
+    while True:
+        try:
+            if not lat:
+                lat = user_input("Enter the latitude (in degrees) of where you observed. "
+                                 "Don't forget the sign where North is '+' and South is '-'! "
+                                 "(Example: +50.4): ", type_=str)
+
+            lat = lat.replace(' ', '')
+            if lat[0] != '+' and lat[0] != '-':
+                raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. "
+                                 "Please try again.")
+
+            # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
+            try:
+                lat = float(lat)
+            except ValueError:
+                lat = float(dms_to_dd(lat))
+
+            if lat <= -90.00 or lat >= 90.00:
+                raise ValueError("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+            return lat
+        except ValueError as err:
+            log.info(err.args)
+            lat = None
+
+
+def longitude(long):
+    while True:
+        try:
+            if not long:
+                long = user_input("Enter the longitude (in degrees) of where you observed. "
+                                  "(Don't forget the sign where East is '+' and West is '-')! "
+                                  "(Example: -32.12): ", type_=str)
+
+            long = long.replace(' ', '')
+            if long[0] != '+' and long[0] != '-':
+                raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. "
+                                 "Please try again.")
+
+            # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
+            try:
+                long = float(long)
+            except ValueError:
+                long = float(dms_to_dd(long))
+
+            if long <= -180.00 or long >= 180.00:
+                raise ValueError("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)")
+            return long
+        except ValueError as err:
+            log.info(err.args)
+            long = None
+
+
+def elevation(elev, lat, long):
+    while True:
+        try:
+            if not elev:
+                elev = open_elevation(lat, long)
+                if not elev:
+                    log.info("EXOTIC could not retrieve elevation.")
+                    elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
+            return float(elev)
+        except ValueError:
+            log.info("The entered elevation is incorrect.")
+            elev = None
+
+
+def is_false(value):
+    return value is False
+
+
+def result_if_max_retry_count(retry_state):
+    pass
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+       retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
+       retry_error_callback=result_if_max_retry_count)
+def open_elevation(lat, long):
+    query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
+
+    try:
+        r = requests.get(query).json()
+        return r['results'][0]['elevation']
+    except requests.exceptions.RequestException:
+        return False
 
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
@@ -1033,7 +1184,7 @@ def round_to_2(*args):
 
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
-    file_extensions = ['.fits', '.fit', '.fts']
+    file_extensions = ['.fits', '.fit', '.fts', '.fz']
     input_files = []
 
     while True:
@@ -1310,9 +1461,8 @@ def variableStarCheck(ra, dec):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def image_alignment(image_data, num_images, file_name, count, roi=1):
-    rot = np.zeros(len(image_data))
-    pos = np.zeros((len(image_data), 2))
+def transformation(image_data, num_images, file_name, count, roi=1):
+    pos = np.zeros((1, 2))
 
     # crop image to ROI
     height = image_data.shape[1]
@@ -1333,26 +1483,26 @@ def image_alignment(image_data, num_images, file_name, count, roi=1):
 
     if sf != 1:
         image_data = np.array([
-            rescale(image_data[0],sf),
-            rescale(image_data[1],sf),
+            rescale(image_data[0], sf),
+            rescale(image_data[1], sf),
         ])
 
-    # Align images from .FITS files and catch exceptions if images can't be aligned.
+    # Find transformation from .FITS files and catch exceptions if not able to.
     try:
-        sys.stdout.write(f"Aligning Image {count + 1} of {num_images}\r")
-        log.debug(f"Aligning Image {count + 1} of {num_images}\r")
+        sys.stdout.write(f"Finding transformation {count + 1} of {num_images}\r")
+        log.debug(f"Finding transformation {count + 1} of {num_images}\r")
         sys.stdout.flush()
 
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
-        rot[1] = results[0].rotation
-        pos[1] = results[0].translation/sf
+        rot = results[0].rotation
+        pos[0] = results[0].translation/sf
 
     except Exception as ee:
         log.info(ee)
         log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
 
-        rot = np.zeros(len(image_data))
-        pos = np.zeros((len(image_data), 2))
+        rot = 0
+        pos = np.zeros((1, 2))
 
     return pos, rot
 
@@ -1699,18 +1849,19 @@ def psf_format(data, pos, init=[]):
     }
 
 
-def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX, exotic_UIprevTPY,
-                   exotic_UIprevRPX, exotic_UIprevRPY):
+def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY):
     targetFluxVals = []
     referenceFluxVals = []
     normalizedFluxVals = []
     fileNameList = []
     timeList = []
 
-    fileNumber = 1
-
     for file_name in real_time_imgs:
-        header = fits.getheader(filename=file_name)
+        extension = 0
+        header = fits.getheader(filename=file_name, ext=extension)
+        while header['NAXIS'] == 0:
+            extension += 1
+            header = fits.getheader(filename=file_name, ext=extension)
         timeVal = getJulianTime(header)
         timeList.append(timeVal)
         fileNameList.append(file_name)
@@ -1727,14 +1878,14 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
     firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
 
     # fit first image
-    targ = psf_format(firstImageData, [exotic_UIprevTPX, exotic_UIprevTPY])
-    ref = psf_format(firstImageData, [exotic_UIprevRPX, exotic_UIprevRPY])
+    targ = psf_format(firstImageData, [UIprevTPX, UIprevTPY])
+    ref = psf_format(firstImageData, [UIprevRPX, UIprevRPY])
 
     # just use one aperture and annulus
     apertureR = 3 * max(targ['sig_x'], targ['sig_y'])
     annulusR = 10
 
-    for imageFile in timeSortedNames:
+    for i, imageFile in enumerate(timeSortedNames):
 
         hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
 
@@ -1742,9 +1893,9 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
         imageData = fits.getdata(imageFile, ext=0)
 
         # Find the target star in the image and get its pixel coordinates if it is the first file
-        if fileNumber == 1:
+        if i == 0:
             # Initializing the star location guess as the user inputted pixel coordinates
-            prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY
+            prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY
             prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ['sig_x'], targ['sig_y'], ref['sig_x'], ref['sig_y']
 
             prevImageData = imageData  # no shift should be registered
@@ -1821,7 +1972,6 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, exotic_UIprevTPX,
 
         # UPDATE FILE COUNT
         prevImageData = imageData
-        fileNumber += 1
 
         hdul.close()
         del hdul
@@ -1927,13 +2077,14 @@ def parse_args():
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
-                             "Can be used an additional argument with -red, --reduce and -pre, --prereduced. "
+                             "Can be used as an additional argument with -red, --reduce and -pre, --prereduced. "
                              "Do not combine with the -nea, --nasaexoarch argument.")
     parser.add_argument('-nea', '--nasaexoarch',
                         action='store_true',
-                        help="Adopts all the NASA Exoplanet Archive planetary parameters. Can be used an additional "
-                             "argument with -red, --reduce and -pre, --prereduced. Do not combine with the "
-                             "-ov, --override argument.")
+                        help="Adopts all the NASA Exoplanet Archive planetary parameters from "
+                             "https://exoplanetarchive.ipac.caltech.edu. Can be used as an additional argument with "
+                             "-red, --reduce and -pre, --prereduced. "
+                             "Do not combine with the -ov, --override argument.")
     return parser.parse_args()
 
 
@@ -1998,27 +2149,7 @@ def main():
 
         real_time_dir, real_time_imgs = check_imaging_files(real_time_dir, 'imaging')
 
-        while True:
-            if not targetName:
-                targetName = user_input("\nPlease enter the Planet Name. Make sure it matches "
-                                        "the case sensitive name and spacing used on Exoplanet Archive "
-                                        "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
-
-            if not targetName[-2].isspace():
-                log.info("The convention on the NASA Exoplanet Archive "
-                         "(https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the star "
-                         "name and the planet letter. Please confirm that you have properly input the planet's name."
-                         "\nPlease confirm:"
-                         f"\n  (1) {targetName} is correct."
-                         "\n  (2) The planet name needs to be changed.")
-
-                planetnameconfirm = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
-            else:
-                break
-            if planetnameconfirm == 1:
-                break
-            else:
-                targetName = ''
+        targetName = planet_name(targetName)
 
         while True:
             carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
@@ -2056,7 +2187,7 @@ def main():
         log.info("Complete Reduction Routine")
         log.info("**************************")
 
-        init_path, wcs_file = None, None
+        init_path, wcs_file, wcs_header = None, None, None
         compStarList = []
 
         exotic_infoDict = {'fitsdir': None, 'saveplot': None, 'flatsdir': None, 'darksdir': None, 'biasesdir': None,
@@ -2132,54 +2263,15 @@ def main():
 
             exotic_infoDict['fitsdir'], inputfiles = check_imaging_files(exotic_infoDict['fitsdir'], 'imaging')
         else:
-            while True:
-                try:
-                    data_file = user_input("Enter the path and file name of your data file: ", type_=str)
-                    if data_file == "ok":
-                        data_file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                        # data_file = "/Users/rzellem/Downloads/fluxorama.csv
-                        log.info("Hello, Rob.")
-
-                    data_file = Path(data_file)
-
-                    if data_file.is_file():
-                        break
-                    else:
-                        raise FileNotFoundError
-                except FileNotFoundError:
-                    log.info("Error: Data file not found. Please try again.")
-
+            data_file = prereduced_file()
             exotic_infoDict['exposure'] = user_input("Please enter your image exposure time (seconds): ", type_=int)
 
-        if fileorcommandline == 1:
-            exotic_infoDict['saveplot'] = user_input("Enter the directory to save the results and plots into "
-                                                     "or type new to create one: ", type_=str)
-
-        exotic_infoDict['saveplot'] = get_save_directory(exotic_infoDict['saveplot'])
+        exotic_infoDict['saveplot'] = save_directory(exotic_infoDict['saveplot'])
 
         # Make a temp directory of helpful files
         Path(Path(exotic_infoDict['saveplot']) / "temp").mkdir(exist_ok=True)
 
-        if fileorcommandline == 1:
-            while True:
-                userpDict['pName'] = user_input("\nEnter the Planet Name. Make sure it matches the case sensitive name "
-                                                "and spacing used on Exoplanet Archive "
-                                                "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
-
-                if not userpDict['pName'][-2].isspace():
-                    log.info("The convention on the NASA Exoplanet Archive "
-                             "(https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the "
-                             "star name and the planet letter. Please confirm that you have properly "
-                             "input the planet's name."
-                             "\nPlease confirm:"
-                             f"\n  (1) {userpDict['pName']} is correct."
-                             "\n  (2) The planet name needs to be changed.")
-
-                    planetnameconfirm = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
-                else:
-                    break
-                if planetnameconfirm == 1:
-                    break
+        userpDict['pName'] = planet_name(userpDict['pName'])
 
         if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
@@ -2188,75 +2280,12 @@ def main():
             pDict = userpDict
             CandidatePlanetBool = False
 
-        # observation date
-        if fileorcommandline == 1:
-            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
-
-        # Using a / in your date can screw up the file paths- this will check user's date
-        while '/' in exotic_infoDict['date']:
-            log.info("Do not use / in your date. Please try again.")
-            exotic_infoDict['date'] = user_input("\nEnter the Observation Date (MM-DD-YYYY): ", type_=str)
+        exotic_infoDict['date'] = obs_date(exotic_infoDict['date'])
 
         if fitsortext == 1:
-            if fileorcommandline == 1:
-                exotic_infoDict['lat'] = user_input("Enter the latitude (in degrees) of where you observed. "
-                                                    "Don't forget the sign where North is '+' and South is '-'! "
-                                                    "(Example: +50.4): ", type_=str)
-            # Latitude
-            while True:
-                try:
-                    exotic_infoDict['lat'] = exotic_infoDict['lat'].replace(' ', '')
-                    if exotic_infoDict['lat'][0] != '+' and exotic_infoDict['lat'][0] != '-':
-                        raise ValueError(
-                            "You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
-                    # Convert to float - if latitude is in +/-HH:MM:SS format, convert to a float
-                    try:
-                        lati = float(exotic_infoDict['lat'])
-                    except ValueError:
-                        exotic_infoDict['lat'] = dms_to_dd(exotic_infoDict['lat'])
-                        lati = float(exotic_infoDict['lat'])
-                    if lati <= -90.00 or lati >= 90.00:
-                        raise ValueError(
-                            'Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)')
-                    break
-                # check to make sure they have a sign
-                except ValueError as err:
-                    log.info(err.args)
-                    exotic_infoDict['lat'] = user_input("Enter the latitude (in degrees) of where you observed. "
-                                                        "Don't forget the sign where North is '+' and South is '-'! "
-                                                        "(Example: +50.4): ", type_=str)
-
-            if fileorcommandline == 1:
-                exotic_infoDict['long'] = user_input("Enter the longitude (in degrees) of where you observed. "
-                                                     "(Don't forget the sign where East is '+' and West is '-')! "
-                                                     "(Example: -32.12): ", type_=str)
-            # Longitude
-            while True:
-                try:
-                    exotic_infoDict['long'] = exotic_infoDict['long'].replace(' ', '')
-                    if exotic_infoDict['long'][0] != '+' and exotic_infoDict['long'][0] != '-':
-                        raise ValueError(
-                            "You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
-                    # Convert to float - if longitude is in +/-HH:MM:SS format, convert to a float
-                    try:
-                        longit = float(exotic_infoDict['long'])
-                    except ValueError:
-                        exotic_infoDict['long'] = dms_to_dd(exotic_infoDict['long'])
-                        longit = float(exotic_infoDict['long'])
-                    if longit <= -180.00 or longit >= 180.00:
-                        raise ValueError(
-                            'Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)')
-                    break
-                # check to make sure they have a sign
-                except ValueError as err:
-                    log.info(err.args)
-                    exotic_infoDict['long'] = user_input("Enter the longitude (in degrees) of where you observed. "
-                                                         "(Don't forget the sign where East is '+' and West is '-')! "
-                                                         "(Example: -32.12): ", type_=str)
-
-            if fileorcommandline == 1:
-                exotic_infoDict['elev'] = user_input("Enter the elevation (in meters) of where you observed: ",
-                                                     type_=float)
+            exotic_infoDict['lat'] = latitude(exotic_infoDict['lat'])
+            exotic_infoDict['long'] = longitude(exotic_infoDict['long'])
+            exotic_infoDict['elev'] = elevation(exotic_infoDict['elev'], exotic_infoDict['lat'], exotic_infoDict['long'])
 
             # TARGET STAR
             if fileorcommandline == 1:
@@ -2425,7 +2454,11 @@ def main():
             # time sort images
             times = []
             for file in inputfiles:
-                header = fits.getheader(filename=file)
+                extension = 0
+                header = fits.getheader(filename=file, ext=extension)
+                while header['NAXIS'] == 0:
+                    extension += 1
+                    header = fits.getheader(filename=file, ext=extension)
                 times.append(getJulianTime(header))
 
             si = np.argsort(times)
@@ -2497,14 +2530,18 @@ def main():
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                                  ignore_missing_end=True)
 
-                image_header = hdul[0].header
+                extension = 0
+                image_header = hdul[extension].header
+                while image_header["NAXIS"] == 0:
+                    extension += 1
+                    image_header = hdul[extension].header
 
                 # TIME
                 timeVal = getJulianTime(image_header)
                 timeList.append(timeVal)
 
                 # AIRMASS
-                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], lati, longit,
+                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
                                      exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
                 airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
@@ -2516,7 +2553,7 @@ def main():
                     exptimes.append(image_header['EXPOSURE'])
 
                 # IMAGES
-                imageData = hdul[0].data
+                imageData = hdul[extension].data
 
                 # apply cals if applicable
                 if darksBool:
@@ -2537,7 +2574,7 @@ def main():
                     imageData = imageData / generalFlat
 
                 if i == 0:
-                    image_scale = 0.25  # get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
+                    image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
                     log.info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
@@ -2552,12 +2589,12 @@ def main():
                     arot = np.array([0,0])
 
                 # Fit PSF for target star
-                if 3.0 <= np.abs(arot[1]) <= 3.3:
-                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) + apos[1][0]
-                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) + apos[1][1]
+                if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
+                    xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) + apos[0][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) + apos[0][1]
                 else:
-                    xrot = exotic_UIprevTPX * np.cos(arot[1]) - exotic_UIprevTPY * np.sin(arot[1]) - apos[1][0]
-                    yrot = exotic_UIprevTPX * np.sin(arot[1]) + exotic_UIprevTPY * np.cos(arot[1]) - apos[1][1]
+                    xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) - apos[0][0]
+                    yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) - apos[0][1]
 
                 psf_data["target_align"][i] = [xrot,yrot]
                 if i == 0:
@@ -2596,13 +2633,13 @@ def main():
                 # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
                     ckey = "comp{}".format(j+1)
-                    # apply image alignment transformation
-                    if 3.0 <= np.abs(arot[1]) <= 3.3:
-                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) + apos[1][0]
-                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) + apos[1][1]
+                    # apply transformation
+                    if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
+                        xrot = coord[0] * np.cos(arot) - coord[1] * np.sin(arot) + apos[0][0]
+                        yrot = coord[0] * np.sin(arot) + coord[1] * np.cos(arot) + apos[0][1]
                     else:
-                        xrot = coord[0] * np.cos(arot[1]) - coord[1] * np.sin(arot[1]) - apos[1][0]
-                        yrot = coord[0] * np.sin(arot[1]) + coord[1] * np.cos(arot[1]) - apos[1][1]
+                        xrot = coord[0] * np.cos(arot) - coord[1] * np.sin(arot) - apos[0][0]
+                        yrot = coord[0] * np.sin(arot) + coord[1] * np.cos(arot) - apos[0][1]
 
                     psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
@@ -2852,13 +2889,15 @@ def main():
 
                 animate_toggle(True)
                 try:
-                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'], lat=lati,
-                                                       longi=longit, alt=exotic_infoDict['elev'])
+                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'],
+                                                       lat=exotic_infoDict['lat'], longi=exotic_infoDict['long'],
+                                                       alt=exotic_infoDict['elev'])
                     goodTimes = resultos[0]
                 except:
                     targetloc = astropy.coordinates.SkyCoord(pDict['ra'], pDict['dec'], unit=(u.deg, u.deg),
                                                              frame='icrs')
-                    obsloc = astropy.coordinates.EarthLocation(lat=lati, lon=longit, height=exotic_infoDict['elev'])
+                    obsloc = astropy.coordinates.EarthLocation(lat=exotic_infoDict['lat'], lon=exotic_infoDict['long'],
+                                                               height=exotic_infoDict['elev'])
                     timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
                     ltt_bary = timesToConvert.light_travel_time(targetloc)
                     time_barycentre = timesToConvert.tdb + ltt_bary
@@ -2922,14 +2961,14 @@ def main():
                     plt.plot(finXRefCent[0], finYRefCent[0], '+r')
                 plt.xlabel("x-axis [pixel]")
                 plt.ylabel("y-axis [pixel]")
-                plt.title(f"FOV for {pDict['pName']} ({image_scale})")
+                plt.title(f"FOV for {pDict['pName']}\n({image_scale} arcsec/pix)")
                 plt.xlim(pltx[0], pltx[1])
                 plt.ylim(plty[0], plty[1])
                 ax.grid(False)
                 plt.plot(0, 0, color='lime', ls='-', label='Target')
                 if minAperture >= 0:
                     plt.plot(0, 0, color='r', ls='-.', label='Comp')
-                l = plt.legend(frameon=None, framealpha=0.1)
+                l = plt.legend(framealpha=0.75)
                 for text in l.get_texts():
                     text.set_color("white")
                 apos = '\''

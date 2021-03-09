@@ -2904,14 +2904,14 @@ def main():
                     plt.plot(finXRefCent[0], finYRefCent[0], '+r')
                 plt.xlabel("x-axis [pixel]")
                 plt.ylabel("y-axis [pixel]")
-                plt.title(f"FOV for {pDict['pName']} ({image_scale})")
+                plt.title(f"FOV for {pDict['pName']}\n({image_scale} arcsec/pix)")
                 plt.xlim(pltx[0], pltx[1])
                 plt.ylim(plty[0], plty[1])
                 ax.grid(False)
                 plt.plot(0, 0, color='lime', ls='-', label='Target')
                 if minAperture >= 0:
                     plt.plot(0, 0, color='r', ls='-.', label='Comp')
-                l = plt.legend(frameon=None, framealpha=0.1)
+                l = plt.legend(framealpha=0.75)
                 for text in l.get_texts():
                     text.set_color("white")
                 apos = '\''

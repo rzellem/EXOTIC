@@ -94,16 +94,3 @@ inputs = column(rprs, tmid, per, inc) #plot 1 and 2 in a row, add a column of pl
 plots = row(plot, plot2)
 curdoc().add_root(column(plots, inputs, width=800))
 curdoc().title = "Sliders"
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-

@@ -16,6 +16,11 @@ from bokeh.plotting import figure
 
 from exotic.api.elca import transit
 
+rsun = 6.955e8 #m
+msun = 1.989e30 #kg
+au = 1.496e11 #m
+G = 0.00029591220828559104 # day, AU, Msun
+
 prior = {
     'rprs':0.1,        # Rp/Rs
     'ars':14.25,        # a/Rs
@@ -39,10 +44,21 @@ plot = figure(plot_height=400, plot_width=400, title="Interactive Transit",
               tools="crosshair,pan,reset,save,wheel_zoom",
               x_range=[0.4,0.6], y_range=[0.98, 1.01])
 
+plot2 = figure(plot_height=400, plot_width=400, x_range=[-2,2], y_range=[-2, 2], title="Exoplanet Interactive Transit Simulator")
+                                 
+
 plot.line('x', 'y', source=source, line_width=3, line_alpha=0.6)
 plot.circle('x', 'y', source=source_noisy, color='black')
 plot.xaxis.axis_label = "Time [day]"
-plot.yaxis.axis_label = "Relative Flux"
+plot.yaxis.axis_label = "Relative Flux" 
+
+sundata = ColumnDataSource(data={'x':[0], 'y':[0]})
+#sun
+plot2.circle('x', 'y', source=sundata, fill_color='orange', radius=1, line_color='yellow')
+
+planetdata = ColumnDataSource(data={'x':[0], 'y':[0], 's':[prior['rprs']]})
+#planet
+plot2.circle('x', 'y', source=planetdata, fill_color='black', radius='s', line_color='green')
 
 # Set up widgets
 #text = TextInput(title="title", value='my transit')
@@ -64,12 +80,17 @@ def update_data(attrname, old, new):
     prior['tmid'] = tmid.value
     prior['per'] = per.value
     source.data = dict(x=time, y=transit(time, prior))
+    offset = prior['ars']*np.cos(np.deg2rad(prior['inc'])) #hypotenuse #b
+    
+    planetdata.data = dict(x=[0], y=[offset], s=[prior['rprs']])
+    
 
+    
 for w in [rprs, inc, tmid, per]:
     w.on_change('value', update_data)
 
 # Set up layouts and add to document
-inputs = column(rprs, tmid, per, inc)
-
-curdoc().add_root(row(inputs, plot, width=800))
+inputs = column(rprs, tmid, per, inc) #plot 1 and 2 in a row, add a column of plots and inputs 
+plots = row(plot, plot2)
+curdoc().add_root(column(plots, inputs, width=800))
 curdoc().title = "Sliders"

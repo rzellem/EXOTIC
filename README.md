@@ -14,19 +14,24 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
 
 - **Google Colab Cloud - RECOMMENDED**
   -  Features: This is the recommended method for using EXOTIC as it does not require the user to install any software locally on their own computer.
- - Limitations: Requires user to upload their images to a free Gdrive account.
- - Recommendations: If you run out of space on your default Google/Gdrive account, you can sign up for a new, free account to use. Some users even make a new Google account for every new dataset to avoid running out of space.
- - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
- - [How to use EXOTIC on the Colab written instructions](https://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
- - [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
+  - Limitations: Requires user to upload their images to a free Gdrive account.
+  - Recommendations: If you run out of space on your default Google/Gdrive account, you can sign up for a new, free account to use. Some users even make a new Google account for every new dataset to avoid running out of space.
+  - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
+  - [How to use EXOTIC on the Colab written instructions](https://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
+  - [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
 
 - Locally On Your Own Computer
- - Features: Images are read off of the user's harddrive- nothing is uploaded to Gdrive. This method can be helpful for those with large filesizes, many files, or a slow internet connection. EXOTIC can be run via an iPython Jupyter Notebook (similar to the interface for the Google Colab) or the command line.
- - Limitations: Requires user to install Python3 and multiple subpackages. Using EXOTIC via the Jupyter Notebook or command line can be confusing to some new users.
- - Installation Instructions:
-  - ​​​​​[Macintosh and Linux](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf)
-  - [Windows](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf)
-- [How to Run EXOTIC On Your Own Computer](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/Getting-Started-with-EXOTIC.pdf)
+  - Features: Images are read off of the user's harddrive- nothing is uploaded to Gdrive. This method can be helpful for those with large filesizes, many files, or a slow internet connection. EXOTIC can be run via an iPython Jupyter Notebook (similar to the interface for the Google Colab) or the command line.
+  - Limitations: Requires user to install Python3 and multiple subpackages. Using EXOTIC via the Jupyter Notebook or command line can be confusing to some new users.
+  - Installation Instructions:
+   - ​​​​​[Macintosh and Linux](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf)
+   - [Windows](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf)
+  - [How to Run EXOTIC On Your Own Computer](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/Getting-Started-with-EXOTIC.pdf)
+  - The easiest way to install exotic is with pip:
+
+  `$ pip install exotic`
+
+  **Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation instructions including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
 
 - We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata) to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 - How EXOTIC Works
@@ -36,11 +41,7 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
 - Lastly, we offer these documents above also [in other languages](https://github.com/rzellem/EXOTIC/raw/main/Documentation/)
 
 
-The easiest way to install exotic is with pip:
 
-`$ pip install exotic`
-
-**Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation instructions including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
 
 ## Examples
 - [Google Collab](https://colab.research.google.com/drive/1W1vrgEp9_IjEN16WFxmopLDYvHeYfxpw?usp=sharing)

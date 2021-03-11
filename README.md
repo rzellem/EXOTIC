@@ -43,16 +43,11 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
 
 
 
-## Examples
-- [Google Collab](https://colab.research.google.com/drive/1W1vrgEp9_IjEN16WFxmopLDYvHeYfxpw?usp=sharing)
-- [Jupyter Notebook](examples/Exotic_Notebook.ipynb)
-- Command Line: `$ exotic`
+## Requirements
+FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC.
 
-or if you have an inits file already:
-
-`$ exotic -i inits.json`
-
-FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC. We provide a sample dataset consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (VMag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the MicroObservatory Robotic Telescope Network operated by the Harvard-Smithsonian Center for Astrophysics.
+## Sample Data and Outputs
+We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
 
 [Sample Data](https://github.com/rzellem/EXOTIC_sampledata)
 
@@ -145,7 +140,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 
 
-## Features/ Pipeline Architecture
+## Features and Pipeline Architecture
 
 - Automatic Plate Solution from http://nova.astrometry.net
 

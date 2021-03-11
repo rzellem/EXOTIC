@@ -946,7 +946,6 @@ def result_if_max_retry_count(retry_state):
        retry_error_callback=result_if_max_retry_count)
 def open_elevation(lat, long):
     query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
-
     try:
         r = requests.get(query).json()
         return r['results'][0]['elevation']
@@ -1185,8 +1184,8 @@ def check_imaging_files(directory, filename):
                 directory = Path(directory)
                 for ext in file_extensions:
                     for file in directory.iterdir():
-                        if file.is_file() and file.name.lower().endswith(ext.lower()) and file.name[0:2] not in (
-                        'ref', 'wcs'):
+                        if file.is_file() and file.name.lower().endswith(ext.lower()) \
+                                and file.name[0:2] not in ('ref', 'wcs'):
                             input_files.append(str(file))
                     if input_files:
                         return directory, input_files
@@ -2557,7 +2556,7 @@ def main():
                 # Find transformation
                 apos, arot = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
 
-                if np.isclose((apos[0]**2).sum()**0.5,0) and i != 0:
+                if np.isclose((apos[0]**2).sum()**0.5, 0) and i != 0:
                     print(fileName, "no alignment")
 
                 # Fit PSF for target star
@@ -2568,7 +2567,7 @@ def main():
                     xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) - apos[0][0]
                     yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) - apos[0][1]
 
-                psf_data["target_align"][i] = [xrot,yrot]
+                psf_data["target_align"][i] = [xrot, yrot]
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                 else:

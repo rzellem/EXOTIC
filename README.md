@@ -8,7 +8,7 @@ The EXOplanet Transit Interpretation Code relies upon the transit method for exo
 
 The objective of this pipeline is to help you reduce your images of your transiting exoplanet into a lightcurve, and fit a model to your data to extract planetary information that is crucial to increasing the efficiency of larger observational platforms, and futhering our astronomical knowledge.
 
-## Installation (instalação)
+## Installation
 
 While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you use EXOTIC via the free Google Colab, as it is much easier to get installed and working. However, if you are a user with many images or large images, please message the Exoplanet Watch Team on Slack for guidance.
 
@@ -35,10 +35,10 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
 
 - **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 - How EXOTIC Works
- - [Document](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/How-EXOTIC-Works.pdf)
- - [Video](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
+  - [Document](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/How-EXOTIC-Works.pdf)
+  - [Video](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
 
-- Lastly, we offer these documents above also [in other languages](https://github.com/rzellem/EXOTIC/raw/main/Documentation/)
+- Lastly, we offer these documents [in other languages](https://github.com/rzellem/EXOTIC/raw/main/Documentation/)
 
 
 

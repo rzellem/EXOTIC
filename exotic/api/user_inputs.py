@@ -502,6 +502,6 @@ def prereduced_file():
 
 
 if __name__ == "__main__":
-    obj = UserInputs('/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/inits.json', 'y')
+    obj = UserInputs('inits.json', 'y')
     info, planet = obj.complete_red()
     print(info, planet)

@@ -2306,30 +2306,6 @@ def main():
             # if they have cals, handle them by calculating the median flat, dark or bias
             if cals == 'y':
 
-                # flats
-                if fileorcommandline == 1:
-                    flats = user_input("\nDo you have flats? (y/n): ", type_=str, val1='y', val2='n')
-
-                    if flats == 'y':
-                        flatsBool = True
-                        exotic_infoDict['flatsdir'] = user_input("Enter the directory path to your flats "
-                                                                 "(must be in their own separate folder): ",
-                                                                 type_=str)  # +"/*.FITS"
-                    else:
-                        flatsBool = False
-
-                if flatsBool:
-                    exotic_infoDict['flatsdir'], inputflats = check_imaging_files(exotic_infoDict['flatsdir'], 'flats')
-                    flatsImgList = []
-                    for flatFile in inputflats:
-                        flatData = fits.getdata(flatFile, ext=0)
-                        flatsImgList.append(flatData)
-                    notNormFlat = np.median(flatsImgList, axis=0)
-
-                    # NORMALIZE
-                    medi = np.median(notNormFlat)
-                    generalFlat = notNormFlat / medi
-
                 # darks
                 if fileorcommandline == 1:
                     darks = user_input("\nDo you have darks? (y/n): ", type_=str, val1='y', val2='n')
@@ -2370,6 +2346,34 @@ def main():
                         biasData = fits.getdata(biasFile, ext=0)
                         biasesImgList.append(biasData)
                     generalBias = np.median(biasesImgList, axis=0)
+
+                # flats
+                if fileorcommandline == 1:
+                    flats = user_input("\nDo you have flats? (y/n): ", type_=str, val1='y', val2='n')
+
+                    if flats == 'y':
+                        flatsBool = True
+                        exotic_infoDict['flatsdir'] = user_input("Enter the directory path to your flats "
+                                                                 "(must be in their own separate folder): ",
+                                                                 type_=str)  # +"/*.FITS"
+                    else:
+                        flatsBool = False
+
+                if flatsBool:
+                    exotic_infoDict['flatsdir'], inputflats = check_imaging_files(exotic_infoDict['flatsdir'], 'flats')
+                    flatsImgList = []
+                    for flatFile in inputflats:
+                        flatData = fits.getdata(flatFile, ext=0)
+                        flatsImgList.append(flatData)
+                    notNormFlat = np.median(flatsImgList, axis=0)
+
+                    # if the bias exists, bias subtract the flatfield
+                    if biasesBool:
+                        notNormFlat = notNormFlat - generalBias
+
+                    # NORMALIZE
+                    medi = np.median(notNormFlat)
+                    generalFlat = notNormFlat / medi
             else:
                 flatsBool = False
                 darksBool = False
@@ -2560,7 +2564,7 @@ def main():
                     if i == 0:
                         log.info("Dark subtracting images.")
                     imageData = imageData - generalDark
-                elif biasesBool:
+                elif biasesBool: # if a dark is not available, then at least subtract off the pedestal via the bias
                     if i == 0:
                         log.info("Bias-correcting images.")
                     imageData = imageData - generalBias

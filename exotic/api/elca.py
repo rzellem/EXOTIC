@@ -130,7 +130,7 @@ def vecoccs(z, xrs, rprs):
         redz = veczsel[select & ~zzero]
         s1 = (np.square(redz) + np.square(redxrs) - rprs**2)/(2e0*redz*redxrs)
         s1[s1 > 1e0] = 1e0
-        s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*rprs)
+        s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*(rprs+0.0001))
         s2[s2 > 1e0] = 1e0
         fs3 = -redz + redxrs + rprs
         ss3 = redz + redxrs - rprs
@@ -205,6 +205,8 @@ def solveme(M, e, eps):
 def transit(time, values):
     sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
+    if np.sum(np.isnan(model)) > 0:
+        import pdb; pdb.set_trace()
     return model
 
 def getPhase(curTime, pPeriod, tMid):
@@ -271,10 +273,11 @@ class lc_fitter(object):
                 bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
         except Exception as e:
             print(e)
-            print("bounded  light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
+            print("bounded light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
 
             for i,k in enumerate(freekeys):
-                print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
+                if not boundarray[i,0] < self.prior[k] < boundarray[i,1]:
+                    print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
 
             print("removing bounds and trying again...")
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], method='lm', jac='3-point', loss='linear')

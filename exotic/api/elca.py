@@ -205,8 +205,6 @@ def solveme(M, e, eps):
 def transit(time, values):
     sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
-    if np.sum(np.isnan(model)) > 0:
-        import pdb; pdb.set_trace()
     return model
 
 def getPhase(curTime, pPeriod, tMid):

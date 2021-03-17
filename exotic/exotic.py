@@ -1625,7 +1625,7 @@ def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     return a * gausx * gausy + b
 
 
-def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear', method='trf', box=15):
+def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear', method='trf', box=10):
     xv, yv = mesh_box(pos, box)
 
     def fcn2min(pars):
@@ -1649,7 +1649,7 @@ def mesh_box(pos, box):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, init=[], box=15, debug=False):
+def fit_centroid(data, pos, init=[], box=10, debug=False):
     # get sub field in image
     xv, yv = mesh_box(pos, box)
 
@@ -1836,7 +1836,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
 
 
 def psf_format(data, pos, init=[]):
-    target = fit_centroid(data, pos, init=init, box=15)
+    target = fit_centroid(data, pos, init=init, box=10)
 
     return {
         'x': target[0],
@@ -2473,7 +2473,7 @@ def main():
             for file in inputfiles:
                 first_image = fits.getdata(file, ext=0)
                 try:
-                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=15)
+                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
                     break
                 except Exception:
                     inc += 1
@@ -2503,7 +2503,7 @@ def main():
             psf_data = {
                 # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
                 'target': np.zeros((len(inputfiles), 7)),  # PSF fit
-                'target_align': np.zeros((len(inputfiles), 2))  # image alignment estimate
+                'target_align': np.zeros((len(inputfiles), 2)),  # image alignment estimate
             }
 
             # aperture sizes in stdev (sigma) of PSF
@@ -2589,7 +2589,7 @@ def main():
                 if alignmentBool:
                     apos, arot = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
                 else:
-                    apos = np.array([[0,0],[0,0]])
+                    apos = np.array([[0,0]])
                     arot = 0
 
                 # Fit PSF for target star
@@ -2602,21 +2602,21 @@ def main():
 
                 psf_data["target_align"][i] = [xrot,yrot]
                 if i == 0:
-                    psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=15)
+                    psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                 else:
                     if alignmentBool:
                         psf_data["target"][i] = fit_centroid(
                             imageData,
                             [xrot, yrot],
                             psf_data["target"][0][2:],  # reference psf in first image
-                            box=15)
+                            box=10)
                     else:
                         # use previous PSF as prior
                         psf_data["target"][i] = fit_centroid(
                             imageData,
                             psf_data["target"][i-1][:2],
                             psf_data["target"][i-1][2:],  # reference psf in first image
-                            box=15)
+                            box=10)
 
                         # check for change in amplitude of PSF
                         if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
@@ -2626,13 +2626,13 @@ def main():
 
                             # Fit PSF for target star
                             if 3.0 <= np.abs(arot) <= 3.3:
-                                xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) + apos[1][0]
-                                yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) + apos[1][1]
+                                xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) + apos[0][0]
+                                yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) + apos[0][1]
                             else:
-                                xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) - apos[1][0]
-                                yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) - apos[1][1]
+                                xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) - apos[0][0]
+                                yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) - apos[0][1]
 
-                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:], box=15)
+                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:], box=10)
 
                 # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
@@ -2647,21 +2647,21 @@ def main():
 
                     psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
-                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=15)
+                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=10)
                     else:
                         if alignmentBool:
                             psf_data[ckey][i] = fit_centroid(
                                 imageData,
                                 [xrot, yrot],
                                 psf_data[ckey][0][2:],  # initialize with psf in first image
-                                box=15)
+                                box=10)
                         else:
                             # use previous PSF as prior
                             psf_data[ckey][i] = fit_centroid(
                                 imageData,
                                 psf_data[ckey][i-1][:2],
                                 psf_data[ckey][i-1][2:],
-                                box=15)
+                                box=10)
 
                             # check for change in amplitude of PSF
                             if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
@@ -2670,14 +2670,14 @@ def main():
                                 apos, arot = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
 
                                 # Fit PSF for target star
-                                if 3.0 <= np.abs(arot[1]) <= 3.3:
-                                    xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) + apos[1][0]
-                                    yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) + apos[1][1]
+                                if 3.0 <= np.abs(arot) <= 3.3:
+                                    xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) + apos[0][0]
+                                    yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) + apos[0][1]
                                 else:
-                                    xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) - apos[1][0]
-                                    yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) - apos[1][1]
+                                    xrot = exotic_UIprevTPX * np.cos(arot) - exotic_UIprevTPY * np.sin(arot) - apos[0][0]
+                                    yrot = exotic_UIprevTPX * np.sin(arot) + exotic_UIprevTPY * np.cos(arot) - apos[0][1]
 
-                                psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:], box=15)
+                                psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:], box=10)
 
                 # aperture photometry
                 if i == 0:
@@ -2774,6 +2774,8 @@ def main():
                     finYTargCent = psf_data["target"][:, 1]
                     finXRefCent = psf_data[ckey][:, 0]
                     finYRefCent = psf_data[ckey][:, 1]
+
+            log.info("Computing best aperture...")
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
@@ -3268,6 +3270,78 @@ def main():
                                                                   myfit.dataerr / myfit.airmass_model, myfit.transit,
                                                                   myfit.airmass_model):
                 f.write(f"{bjdi}, {phasei}, {fluxi}, {fluxerri}, {modeli}, {ami}\n")
+
+        ##########
+        # PSF data
+        ##########
+
+        fig, ax = plt.subplots(3,2, figsize=(12,10))
+        fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
+        ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
+        ax[0,0].set_ylabel("X-Centroid [px]")
+        ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
+        ax[0,1].set_ylabel("Y-Centroid [px]")
+        ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
+        ax[1,0].set_ylabel("Seeing [px]")
+        ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
+        ax[1,1].set_ylabel("Airmass")
+        ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
+        ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
+        ax[2,0].set_ylabel("Amplitude [ADU]")
+        ax[2,1].set_ylabel("Background [ADU]")
+        ax[0,0].set_xlabel("Time [BJD]")
+        ax[0,1].set_xlabel("Time [BJD]")
+        ax[1,0].set_xlabel("Time [BJD]")
+        ax[1,1].set_xlabel("Time [BJD]")
+        ax[2,0].set_xlabel("Time [BJD]")
+        ax[2,1].set_xlabel("Time [BJD]")
+        plt.tight_layout()
+
+        try:
+            fig.savefig(Path(exotic_infoDict['saveplot']) /
+                        f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
+        except:
+            pass
+        fig.savefig(Path(exotic_infoDict['saveplot']) /
+                    f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+        plt.close()
+
+        # PSF DATA for COMP STARS
+        for j,coord in enumerate(compStarList):
+            ctitle = "Comp Star {}".format(j+1)
+            ckey = "comp{}".format(j+1)
+
+            fig, ax = plt.subplots(3,2, figsize=(12,10))
+            fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
+            ax[0,0].plot(myfit.time, psf_data[ckey][si,0][gi], 'k.')
+            ax[0,0].set_ylabel("X-Centroid [px]")
+            ax[0,1].plot(myfit.time, psf_data[ckey][si,1][gi], 'k.')
+            ax[0,1].set_ylabel("Y-Centroid [px]")
+            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data[ckey][si,3][gi] + psf_data[ckey][si,4][gi]), 'k.')
+            ax[1,0].set_ylabel("Seeing [px]")
+            ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
+            ax[1,1].set_ylabel("Airmass")
+            ax[2,0].plot(myfit.time, psf_data[ckey][si,2][gi], 'k.')
+            ax[2,1].plot(myfit.time, psf_data[ckey][si,6][gi], 'k.')
+            ax[2,0].set_ylabel("Amplitude [ADU]")
+            ax[2,1].set_ylabel("Background [ADU]")
+            ax[0,0].set_xlabel("Time [BJD_TBD]")
+            ax[0,1].set_xlabel("Time [BJD_TBD]")
+            ax[1,0].set_xlabel("Time [BJD_TBD]")
+            ax[1,1].set_xlabel("Time [BJD_TBD]")
+            ax[2,0].set_xlabel("Time [BJD_TBD]")
+            ax[2,1].set_xlabel("Time [BJD_TBD]")
+            plt.tight_layout()
+
+            try:
+                fig.savefig(Path(exotic_infoDict['saveplot']) /
+                            f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+            except:
+                pass
+            fig.savefig(Path(exotic_infoDict['saveplot']) /
+                        f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+            plt.close()
+
 
         #######################################################################
         # print final extracted planetary parameters

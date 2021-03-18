@@ -36,15 +36,12 @@
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
 
-import logging
 import requests
 from json import dumps
 from pathlib import Path
 from astropy.io.fits import PrimaryHDU, getdata, getheader
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
-
-log = logging.getLogger(__name__)
 
 
 def is_false(value):
@@ -86,25 +83,25 @@ class PlateSolution:
         if not wcs_file:
             return PlateSolution.fail('Job Status')
         else:
-            log.info("WCS file creation successful.")
+            print("WCS file creation successful.")
             return wcs_file
 
     def _get_url(self, service):
         return self.apiurl + service
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
         r = requests.post(self._get_url('login'), data={'request-json': dumps(self.apikey)})
-        if r.json()['status'] == 'success':
+        if r.status_code >= 400:
+            return False
+        elif r.json()['status'] == 'success':
             return r.json()['session']
         return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
         files = {'file': open(self.file, 'rb')}
@@ -118,8 +115,7 @@ class PlateSolution:
         return False
 
     @retry(stop=stop_after_attempt(45), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
         r = requests.get(sub_url)
@@ -128,8 +124,7 @@ class PlateSolution:
         return False
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(ConnectionError) |
-                  retry_if_exception_type(requests.exceptions.RequestException)),
+           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):
         r = requests.get(job_url)
@@ -144,7 +139,6 @@ class PlateSolution:
 
     @staticmethod
     def fail(error_type):
-        log.info("")
-        log.info("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net"
-                 f" due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
+        print("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net"
+              f" due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
         return False

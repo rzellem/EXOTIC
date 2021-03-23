@@ -861,16 +861,11 @@ def planet_name(planet):
 
 
 def obs_date(date):
-    while True:
-        try:
-            if not date:
-                date = user_input("\nPlease enter the Observation Date (DD-Month-YYYY): ", type_=str)
-            if date != datetime.strptime(date, '%d-%B-%Y').strftime('%d-%B-%Y'):
-                raise ValueError
-            return date
-        except ValueError:
-            log.info('\nThe entered Observation Date format is incorrect.')
-            date = None
+    if not date:
+        date = user_input("\nPlease enter the Observation Date: ", type_=str)
+    if '/' in date:
+        date = date.replace('/', '-')
+    return date
 
 
 def latitude(lat):

@@ -1,0 +1,32 @@
+AAVSO Comparison star charts
+
+1. Getting the charts
+
+   the main URL is https://app.aavso.org/vsp/
+
+ you can go directly to the chart for a specific star by looking up the chart id in the lists that are periodically posted to the Slack channel and forming the URL as
+
+       https://app.aavso.org/vsp/chart/?chartid=(the listed chartid)
+
+Example, fot HAT-P-23
+
+      https://app.aavso.org/vsp/chart/?chartid=X26350XQ
+
+You can also go to the main URL and use the full search capabilities. You can search by star name or by RA and Dec. There is a help available (https://www.aavso.org/sites/default/files/VSP_Help.pdf)
+
+Notes:
+    Not all the host star names in the NASA Exoplanet Archive are in the VSX database yet. We are working to add the necessary alternate names but if you can't find a chart, you can look up the chartid in the list. The list also contains the VSX name that will find the correct star. You also can do a search by RA and Dec.
+
+   There are stars where the NASA Exoplanet Archive name is not the primary name in the VSX database. In these cases the chart header will have the VSX name.
+
+2. Using the charts
+
+  There are two parts to the chart; the image of the star field and the photometry table.
+
+
+The chart image shows stars within the magnitude limit in the chosen field of view
+The default field of view for the re-calculated charts in the chartid lists is 30 arcminutes. The comparison stars in the field are labeled. The label is a number which is the star magnitude to the nearest 10th, multiple by 10. Unfortunately sometimes this results in multiple comparison stars with the same label. In these cases you will need to sort out the correct star by RA and Dec.
+
+The photometry table can be found on the main chart page by clicking on the link near the top that says "Photometry Tabel for This Chart". It provides the details for the comparison stars including the AAVSO UID, label, RA, Dec, V magnitude and B-V magnitude. It can also contain magnitudes in other bands. EXOTIC does not make use of these magnitudes but they can be used to transform magnitudes into a standard form. See https://www.aavso.org/transform
+
+Using the comparison stars in EXOTIC requires finding the x,y coordinates for the stars in your particular images. You can compare the data image with the chart by eye and note the x,y values. If your image is plate solved, you can confirm the comparison star identification by matching the RA and Dec to the values in the photometry table. There is also a jupyter notebook app that will annotate a plate solved image with the comparison stars and print out the x,y values in a form that can be pasted into the inits file.

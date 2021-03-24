@@ -120,6 +120,7 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as PathEffects
 
 import numpy as np
 import os
@@ -2971,7 +2972,8 @@ def main():
                     plt.plot(0, 0, color='r', ls='-.', label='Comp')
                 l = plt.legend(framealpha=0.75)
                 for text in l.get_texts():
-                    text.set_color("white")
+                    text.set_color("k")
+                    text.set_path_effects([PathEffects.withStroke(linewidth=1, foreground='white')])
                 apos = '\''
                 Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
                 plt.savefig(Path(exotic_infoDict['saveplot']) /

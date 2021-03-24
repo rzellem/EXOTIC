@@ -2749,6 +2749,7 @@ def main():
                 resstd = myfit.residuals.std() / np.median(myfit.data)
                 if minSTD > resstd:  # If the standard deviation is less than the previous min
                     bestCompStar = j + 1
+                    comp_coords = coord
                     minSTD = resstd
                     minAperture = 0
                     minAnnulus = 15 * sigma

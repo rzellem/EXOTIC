@@ -2518,11 +2518,10 @@ def main():
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
 
-            alignmentBool = exotic_infoDict.get('image_align', True)
-            if alignmentBool == 'y':
-                alignmentBool = True
-            elif alignmentBool == 'n':
+            if exotic_infoDict['image_align'] == 'n':
                 alignmentBool = False
+            else:
+                alignmentBool = True
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):

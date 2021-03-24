@@ -323,7 +323,7 @@ class lc_fitter(object):
             maxiter_init=5000, dlogz_init=1, dlogz=0.05,
             maxiter_batch=100, maxbatch=10, nlive_batch=100
         )
-        dsampler.run_nested()
+        dsampler.run_nested(maxcall=1e6)
         self.results = dsampler.results
 
         # alloc data for best fit + error

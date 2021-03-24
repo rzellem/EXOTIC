@@ -3458,7 +3458,7 @@ def main():
             f.write("# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. This work is supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute.\n"
                     "# Use of this data is governed by the AAVSO Data Usage Guidelines: aavso.org/data-usage-guidelines\n")
 
-            f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
+            f.write("#DATE,DIFF,ERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(myfit.time)):
                 # f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
                 #         f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"

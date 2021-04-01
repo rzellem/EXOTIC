@@ -1,92 +1,66 @@
 import logging
 import json
-import requests
 from pathlib import Path
-from datetime import datetime
-from tenacity import retry, retry_if_exception_type, retry_if_result, \
-    stop_after_attempt, wait_exponential
 try:
-    from plate_solution import is_false, result_if_max_retry_count
+    from util import user_input, dms_to_dd, open_elevation, typecast_check
 except ImportError:
-    from .plate_solution import is_false, result_if_max_retry_count
+    from exotic.util import user_input, dms_to_dd, open_elevation, typecast_check
+
 
 log = logging.getLogger(__name__)
 
 
-def user_input(prompt, type_, val1=None, val2=None, val3=None):
-    while True:
-        try:
-            result = type_(input(prompt))
-            log.debug(f"{prompt}{result}")
-        except ValueError:
-            log.info("Sorry, not a valid datatype.")
-            continue
-        if type_ == str and val1 and val2 and val3:
-            result = result.lower().strip()
-            if result not in (val1, val2, val3):
-                log.info("Sorry, your response was not valid.")
-            else:
-                return result
-        elif type_ == int and val1 and val2 and val3:
-            if result not in (val1, val2, val3):
-                log.info("Sorry, your response was not valid.")
-            else:
-                return result
-        elif type_ == int and val1 and val2 and val3:
-            if result not in (val1, val2, val3):
-                log.info("Sorry, your response was not valid.")
-            else:
-                return result
-        else:
-            return result
+class Inputs:
 
-
-class UserInputs:
-
-    def __init__(self, init_file, init_opt):
-        self.init_file = init_file
+    def __init__(self, planet, init_opt):
+        self.planet = planet
         self.init_opt = init_opt
         self.info_dict = {
             'images': None, 'save': None, 'flats': None, 'darks': None, 'biases': None,
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
-            'plate_opt': None, 'tar_coords': None, 'comp_stars': None, 'pixel_scale': None,
-            'exposure': None, 'wl_min': None, 'wl_max': None
+            'plate_opt': None, 'img_align_opt': None, 'tar_coords': None, 'comp_stars': None,
+            'prereduced_file': None, 'file_units': None, 'file_time': None,
+            'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
-        self.planet_dict = {
-            'ra': None, 'dec': None, 'p_name': None, 's_name': None, 'per': None, 'per_unc': None,
-            'mid_t': None, 'mid_t_unc': None, 'rprs': None, 'rprs_unc': None,
-            'ars': None, 'ars_unc': None, 'inc': None, 'inc_unc': None, 'ecc': None,
-            'teff': None, 'teff_unc_pos': None, 'teff_unc_neg': None,
-            'met': None, 'met_unc_pos': None, 'met_unc_neg': None,
-            'logg': None, 'logg_unc_pos': None, 'logg_unc_neg': None
+        self.params = {
+            'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
+            'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
+            'pixel_bin': pixel_bin, 'filter': filter_type, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
+            'img_align_opt': image_align_opt, 'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
     def complete_red(self):
-        params = {
-            'images': imaging_files, 'save': save_directory, 'flats': flats, 'darks': darks, 'biases': biases,
-            'aavso_num': obs_code, 'second_obs': second_obs_code, 'date': obs_date, 'lat': latitude,
-            'long': longitude, 'elev': elevation, 'camera': camera, 'pixel_bin': pixel_bin, 'filter': filter_type,
-            'notes': obs_notes, 'plate_opt': plate_solution_opt, 'tar_coords': target_star_coords,
-            'comp_stars': comparison_star_coords
-        }
-
-        if self.init_opt == 'y':
-            self.search_init()
-
-        image_calibrations(self.info_dict['flats'], self.info_dict['darks'], self.info_dict['biases'])
-
-        for key, value in list(params.items()):
+        for key, value in list(self.params.items()):
             if key == 'elev':
-                self.info_dict[key] = params[key](self.info_dict[key], self.info_dict['lat'], self.info_dict['long'])
+                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'], self.info_dict['long'])
             elif key == 'tar_coords':
-                self.info_dict[key] = params[key](self.info_dict[key], self.planet_dict['p_name'])
+                self.info_dict[key] = self.params[key](self.info_dict[key], self.planet)
             else:
-                self.info_dict[key] = params[key](self.info_dict[key])
+                self.info_dict[key] = self.params[key](self.info_dict[key])
+            if key == 'save':
+                self.info_dict['flats'], self.info_dict['darks'], self.info_dict['biases'] = \
+                    image_calibrations(self.info_dict['flats'], self.info_dict['darks'],
+                                       self.info_dict['biases'], self.init_opt)
 
-        return self.info_dict, self.planet_dict
+        return self.info_dict
 
-    def search_init(self):
+    def prereduced(self):
+        rem_list = ['images', 'plate_opt', 'img_align_opt', 'tar_coords', 'comp_stars']
+        [self.params.pop(key) for key in rem_list]
+
+        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
+        self.info_dict['prereduced_file'] = prereduced_file(self.info_dict['prereduced_file'])
+
+        for key, value in list(self.params.items()):
+            if key == 'elev':
+                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'], self.info_dict['long'])
+            else:
+                self.info_dict[key] = self.params[key](self.info_dict[key])
+
+        return self.info_dict
+
+    def search_init(self, init_file):
         cwd = Path.cwd()
         log.info(f"\nYour current working directory is: {cwd}")
         log.info(f"Potential initialization files I've found in {cwd} are: ")
@@ -94,57 +68,41 @@ class UserInputs:
 
         while True:
             try:
-                if not self.init_file:
-                    self.init_file = user_input("\nPlease enter the Directory and Filename of "
-                                                "your Initialization File: ", type_=str)
-                if self.init_file == 'ok':
-                    self.init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
-                self.init_file = Path(self.init_file)
-                self.comp_params()
+                if not init_file:
+                    init_file = user_input("\nPlease enter the Directory and Filename of "
+                                           "your Initialization File: ", type_=str)
+                if init_file == 'ok':
+                    init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
+                init_file = Path(init_file)
+                self.comp_params(init_file)
                 break
-            except FileNotFoundError:
-                log.info("Error: Initialization file not found. Please try again.")
-                self.init_file = None
-            except IsADirectoryError:
-                log.info("Error: Entered a directory. Please try again.")
-                self.init_file = None
+            except (FileNotFoundError, IsADirectoryError) as e:
+                log.info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
+                init_file = None
 
-    def comp_params(self):
-        with self.init_file.open('r') as json_file:
+    def comp_params(self, init_file):
+        with init_file.open('r') as json_file:
             data = json.load(json_file)
 
-        comp_info = {
-            'images': 'Directory with FITS files', 'save': 'Directory to Save Plots', 'flats': 'Directory of Flats',
-            'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
+        user_info = {
+            'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',
+            'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
             'elev': 'Obs. Elevation (meters)', 'camera': 'Camera Type (CCD or DSLR)', 'pixel_bin': 'Pixel Binning',
-            'filter': 'Filter Name (aavso.org/filters)', 'wl_min': 'Filter Minimum Wavelength (nm)',
-            'wl_max': 'Filter Maximum Wavelength (nm)', 'notes': 'Observing Notes',
-            'plate_opt': 'Plate Solution? (y/n)', 'tar_coords': 'Target Star X & Y Pixel',
-            'comp_stars': 'Comparison Star(s) X & Y Pixel', 'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'
+            'filter': 'Filter Name (aavso.org/filters)', 'notes': 'Observing Notes',
+            'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
+            'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
-        comp_planet = {
-            'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'p_name': "Planet Name", 's_name': "Host Star Name",
-            'per': 'Orbital Period (days)', 'per_unc': 'Orbital Period Uncertainty',
-            'mid_t': 'Published Mid-Transit Time (BJD-UTC)', 'mid_t_unc': 'Mid-Transit Time Uncertainty',
-            'rprs': 'Ratio of Planet to Stellar Radius (Rp/Rs)',
-            'rprs_unc': 'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty',
-            'ars': 'Ratio of Distance to Stellar Radius (a/Rs)',
-            'ars_unc': 'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty',
-            'inc': 'Orbital Inclination (deg)', 'inc_unc': 'Orbital Inclination (deg) Uncertainity',
-            'ecc': 'Orbital Eccentricity (0 if null)', 'teff': 'Star Effective Temperature (K)',
-            'teff_unc_pos': 'Star Effective Temperature (+) Uncertainty',
-            'teff_unc_neg': 'Star Effective Temperature (-) Uncertainty', 'met': 'Star Metallicity ([FE/H])',
-            'met_unc_pos': 'Star Metallicity (+) Uncertainty', 'met_unc_neg': 'Star Metallicity (-) Uncertainty',
-            'logg': 'Star Surface Gravity (log(g))',
-            'logg_unc_pos': 'Star Surface Gravity (+) Uncertainty',
-            'logg_unc_neg': 'Star Surface Gravity (-) Uncertainty'
+        opt_info = {
+            'prereduced_file': 'Prereduced File:', 'file_time': 'Prereduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
+            'file_units': 'Prereduced File Units of Flux (flux, magnitude, millimagnitude)',
+            'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
+            'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)', 'exposure': 'Exposure Time (s)',
         }
 
-        self.info_dict = init_params(comp_info, self.info_dict, data['user_info'])
-        self.info_dict = init_params(comp_info, self.info_dict, data['optional_info'])
-        self.planet_dict = init_params(comp_planet, self.planet_dict, data['planetary_parameters'])
+        self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
+        self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])
 
 
 def init_params(comp, dict1, dict2):
@@ -170,16 +128,15 @@ def check_imaging_files(directory, img_type):
                                 and file.name[0:2] not in ('ref', 'wcs'):
                             input_files.append(str(file))
                     if input_files:
-                        return directory, input_files
+                        return input_files
                 if not input_files:
                     raise FileNotFoundError
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            opt = user_input(
-                f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}."
-                "\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
-                type_=str, val1='y', val2='n')
+            log.info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.")
+            opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
+                             type_=str, val1='y', val2='n')
             if opt == 'y':
                 add_ext = user_input("Please enter the extension you want to add (EX: .FITS): ", type_=str)
                 file_extensions.append(add_ext)
@@ -231,54 +188,32 @@ def create_directory():
             return save_path
 
 
-def image_calibrations(flats_dir, darks_dir, biases_dir):
+def image_calibrations(flats_dir, darks_dir, biases_dir, init):
     opt, flats_list, darks_list, biases_list = None, None, None, None
 
-    if [x for x in (flats_dir, darks_dir, biases_dir) if x is None]:
+    if init == 'n':
         opt = user_input("\nDo you have any Calibration Images? (Flats, Darks or Biases)? (y/n): ",
                          type_=str, val1='y', val2='n')
 
     if opt == 'y' or flats_dir:
-        flats_dir, flats_list = flats(flats_dir)
+        flats_list = check_calibration(flats_dir, 'Flats')
     if opt == 'y' or darks_dir:
-        darks_dir, darks_list = darks(darks_dir)
+        darks_list = check_calibration(darks_dir, 'Darks')
     if opt == 'y' or biases_dir:
-        biases_dir, biases_list = biases(biases_dir)
+        biases_list = check_calibration(biases_dir, 'Biases')
 
-    return flats_dir, flats_list, darks_dir, darks_list, biases_dir, biases_list
+    return flats_list, darks_list, biases_list
 
 
-def flats(directory):
-    if directory is None:
-        opt = user_input("\nDo you have Flats? (y/n): ", type_=str, val1='y', val2='n')
+def check_calibration(directory, image_type):
+    if not directory:
+        opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, val1='y', val2='n')
         if opt == 'y':
             directory = user_input("Please enter the directory path to your Flats "
                                    "(must be in their own separate folder): ", type_=str)
     if directory:
-        return check_imaging_files(directory, 'Flats')
-    return directory, None
-
-
-def darks(directory):
-    if directory is None:
-        opt = user_input("\nDo you have Darks? (y/n): ", type_=str, val1='y', val2='n')
-        if opt == 'y':
-            directory = user_input("Please enter the directory path to your Darks "
-                                   "(must be in their own separate folder): ", type_=str)
-    if directory:
-        return check_imaging_files(directory, 'Darks')
-    return directory, None
-
-
-def biases(directory):
-    if directory is None:
-        opt = user_input("\nDo you have Biases? (y/n): ", type_=str, val1='y', val2='n')
-        if opt == 'y':
-            directory = user_input("Please enter the directory path to your Biases "
-                                   "(must be in their own separate folder): ", type_=str)
-    if directory:
-        return check_imaging_files(directory, 'Biases')
-    return directory, None
+        return check_imaging_files(directory, image_type)
+    return None
 
 
 def obs_code(code):
@@ -301,33 +236,13 @@ def second_obs_code(code):
 
 def obs_date(date):
     while True:
-        try:
-            if not date:
-                date = user_input("\nPlease enter the Observation Date (DD-Month-YYYY): ", type_=str)
-            if date != datetime.strptime(date, '%d-%B-%Y').strftime('%d-%B-%Y'):
-                raise ValueError
-            return date
-        except ValueError:
-            log.info('\nThe entered Observation Date format is incorrect.')
-            date = None
-
-
-def dms_to_dd(dms_in):
-    """
-    Quick helper method to convert long/lat values in degree-minute-second (dms) form
-    (using ':' separators) to decimal (dd) form
-    :param dms_in: DMS long/lat value, colon separated
-    :return float: Properly signed long/lat value in decimal float form
-    """
-    if dms_in is None or isinstance(dms_in, str) is False or str(dms_in).count(":") != 2:
-        raise ValueError("Invalid DMS input provided for calculations. ...")
-    # clean string of errant leading/trailing/internal spaces
-    dms = str(dms_in).strip().replace(" ", "")
-    degrees, minutes, seconds = dms.split(":")
-    dec = abs(float(degrees)) + float(minutes) / 60. + float(seconds) / 3600.
-    if float(degrees) < 0.:
-        dec = dec * -1.
-    return dec
+        if not date:
+            date = user_input("\nPlease enter the Observation Date: ", type_=str)
+        if date:
+            break
+    if '/' in date:
+        date = date.replace('/', '-')
+    return date
 
 
 def latitude(lat):
@@ -387,6 +302,7 @@ def longitude(long):
 def elevation(elev, lat, long):
     while True:
         try:
+            elev = typecast_check(type_=float, val=elev)
             if not elev:
                 log.info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
@@ -394,27 +310,15 @@ def elevation(elev, lat, long):
                 if not elev:
                     log.info("\nEXOTIC could not retrieve elevation.")
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
-            return float(elev)
+            return elev
         except ValueError:
             log.info("The entered elevation is incorrect.")
             elev = None
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
-       retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
-       retry_error_callback=result_if_max_retry_count)
-def open_elevation(lat, long):
-    query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
-    try:
-        r = requests.get(query).json()
-        return r['results'][0]['elevation']
-    except requests.exceptions.RequestException:
-        return False
-
-
 def camera(c_type):
     if not c_type:
-        c_type = user_input("Please enter the camera type (CCD or DSLR): ", type_=str)
+        c_type = user_input("\nPlease enter the camera type (CCD or DSLR): ", type_=str)
     return c_type
 
 
@@ -432,17 +336,28 @@ def filter_type(f_type):
 
 def obs_notes(notes):
     if not isinstance(notes, str):
-        notes = user_input("Please enter any observing notes (seeing, weather, etc.): ", type_=str)
+        notes = user_input("Please enter any observing notes (seeing, weather, etc.) or leave blank and press enter: ",
+                           type_=str)
     if not notes.replace(' ', ''):
         notes = "na"
     return notes
 
 
 def plate_solution_opt(opt):
+    if opt:
+        opt = opt.lower().strip()
     if opt not in ('y', 'n'):
         opt = user_input("\nWould you like to upload the your image for a plate solution?"
                          "\nDISCLAIMER: One of your imaging files will be publicly viewable on "
                          "nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
+    return opt
+
+
+def image_align_opt(opt):
+    if opt:
+        opt = opt.lower().strip()
+    if opt not in ('y', 'n'):
+        opt = user_input("\nWould you like to align your images (y/n): ", type_=str, val1='y', val2='n')
     return opt
 
 
@@ -457,11 +372,15 @@ def target_star_coords(coords, planet):
 
 
 def comparison_star_coords(comp_stars):
-    if isinstance(comp_stars, list) and len(comp_stars) >= 1 and all(isinstance(star, list) for star in comp_stars):
-        pass
+    if isinstance(comp_stars, list) and 1 <= len(comp_stars) <= 10 and \
+            all(isinstance(star, list) for star in comp_stars):
+        comp_stars = [star for star in comp_stars if star != []]
     else:
+        comp_stars = []
+
+    if not comp_stars:
         while True:
-            num_comp_stars = user_input("How many Comparison Stars would you like to use? (1-10): ", type_=int)
+            num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
             if 1 <= num_comp_stars <= 10:
                 break
             log.info("\nThe number of Comparison Stars entered is incorrect.")
@@ -469,23 +388,23 @@ def comparison_star_coords(comp_stars):
         for num in range(num_comp_stars):
             x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
             y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
-            comp_stars.append((x_pix, y_pix))
+            comp_stars.append([x_pix, y_pix])
 
-    final_comp_stars = [star for star in comp_stars if star != []]
-
-    return final_comp_stars
+    return comp_stars
 
 
 def exposure(exp):
+    exp = typecast_check(type_=float, val=exp)
     if not exp:
-        exp = user_input("Please enter your exposure time (seconds): ", type_=int)
+        exp = user_input("Please enter your exposure time (seconds): ", type_=float)
     return exp
 
 
-def prereduced_file():
+def prereduced_file(file):
     while True:
         try:
-            file = user_input("Enter the path and file name of your data file: ", type_=str)
+            if not file:
+                file = user_input("Enter the path and file name of your data file: ", type_=str)
             if file == "ok":
                 file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
                 # file = "/Users/rzellem/Downloads/fluxorama.csv
@@ -499,9 +418,46 @@ def prereduced_file():
                 raise FileNotFoundError
         except FileNotFoundError:
             log.info("Error: Data file not found. Please try again.")
+            file = None
+
+
+def data_file_time(time_format):
+    log.info("\nNOTE: If your file is not in one of the following formats, "
+             "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
+
+    while True:
+        if not time_format:
+            time_format = user_input("\nWhich of the following time formats is your data file stored in? "
+                                     "\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
+        time_format = time_format.upper().strip()
+
+        if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
+            log.info("Invalid entry; please try again.")
+            time_format = None
+        else:
+            break
+
+
+def data_file_units(units):
+    log.info("\nNOTE: If your file is not in one of the following units, "
+             "\nplease re-reduce your data into one of the units of flux recognized by EXOTIC.")
+
+    while True:
+        if not units:
+            units = user_input("\nWhich of the following units of flux is your data file stored in? "
+                               "\nflux / magnitude / millimagnitude: ", type_=str)
+        units = units.lower().strip()
+
+        if units not in ['flux', 'magnitude', 'millimagnitude']:
+            log.info("Invalid entry; please try again.")
+            units = None
+        else:
+            break
 
 
 if __name__ == "__main__":
-    obj = UserInputs('inits.json', 'y')
-    info, planet = obj.complete_red()
-    print(info, planet)
+    path = '/inits.json'
+    obj = Inputs('HAT-P-32 b', 'y')
+    obj.search_init(path)
+    info = obj.complete_red()
+    print(info)

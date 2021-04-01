@@ -16,16 +16,14 @@
             "Standard Filter": "To use EXOTIC standard filters, type only the filter name.",
             "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info.",
             "Target Star RA": "Must be in HH:MM:SS sexagesimal format.",
-            "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
-            "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
-            "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
+            "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -)."
     },
     "user_info": {
-            "Directory with FITS files": "sample-data/HatP32Dec202017",
-            "Directory to Save Plots": "sample-data/",
-            "Directory of Flats": null,
-            "Directory of Darks": null,
-            "Directory of Biases": null,
+            "Directory with FITS files": "/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/sample-data/HatP32Dec202017",
+            "Directory to Save Plots": "/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/sample-data",
+            "Directory of Flats": "",
+            "Directory of Darks": "",
+            "Directory of Biases": "",
 
             "AAVSO Observer Code (N/A if none)": "RTZ",
             "Secondary Observer Codes (N/A if none)": "N/A",
@@ -33,7 +31,7 @@
             "Observation date": "17-December-2017",
             "Obs. Latitude": "+32.41638889",
             "Obs. Longitude": "-110.73444444",
-            "Obs. Elevation (meters)": 2616,
+            "Obs. Elevation (meters)": "2616",
             "Camera Type (CCD or DSLR)": "CCD",
             "Pixel Binning": "1x1",
             "Filter Name (aavso.org/filters)": "V",
@@ -43,37 +41,44 @@
             "Align Images? (y/n)": "y",
 
             "Target Star X & Y Pixel": [424, 286],
-            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
+            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]
     },
     "planetary_parameters": {
             "Target Star RA": "02:04:10",
             "Target Star Dec": "+46:41:23",
             "Planet Name": "HAT-P-32 b",
             "Host Star Name": "HAT-P-32",
-            "Orbital Period (days)": 2.1500082,
-            "Orbital Period Uncertainty": 1.3e-07,
-            "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
-            "Mid-Transit Time Uncertainty": 4.9e-05,
-            "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14886235252742716,
-            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.0005539487393037134,
-            "Ratio of Distance to Stellar Radius (a/Rs)": 5.344,
-            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.039496835316262996,
-            "Orbital Inclination (deg)": 88.98,
-            "Orbital Inclination (deg) Uncertainity": 0.7602631123499285,
-            "Orbital Eccentricity (0 if null)": 0.159,
-            "Star Effective Temperature (K)": 6001.0,
-            "Star Effective Temperature (+) Uncertainty": 88.0,
-            "Star Effective Temperature (-) Uncertainty": -88.0,
-            "Star Metallicity ([FE/H])": -0.16,
-            "Star Metallicity (+) Uncertainty": 0.08,
-            "Star Metallicity (-) Uncertainty": -0.08,
-            "Star Surface Gravity (log(g))": 4.22,
-            "Star Surface Gravity (+) Uncertainty": 0.04,
-            "Star Surface Gravity (-) Uncertainty": -0.04
+            "Orbital Period (days)": "2.1500082",
+            "Orbital Period Uncertainty": "1.3e-07",
+            "Published Mid-Transit Time (BJD-UTC)": "2455867.402743",
+            "Mid-Transit Time Uncertainty": "4.9e-05",
+            "Ratio of Planet to Stellar Radius (Rp/Rs)": "0.14886235252742716",
+            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": "0.0005539487393037134",
+            "Ratio of Distance to Stellar Radius (a/Rs)": "5.344",
+            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": "0.039496835316262996",
+            "Orbital Inclination (deg)": "88.98",
+            "Orbital Inclination (deg) Uncertainity": "0.7602631123499285",
+            "Orbital Eccentricity (0 if null)": "0.159",
+            "Star Effective Temperature (K)": "6001.0",
+            "Star Effective Temperature (+) Uncertainty": "88.0",
+            "Star Effective Temperature (-) Uncertainty": "-88.0",
+            "Star Metallicity ([FE/H])": "-0.16",
+            "Star Metallicity (+) Uncertainty": "0.08",
+            "Star Metallicity (-) Uncertainty": "-0.08",
+            "Star Surface Gravity (log(g))": "4.22",
+            "Star Surface Gravity (+) Uncertainty": "0.04",
+            "Star Surface Gravity (-) Uncertainty": "-0.04"
     },
     "optional_info": {
-            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
-            "Filter Minimum Wavelength (nm)": null,
-            "Filter Maximum Wavelength (nm)": null
+            "Prereduced File:": "/sample-data/NormalizedFlux_HAT-P-32 b_December 17, 2017.txt",
+            "Prereduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
+            "Prereduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
+
+            "Filter Minimum Wavelength (nm)": "",
+            "Filter Maximum Wavelength (nm)": "",
+
+            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": "",
+
+            "Exposure Time (s)": "60"
     }
 }

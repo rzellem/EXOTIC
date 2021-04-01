@@ -456,8 +456,10 @@ def data_file_units(units):
 
 
 if __name__ == "__main__":
-    path = '/inits.json'
-    obj = Inputs('HAT-P-32 b', 'y')
-    obj.search_init(path)
+    path = 'inits.json'
+    init_opt = 'y'
+    obj = Inputs('HAT-P-32 b', init_opt)
+    if init_opt == 'y':
+        obj.search_init(path)
     info = obj.complete_red()
     print(info)

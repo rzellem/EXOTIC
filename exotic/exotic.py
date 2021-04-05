@@ -120,6 +120,7 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as PathEffects
 
 import numpy as np
 import os
@@ -2499,11 +2500,10 @@ def main():
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
 
-            alignmentBool = exotic_infoDict.get('image_align', True)
-            if alignmentBool == 'y':
-                alignmentBool = True
-            elif alignmentBool == 'n':
+            if exotic_infoDict['image_align'] == 'n':
                 alignmentBool = False
+            else:
+                alignmentBool = True
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
@@ -2730,6 +2730,7 @@ def main():
                 resstd = myfit.residuals.std() / np.median(myfit.data)
                 if minSTD > resstd:  # If the standard deviation is less than the previous min
                     bestCompStar = j + 1
+                    comp_coords = coord
                     minSTD = resstd
                     minAperture = 0
                     minAnnulus = 15 * sigma
@@ -2952,7 +2953,8 @@ def main():
                     plt.plot(0, 0, color='r', ls='-.', label='Comp')
                 l = plt.legend(framealpha=0.75)
                 for text in l.get_texts():
-                    text.set_color("white")
+                    text.set_color("k")
+                    text.set_path_effects([PathEffects.withStroke(linewidth=1, foreground='white')])
                 apos = '\''
                 Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
                 plt.savefig(Path(exotic_infoDict['saveplot']) /

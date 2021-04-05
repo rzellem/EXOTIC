@@ -1,7 +1,12 @@
-class NEA:
+try:
+    from util import user_input, init_params
+except ImportError:
+    from .util import user_input, init_params
 
-    def __init__(self, init_file, init_opt):
-        self.init_file = init_file
+
+class PlanetaryParameters:
+
+    def __init__(self, init_opt):
         self.init_opt = init_opt
         self.planet_dict = {
             'ra': None, 'dec': None, 'p_name': None, 's_name': None, 'per': None, 'per_unc': None,
@@ -30,3 +35,7 @@ class NEA:
         }
 
         self.planet_dict = init_params(comp_planet, self.planet_dict, data['planetary_parameters'])
+
+
+    def scrape_vals(self):
+

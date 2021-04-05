@@ -1,5 +1,6 @@
 import logging
 import requests
+from numpy import floor, log10
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
@@ -35,11 +36,33 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             return result
 
 
+def init_params(comp, dict1, dict2):
+    for key, value in comp.items():
+        try:
+            dict1[key] = dict2[value]
+        except KeyError:
+            pass
+    return dict1
+
+
 def typecast_check(type_, val):
     try:
         return type_(val)
     except (ValueError, TypeError):
         return False
+
+
+def round_to_2(*args):
+    x = args[0]
+    if len(args) == 1:
+        y = args[0]
+    else:
+        y = args[1]
+    if floor(y) >= 1. or y == 0.0:
+        roundval = 2
+    else:
+        roundval = -int(floor(log10(abs(y)))) + 1
+    return round(x, roundval)
 
 
 def dms_to_dd(dms_in):

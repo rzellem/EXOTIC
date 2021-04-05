@@ -2,9 +2,9 @@ import logging
 import json
 from pathlib import Path
 try:
-    from util import user_input, dms_to_dd, open_elevation, typecast_check
+    from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
 except ImportError:
-    from exotic.util import user_input, dms_to_dd, open_elevation, typecast_check
+    from .util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
 
 
 log = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class Inputs:
                     init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
                 init_file = Path(init_file)
                 self.comp_params(init_file)
-                break
+                return init_file
             except (FileNotFoundError, IsADirectoryError) as e:
                 log.info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
                 init_file = None
@@ -103,15 +103,6 @@ class Inputs:
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
         self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])
-
-
-def init_params(comp, dict1, dict2):
-    for key, value in comp.items():
-        try:
-            dict1[key] = dict2[value]
-        except KeyError:
-            pass
-    return dict1
 
 
 def check_imaging_files(directory, img_type):
@@ -457,9 +448,9 @@ def data_file_units(units):
 
 if __name__ == "__main__":
     path = 'inits.json'
-    init_opt = 'y'
-    obj = Inputs('HAT-P-32 b', init_opt)
-    if init_opt == 'y':
-        obj.search_init(path)
+    opt_init = 'y'
+    obj = Inputs('HAT-P-32 b', opt_init)
+    if opt_init == 'y':
+        path = obj.search_init(path)
     info = obj.complete_red()
     print(info)

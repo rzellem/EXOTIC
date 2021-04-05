@@ -7,10 +7,6 @@ try:
 except ImportError:
     from .util import round_to_2
 try:
-    from exotic import getPhase
-except ImportError:
-    from .exotic import getPhase
-try:
     from version import __version__
 except ImportError:
     from .version import __version__
@@ -23,13 +19,12 @@ class OutputFiles:
         self.i_dict = i_dict
         self.durs = durs
 
-    def final_lightcurve_csv(self):
+    def final_lightcurve(self, phase):
         params_file = Path(self.i_dict['saveplot']) / f"FinalLightCurve_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
             f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
-            phase = getPhase(self.fit.time, self.p_dict['pPer'], self.fit.parameters['tmid'])
 
             for bjd, phase, flux, fluxerr, model, am in zip(self.fit.time, phase, self.fit.detrended,
                                                             self.fit.dataerr / self.fit.airmass_model,
@@ -38,6 +33,7 @@ class OutputFiles:
 
     def final_planetary_params(self):
         params_file = Path(self.i_dict['saveplot']) / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
+
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
                                        f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
@@ -57,6 +53,7 @@ class OutputFiles:
         }
 
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
+
         with params_file.open('w') as f:
             dump(final_params, f, indent=4)
 

@@ -164,13 +164,13 @@ try:  # filters
     from .api.filters import fwhm
 except ImportError:  # package import
     from api.filters import fwhm
-try:  # simple version
+try: # output files
     from output_files import OutputFiles
 except ImportError:  # package import
     from .output_files import OutputFiles
-try:
+try: # tools
     from util import round_to_2
-except ImportError:
+except ImportError: # package import
     from .util import round_to_2
 try:  # simple version
     from .version import __version__
@@ -3234,17 +3234,7 @@ def main():
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
         plt.close()
 
-        # write output to text file
-        params_file = Path(exotic_infoDict['saveplot']) / f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.csv"
-        with params_file.open('w') as f:
-            f.write(f"# FINAL TIMESERIES OF {pDict['pName']}\n")
-            f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
-            phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
-
-            for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(myfit.time, phase, myfit.detrended,
-                                                                  myfit.dataerr / myfit.airmass_model, myfit.transit,
-                                                                  myfit.airmass_model):
-                f.write(f"{bjdi}, {phasei}, {fluxi}, {fluxerri}, {modeli}, {ami}\n")
+        phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
 
         ##########
         # PSF data
@@ -3333,10 +3323,6 @@ def main():
         log.info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log.info("*********************************************************")
 
-        ##########
-        # SAVE DATA
-        ##########
-
         if bestCompStar:
             comp_ra = None
             comp_dec = None
@@ -3352,20 +3338,25 @@ def main():
         else:
             comp_star = []
 
+        ##########
+        # SAVE DATA
+        ##########
+
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
+        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
-            output_files.final_lightcurve_csv()
-        except:
-            log.info("Could not create FinalLightCurve.csv file.")
+            output_files.final_lightcurve(phase)
+        except Exception as e:
+            log.info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
         try:
             output_files.final_planetary_params()
-        except:
-            log.info("Could not create FinalParams.json file.")
+        except Exception as e:
+            log.info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
         try:
             output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
-        except:
-            log.info("Could not create AAVSO.txt file.")
+        except Exception as e:
+            log.info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
 
         log.info("Output File Saved")
 

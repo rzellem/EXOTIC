@@ -103,7 +103,7 @@ class OutputFiles:
                     "# Use of this data is governed by the AAVSO Data Usage Guidelines: "
                     "aavso.org/data-usage-guidelines\n")
 
-            f.write("#DATE,FLUX,MERR,DETREND_1,DETREND_2\n")
+            f.write("#DATE,DIFF,ERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(self.fit.time)):
                 # f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC] / self.fit.parameters['a1'], 7)},"
                 #         f"{round(self.fit.dataerr[aavsoC] / self.fit.parameters['a1'], 7)},{round(good_airmasses[aavsoC], 7)},"

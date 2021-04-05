@@ -4,6 +4,11 @@ from numpy import floor, log10
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
+try:
+    from api.plate_solution import is_false, result_if_max_retry_count
+except ImportError:
+    from .api.plate_solution import is_false, result_if_max_retry_count
+
 
 log = logging.getLogger(__name__)
 
@@ -81,14 +86,6 @@ def dms_to_dd(dms_in):
     if float(degrees) < 0.:
         dec = dec * -1.
     return dec
-
-
-def is_false(value):
-    return value is False
-
-
-def result_if_max_retry_count(retry_state):
-    pass
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),

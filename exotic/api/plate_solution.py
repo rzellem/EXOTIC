@@ -42,10 +42,14 @@ from pathlib import Path
 from astropy.io.fits import PrimaryHDU, getdata, getheader
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
-try:
-    from util import is_false, result_if_max_retry_count
-except ImportError:
-    from exotic.util import is_false, result_if_max_retry_count
+
+
+def is_false(value):
+    return value is False
+
+
+def result_if_max_retry_count(retry_state):
+    pass
 
 
 class PlateSolution:

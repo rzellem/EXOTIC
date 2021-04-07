@@ -53,12 +53,13 @@ def result_if_max_retry_count(retry_state):
 
 
 class PlateSolution:
-    default_url = 'http://nova.astrometry.net/api/'
-    default_apikey = {'apikey': 'vfsyxlmdxfryhprq'}
 
-    def __init__(self, apiurl=default_url, apikey=default_apikey, file=None, directory=None):
-        self.apiurl = apiurl
-        self.apikey = apikey
+    def __init__(self, file=None, directory=None, api_key=None,
+                 api_url='http://nova.astrometry.net/api/'):
+        if api_key is None:
+            api_key = {'apikey': 'vfsyxlmdxfryhprq'}
+        self.api_url = api_url
+        self.api_key = api_key
         self.file = file
         self.directory = directory
 
@@ -77,7 +78,7 @@ class PlateSolution:
             return PlateSolution.fail('Submission ID')
 
         job_url = self._get_url(f"jobs/{job_id}")
-        download_url = self.apiurl.replace("/api/", f"/wcs_file/{job_id}/")
+        download_url = self.api_url.replace("/api/", f"/wcs_file/{job_id}/")
         wcs_file = Path(self.directory) / "wcs.fits"
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
@@ -87,13 +88,13 @@ class PlateSolution:
             return wcs_file
 
     def _get_url(self, service):
-        return self.apiurl + service
+        return self.api_url + service
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
-        r = requests.post(self._get_url('login'), data={'request-json': dumps(self.apikey)})
+        r = requests.post(self._get_url('login'), data={'request-json': dumps(self.api_key)})
         if r.status_code >= 400:
             return False
         elif r.json()['status'] == 'success':
@@ -108,7 +109,7 @@ class PlateSolution:
         headers = {'request-json': dumps({"session": session}), 'allow_commercial_use': 'n',
                    'allow_modifications': 'n', 'publicly_visible': 'n'}
 
-        r = requests.post(self.apiurl + 'upload', files=files, data=headers)
+        r = requests.post(self.api_url + 'upload', files=files, data=headers)
 
         if r.json()['status'] == 'success':
             return r.json()['subid']

@@ -1342,7 +1342,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('X Pixel Position')
     plt.title(targetname + ' X Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # Y TARGET
@@ -1351,7 +1351,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('Y Pixel Position')
     plt.title(targetname + ' Y Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # X COMP
@@ -1360,7 +1360,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('X Pixel Position')
     plt.title('Comp Star X Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # Y COMP
@@ -1369,7 +1369,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('Y Pixel Position')
     plt.title('Comp Star Y Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # X DISTANCE BETWEEN TARGET AND COMP
@@ -1379,7 +1379,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     for e in range(0, len(xTarg)):
         plt.plot(times[e] - np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
     plt.title('Distance between Target and Comparison X position')
-    plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
+    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
     plt.close()
 
     # Y DISTANCE BETWEEN TARGET AND COMP
@@ -1390,7 +1390,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     for d in range(0, len(yTarg)):
         plt.plot(times[d] - np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
     plt.title('Difference between Target and Comparison Y position')
-    plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
+    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
     plt.close()
 
 
@@ -2410,16 +2410,16 @@ def main():
                     text.set_color("k")
                     text.set_path_effects([PathEffects.withStroke(linewidth=1, foreground='white')])
                 apos = '\''
-                Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
-                plt.savefig(Path(exotic_infoDict['saveplot']) /
+                Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
+                plt.savefig(Path(exotic_infoDict['save']) /
                             f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                             f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
-                plt.savefig(Path(exotic_infoDict['saveplot']) /
+                plt.savefig(Path(exotic_infoDict['save']) /
                             f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                             f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt.close()
 
-            log.info(f"\nFOV file saved as: {exotic_infoDict['saveplot']}/FOV_{pDict['pName']}_"
+            log.info(f"\nFOV file saved as: {exotic_infoDict['save']}/FOV_{pDict['pName']}_"
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Centroid position plots
@@ -2453,7 +2453,7 @@ def main():
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
             plt.title(pDict['pName'] + ' Raw Flux Values ' + exotic_infoDict['date'])
-            plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
+            plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"TargetRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
 
@@ -2464,7 +2464,7 @@ def main():
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
             plt.title('Comparison Star Raw Flux Values ' + exotic_infoDict['date'])
-            plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
+            plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"CompRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
 
@@ -2476,13 +2476,13 @@ def main():
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
             plt.title(pDict['pName'] + ' Normalized Flux vs. Time ' + exotic_infoDict['date'])
-            plt.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
+            plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"NormalizedFluxTime_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
 
             # Save normalized flux to text file prior to MCMC
             params_file = Path(
-                exotic_infoDict['saveplot']) / f"NormalizedFlux_{pDict['pName']}_{exotic_infoDict['date']}.txt"
+                exotic_infoDict['save']) / f"NormalizedFlux_{pDict['pName']}_{exotic_infoDict['date']}.txt"
             with params_file.open('w') as f:
                 f.write("BJD,Norm Flux,Norm Err,AM\n")
 
@@ -2639,14 +2639,14 @@ def main():
         f.subplots_adjust(hspace=0)
 
         # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
-        Path(exotic_infoDict['saveplot']).mkdir(parents=True, exist_ok=True)
+        Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
         try:
-            f.savefig(Path(exotic_infoDict['saveplot']) /
+            f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-            f.savefig(Path(exotic_infoDict['saveplot']) /
+            f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         except:
-            f.savefig(Path(exotic_infoDict['saveplot']) /
+            f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()
 
@@ -2658,7 +2658,7 @@ def main():
                                                hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
         dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()),
                                       fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
-        fig.savefig(Path(exotic_infoDict['saveplot']) / "temp" /
+        fig.savefig(Path(exotic_infoDict['save']) / "temp" /
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
         plt.close()
 
@@ -2691,11 +2691,11 @@ def main():
         plt.tight_layout()
 
         try:
-            fig.savefig(Path(exotic_infoDict['saveplot']) /
+            fig.savefig(Path(exotic_infoDict['save']) /
                         f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
         except:
             pass
-        fig.savefig(Path(exotic_infoDict['saveplot']) /
+        fig.savefig(Path(exotic_infoDict['save']) /
                     f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
         plt.close()
 
@@ -2727,11 +2727,11 @@ def main():
             plt.tight_layout()
 
             try:
-                fig.savefig(Path(exotic_infoDict['saveplot']) /
+                fig.savefig(Path(exotic_infoDict['save']) /
                             f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             except:
                 pass
-            fig.savefig(Path(exotic_infoDict['saveplot']) /
+            fig.savefig(Path(exotic_infoDict['save']) /
                         f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
             plt.close()
 

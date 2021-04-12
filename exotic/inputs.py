@@ -118,7 +118,7 @@ class Inputs:
             'rprsUnc': 'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty',
             'aRs': 'Ratio of Distance to Stellar Radius (a/Rs)',
             'aRsUnc': 'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty',
-            'inc': 'Orbital Inclination (deg)', 'incUnc': 'Orbital Inclination (deg) Uncertainity',
+            'inc': 'Orbital Inclination (deg)', 'incUnc': 'Orbital Inclination (deg) Uncertainty',
             'ecc': 'Orbital Eccentricity (0 if null)', 'teff': 'Star Effective Temperature (K)',
             'teffUncPos': 'Star Effective Temperature (+) Uncertainty',
             'teffUncNeg': 'Star Effective Temperature (-) Uncertainty',

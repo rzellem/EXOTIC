@@ -1571,43 +1571,12 @@ def find_target(target, hdufile, verbose=False):
     return pixcoord[0]
 
 
-# defines the star point spread function as a 2D Gaussian
-def star_psf(x, y, x0, y0, a, sigx, sigy, b):
-    gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
-    return gaus
-
-
-# Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
-def estimate_sigma(x, maxidx=-1):
-    if maxidx == -1:
-        maxidx = np.argmax(x)
-    lower = np.abs(x - 0.5 * np.nanmax(x))[:maxidx].argmin()
-    upper = np.abs(x - 0.5 * np.nanmax(x))[maxidx:].argmin() + maxidx
-    FWHM = upper - lower
-    return FWHM / (2 * np.sqrt(2 * np.log(2)))
-
-
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     rx = (x - x0) * np.cos(rot) - (y - y0) * np.sin(rot)
     ry = (x - x0) * np.sin(rot) + (y - y0) * np.cos(rot)
     gausx = np.exp(-rx ** 2 / (2 * sigx ** 2))
     gausy = np.exp(-ry ** 2 / (2 * sigy ** 2))
     return a * gausx * gausy + b
-
-
-def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear', method='trf'):
-    xv, yv = mesh_box(pos, box)
-
-    def fcn2min(pars):
-        model = psf_function(xv, yv, *pars)
-        return (data[yv, xv] - model).flatten()
-
-    if method == 'trf':
-        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point', method='dogbox',
-                            xtol=None, ftol=1e-3, tr_options='exact')
-    else:
-        res = least_squares(fcn2min, x0=[*pos, *init], loss=lossfn, jac='3-point', method=method)
-    return res.x
 
 
 def mesh_box(pos, box):
@@ -1619,25 +1588,9 @@ def mesh_box(pos, box):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, init=[], debug=False, psf_function=gaussian_psf, box=10):
+def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     # get sub field in image
     xv, yv = mesh_box(pos, box)
-
-    # mask sources in the background
-    star_tol =  np.percentile(data[yv,xv].flatten(),90)
-    rv = ((xv - pos[0]) ** 2 + (yv - pos[1]) ** 2) ** 0.5
-    mask = (rv < 0.5*box) | (data[yv,xv] < star_tol)
-
-    # # find position of max after bg mask
-    cdata = np.array(data[yv, xv], dtype=np.float)
-    cdata*= binary_dilation(mask)
-    ind = np.unravel_index(np.argmax(cdata*mask, axis=None), cdata.shape)
-
-    # pos = [xv[ind], yv[ind]]
-    # xv, yv = mesh_box(pos, box)
-    # star_tol =  np.percentile(data[yv,xv].flatten(),90)
-    # rv = ((xv - pos[0]) ** 2 + (yv - pos[1]) ** 2) ** 0.5
-    # mask = (rv < 0.5*box) | (data[yv,xv] < star_tol)
 
     init = [np.nanmax(data[yv, xv]) - np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
 
@@ -1650,117 +1603,14 @@ def fit_centroid(data, pos, init=[], debug=False, psf_function=gaussian_psf, box
         return (data[yv, xv] - model).flatten()
 
     try:
-        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', ftol=1e-3, xtol=None, method='trf')
+        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
         log.info(
             f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
-        plt.imshow(data[yv,xv], vmin=np.percentile(data,55), vmax=np.percentile(data,99), cmap='binary_r', origin='lower')
-        plt.imshow(mask, cmap='jet', alpha=0.5)
-        plt.colorbar()
-        plt.show()
-
-        plt.imshow(data, vmin=np.percentile(data,55), vmax=np.percentile(data,99), cmap='binary_r')
-        plt.plot(pos[0], pos[1], 'r.',alpha=0.5, label='prior')
-        #plt.plot(res.x[0], res.x[1], 'g.', alpha=0.5, label='fit with bg mask')
-
-
-        plt.plot(xv[ind], yv[ind], 'o', alpha=0.5, label='max')
-        plt.legend(loc='best')
-        plt.xlim([xv.min(), xv.max()])
-        plt.ylim([yv.min(), yv.max()])
-        plt.show()
-
-        import pdb; pdb.set_trace()
+        res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
 
     return res.x
-
-
-
-# Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid_old(data, pos, init=[], debug=False, psf_function=gaussian_psf):
-    # get sub field in image
-    xv, yv = mesh_box(pos, box)
-
-    if len(init) == 5:
-        pass
-    else:
-        init = [np.nanmax(data[yv, xv]) - np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
-
-    try:
-        # fit gaussian PSF
-        pars = fit_psf(
-            data,
-            pos,   # position estimate
-            init,  # initial guess: [amp, sigx, sigy, rotation, bg]
-            [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(data) - 1],
-            # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-            [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1],  # upper bound
-            psf_function=gaussian_psf, method='trf',
-            box=box  # only fit a subregion +/- 5 px from centroid
-        )
-    except:
-        log.info(f"WARNING: trouble fitting Gaussian PSF to star at {pos[0]},{pos[1]}")
-        log.info("  check location of comparison star in the first few images")
-        log.info("  fitting parameters are out of bounds")
-        log.info(f"  init: {init}")
-        log.info(f" lower: {[pos[0] - 5, pos[1] - 5, 0, 0, 0, -np.pi / 4, np.nanmin(data) - 1]}")
-        log.info(f" upper: {[ pos[0] + 5, pos[1] + 5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1]}")
-
-        # use LM in unbounded optimization
-        pars = fit_psf(
-            data, [pos[0], pos[1]], init,
-            [pos[0] - 5, pos[1] - 5, 0, 0, 0, -PI / 4, np.nanmin(data) - 1],
-            [pos[0] + 5, pos[1] + 5, 1e7, 20, 20, PI / 4, np.nanmax(data[yv, xv]) + 1],
-            psf_function=gaussian_psf,
-            box=box, method='lm'
-        )
-
-    if pars[2] <= 10:
-        log.info(
-            f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
-
-        # mask sources in the background
-        star_tol =  np.percentile(data[yv,xv].flatten(),90)
-        rv = ((xv - pos[0]) ** 2 + (yv - pos[1]) ** 2) ** 0.5
-        mask = (rv < 0.5*box) | (data[yv,xv] < star_tol)
-
-        def fcn2min(pars):
-            model = psf_function(xv, yv, *pars)
-            return (data[yv, xv][mask] - model[mask]).flatten()
-
-        # find position of max after bg mask
-        cdata = np.array(data[yv, xv], dtype=np.float)
-        cdata*=mask
-        ind = np.unravel_index(np.argmax(cdata*mask, axis=None), cdata.shape)
-
-        # flux weighted centroid
-        wfx = np.sum(np.unique(xv) * cdata.sum(0)) / np.sum(cdata.sum(0))
-        wfy = np.sum(np.unique(yv) * cdata.sum(1)) / np.sum(cdata.sum(1))
-
-        # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-        lo = [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(data) - 1]
-        up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1]
-
-        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
-
-        plt.imshow(data[yv,xv], vmin=np.percentile(data,55), vmax=np.percentile(data,99), cmap='binary_r', origin='lower')
-        plt.imshow(mask, cmap='jet', alpha=0.5)
-        plt.colorbar()
-        plt.show()
-
-        plt.imshow(data, vmin=np.percentile(data,55), vmax=np.percentile(data,99), cmap='binary_r')
-        plt.plot(pos[0], pos[1], 'r.',alpha=0.5, label='prior')
-        plt.plot(pars[0], pars[1], 'cx', alpha=0.5, label='fit no bg mask')
-        plt.plot(res.x[0], res.x[1], 'g.', alpha=0.5, label='fit with bg mask')
-        plt.plot(xv[ind], yv[ind], 'o', alpha=0.5, label='max')
-        plt.plot(wfx, wfy, 'yo', alpha=0.5, label='flux weighted')
-        plt.legend(loc='best')
-        plt.xlim([xv.min(), xv.max()])
-        plt.ylim([yv.min(), yv.max()])
-        plt.show()
-
-    return pars
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
@@ -1788,7 +1638,6 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     except IndexError:
         log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
 
-        import pdb; pdb.set_trace()
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
         y = np.arange(data.shape[0])

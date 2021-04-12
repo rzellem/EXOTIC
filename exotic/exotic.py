@@ -135,7 +135,7 @@ from scipy.ndimage import median_filter, generic_filter
 from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
-from scipy.ndimage import binary_dilation, label
+from scipy.ndimage import binary_dilation, label, binary_erosion
 # cross correlation imports
 from skimage.transform import SimilarityTransform
 # error handling for scraper
@@ -1472,14 +1472,30 @@ def transformation(image_data, num_images, file_name, count, roi=1):
         sys.stdout.flush()
 
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
-
+        return results[0]
     except Exception as ee:
         log.info(ee)
-        log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
 
-    # https://scikit-image.org/docs/dev/api/skimage.transform.html#skimage.transform.SimilarityTransform
-    return results[0]
+        for p in [99, 98, 95, 90]:
+            for it in [2,1,0]:
 
+                # create binary mask to align image
+                mask1 = image_data[1][roiy, roix] > np.percentile(image_data[1][roiy, roix], p)
+                mask1 = binary_erosion(mask1, iterations=it)
+
+                mask0 = image_data[0][roiy, roix] > np.percentile(image_data[0][roiy, roix], p)
+                mask0 = binary_erosion(mask0, iterations=it)
+
+                try:
+                    results = aa.find_transform(mask1, mask0)
+                    return results[0] 
+                except Exception as ee:
+                    results = False
+                    log.info(ee)
+    
+    log.info('alignment failed')
+    import pdb; pdb.set_trace()
+    return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 def get_pixel_scale(wcs_header, header, pixel_init):
     astrometry_scale = None
@@ -1792,6 +1808,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     except IndexError:
         log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
 
+        import pdb; pdb.set_trace()
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
         y = np.arange(data.shape[0])
@@ -2689,12 +2706,8 @@ def main():
                         if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
                             log.info("Can't find target. Trying to align...")
 
-                            # Image Alignment
-                            if alignmentBool:
-                                tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
-                            else:
-                                tform = SimilarityTransform(scale=1, rotation=0, translation=[0,0])
-
+                            tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                            
                             xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
                             psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:])
@@ -2724,7 +2737,7 @@ def main():
 
                             # check for change in amplitude of PSF
                             if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                log.info("Can't find target. Trying to align...")
+                                #log.info("Can't find comp. Trying to align...")
 
                                 tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 

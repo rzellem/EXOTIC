@@ -18,9 +18,10 @@ class OutputFiles:
         self.p_dict = p_dict
         self.i_dict = i_dict
         self.durs = durs
+        self.dir = Path(self.i_dict['save'])
 
     def final_lightcurve(self, phase):
-        params_file = Path(self.i_dict['saveplot']) / f"FinalLightCurve_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
+        params_file = self.dir / f"FinalLightCurve_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
@@ -32,7 +33,7 @@ class OutputFiles:
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
     def final_planetary_params(self):
-        params_file = Path(self.i_dict['saveplot']) / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
+        params_file = self.dir / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
@@ -61,19 +62,19 @@ class OutputFiles:
         priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                              ld0, ld1, ld2, ld3)
 
-        params_file = Path(self.i_dict['saveplot']) / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
+        params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
 
         with params_file.open('w') as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed
-                    f"#OBSCODE={self.i_dict['aavsonum']}\n"  # UI
-                    f"#SECONDARY_OBSCODES={self.i_dict['secondobs']}\n"  # UI
+                    f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
+                    f"#SECONDARY_OBSCODES={self.i_dict['second_obs']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
                     "#DATE_TYPE=BJD_TDB\n"  # fixed
-                    f"#OBSTYPE={self.i_dict['ctype']}\n"
+                    f"#OBSTYPE={self.i_dict['camera']}\n"
                     f"#STAR_NAME={self.p_dict['sName']}\n"  # code yields
                     f"#EXOPLANET_NAME={self.p_dict['pName']}\n"  # code yields
-                    f"#BINNING={self.i_dict['pixelbin']}\n"  # user input
+                    f"#BINNING={self.i_dict['pixel_bin']}\n"  # user input
                     f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI
                     f"#FILTER-XC={dumps(filter_dict)}\n"
                     f"#COMP_STAR-XC={dumps(comp_star)}\n"
@@ -106,7 +107,7 @@ class OutputFiles:
             f.write("#DATE,DIFF,ERR,DETREND_1,DETREND_2\n")
             for aavsoC in range(0, len(self.fit.time)):
                 # f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC] / self.fit.parameters['a1'], 7)},"
-                #         f"{round(self.fit.dataerr[aavsoC] / self.fit.parameters['a1'], 7)},{round(good_airmasses[aavsoC], 7)},"
+                #         f"{round(self.fit.dataerr[aavsoC] / self.fit.parameters['a1'], 7)},{round(airmasses[aavsoC], 7)},"
                 #         f"{round(self.fit.airmass_model[aavsoC] / self.fit.parameters['a1'], 7)}\n")
                 f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC], 7)},"
                         f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
@@ -179,4 +180,3 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     }
 
     return priors, filter_type, results
-

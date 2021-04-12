@@ -1487,8 +1487,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
                     results = False
                     log.info(ee)
     
-    log.info('alignment failed')
-    import pdb; pdb.set_trace()
+    log.info(f"alignment failed: {file_name}")
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 def get_pixel_scale(wcs_header, header, pixel_init):

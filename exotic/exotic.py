@@ -164,6 +164,14 @@ try:  # filters
     from .api.filters import fwhm
 except ImportError:  # package import
     from api.filters import fwhm
+try: # output files
+    from output_files import OutputFiles
+except ImportError:  # package import
+    from .output_files import OutputFiles
+try: # tools
+    from util import round_to_2
+except ImportError: # package import
+    from .util import round_to_2
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -949,7 +957,6 @@ def result_if_max_retry_count(retry_state):
        retry_error_callback=result_if_max_retry_count)
 def open_elevation(lat, long):
     query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
-
     try:
         r = requests.get(query).json()
         return r['results'][0]['elevation']
@@ -1164,19 +1171,6 @@ def radec_hours_to_degree(ra, dec):
             dec = input("Input the declination of target (<sign>DD:MM:SS): ")
 
 
-def round_to_2(*args):
-    x = args[0]
-    if len(args) == 1:
-        y = args[0]
-    else:
-        y = args[1]
-    if np.floor(y) >= 1. or y == 0.0:
-        roundval = 2
-    else:
-        roundval = -int(np.floor(np.log10(abs(y)))) + 1
-    return round(x, roundval)
-
-
 # Check if user's directory contains imaging FITS files that are able to be reduced
 def check_imaging_files(directory, filename):
     file_extensions = ['.fits', '.fit', '.fts', '.fz']
@@ -1188,8 +1182,8 @@ def check_imaging_files(directory, filename):
                 directory = Path(directory)
                 for ext in file_extensions:
                     for file in directory.iterdir():
-                        if file.is_file() and file.name.lower().endswith(ext.lower()) and file.name[0:2] not in (
-                        'ref', 'wcs'):
+                        if file.is_file() and file.name.lower().endswith(ext.lower()) \
+                                and file.name[0:2] not in ('ref', 'wcs'):
                             input_files.append(str(file))
                     if input_files:
                         return directory, input_files
@@ -1522,19 +1516,6 @@ def get_pixel_scale(wcs_header, header, pixel_init):
         image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
         image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
     return image_scale
-
-
-# Will remove later from code as these are older metadata formatting replaced by -XC. Kept for compatibility
-def previous_data_format(pdict, ld_0, ld_1, ld_2, ld_3, my_fit):
-    return (f"#FILTER={exotic_infoDict['filter']}\n"
-            f"#PRIORS=Period={round_to_2(pdict['pPer'], pdict['pPerUnc'])} +/- {round_to_2(pdict['pPerUnc'])},a/R*={round_to_2(pdict['aRs'], pdict['aRsUnc'])} +/- {round_to_2(pdict['aRsUnc'])}"
-            f",inc={round_to_2(pdict['inc'], pdict['incUnc'])} +/- {round_to_2(pdict['incUnc'])},ecc={round_to_2(pdict['ecc'])}"
-            f",u0={round_to_2(ld_0[0], ld_0[1])} +/- {round_to_2(ld_0[1])},u1={round_to_2(ld_1[0], ld_1[1])} +/- {round_to_2(ld_1[1])},u2={round_to_2(ld_2[0], ld_2[1])} +/- {round_to_2(ld_2[1])}"
-            f",u3={round_to_2(ld_3[0], ld_3[1])} +/- {round_to_2(ld_3[1])}\n"
-            f"#RESULTS=Tc={round_to_2(my_fit.parameters['tmid'], my_fit.errors['tmid'])} +/- {round_to_2(my_fit.errors['tmid'])}"
-            f",Rp/R*={round_to_2(my_fit.parameters['rprs'], my_fit.errors['rprs'])} +/- {round_to_2(my_fit.errors['rprs'])}"
-            f",Am1={round_to_2(my_fit.parameters['a1'], my_fit.errors['a1'])} +/- {round_to_2(my_fit.errors['a1'])}"
-            f",Am2={round_to_2(my_fit.parameters['a2'], my_fit.errors['a2'])} +/- {round_to_2(my_fit.errors['a2'])}\n")
 
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
@@ -2286,7 +2267,7 @@ def main():
                            'aavsonum': None, 'secondobs': None, 'date': None, 'lat': None, 'long': None, 'elev': None,
                            'ctype': None, 'pixelbin': None, 'filter': None, 'wl_min': None, 'wl_max': None,
                            'notes': None,
-                           'tarcoords': None, 'compstars': None, 'plate_opt': None, 'pixel_scale': None, 
+                           'tarcoords': None, 'compstars': None, 'plate_opt': None, 'pixel_scale': None,
                            'image_align':None }
 
         userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
@@ -2686,7 +2667,7 @@ def main():
                 # apply transform
                 xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
-                psf_data["target_align"][i] = [xrot,yrot]
+                psf_data["target_align"][i] = [xrot, yrot]
                 if i == 0:
                     psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot])
                 else:
@@ -3325,18 +3306,7 @@ def main():
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
         plt.close()
 
-        # write output to text file
-        params_file = Path(
-            exotic_infoDict['saveplot']) / f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.csv"
-        with params_file.open('w') as f:
-            f.write(f"# FINAL TIMESERIES OF {pDict['pName']}\n")
-            f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
-            phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
-
-            for bjdi, phasei, fluxi, fluxerri, modeli, ami in zip(myfit.time, phase, myfit.detrended,
-                                                                  myfit.dataerr / myfit.airmass_model, myfit.transit,
-                                                                  myfit.airmass_model):
-                f.write(f"{bjdi}, {phasei}, {fluxi}, {fluxerri}, {modeli}, {ami}\n")
+        phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
 
         ##########
         # PSF data
@@ -3416,45 +3386,14 @@ def main():
 
         log.info("\n*********************************************************")
         log.info("FINAL PLANETARY PARAMETERS\n")
-        log.info(
-            f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
-        log.info(
-            f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
-        log.info(
-            f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
-        log.info(
-            f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
-        log.info(
-            f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
-        log.info(
-            f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
-        log.info(
-            f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
+        log.info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
+        log.info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
+        log.info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
+        log.info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
+        log.info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
+        log.info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        log.info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log.info("*********************************************************")
-
-        ##########
-        # SAVE DATA
-        ##########
-
-        params_file = Path(exotic_infoDict['saveplot']) / f"FinalParams_{pDict['pName']}_{exotic_infoDict['date']}.json"
-        params_num = {
-            "Mid-Transit Time (Tmid)": f"{round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])} BJD_TDB",
-            "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}",
-            "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]",
-            "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])} ",
-            "Airmass coefficient 1 (a1)": f"{round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}",
-            "Airmass coefficient 2 (a2)": f"{round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}",
-            "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %",
-            "Transit Duration (day)":f"{round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}"
-        }
-        final_params = {'FINAL PLANETARY PARAMETERS': params_num}
-
-        # write output to json file
-        with params_file.open('w') as f:
-            json.dump(final_params, f, indent=4)
-
-        log.info(f"\nFinal Planetary Parameters have been saved in {exotic_infoDict['saveplot']} as "
-                 f"{pDict['pName']}_{exotic_infoDict['date']}.json\n")
 
         if bestCompStar:
             comp_ra = None
@@ -3471,73 +3410,25 @@ def main():
         else:
             comp_star = []
 
-        filter_dict = {'name': exotic_infoDict['filter'],
-                       'fwhm': [
-                           str(exotic_infoDict['wl_min']) if exotic_infoDict['wl_min'] else exotic_infoDict['wl_min'],
-                           str(exotic_infoDict['wl_max']) if exotic_infoDict['wl_max'] else exotic_infoDict['wl_max']]}
+        ##########
+        # SAVE DATA
+        ##########
 
-        priors_dict = {'Period': {'value': str(round_to_2(pDict['pPer'], pDict['pPerUnc'])),
-                                  'uncertainty': str(round_to_2(pDict['pPerUnc'])) if pDict['pPerUnc'] else pDict[
-                                      'pPerUnc']},
-                       'a/R*': {'value': str(round_to_2(pDict['aRs'], pDict['aRsUnc'])),
-                                'uncertainty': str(round_to_2(pDict['aRsUnc'])) if pDict['aRsUnc'] else pDict[
-                                    'aRsUnc']},
-                       'inc': {'value': str(round_to_2(pDict['inc'], pDict['incUnc'])),
-                               'uncertainty': str(round_to_2(pDict['incUnc'])) if pDict['incUnc'] else pDict['incUnc']},
-                       'ecc': {'value': str(round_to_2(pDict['ecc'])), 'uncertainty': None},
-                       'u0': {'value': str(round_to_2(ld0[0], ld0[1])), 'uncertainty': str(round_to_2(ld0[1]))},
-                       'u1': {'value': str(round_to_2(ld1[0], ld1[1])), 'uncertainty': str(round_to_2(ld1[1]))},
-                       'u2': {'value': str(round_to_2(ld2[0], ld2[1])), 'uncertainty': str(round_to_2(ld2[1]))},
-                       'u3': {'value': str(round_to_2(ld3[0], ld3[1])), 'uncertainty': str(round_to_2(ld3[1]))}}
+        output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
+        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
-        round_to_2(myfit.parameters['a1'], myfit.errors['a1'])
-
-        results_dict = {'Tc': {'value': str(round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])),
-                               'uncertainty': str(round_to_2(myfit.errors['tmid']))},
-                        'Rp/R*': {'value': str(round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])),
-                                  'uncertainty': str(round_to_2(myfit.errors['rprs']))},
-                        'Am1': {'value': str(round_to_2(myfit.parameters['a1'], myfit.errors['a1'])),
-                                'uncertainty': str(round_to_2(myfit.errors['a1']))},
-                        'Am2': {'value': str(round_to_2(myfit.parameters['a2'], myfit.errors['a2'])),
-                                'uncertainty': str(round_to_2(myfit.errors['a2']))},
-                        'Duration':{'value':str(round_to_2(np.mean(durs))),
-                                    'uncertainty':str(round_to_2(np.std(durs)))}}
-
-        params_file = Path(exotic_infoDict['saveplot']) / f"AAVSO_{pDict['pName']}_{exotic_infoDict['date']}.txt"
-        with params_file.open('w') as f:
-            f.write("#TYPE=EXOPLANET\n"  # fixed
-                    f"#OBSCODE={exotic_infoDict['aavsonum']}\n"  # UI
-                    f"#SECONDARY_OBSCODE={exotic_infoDict['secondobs']}\n"  # UI
-                    f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
-                    "#DELIM=,\n"  # fixed
-                    "#DATE_TYPE=BJD_TDB\n"  # fixed
-                    f"#OBSTYPE={exotic_infoDict['ctype']}\n"
-                    f"#STAR_NAME={pDict['sName']}\n"  # code yields
-                    f"#EXOPLANET_NAME={pDict['pName']}\n"  # code yields
-                    f"#BINNING={exotic_infoDict['pixelbin']}\n"  # user input
-                    f"#EXPOSURE_TIME={exotic_infoDict.get('exposure', -1)}\n"  # UI
-                    f"#FILTER-XC={json.dumps(filter_dict)}\n"
-                    f"#COMP_STAR-XC={json.dumps(comp_star)}\n"
-                    f"#NOTES={exotic_infoDict['notes']}\n"
-                    "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
-                    "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
-                    f"#PRIORS-XC={json.dumps(priors_dict)}\n"  # code yields
-                    f"#RESULTS-XC={json.dumps(results_dict)}\n")  # code yields
-
-            # Older formatting, will remove later
-            f.write(previous_data_format(pDict, ld0, ld1, ld2, ld3, myfit))
-
-            f.write("# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. This work is supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute.\n"
-                    "# Use of this data is governed by the AAVSO Data Usage Guidelines: aavso.org/data-usage-guidelines\n")
-
-            f.write("#DATE,DIFF,ERR,DETREND_1,DETREND_2\n")
-            for aavsoC in range(0, len(myfit.time)):
-                # f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC] / myfit.parameters['a1'], 7)},"
-                #         f"{round(myfit.dataerr[aavsoC] / myfit.parameters['a1'], 7)},{round(goodAirmasses[aavsoC], 7)},"
-                #         f"{round(myfit.airmass_model[aavsoC] / myfit.parameters['a1'], 7)}\n")
-                f.write(f"{round(myfit.time[aavsoC], 8)},{round(myfit.data[aavsoC], 7)},"
-                        f"{round(myfit.dataerr[aavsoC], 7)},{round(goodAirmasses[aavsoC], 7)},"
-                        f"{round(myfit.airmass_model[aavsoC], 7)}\n")
+        try:
+            output_files.final_lightcurve(phase)
+        except Exception as e:
+            log.info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
+        try:
+            output_files.final_planetary_params()
+        except Exception as e:
+            log.info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
+        try:
+            output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
+        except Exception as e:
+            log.info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
 
         log.info("Output File Saved")
 

@@ -66,7 +66,7 @@ class OutputFiles:
         with params_file.open('w') as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavsonum']}\n"  # UI
-                    f"#SECONDARY_OBSCODE={self.i_dict['secondobs']}\n"  # UI
+                    f"#SECONDARY_OBSCODES={self.i_dict['secondobs']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
                     "#DATE_TYPE=BJD_TDB\n"  # fixed

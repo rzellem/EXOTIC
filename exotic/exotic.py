@@ -1484,7 +1484,6 @@ def transformation(image_data, num_images, file_name, count, roi=1):
                     results = aa.find_transform(mask1, mask0)
                     return results[0] 
                 except Exception as ee:
-                    results = False
                     log.info(ee)
     
     log.info(f"alignment failed: {file_name}")

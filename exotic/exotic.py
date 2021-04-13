@@ -1046,18 +1046,10 @@ def transformation(image_data, num_images, file_name, count, roi=1):
         sys.stdout.flush()
 
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
-<<<<<<< HEAD
         return results[0]
-=======
-        rot = results[0].rotation
-        pos[0] = results[0].translation/sf
-        scale = results[0].scale
-
->>>>>>> 3d47796e84530617f39055e8e8d464873b5ac8bd
     except Exception as ee:
         log.info(ee)
 
-<<<<<<< HEAD
         for p in [99, 98, 95, 90]:
             for it in [2,1,0]:
 
@@ -1067,13 +1059,6 @@ def transformation(image_data, num_images, file_name, count, roi=1):
 
                 mask0 = image_data[0][roiy, roix] > np.percentile(image_data[0][roiy, roix], p)
                 mask0 = binary_erosion(mask0, iterations=it)
-=======
-        rot = 0
-        pos = np.zeros((1, 2))
-        scale = 1
-
-    return pos, rot, scale
->>>>>>> 3d47796e84530617f39055e8e8d464873b5ac8bd
 
                 try:
                     results = aa.find_transform(mask1, mask0)
@@ -1972,28 +1957,12 @@ def main():
 
                 # Image Alignment
                 if alignmentBool:
-<<<<<<< HEAD
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
                     tform = SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
                 # apply transform
                 xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
-=======
-                    apos, arot, scl = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
-                else:
-                    apos = np.array([[0,0]])
-                    arot = 0
-                    scl = 1
-
-                # Fit PSF for target star
-                if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) + apos[0][0]
-                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) + apos[0][1]
-                else:
-                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) - apos[0][0]
-                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) - apos[0][1]
->>>>>>> 3d47796e84530617f39055e8e8d464873b5ac8bd
 
                 psf_data["target_align"][i] = [xrot, yrot]
                 if i == 0:
@@ -2015,41 +1984,18 @@ def main():
                         if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
                             log.info("Can't find target. Trying to align...")
 
-<<<<<<< HEAD
                             tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                             
                             xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
                             psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:])
-=======
-                            apos, arot, scl = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
-
-                            # Fit PSF for target star
-                            if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                                xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) + apos[0][0]
-                                yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) + apos[0][1]
-                            else:
-                                xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) - apos[0][0]
-                                yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) - apos[0][1]
-
-                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:], box=10)
->>>>>>> 3d47796e84530617f39055e8e8d464873b5ac8bd
 
                 # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
                     ckey = "comp{}".format(j+1)
 
                     # apply transformation
-<<<<<<< HEAD
                     xrot, yrot = tform(coord)[0]
-=======
-                    if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                        xrot = scl * coord[0] * np.cos(arot) - scl * coord[1] * np.sin(arot) + apos[0][0]
-                        yrot = scl * coord[0] * np.sin(arot) + scl * coord[1] * np.cos(arot) + apos[0][1]
-                    else:
-                        xrot = scl * coord[0] * np.cos(arot) - scl * coord[1] * np.sin(arot) - apos[0][0]
-                        yrot = scl * coord[0] * np.sin(arot) + scl * coord[1] * np.cos(arot) - apos[0][1]
->>>>>>> 3d47796e84530617f39055e8e8d464873b5ac8bd
 
                     psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
@@ -2071,21 +2017,9 @@ def main():
                             if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
                                 #log.info("Can't find comp. Trying to align...")
 
-<<<<<<< HEAD
                                 tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 
                                 xrot, yrot = tform(coord)[0]
-=======
-                                apos, arot, scl = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
-
-                                # Fit PSF for target star
-                                if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) + apos[0][0]
-                                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) + apos[0][1]
-                                else:
-                                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) - apos[0][0]
-                                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) - apos[0][1]
->>>>>>> 3d47796e84530617f39055e8e8d464873b5ac8bd
 
                                 psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:])
 

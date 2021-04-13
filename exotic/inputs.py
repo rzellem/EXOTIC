@@ -1,13 +1,20 @@
 import logging
 import json
+import sys
 from pathlib import Path
+
 try:
     from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
 except ImportError:
     from .util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
 
-
+# TODO Need to revamp logging file handler in the future for all of EXOTIC modules. Not correct formatting.
 log = logging.getLogger(__name__)
+consoleFormatter = logging.Formatter("%(message)s")
+consoleHandler = logging.StreamHandler(sys.stdout)
+consoleHandler.setFormatter(consoleFormatter)
+consoleHandler.setLevel(logging.INFO)
+log.addHandler(consoleHandler)
 
 
 class Inputs:
@@ -118,7 +125,8 @@ class Inputs:
             'rprsUnc': 'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty',
             'aRs': 'Ratio of Distance to Stellar Radius (a/Rs)',
             'aRsUnc': 'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty',
-            'inc': 'Orbital Inclination (deg)', 'incUnc': 'Orbital Inclination (deg) Uncertainity',
+            'inc': 'Orbital Inclination (deg)',
+            'incUnc': ('Orbital Inclination (deg) Uncertainty', 'Orbital Inclination (deg) Uncertainity'),
             'ecc': 'Orbital Eccentricity (0 if null)', 'teff': 'Star Effective Temperature (K)',
             'teffUncPos': 'Star Effective Temperature (+) Uncertainty',
             'teffUncNeg': 'Star Effective Temperature (-) Uncertainty',
@@ -185,7 +193,7 @@ def save_directory(directory):
     while True:
         try:
             if not directory:
-                directory = user_input("Enter the directory to Save the Results and Plots into "
+                directory = user_input("\nEnter the directory to Save the Results and Plots into "
                                        "or type new to create one: ", type_=str)
             if directory == 'new':
                 directory = create_directory()
@@ -194,7 +202,7 @@ def save_directory(directory):
                     raise NotADirectoryError
             return directory
         except (NotADirectoryError, OSError):
-            log.info("Error: the directory entered does not exist. Please try again. Make sure to follow this "
+            log.info("Error: The directory entered does not exist. Please try again. Make sure to follow this "
                      "\nformatting (using whichever directory you choose): /sample-data/results")
             directory = None
 

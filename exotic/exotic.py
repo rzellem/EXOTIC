@@ -116,7 +116,6 @@ from io import StringIO
 import pyvo as vo
 import json
 import logging
-import logging.config
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports

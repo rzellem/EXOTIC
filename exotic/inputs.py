@@ -12,15 +12,14 @@ log = logging.getLogger(__name__)
 
 class Inputs:
 
-    def __init__(self, planet, init_opt):
-        self.planet = planet
+    def __init__(self, init_opt):
         self.init_opt = init_opt
         self.info_dict = {
             'images': None, 'save': None, 'flats': None, 'darks': None, 'biases': None,
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
             'plate_opt': None, 'img_align_opt': None, 'tar_coords': None, 'comp_stars': None,
-            'prereduced_file': None, 'file_units': None, 'file_time': None,
+            'prered_file': None, 'file_units': None, 'file_time': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
         self.params = {
@@ -30,12 +29,15 @@ class Inputs:
             'img_align_opt': image_align_opt, 'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
-    def complete_red(self):
+    def complete_red(self, planet):
         for key, value in list(self.params.items()):
             if key == 'elev':
-                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'], self.info_dict['long'])
+                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
+                                                       self.info_dict['long'])
             elif key == 'tar_coords':
-                self.info_dict[key] = self.params[key](self.info_dict[key], self.planet)
+                self.info_dict[key] = self.params[key](self.info_dict[key], planet)
+            elif key == 'comp_stars':
+                self.info_dict[key] = self.params[key](self.info_dict[key], False)
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
             if key == 'save':
@@ -50,17 +52,31 @@ class Inputs:
         [self.params.pop(key) for key in rem_list]
 
         self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
-        self.info_dict['prereduced_file'] = prereduced_file(self.info_dict['prereduced_file'])
+        self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
 
         for key, value in list(self.params.items()):
             if key == 'elev':
-                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'], self.info_dict['long'])
+                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
+                                                       self.info_dict['long'])
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
         return self.info_dict
 
-    def search_init(self, init_file):
+    def real_time(self):
+        rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
+                    'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt', 'img_align_opt']
+        [self.params.pop(key) for key in rem_list]
+
+        for key, value in list(self.params.items()):
+            if key == 'comp_stars':
+                self.info_dict[key] = self.params[key](self.info_dict[key], True)
+            else:
+                self.info_dict[key] = self.params[key](self.info_dict[key])
+
+        return self.info_dict
+
+    def search_init(self, init_file, planet_dict):
         cwd = Path.cwd()
         log.info(f"\nYour current working directory is: {cwd}")
         log.info(f"Potential initialization files I've found in {cwd} are: ")
@@ -74,13 +90,13 @@ class Inputs:
                 if init_file == 'ok':
                     init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
                 init_file = Path(init_file)
-                self.comp_params(init_file)
-                return init_file
+                planet_params = self.comp_params(init_file, planet_dict)
+                return init_file, planet_params
             except (FileNotFoundError, IsADirectoryError) as e:
                 log.info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
                 init_file = None
 
-    def comp_params(self, init_file):
+    def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
             data = json.load(json_file)
 
@@ -94,15 +110,33 @@ class Inputs:
             'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
+        planet_params = {
+            'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'pName': "Planet Name", 'sName': "Host Star Name",
+            'pPer': 'Orbital Period (days)', 'pPerUnc': 'Orbital Period Uncertainty',
+            'midT': 'Published Mid-Transit Time (BJD-UTC)', 'midTUnc': 'Mid-Transit Time Uncertainty',
+            'rprs': 'Ratio of Planet to Stellar Radius (Rp/Rs)',
+            'rprsUnc': 'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty',
+            'aRs': 'Ratio of Distance to Stellar Radius (a/Rs)',
+            'aRsUnc': 'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty',
+            'inc': 'Orbital Inclination (deg)', 'incUnc': 'Orbital Inclination (deg) Uncertainty',
+            'ecc': 'Orbital Eccentricity (0 if null)', 'teff': 'Star Effective Temperature (K)',
+            'teffUncPos': 'Star Effective Temperature (+) Uncertainty',
+            'teffUncNeg': 'Star Effective Temperature (-) Uncertainty',
+            'met': 'Star Metallicity ([FE/H])', 'metUncPos': 'Star Metallicity (+) Uncertainty',
+            'metUncNeg': 'Star Metallicity (-) Uncertainty',
+            'logg': 'Star Surface Gravity (log(g))', 'loggUncPos': 'Star Surface Gravity (+) Uncertainty',
+            'loggUncNeg': 'Star Surface Gravity (-) Uncertainty'
+        }
         opt_info = {
-            'prereduced_file': 'Prereduced File:', 'file_time': 'Prereduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
-            'file_units': 'Prereduced File Units of Flux (flux, magnitude, millimagnitude)',
+            'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
+            'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
             'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
             'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)', 'exposure': 'Exposure Time (s)',
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
         self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])
+        return init_params(planet_params, planet_dict, data['planetary_parameters'])
 
 
 def check_imaging_files(directory, img_type):
@@ -362,7 +396,7 @@ def target_star_coords(coords, planet):
     return coords
 
 
-def comparison_star_coords(comp_stars):
+def comparison_star_coords(comp_stars, rt_bool):
     if isinstance(comp_stars, list) and 1 <= len(comp_stars) <= 10 and \
             all(isinstance(star, list) for star in comp_stars):
         comp_stars = [star for star in comp_stars if star != []]
@@ -371,15 +405,21 @@ def comparison_star_coords(comp_stars):
 
     if not comp_stars:
         while True:
-            num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
-            if 1 <= num_comp_stars <= 10:
-                break
-            log.info("\nThe number of Comparison Stars entered is incorrect.")
+            if not rt_bool:
+                num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
+                if 1 <= num_comp_stars <= 10:
+                    break
+                log.info("\nThe number of Comparison Stars entered is incorrect.")
+            else:
+                num_comp_stars = 1
 
         for num in range(num_comp_stars):
             x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
             y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
             comp_stars.append([x_pix, y_pix])
+
+    if rt_bool and isinstance(comp_stars[1], list):
+        comp_stars = comp_stars[1]
 
     return comp_stars
 
@@ -426,7 +466,7 @@ def data_file_time(time_format):
             log.info("Invalid entry; please try again.")
             time_format = None
         else:
-            break
+            return time_format
 
 
 def data_file_units(units):
@@ -443,14 +483,4 @@ def data_file_units(units):
             log.info("Invalid entry; please try again.")
             units = None
         else:
-            break
-
-
-if __name__ == "__main__":
-    path = 'inits.json'
-    opt_init = 'y'
-    obj = Inputs('HAT-P-32 b', opt_init)
-    if opt_init == 'y':
-        path = obj.search_init(path)
-    info = obj.complete_red()
-    print(info)
+            return units

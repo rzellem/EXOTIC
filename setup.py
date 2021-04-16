@@ -27,7 +27,8 @@ PYTHON_REQUIREMENTS = ">=3.7.0"
 URL = "https://github.com/rzellem/EXOTIC"
 
 REQUIREMENTS_SETUP = ['setuptools_scm',
-                      'importlib-metadata ~= 1.7 ; python_version >= "3.7"']
+                      'importlib-metadata >= 3.6 ; python_version < "3.8"',
+                      '>=3.7']
 
 
 def description_read():

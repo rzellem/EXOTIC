@@ -130,7 +130,7 @@ def vecoccs(z, xrs, rprs):
         redz = veczsel[select & ~zzero]
         s1 = (np.square(redz) + np.square(redxrs) - rprs**2)/(2e0*redz*redxrs)
         s1[s1 > 1e0] = 1e0
-        s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*rprs)
+        s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*(rprs+0.0001))
         s2[s2 > 1e0] = 1e0
         fs3 = -redz + redxrs + rprs
         ss3 = redz + redxrs - rprs
@@ -207,7 +207,6 @@ def transit(time, values):
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
     return model
 
-
 def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid) / pPeriod
     return phase - int(np.nanmin(phase))
@@ -272,10 +271,11 @@ class lc_fitter(object):
                 bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
         except Exception as e:
             print(e)
-            print("bounded  light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
+            print("bounded light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
 
             for i,k in enumerate(freekeys):
-                print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
+                if not boundarray[i,0] < self.prior[k] < boundarray[i,1]:
+                    print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
 
             print("removing bounds and trying again...")
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], method='lm', jac='3-point', loss='linear')
@@ -323,7 +323,7 @@ class lc_fitter(object):
             maxiter_init=5000, dlogz_init=1, dlogz=0.05,
             maxiter_batch=100, maxbatch=10, nlive_batch=100
         )
-        dsampler.run_nested()
+        dsampler.run_nested(maxcall=1e6)
         self.results = dsampler.results
 
         # alloc data for best fit + error
@@ -381,60 +381,75 @@ class lc_fitter(object):
         self.create_fit_variables()
 
     def plot_bestfit(self, nbins=10, phase=True, title=""):
+        # import pdb; pdb.set_trace()
 
-        f = plt.figure( figsize=(12,7) )
-        f.subplots_adjust(top=0.96,bottom=0.07,left=0.08,right=0.99,hspace=0,wspace=0)
-        ax_lc = plt.subplot2grid( (4,5), (0,0), colspan=5,rowspan=3 )
-        ax_res = plt.subplot2grid( (4,5), (3,0), colspan=5, rowspan=1, sharex=ax_lc )
-        axs = [ax_lc, ax_res]
+        f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
 
-        dt = (max(self.time) - min(self.time))/nbins
-        phasebinned = binner(self.phase, len(self.phase)//10)
-        timebinned = binner(self.time, len(self.time)//10)
-        databinned, errbinned = binner(self.detrended, len(self.detrended)//10, self.detrendederr)
-        residbinned, res_errbinned = binner(self.residuals/np.median(self.data), len(self.residuals)//10, self.dataerr/np.median(self.data))
+        if phase:
+            ax_res.set_xlabel('Phase')
 
-        if phase == True:
-            rplabel = r"$(R_p/R_s)^2$ = {:.6f} $\pm$ {:.6f}".format(self.parameters['rprs']**2, 2*self.parameters['rprs']*self.errors['rprs'])
-            tmlabel = r"T$_0$ = {:.5f} $\pm$ {:.5f}".format(self.parameters['tmid'], self.errors['tmid'])
-
-            axs[0].errorbar(self.phase, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
-            axs[0].plot(self.phase, self.transit, 'r-', zorder=2, label=r"{}, {}".format(rplabel,tmlabel))
-            axs[0].set_ylabel("Relative Flux")
-            axs[0].grid(True,ls='--')
-            axs[0].legend(loc='best')
-
-            axs[1].plot(self.phase, self.residuals/np.median(self.data), marker='o', color='gray', mec='None', markersize=5, ls='none')
-            axs[1].plot(self.phase, np.zeros(len(self.phase)), 'r-', lw=2, alpha=1, zorder=100)
-            axs[1].grid(True,ls='--')
-            axs[1].set_xlabel("Phase")
-            axs[1].set_ylabel("Residuals")
-
-            ax_lc.errorbar(phasebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            ax_res.errorbar(phasebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-
-            ax_res.set_xlim([min(self.phase), max(self.phase)])
-            ax_lc.set_xlim([min(self.phase), max(self.phase)])
-            axs[0].set_title(title)
+            ecks = self.phase
 
         else:
-            axs[0].errorbar(self.time, self.detrended, yerr=self.detrendederr, ls='none', marker='o', color='gray', markersize=5, zorder=1)
-            axs[0].plot(self.time, self.transit, 'r-', zorder=2)
-            axs[0].set_ylabel("Relative Flux")
-            axs[0].grid(True,ls='--')
+            ax_res.set_xlabel('Time [day]')
 
-            axs[1].plot(self.time, self.residuals/np.median(self.data), marker='o', color='gray', markersize=5, mec='None', ls='none')
-            axs[1].plot(self.time, np.zeros(len(self.time)), 'r-', lw=2, alpha=1, zorder=100)   ###maybe
-            axs[1].set_xlabel("Time [day]")
-            axs[1].set_ylabel("Residuals")
+            ecks = self.time
 
-            ax_lc.errorbar(timebinned, databinned, yerr=errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
-            ax_res.errorbar(timebinned, residbinned, yerr=res_errbinned, fmt='s', mfc='b', mec='b', ecolor='b', zorder=10)
 
-            ax_res.set_xlim([min(self.time), max(self.time)])
-            ax_lc.set_xlim([min(self.time), max(self.time)])
+        # clip plot to get rid of white space
+        ax_res.set_xlim([min(ecks), max(ecks)])
+        ax_lc.set_xlim([min(ecks), max(ecks)])
 
-        return f,axs
+
+
+        # making borders and tick labels black
+        ax_lc.spines['bottom'].set_color('black')
+        ax_lc.spines['top'].set_color('black')
+        ax_lc.spines['right'].set_color('black')
+        ax_lc.spines['left'].set_color('black')
+        ax_lc.tick_params(axis='x', colors='black')
+        ax_lc.tick_params(axis='y', colors='black')
+
+        ax_res.spines['bottom'].set_color('black')
+        ax_res.spines['top'].set_color('black')
+        ax_res.spines['right'].set_color('black')
+        ax_res.spines['left'].set_color('black')
+        ax_res.tick_params(axis='x', colors='black')
+        ax_res.tick_params(axis='y', colors='black')
+
+        # residual plot
+        ax_res.errorbar(ecks, self.residuals / np.median(self.data), yerr=self.detrendederr, color='gray',
+                        marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
+        ax_res.plot(ecks, np.zeros(len(ecks)), 'r-', lw=2, alpha=1, zorder=100)
+        ax_res.set_ylabel('Residuals')
+        ax_res.set_ylim([-3 * np.nanstd(self.residuals / np.median(self.data)),
+                         3 * np.nanstd(self.residuals / np.median(self.data))])
+
+        correctedSTD = np.std(self.residuals / np.median(self.data))
+        ax_lc.errorbar(ecks, self.detrended, yerr=self.detrendederr, ls='none',
+                       marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
+        ax_lc.plot(ecks, self.transit, 'r', zorder=1000, lw=2)
+
+        ax_lc.set_ylabel('Relative Flux')
+        ax_lc.get_xaxis().set_visible(False)
+
+        ax_res.errorbar(binner(ecks, len(self.residuals) // 10),
+                        binner(self.residuals / np.median(self.data), len(self.residuals) // 10),
+                        yerr=
+                        binner(self.residuals / np.median(self.data), len(self.residuals) // 10, self.detrendederr)[
+                            1],
+                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+        ax_lc.errorbar(binner(ecks, len(ecks) // 10),
+                       binner(self.detrended, len(self.detrended) // 10),
+                       yerr=
+                       binner(self.residuals / np.median(self.data), len(self.residuals) // 10, self.detrendederr)[
+                           1],
+                       fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+
+        # remove vertical whitespace
+        f.subplots_adjust(hspace=0)
+
+        return f,(ax_lc, ax_res)
 
     def plot_triangle(self):
         # TO DO
@@ -470,7 +485,6 @@ if __name__ == "__main__":
     data += np.random.normal(0, prior['a1']*250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time))
 
-
     # add bounds for free parameters only
     mybounds = {
         'rprs':[0,0.1],
@@ -487,6 +501,7 @@ if __name__ == "__main__":
         print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
     fig,axs = myfit.plot_bestfit()
+    plt.tight_layout()
     plt.show()
 
     # triangle plot

@@ -30,7 +30,7 @@
             "AAVSO Observer Code (N/A if none)": "RTZ",
             "Secondary Observer Codes (N/A if none)": "N/A",
 
-            "Observation date": "December 17, 2017",
+            "Observation date": "17-December-2017",
             "Obs. Latitude": "+32.41638889",
             "Obs. Longitude": "-110.73444444",
             "Obs. Elevation (meters)": 2616,
@@ -40,6 +40,7 @@
             "Observing Notes": "Weather, seeing was nice.",
 
             "Plate Solution? (y/n)": "y",
+            "Align Images? (y/n)": "y",
 
             "Target Star X & Y Pixel": [424, 286],
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
@@ -58,7 +59,7 @@
             "Ratio of Distance to Stellar Radius (a/Rs)": 5.344,
             "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.039496835316262996,
             "Orbital Inclination (deg)": 88.98,
-            "Orbital Inclination (deg) Uncertainity": 0.7602631123499285,
+            "Orbital Inclination (deg) Uncertainty": 0.7602631123499285,
             "Orbital Eccentricity (0 if null)": 0.159,
             "Star Effective Temperature (K)": 6001.0,
             "Star Effective Temperature (+) Uncertainty": 88.0,

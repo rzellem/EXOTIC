@@ -1,15 +1,24 @@
+<<<<<<< HEAD
 <<<<<<< HEAD:examples/interactive_fitter.py
 <<<<<<< HEAD:examples/fdinteractive_fitter.py
+=======
+<<<<<<<< HEAD:examples/interactive_fitter.py
+========
+>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b
 #!/usr/bin/env python
 # coding: utf-8
 
 # In[33]:
 
 
+<<<<<<< HEAD
 =======
 >>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b:examples/interactive_fitter.py
 =======
 >>>>>>> 99fd8787202b44ac619bfac98d9a8e3267a7a7bd:examples/fdinteractive_fitter.py
+=======
+>>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b:examples/fdinteractive_fitter.py
+>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b
 ''' Present an interactive function explorer with slider widgets.
 Scrub the sliders to change the properties of the ``sin`` curve, or
 type into the title text box to update the title of the plot.
@@ -84,6 +93,7 @@ plot.yaxis.axis_label = "Relative Flux"
 
 sundata = ColumnDataSource(data={'x':[0], 'y':[0]})
 #sun
+<<<<<<< HEAD
 <<<<<<< HEAD:examples/fdinteractive_fitter.py
 plot2.circle('x', 'y', source=sundata, fill_color='beige', radius=1)
 
@@ -97,6 +107,21 @@ planetdata = ColumnDataSource(data={'x':[0], 'y':[0], 's':[prior['rprs']]})
 #planet
 plot2.circle('x', 'y', source=planetdata, fill_color='black', radius='s', line_color='green')
 >>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b:examples/interactive_fitter.py
+=======
+<<<<<<<< HEAD:examples/interactive_fitter.py
+plot2.circle('x', 'y', source=sundata, fill_color='orange', radius=1, line_color='yellow')
+
+planetdata = ColumnDataSource(data={'x':[0], 'y':[0], 's':[prior['rprs']]})
+#planet
+plot2.circle('x', 'y', source=planetdata, fill_color='black', radius='s', line_color='green')
+========
+plot2.circle('x', 'y', source=sundata, fill_color='beige', radius=1)
+
+planetdata = ColumnDataSource(data={'x':[0], 'y':[0], 's':[prior['rprs']]})
+#planet
+plot2.circle('x', 'y', source=planetdata, fill_color='grey', radius='s')
+>>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b:examples/fdinteractive_fitter.py
+>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b
 
 # Set up widgets
 
@@ -113,6 +138,11 @@ def update_data(attrname, old, new):
 
     planetdata.data = dict(x=[0], y=[offset], s=[prior['rprs']])
 
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b
 for w in [rprs2, inc, tmid,]:
     w.on_change('value', update_data)
 
@@ -121,8 +151,13 @@ inputs = column(rprs2, tmid, inc) #plot 1 and 2 in a row, add a column of plots 
 plots = row(plot, plot2)
 curdoc().add_root(column(plots, inputs, width=800))
 curdoc().title = "Sliders"
+<<<<<<< HEAD
 <<<<<<< HEAD:examples/interactive_fitter.py
 <<<<<<< HEAD:examples/fdinteractive_fitter.py
+=======
+<<<<<<<< HEAD:examples/interactive_fitter.py
+========
+>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b
 
 
 # In[ ]:
@@ -138,7 +173,11 @@ curdoc().title = "Sliders"
 
 
 # In[ ]:
+<<<<<<< HEAD
 =======
 >>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b:examples/interactive_fitter.py
 =======
 >>>>>>> 99fd8787202b44ac619bfac98d9a8e3267a7a7bd:examples/fdinteractive_fitter.py
+=======
+>>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b:examples/fdinteractive_fitter.py
+>>>>>>> 5a990b6082ab286f76d34d609b6b86f19b21e44b

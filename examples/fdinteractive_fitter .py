@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[33]:
+# In[4]:
 
 
 ''' Present an interactive function explorer with slider widgets.
@@ -15,7 +15,7 @@ http://localhost:5006/sliders in your browser.'''
 
 import numpy as np
 import json
-data = json.load(open("sampledata.json", "r"))
+info = json.load(open("sampledata.json", "r"))
 
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
@@ -23,7 +23,6 @@ from bokeh.models import ColumnDataSource, Slider, TextInput
 from bokeh.plotting import figure
 
 from exotic.api.elca import transit
-
 from exotic.exotic import NASAExoplanetArchive, get_wcs, find_target
 
 rsun = 6.955e8 #m
@@ -31,29 +30,41 @@ msun = 1.989e30 #kg
 au = 1.496e11 #m
 G = 0.00029591220828559104 # day, AU, Msun
 
-target = NASAExoplanetArchive(data["name"]) #planetname
-
+target = NASAExoplanetArchive(info["name"]) #planetname #HAT-P-32 b
+#target.resolve_name()
 
 if target.resolve_name():
     planet_name, _, parameters = target.planet_info()
 
 else:
-    print(f"can not resolve planet name: {data['name']}")
+    print(f"can not resolve planet name: {info['name']}")
 
 
+#prior = {
+  #  'rprs':0.1,        # Rp/Rs
+   # 'ars':14.25,        # a/Rs
+   # 'per':3.336817,     # Period [day]
+   # 'inc':87.5,        # Inclination [deg]
+   # 'u0': 0, 'u1': 0, 'u2': 0, 'u3': 0,  # limb darkening (nonlinear)
+   # 'ecc':0,            # Eccentricity
+   # 'omega':0,          # Arg of periastron
+   # 'tmid':0.5,         # time of mid transit [day]
+ #}
+
+#print(target.planet_info(fancy=True))
 prior = {
-    'rprs':parameters['rprs'],      # Rp/Rs
-    'ars':parameters['aRs'],     # a/Rs
-    'per':parameters['pPer'],     # Period [day]
-    'inc':parameters['inc'],        # Inclination [deg]
+    'rprs': parameters['rprs'],      # Rp/Rs
+    'ars': parameters['ars'],    # a/Rs
+    'per': parameters['pPer'],     # Period [day]
+    'inc': parameters['inc'],        # Inclination [deg]
     'u0': 0, 'u1': 0, 'u2': 0, 'u3': 0,  # limb darkening (nonlinear)
     'ecc': parameters['ecc'],            # Eccentricity
-    'omega': 0,          # Arg of periastron
-    'tmid':parameters['midT'],         # time of mid transit [day]
+    'omega': parameters['omega'],          # Arg of periastron
+    'tmid': parameters['tmid'],         # time of mid transit [day]
 
 }
 
-
+#planet_name, _, parameters = target.planet_info()
 print(parameters)
 
 time = np.linspace(0.4,0.6,200) # [day]
@@ -72,7 +83,7 @@ plot2 = figure(plot_height=400, plot_width=400, x_range=[-2,2], y_range=[-2, 2],
 
 
 plot.line('x', 'y', source=source, line_width=3, line_alpha=0.6)
-plot.circle('x', 'y', source=ColumnDataSource(('data["time"]'), ('data["flux"]')), color='black')
+plot.circle('x', 'y', source=source_noisy, color='black')
 plot.xaxis.axis_label = "Time [day]"
 plot.yaxis.axis_label = "Relative Flux"
 
@@ -85,15 +96,24 @@ planetdata = ColumnDataSource(data={'x':[0], 'y':[0], 's':[prior['rprs']]})
 plot2.circle('x', 'y', source=planetdata, fill_color='grey', radius='s')
 
 # Set up widgets
+#text = TextInput(title="title", value='my transit')
 
-rprs2 = Slider(title="Transit Depth (Rp/Rs)^2", value=prior['rprs'], start=0.01, end=0.15, step=0.001)
+rprs = Slider(title="Transit Depth (Rp/Rs)^2", value=prior['rprs'], start=0.01, end=0.15, step=0.001)
 inc = Slider(title="Inclination (i)", value=90, start=85, end=90, step=0.1)
 tmid = Slider(title="Mid-Transit (Tmid)", value=0.5, start=0.45, end=0.55, step=0.001)
+per = Slider(title="Period", value=prior['per'], start=prior['per']*0.8, end=prior['per']*1.2, step=prior['per']*0.01)
+
+# Set up callbacks
+#def update_title(attrname, old, new):
+#    plot.title.text = text.value
+
+#text.on_change('value', update_title)
 
 def update_data(attrname, old, new):
-    prior['rprs'] = rprs2.value
+    prior['rprs'] = rprs.value
     prior['inc'] = inc.value
     prior['tmid'] = tmid.value
+    prior['per'] = per.value
     source.data = dict(x=time, y=transit(time, prior))
     offset = prior['ars']*np.cos(np.deg2rad(prior['inc'])) #hypotenuse #b
 
@@ -101,11 +121,11 @@ def update_data(attrname, old, new):
 
 
 
-for w in [rprs2, inc, tmid,]:
+for w in [rprs, inc, tmid, per]:
     w.on_change('value', update_data)
 
 # Set up layouts and add to document
-inputs = column(rprs2, tmid, inc) #plot 1 and 2 in a row, add a column of plots and inputs
+inputs = column(rprs, tmid, per, inc) #plot 1 and 2 in a row, add a column of plots and inputs
 plots = row(plot, plot2)
 curdoc().add_root(column(plots, inputs, width=800))
 curdoc().title = "Sliders"

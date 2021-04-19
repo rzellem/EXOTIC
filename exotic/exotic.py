@@ -1858,7 +1858,8 @@ def main():
                 rafile, decfile = get_radec(wcs_header)
 
                 # Checking pixel coordinates against plate solution
-                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
+                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_infoDict['tar_coords'][0],
+                                                                          exotic_infoDict['tar_coords'][1],
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
                 for comp in exotic_infoDict['comp_stars'][:]:

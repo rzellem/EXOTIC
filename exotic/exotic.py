@@ -1606,8 +1606,6 @@ def main():
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
 
-    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
-
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
 
@@ -1834,6 +1832,8 @@ def main():
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+            exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
+            exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
@@ -1849,8 +1849,6 @@ def main():
                 finally:
                     del first_image
 
-            compStarList = exotic_infoDict['comp_stars']
-
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
 
@@ -1863,13 +1861,13 @@ def main():
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
-                for comp in exotic_infoDict['comp_stars']:
+                for comp in exotic_infoDict['comp_stars'][:]:
                     log.info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
                         log.info("\nCurrent comparison star is variable, proceeding to next star.")
-                    else:
-                        compStarList.remove(comp)
+                        exotic_infoDict['comp_stars'].remove(comp)
+                compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param
             psf_data = {

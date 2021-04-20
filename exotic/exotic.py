@@ -1606,8 +1606,6 @@ def main():
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
 
-    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
-
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
 
@@ -1834,6 +1832,8 @@ def main():
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+            exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
+            exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
@@ -1858,8 +1858,7 @@ def main():
                 rafile, decfile = get_radec(wcs_header)
 
                 # Checking pixel coordinates against plate solution
-                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_infoDict['tar_coords'][0],
-                                                                          exotic_infoDict['tar_coords'][1],
+                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
                 for comp in exotic_infoDict['comp_stars'][:]:

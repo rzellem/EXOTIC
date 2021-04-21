@@ -135,10 +135,9 @@ from scipy.ndimage import median_filter, generic_filter
 from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
-from scipy.ndimage import binary_dilation, label
+from scipy.ndimage import binary_dilation, label, binary_erosion
 # cross correlation imports
-from skimage.registration import phase_cross_correlation
-from skimage.transform import rescale
+from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
@@ -1039,23 +1038,6 @@ def transformation(image_data, num_images, file_name, count, roi=1):
     roix = slice(int(width * (0.5 - roi / 2)), int(width * (0.5 + roi / 2)))
     roiy = slice(int(height * (0.5 - roi / 2)), int(height * (0.5 + roi / 2)))
 
-    # scale data
-    npix = np.product(image_data[0].shape)
-    if npix > 16e6: # 16 Mega Pixel
-        sf = 0.25
-    elif npix > 7.9e6: # ~8 MP
-        sf = 0.33
-    elif npix > 1e6: # more than 1 Mega Pixel
-        sf = 0.5
-    else:
-        sf = 1
-
-    if sf != 1:
-        image_data = np.array([
-            rescale(image_data[0], sf),
-            rescale(image_data[1], sf),
-        ])
-
     # Find transformation from .FITS files and catch exceptions if not able to.
     try:
         sys.stdout.write(f"Finding transformation {count + 1} of {num_images}\r")
@@ -1063,20 +1045,28 @@ def transformation(image_data, num_images, file_name, count, roi=1):
         sys.stdout.flush()
 
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
-        rot = results[0].rotation
-        pos[0] = results[0].translation/sf
-        scale = results[0].scale
-
+        return results[0]
     except Exception as ee:
         log.info(ee)
-        log.info(f"Image {count + 1} of {num_images} failed to align, passing on image: {file_name}")
 
-        rot = 0
-        pos = np.zeros((1, 2))
-        scale = 1
+        for p in [99, 98, 95, 90]:
+            for it in [2,1,0]:
 
-    return pos, rot, scale
+                # create binary mask to align image
+                mask1 = image_data[1][roiy, roix] > np.percentile(image_data[1][roiy, roix], p)
+                mask1 = binary_erosion(mask1, iterations=it)
 
+                mask0 = image_data[0][roiy, roix] > np.percentile(image_data[0][roiy, roix], p)
+                mask0 = binary_erosion(mask0, iterations=it)
+
+                try:
+                    results = aa.find_transform(mask1, mask0)
+                    return results[0] 
+                except Exception as ee:
+                    log.info(ee)
+    
+    log.info(f"alignment failed: {file_name}")
+    return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 def get_pixel_scale(wcs_header, header, pixel_init):
     astrometry_scale = None
@@ -1159,43 +1149,12 @@ def find_target(target, hdufile, verbose=False):
     return pixcoord[0]
 
 
-# defines the star point spread function as a 2D Gaussian
-def star_psf(x, y, x0, y0, a, sigx, sigy, b):
-    gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
-    return gaus
-
-
-# Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
-def estimate_sigma(x, maxidx=-1):
-    if maxidx == -1:
-        maxidx = np.argmax(x)
-    lower = np.abs(x - 0.5 * np.nanmax(x))[:maxidx].argmin()
-    upper = np.abs(x - 0.5 * np.nanmax(x))[maxidx:].argmin() + maxidx
-    FWHM = upper - lower
-    return FWHM / (2 * np.sqrt(2 * np.log(2)))
-
-
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     rx = (x - x0) * np.cos(rot) - (y - y0) * np.sin(rot)
     ry = (x - x0) * np.sin(rot) + (y - y0) * np.cos(rot)
     gausx = np.exp(-rx ** 2 / (2 * sigx ** 2))
     gausy = np.exp(-ry ** 2 / (2 * sigy ** 2))
     return a * gausx * gausy + b
-
-
-def fit_psf(data, pos, init, lo, up, psf_function=gaussian_psf, lossfn='linear', method='trf', box=10):
-    xv, yv = mesh_box(pos, box)
-
-    def fcn2min(pars):
-        model = psf_function(xv, yv, *pars)
-        return (data[yv, xv] - model).flatten()
-
-    if method == 'trf':
-        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point', method='dogbox',
-                            xtol=None, ftol=1e-3, tr_options='exact')
-    else:
-        res = least_squares(fcn2min, x0=[*pos, *init], loss=lossfn, jac='3-point', method=method)
-    return res.x
 
 
 def mesh_box(pos, box):
@@ -1207,55 +1166,29 @@ def mesh_box(pos, box):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, init=[], box=10, debug=False):
+def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     # get sub field in image
     xv, yv = mesh_box(pos, box)
 
-    # weighted flux centroid
-    wfx = np.sum(np.unique(xv) * (data[yv, xv].sum(0) - data[yv, xv].sum(0).min())) / np.sum(
-        (data[yv, xv].sum(0) - data[yv, xv].sum(0).min()))
-    wfy = np.sum(np.unique(yv) * (data[yv, xv].sum(1) - data[yv, xv].sum(1).min())) / np.sum(
-        (data[yv, xv].sum(1) - data[yv, xv].sum(1).min()))
+    init = [np.nanmax(data[yv, xv]) - np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
 
-    if len(init) == 5:
-        pass
-    else:
-        init = [np.nanmax(data[yv, xv]) - np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
+    # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
+    lo = [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(data[yv,xv]) - 1]
+    up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv,xv]) + 1]
+
+    def fcn2min(pars):
+        model = psf_function(xv, yv, *pars)
+        return (data[yv, xv] - model).flatten()
 
     try:
-        # fit gaussian PSF
-        pars = fit_psf(
-            data,
-            [wfx, wfy],  # position estimate
-            init,  # initial guess: [amp, sigx, sigy, rotation, bg]
-            [wfx - box * 0.5, wfy - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(data) - 1],
-            # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-            [wfx + box * 0.5, wfy + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1],  # upper bound
-            psf_function=gaussian_psf, method='trf',
-            box=box  # only fit a subregion +/- 5 px from centroid
-        )
+        res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log.info(f"WARNING: trouble fitting Gaussian PSF to star at {wfx},{wfy}")
-        log.info("  check location of comparison star in the first few images")
-        log.info("  fitting parameters are out of bounds")
-        log.info(f"  init: {init}")
-        log.info(f" lower: {[wfx - 5, wfy - 5, 0, 0, 0, -np.pi / 4, np.nanmin(data) - 1]}")
-        log.info(f" upper: {[wfx + 5, wfy + 5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1]}")
-
-        # use LM in unbounded optimization
-        pars = fit_psf(
-            data, [wfx, wfy], init,
-            [wfx - 5, wfy - 5, 0, 0, 0, -PI / 4, np.nanmin(data) - 1],
-            [wfx + 5, wfy + 5, 1e7, 20, 20, PI / 4, np.nanmax(data[yv, xv]) + 1],
-            psf_function=gaussian_psf,
-            box=box, method='lm'
-        )
-
-    if pars[2] <= 10:
         log.info(
             f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
-    return pars
+        res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
+
+    return res.x
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
@@ -1282,7 +1215,14 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
         log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
-        cutoff = np.nanpercentile(data[yv, xv], ptol)
+
+        # create pixel wise mask on entire image
+        x = np.arange(data.shape[1])
+        y = np.arange(data.shape[0])
+        xv, yv = np.meshgrid(x, y)
+        rv = ((xv - xc) ** 2 + (yv - yc) ** 2) ** 0.5
+        mask = (rv > r) & (rv < (r + dr))
+        cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
 
     dat = np.array(data[yv, xv], dtype=float)
     dat[dat > cutoff] = np.nan  # ignore pixels brighter than percentile
@@ -1394,7 +1334,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
 
 
 def psf_format(data, pos, init=[]):
-    target = fit_centroid(data, pos, init=init, box=10)
+    target = fit_centroid(data, pos, init=init)
 
     return {
         'x': target[0],
@@ -1585,6 +1525,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
     arrayPhases = (arrayTimes - pDict['midT']) / prior['per']
     prior['tmid'] = pDict['midT'] + np.floor(arrayPhases).max() * prior['per']
+
     upper = prior['tmid'] + np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
     lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
 
@@ -1600,7 +1541,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
         'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
-
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
@@ -1664,8 +1604,6 @@ def main():
 
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
-
-    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
 
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
@@ -1883,30 +1821,32 @@ def main():
 
             # time sort images
             times = []
-            for file in inputfiles:
+            for ifile in inputfiles:
                 extension = 0
-                header = fits.getheader(filename=file, ext=extension)
+                header = fits.getheader(filename=ifile, ext=extension)
                 while header['NAXIS'] == 0:
                     extension += 1
-                    header = fits.getheader(filename=file, ext=extension)
+                    header = fits.getheader(filename=ifile, ext=extension)
                 times.append(getJulianTime(header))
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+            exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
+            exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
-            for file in inputfiles:
-                first_image = fits.getdata(file, ext=0)
+            for ifile in inputfiles:
+                first_image = fits.getdata(ifile, ext=0)
+                args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
+
                 try:
-                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], box=10)
+                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
                     break
                 except Exception:
                     inc += 1
                 finally:
-                    del first_image, args
-
-            compStarList = exotic_infoDict['comp_stars']
+                    del first_image
 
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
@@ -1920,13 +1860,13 @@ def main():
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
-                for comp in exotic_infoDict['comp_stars']:
+                for comp in exotic_infoDict['comp_stars'][:]:
                     log.info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
                         log.info("\nCurrent comparison star is variable, proceeding to next star.")
-                    else:
-                        compStarList.remove(comp)
+                        exotic_infoDict['comp_stars'].remove(comp)
+                compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param
             psf_data = {
@@ -1941,7 +1881,6 @@ def main():
 
             aper_data = {
                 'target': np.zeros((len(inputfiles), len(apers), len(annuli))),
-                'target_err': np.zeros((len(inputfiles), len(apers), len(annuli))),
                 'target_bg': np.zeros((len(inputfiles), len(apers), len(annuli)))
             }
 
@@ -2015,98 +1954,71 @@ def main():
 
                 # Image Alignment
                 if alignmentBool:
-                    apos, arot, scl = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
+                    tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
-                    apos = np.array([[0,0]])
-                    arot = 0
-                    scl = 1
+                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
-                # Fit PSF for target star
-                if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) + apos[0][0]
-                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) + apos[0][1]
-                else:
-                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) - apos[0][0]
-                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) - apos[0][1]
+                # apply transform
+                xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
                 psf_data["target_align"][i] = [xrot, yrot]
                 if i == 0:
-                    psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], box=10)
+                    psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot])
                 else:
                     if alignmentBool:
                         psf_data["target"][i] = fit_centroid(
                             imageData,
                             [xrot, yrot],
-                            psf_data["target"][0][2:],  # reference psf in first image
-                            box=10)
+                            psf_data["target"][0][2:])
                     else:
                         # use previous PSF as prior
                         psf_data["target"][i] = fit_centroid(
                             imageData,
                             psf_data["target"][i-1][:2],
-                            psf_data["target"][i-1][2:],  # reference psf in first image
-                            box=10)
+                            psf_data["target"][i-1][2:])
 
                         # check for change in amplitude of PSF
                         if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
                             log.info("Can't find target. Trying to align...")
 
-                            apos, arot, scl = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
+                            tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                            
+                            xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
-                            # Fit PSF for target star
-                            if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                                xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) + apos[0][0]
-                                yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) + apos[0][1]
-                            else:
-                                xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) - apos[0][0]
-                                yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) - apos[0][1]
-
-                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:], box=10)
+                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:])
 
                 # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
                     ckey = "comp{}".format(j+1)
+
                     # apply transformation
-                    if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                        xrot = scl * coord[0] * np.cos(arot) - scl * coord[1] * np.sin(arot) + apos[0][0]
-                        yrot = scl * coord[0] * np.sin(arot) + scl * coord[1] * np.cos(arot) + apos[0][1]
-                    else:
-                        xrot = scl * coord[0] * np.cos(arot) - scl * coord[1] * np.sin(arot) - apos[0][0]
-                        yrot = scl * coord[0] * np.sin(arot) + scl * coord[1] * np.cos(arot) - apos[0][1]
+                    xrot, yrot = tform(coord)[0]
 
                     psf_data[ckey+"_align"][i] = [xrot,yrot]
                     if i == 0:
-                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], box=10)
+                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot])
                     else:
                         if alignmentBool:
                             psf_data[ckey][i] = fit_centroid(
                                 imageData,
                                 [xrot, yrot],
-                                psf_data[ckey][0][2:],  # initialize with psf in first image
-                                box=10)
+                                psf_data[ckey][0][2:])
                         else:
                             # use previous PSF as prior
                             psf_data[ckey][i] = fit_centroid(
                                 imageData,
                                 psf_data[ckey][i-1][:2],
-                                psf_data[ckey][i-1][2:],
-                                box=10)
+                                psf_data[ckey][i-1][2:])
 
                             # check for change in amplitude of PSF
                             if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                log.info("Can't find target. Trying to align...")
+                                #log.info("Can't find comp. Trying to align...")
 
-                                apos, arot, scl = transformation(np.array([firstImage, imageData]), len(inputfiles), fileName, i)
+                                tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 
-                                # Fit PSF for target star
-                                if (np.pi - 0.1) <= np.abs(arot) <= (np.pi + 0.1):
-                                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) + apos[0][0]
-                                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) + apos[0][1]
-                                else:
-                                    xrot = scl * exotic_UIprevTPX * np.cos(arot) - scl * exotic_UIprevTPY * np.sin(arot) - apos[0][0]
-                                    yrot = scl * exotic_UIprevTPX * np.sin(arot) + scl * exotic_UIprevTPY * np.cos(arot) - apos[0][1]
+                                xrot, yrot = tform(coord)[0]
 
-                                psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:], box=10)
+                                psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:])
 
                 # aperture photometry
                 if i == 0:
@@ -2212,10 +2124,9 @@ def main():
 
                 for an, annulus in enumerate(annuli):
                     tFlux = aper_data['target'][:, a, an]
-                    tFlux_err = aper_data['target_err'][:, a, an]
 
                     # fit without a comparison star
-                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape), airmass, ld, pDict)
+                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
                     for k in myfit.bounds.keys():
                         log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
@@ -2229,7 +2140,7 @@ def main():
                         minSTD = resstd
                         minAperture = -aper
                         minAnnulus = annulus
-                        arrayNormUnc = arrayNormUnc
+                        arrayNormUnc = tFlux**0.5
 
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
@@ -2554,7 +2465,7 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
-            'ars': [pDict['aRs'] - 1, pDict['aRs'] + 1],
+            'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
             'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
             'a2': [-3, 3],
         }

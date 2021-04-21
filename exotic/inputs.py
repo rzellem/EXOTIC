@@ -154,7 +154,7 @@ def check_imaging_files(directory, img_type):
 
     while True:
         try:
-            if Path(directory).is_dir():
+            if Path(directory).is_dir() or not directory.replace(' ', '') == '':
                 directory = Path(directory)
                 for ext in file_extensions:
                     for file in directory.iterdir():
@@ -281,56 +281,50 @@ def obs_date(date):
 
 def latitude(lat):
     while True:
-        try:
-            if not lat:
-                lat = user_input("Enter the latitude (in degrees) of where you observed. "
-                                 "Don't forget the sign where North is '+' and South is '-'! "
-                                 "(Example: +50.4): ", type_=str)
+        if not lat:
+            lat = user_input("Enter the longitude (in degrees) of where you observed. "
+                             "(Don't forget the sign where East is '+' and West is '-')! "
+                             "(Example: -32.12): ", type_=str)
+        lat = lat.replace(' ', '')
 
-            lat = lat.replace(' ', '')
-            if lat[0] != '+' and lat[0] != '-':
-                raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. "
-                                 "Please try again.")
-
-            # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
+        if lat[0] == '+' or lat[0] == '-':
+            # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
                 lat = float(lat)
             except ValueError:
                 lat = float(dms_to_dd(lat))
 
-            if lat <= -90.00 or lat >= 90.00:
-                raise ValueError("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
-            return lat
-        except ValueError as err:
-            log.warning(err.args)
-            lat = None
+            if -90.00 <= lat <= 90.00:
+                return lat
+            else:
+                log.warning("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+        else:
+            log.warning("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+        lat = None
 
 
 def longitude(long):
     while True:
-        try:
-            if not long:
-                long = user_input("Enter the longitude (in degrees) of where you observed. "
-                                  "(Don't forget the sign where East is '+' and West is '-')! "
-                                  "(Example: -32.12): ", type_=str)
+        if not long:
+            long = user_input("Enter the longitude (in degrees) of where you observed. "
+                              "(Don't forget the sign where East is '+' and West is '-')! "
+                              "(Example: -32.12): ", type_=str)
+        long = long.replace(' ', '')
 
-            long = long.replace(' ', '')
-            if long[0] != '+' and long[0] != '-':
-                raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. "
-                                 "Please try again.")
-
+        if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
                 long = float(long)
             except ValueError:
                 long = float(dms_to_dd(long))
 
-            if long <= -180.00 or long >= 180.00:
-                raise ValueError("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)")
-            return long
-        except ValueError as err:
-            log.warning(err.args)
-            long = None
+            if -180.00 <= long <= 180.00:
+                return long
+            else:
+                log.warning("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)")
+        else:
+            log.warning("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
+        long = None
 
 
 def elevation(elev, lat, long):

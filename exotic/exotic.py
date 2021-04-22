@@ -116,7 +116,6 @@ from io import StringIO
 import pyvo as vo
 import json
 import logging
-import logging.config
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
@@ -785,7 +784,7 @@ def radec_hours_to_degree(ra, dec):
             c = SkyCoord(ra + ' ' + dec, unit=(u.hourangle, u.deg))
             return c.ra.degree, c.dec.degree
         except ValueError:
-            log.info("Error: The format is not correct, please try again.")
+            log.warning("Error: The format is not correct, please try again.")
             ra = input("Input the right ascension of target (HH:MM:SS): ")
             dec = input("Input the declination of target (<sign>DD:MM:SS): ")
 
@@ -848,7 +847,7 @@ class LimbDarkening:
                     raise KeyError
                 break
             except KeyError:
-                log.info("\nError: The entered filter is not in the provided list of standard filters.")
+                log.warning("\nError: The entered filter is not in the provided list of standard filters.")
                 self.filter_type = None
 
         self.wl_min = self.fwhm[self.filter_type][0]
@@ -903,7 +902,7 @@ def corruption_check(files):
             hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
             valid_files.append(file)
         except OSError as e:
-            log.info(f"Found corrupted file and removing from reduction: {file}, ({e})")
+            log.warning(f"Found corrupted file and removing from reduction: {file}, ({e})")
         finally:
             if getattr(hdul, "close", None) and callable(hdul.close):
                 hdul.close()
@@ -998,7 +997,7 @@ def variableStarCheck(ra, dec):
         gaiaQuery = Gaia.cone_search_async(sample, radius)
         gaiaResult = gaiaQuery.get_results()
     except Exception:
-        log.info("Not able to query information from Simbad.")
+        log.warning("Not able to query information from Simbad.")
         return False
 
     # Individually go through the phot_variable_flag indicator for each star to see if variable or not
@@ -1020,7 +1019,7 @@ def variableStarCheck(ra, dec):
     try:
         starName = simbad_result['MAIN_ID'][0].decode("utf-8")
     except:
-        log.info("Your star cannot be resolved in SIMBAD. Proceed with caution.")
+        log.warning("Your star cannot be resolved in SIMBAD. Proceed with caution.")
         return False
     identifiers = Simbad.query_objectids(starName)
     for currName in identifiers:
@@ -1048,7 +1047,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         return results[0]
     except Exception as ee:
-        log.info(ee)
+        log.warning(ee)
 
         for p in [99, 98, 95, 90]:
             for it in [2,1,0]:
@@ -1064,7 +1063,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
                     results = aa.find_transform(mask1, mask0)
                     return results[0] 
                 except Exception as ee:
-                    log.info(ee)
+                    log.warning(ee)
     
     log.info(f"alignment failed: {file_name}")
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
@@ -1184,7 +1183,7 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log.info(
+        log.warning(
             f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
@@ -1215,7 +1214,8 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     try:
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
-        log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
+        log.warning(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. "
+                    f"Check if star is present or close to border.")
 
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
@@ -1606,8 +1606,6 @@ def main():
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
 
-    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
-
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
 
@@ -1834,6 +1832,8 @@ def main():
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+            exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
+            exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
@@ -1849,8 +1849,6 @@ def main():
                 finally:
                     del first_image
 
-            compStarList = exotic_infoDict['comp_stars']
-
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
 
@@ -1863,13 +1861,13 @@ def main():
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
-                for comp in exotic_infoDict['comp_stars']:
+                for comp in exotic_infoDict['comp_stars'][:]:
                     log.info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
                         log.info("\nCurrent comparison star is variable, proceeding to next star.")
-                    else:
-                        compStarList.remove(comp)
+                        exotic_infoDict['comp_stars'].remove(comp)
+                compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param
             psf_data = {
@@ -2691,15 +2689,15 @@ def main():
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
-            log.info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
+            log.warning(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
         try:
             output_files.final_planetary_params()
         except Exception as e:
-            log.info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
+            log.warning(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
         try:
             output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
-            log.info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
+            log.warning(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
 
         log.info("Output File Saved")
 
@@ -2712,7 +2710,7 @@ def main():
 
 if __name__ == "__main__":
     # configure logger for standalone execution
-    logging.root.setLevel(logging.NOTSET)
+    logging.root.setLevel(logging.DEBUG)
     fileFormatter = logging.Formatter("%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
                                       "%(funcName)s:%(lineno)d - %(message)s", f"%Y-%m-%dT%H:%M:%S")
     fileHandler = TimedRotatingFileHandler(filename="exotic.log", when="midnight", backupCount=2)

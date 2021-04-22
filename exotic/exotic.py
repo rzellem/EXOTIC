@@ -1845,8 +1845,6 @@ def main():
             inc = 0
             for ifile in inputfiles:
                 first_image = fits.getdata(ifile, ext=0)
-                args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
-
                 try:
                     args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
                     break

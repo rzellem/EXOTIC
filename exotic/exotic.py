@@ -193,10 +193,12 @@ plt.style.use(astropy_mpl_style)
 # logging -- https://docs.python.org/3/library/logging.html
 log = logging.getLogger(__name__)
 
+
 def log_info(string):
     print(string)
     log.debug(string)
     return True
+
 
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)

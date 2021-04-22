@@ -139,8 +139,8 @@ from scipy.ndimage import binary_dilation, label, binary_erosion
 # cross correlation imports
 from skimage.transform import SimilarityTransform
 # error handling for scraper
-from tenacity import retry, retry_if_exception_type, retry_if_result, \
-    stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
+    stop_after_delay, wait_exponential
 import warnings
 
 # ########## EXOTIC imports ##########
@@ -966,11 +966,11 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                 raise ValueError
             return pixx, pixy
         except ValueError:
-            log_info("Your input pixel coordinates: ", "["+str(pixx)+","+str(pixy)+"]")
+            log_info(f"Your input pixel coordinates: [{pixx}, {pixy}]")
 
             dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
             exotic_pixy, exotic_pixx = np.unravel_index(dist.argmin(), dist.shape)
-            log_info("EXOTIC's calculated pixel coordinates: ", "["+str(exotic_pixx)+","+str(exotic_pixy)+"]")
+            log_info(f"EXOTIC's calculated pixel coordinates: [{exotic_pixx}, {exotic_pixy}]")
 
             opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, val1='y', val2='n')
 
@@ -1000,42 +1000,57 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 def variableStarCheck(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
+    radius = u.Quantity(20.0, u.arcsec)
 
     # Query GAIA first to check for variability using the phot_variable_flag trait
-    radius = u.Quantity(20.0, u.arcsec)
-    try:
-        gaiaQuery = Gaia.cone_search_async(sample, radius)
-        gaiaResult = gaiaQuery.get_results()
-    except Exception:
-        log_info("Not able to query information from Simbad.")
-        return False
+    gaia_result = gaia_query(sample, radius)
+    if not gaia_result:
+        log_info("WARNING: Your comparison star cannot be resolved in Gaia. Proceed with caution.")
+    else:
+        # Individually go through the phot_variable_flag indicator for each star to see if variable or not
+        variableFlagList = gaia_result.columns["phot_variable_flag"]
+        constantCounter = 0
+        for currFlag in variableFlagList:
+            if currFlag == "VARIABLE":
+                return True
+            elif currFlag == "NOT_AVAILABLE":
+                continue
+            elif currFlag == "CONSTANT":
+                constantCounter += 1
+        if constantCounter == len(variableFlagList):
+            return False
 
-    # Individually go through the phot_variable_flag indicator for each star to see if variable or not
-    variableFlagList = gaiaResult.columns["phot_variable_flag"]
-    constantCounter = 0
-    for currFlag in variableFlagList:
-        if currFlag == "VARIABLE":
-            return True
-        elif currFlag == "NOT_AVAILABLE":
-            continue
-        elif currFlag == "CONSTANT":
-            constantCounter += 1
-    if constantCounter == len(variableFlagList):
-        return False
-
-    # query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    # Query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     # This is a secondary check if GAIA query returns inconclusive results
-    simbad_result = Simbad.query_region(sample, radius=20 * u.arcsec)
-    try:
-        starName = simbad_result['MAIN_ID'][0].decode("utf-8")
-    except:
-        log_info("Your star cannot be resolved in SIMBAD. Proceed with caution.")
+    simbad_result = simbad_query(sample)
+    if not simbad_result:
+        log_info("WARNING: Your comparison star cannot be resolved in SIMBAD. Proceed with caution.")
         return False
-    identifiers = Simbad.query_objectids(starName)
-    for currName in identifiers:
-        if "V*" in currName[0]:
-            return True
-    return False
+    else:
+        star_name = simbad_result['MAIN_ID'][0].decode("utf-8")
+        identifiers = Simbad.query_objectids(star_name)
+
+        for currName in identifiers:
+            if "V*" in currName[0]:
+                return True
+        return False
+
+
+@retry(stop=stop_after_delay(30))
+def gaia_query(sample, radius):
+    try:
+        gaia_query = Gaia.cone_search(sample, radius)
+        return gaia_query.get_results()
+    except Exception:
+        return False
+
+
+@retry(stop=stop_after_delay(30))
+def simbad_query(sample):
+    try:
+        return Simbad.query_region(sample, radius=20 * u.arcsec)
+    except Exception:
+        return False
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1077,6 +1092,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
     
     log_info(f"alignment failed: {file_name}")
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
+
 
 def get_pixel_scale(wcs_header, header, pixel_init):
     astrometry_scale = None
@@ -1830,34 +1846,34 @@ def main():
 
             inputfiles = corruption_check(exotic_infoDict['images'])
 
-            # time sort images
-            times = []
-            for ifile in inputfiles:
-                extension = 0
-                header = fits.getheader(filename=ifile, ext=extension)
-                while header['NAXIS'] == 0:
-                    extension += 1
-                    header = fits.getheader(filename=ifile, ext=extension)
-                times.append(getJulianTime(header))
-
-            si = np.argsort(times)
-            inputfiles = np.array(inputfiles)[si]
+            # # time sort images
+            # times = []
+            # for ifile in inputfiles:
+            #     extension = 0
+            #     header = fits.getheader(filename=ifile, ext=extension)
+            #     while header['NAXIS'] == 0:
+            #         extension += 1
+            #         header = fits.getheader(filename=ifile, ext=extension)
+            #     times.append(getJulianTime(header))
+            #
+            # si = np.argsort(times)
+            # inputfiles = np.array(inputfiles)[si]
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
-            # fit target in the first image and use it to determine aperture and annulus range
-            inc = 0
-            for ifile in inputfiles:
-                first_image = fits.getdata(ifile, ext=0)
-                try:
-                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
-                    break
-                except Exception:
-                    inc += 1
-                finally:
-                    del first_image
+            # # fit target in the first image and use it to determine aperture and annulus range
+            # inc = 0
+            # for ifile in inputfiles:
+            #     first_image = fits.getdata(ifile, ext=0)
+            #     try:
+            #         args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
+            #         break
+            #     except Exception:
+            #         inc += 1
+            #     finally:
+            #         del first_image
 
-            inputfiles = inputfiles[inc:]
+            # inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
 
@@ -2063,7 +2079,7 @@ def main():
             badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
                 aper_data["target"][:, 0, 0])
             if np.sum(~badmask) == 0:
-                log.error("No images to fit...check reference image for alignment (first image of sequence)")
+                log_info("No images to fit...check reference image for alignment (first image of sequence)")
 
             # convert to numpy arrays
             times = np.array(timeList)[~badmask]

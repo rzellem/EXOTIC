@@ -13,13 +13,21 @@ from pprint import pprint
 def plot_image(filename, save=False):
 
     hdu = fits.open(filename)
-    dheader = dict(hdu[0].header)
+
+    extension = 0
+    image_header = hdu[extension].header
+    while image_header["NAXIS"] == 0:
+        extension += 1
+        image_header = hdu[extension].header
+
+
+    dheader = dict(hdu[extension].header)
     for k in dheader:
         if len(k) >= 2:
             print(f"{k}: {dheader[k]}")
 
     print(hdu.info())
-    data = hdu[0].data
+    data = hdu[extension].data
 
     # quick hot pixel/ cosmic ray mask
     mask, cdata = detect_cosmics(
@@ -30,7 +38,7 @@ def plot_image(filename, save=False):
     )
 
     # show how many pixels are saturated
-    SATURATION = 2**(hdu[0].header['bitpix'])
+    SATURATION = 2**(hdu[extension].header['bitpix'])
     mmask = cdata >= SATURATION*0.9
     labels, ngroups = label(mmask)
     print('Saturated Areas:',ngroups)
@@ -63,7 +71,7 @@ def plot_image(filename, save=False):
     # must give a vector of image data for image parameter
     fig.image(
         image=[cdata],
-          x=0, y=0, dw=hdu[0].data.shape[1], dh=hdu[0].data.shape[0],
+          x=0, y=0, dw=hdu[extension].data.shape[1], dh=hdu[extension].data.shape[0],
           level="image", color_mapper=color_mapper
     )
 

@@ -1848,34 +1848,34 @@ def main():
 
             inputfiles = corruption_check(exotic_infoDict['images'])
 
-            # # time sort images
-            # times = []
-            # for ifile in inputfiles:
-            #     extension = 0
-            #     header = fits.getheader(filename=ifile, ext=extension)
-            #     while header['NAXIS'] == 0:
-            #         extension += 1
-            #         header = fits.getheader(filename=ifile, ext=extension)
-            #     times.append(getJulianTime(header))
-            #
-            # si = np.argsort(times)
-            # inputfiles = np.array(inputfiles)[si]
+            # time sort images
+            times = []
+            for ifile in inputfiles:
+                extension = 0
+                header = fits.getheader(filename=ifile, ext=extension)
+                while header['NAXIS'] == 0:
+                    extension += 1
+                    header = fits.getheader(filename=ifile, ext=extension)
+                times.append(getJulianTime(header))
+
+            si = np.argsort(times)
+            inputfiles = np.array(inputfiles)[si]
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
-            # # fit target in the first image and use it to determine aperture and annulus range
-            # inc = 0
-            # for ifile in inputfiles:
-            #     first_image = fits.getdata(ifile, ext=0)
-            #     try:
-            #         args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
-            #         break
-            #     except Exception:
-            #         inc += 1
-            #     finally:
-            #         del first_image
+            # fit target in the first image and use it to determine aperture and annulus range
+            inc = 0
+            for ifile in inputfiles:
+                first_image = fits.getdata(ifile, ext=0)
+                try:
+                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
+                    break
+                except Exception:
+                    inc += 1
+                finally:
+                    del first_image
 
-            # inputfiles = inputfiles[inc:]
+            inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
 

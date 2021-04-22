@@ -115,7 +115,9 @@ from pathlib import Path
 from io import StringIO
 import pyvo as vo
 import json
+from importlib import reload
 import logging
+reload(logging)
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports

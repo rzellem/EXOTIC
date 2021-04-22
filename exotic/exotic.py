@@ -955,13 +955,19 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             uncert = 20 / 3600
             # Margins are within 20 arcseconds
             if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
-                log.info("Error: The X Pixel Coordinate entered does not match the target's right ascension.")
+                log.info("\n*** Warning: The X Pixel Coordinate entered does not match the target's right ascension. ***")
                 raise ValueError
             if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
-                log.info("Error: The Y Pixel Coordinate entered does not match the target's declination.")
+                log.info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's declination. ***")
                 raise ValueError
             return pixx, pixy
         except ValueError:
+            log.info("Your input pixel coordinates: ", "["+str(pixx)+","+str(pixy)+"]")
+
+            dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
+            exotic_pixy, exotic_pixx = np.unravel_index(dist.argmin(), dist.shape)
+            log.info("EXOTIC's calculated pixel coordinates: ", "["+str(exotic_pixx)+","+str(exotic_pixy)+"]")
+
             opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, val1='y', val2='n')
 
             # User wants to change their coordinates

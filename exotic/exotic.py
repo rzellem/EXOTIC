@@ -1024,12 +1024,11 @@ def variableStarCheck(ra, dec):
 
     # Query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     # This is a secondary check if GAIA query returns inconclusive results
-    simbad_result = simbad_query(sample)
-    if not simbad_result:
+    star_name = simbad_query(sample)
+    if not star_name:
         log_info("WARNING: Your comparison star cannot be resolved in SIMBAD. Proceed with caution.")
         return False
     else:
-        star_name = simbad_result['MAIN_ID'][0].decode("utf-8")
         identifiers = Simbad.query_objectids(star_name)
 
         for currName in identifiers:
@@ -1050,7 +1049,8 @@ def gaia_query(sample, radius):
 @retry(stop=stop_after_delay(30))
 def simbad_query(sample):
     try:
-        return Simbad.query_region(sample, radius=20 * u.arcsec)
+        simbad_result = Simbad.query_region(sample, radius=20 * u.arcsec)
+        return simbad_result['MAIN_ID'][0].decode("utf-8")
     except Exception:
         return False
 

@@ -14,7 +14,7 @@
 # pip3 install --exists-action w --progress-bar ascii -r requirements.txt  # install req's
 # pip3 install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/  # install locally
 # CLEAN PREVIOUS BUILDS: 
-# rm -r dist *.egg* && pip3 uninstall exotic
+# rm -r dist *.egg* ; pip3 uninstall exotic ; # pipenv uninstall exotic
 
 import re
 import time
@@ -27,14 +27,11 @@ AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "exoplanetwatch@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
 NAME = "exotic"
-PYTHON_REQUIREMENTS = '>="3.7"'
+PYTHON_REQUIREMENTS = "3.7"
 URL = "https://github.com/rzellem/EXOTIC"
 
-REQUIREMENTS_SETUP = ['wheel',
-                      'setuptools>=30.3.0',
-                      'setuptools_scm',
-                      'importlib-metadata>=3.6 ; python_version<"3.8"',
-                      f'python_version{PYTHON_REQUIREMENTS}']
+REQUIREMENTS_SETUP = [f"importlib-metadata>=3.6 ; python_version<='{PYTHON_REQUIREMENTS}'",
+                      "setuptools_scm"]
 
 
 def description_read():
@@ -106,7 +103,7 @@ setuptools.setup(name=NAME,
                  include_package_data=True,
                  zip_safe=False,
                  install_requires=requirements_read(),
-                 python_requires=PYTHON_REQUIREMENTS,
+                 python_requires=f">='{PYTHON_REQUIREMENTS}'",
                  setup_requires=REQUIREMENTS_SETUP,
                  entry_points={
                      'console_scripts': [

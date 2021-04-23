@@ -1,6 +1,8 @@
 import logging
 import json
+import sys
 from pathlib import Path
+
 try:
     from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
 except ImportError:
@@ -8,6 +10,12 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
+logging.basicConfig(filename='exotic.log', level=logging.DEBUG)
+consoleFormatter = logging.Formatter("%(message)s")
+consoleHandler = logging.StreamHandler(sys.stdout)
+consoleHandler.setFormatter(consoleFormatter)
+consoleHandler.setLevel(logging.INFO)
+log.addHandler(consoleHandler)
 
 
 class Inputs:
@@ -78,9 +86,9 @@ class Inputs:
 
     def search_init(self, init_file, planet_dict):
         cwd = Path.cwd()
-        log.info(f"\nYour current working directory is: {cwd}")
-        log.info(f"Potential initialization files I've found in {cwd} are: ")
-        [log.info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
+        log_info(f"\nYour current working directory is: {cwd}")
+        log_info(f"Potential initialization files I've found in {cwd} are: ")
+        [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
         while True:
             try:
@@ -93,7 +101,7 @@ class Inputs:
                 planet_params = self.comp_params(init_file, planet_dict)
                 return init_file, planet_params
             except (FileNotFoundError, IsADirectoryError) as e:
-                log.info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
+                log_info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
                 init_file = None
 
     def comp_params(self, init_file, planet_dict):
@@ -118,7 +126,8 @@ class Inputs:
             'rprsUnc': 'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty',
             'aRs': 'Ratio of Distance to Stellar Radius (a/Rs)',
             'aRsUnc': 'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty',
-            'inc': 'Orbital Inclination (deg)', 'incUnc': 'Orbital Inclination (deg) Uncertainty',
+            'inc': 'Orbital Inclination (deg)',
+            'incUnc': ('Orbital Inclination (deg) Uncertainty', 'Orbital Inclination (deg) Uncertainity'),
             'ecc': 'Orbital Eccentricity (0 if null)', 'teff': 'Star Effective Temperature (K)',
             'teffUncPos': 'Star Effective Temperature (+) Uncertainty',
             'teffUncNeg': 'Star Effective Temperature (-) Uncertainty',
@@ -145,7 +154,7 @@ def check_imaging_files(directory, img_type):
 
     while True:
         try:
-            if Path(directory).is_dir():
+            if Path(directory).is_dir() or not directory.replace(' ', '') == '':
                 directory = Path(directory)
                 for ext in file_extensions:
                     for file in directory.iterdir():
@@ -159,7 +168,7 @@ def check_imaging_files(directory, img_type):
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            log.info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.")
+            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.")
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
                              type_=str, val1='y', val2='n')
             if opt == 'y':
@@ -169,7 +178,7 @@ def check_imaging_files(directory, img_type):
                 directory = user_input(f"Enter the directory path where {img_type} files are located "
                                        f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
         except (NotADirectoryError, OSError):
-            log.info("\nError: No such directory exists when searching for FITS files. Please try again.")
+            log_info("\nError: No such directory exists when searching for FITS files. Please try again.")
             directory = user_input(f"Enter the directory path where {img_type} files are located "
                                    f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
 
@@ -185,16 +194,16 @@ def save_directory(directory):
     while True:
         try:
             if not directory:
-                directory = user_input("Enter the directory to Save the Results and Plots into "
+                directory = user_input("\nEnter the directory to Save the Results and Plots into "
                                        "or type new to create one: ", type_=str)
             if directory == 'new':
                 directory = create_directory()
             else:
-                if not Path(directory).is_dir():
+                if not Path(directory).is_dir() or directory.replace(' ', '') == '':
                     raise NotADirectoryError
             return directory
         except (NotADirectoryError, OSError):
-            log.info("Error: the directory entered does not exist. Please try again. Make sure to follow this "
+            log_info("Error: The directory entered does not exist. Please try again. Make sure to follow this "
                      "\nformatting (using whichever directory you choose): /sample-data/results")
             directory = None
 
@@ -207,9 +216,9 @@ def create_directory():
             save_path = save_path / directory
             Path(save_path).mkdir()
         except OSError:
-            log.info(f"Creation of the directory {save_path}/{directory} failed.")
+            log_info(f"Creation of the directory {save_path}/{directory} failed.")
         else:
-            log.info(f"Successfully created the directory {save_path}.")
+            log_info(f"Successfully created the directory {save_path}.")
             return save_path
 
 
@@ -272,56 +281,50 @@ def obs_date(date):
 
 def latitude(lat):
     while True:
-        try:
-            if not lat:
-                lat = user_input("Enter the latitude (in degrees) of where you observed. "
-                                 "Don't forget the sign where North is '+' and South is '-'! "
-                                 "(Example: +50.4): ", type_=str)
+        if not lat:
+            lat = user_input("Enter the longitude (in degrees) of where you observed. "
+                             "(Don't forget the sign where East is '+' and West is '-')! "
+                             "(Example: -32.12): ", type_=str)
+        lat = lat.replace(' ', '')
 
-            lat = lat.replace(' ', '')
-            if lat[0] != '+' and lat[0] != '-':
-                raise ValueError("You forgot the sign for the latitude! North is '+' and South is '-'. "
-                                 "Please try again.")
-
-            # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
+        if lat[0] == '+' or lat[0] == '-':
+            # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
                 lat = float(lat)
             except ValueError:
                 lat = float(dms_to_dd(lat))
 
-            if lat <= -90.00 or lat >= 90.00:
-                raise ValueError("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
-            return lat
-        except ValueError as err:
-            log.info(err.args)
-            lat = None
+            if -90.00 <= lat <= 90.00:
+                return lat
+            else:
+                log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+        else:
+            log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+        lat = None
 
 
 def longitude(long):
     while True:
-        try:
-            if not long:
-                long = user_input("Enter the longitude (in degrees) of where you observed. "
-                                  "(Don't forget the sign where East is '+' and West is '-')! "
-                                  "(Example: -32.12): ", type_=str)
+        if not long:
+            long = user_input("Enter the longitude (in degrees) of where you observed. "
+                              "(Don't forget the sign where East is '+' and West is '-')! "
+                              "(Example: -32.12): ", type_=str)
+        long = long.replace(' ', '')
 
-            long = long.replace(' ', '')
-            if long[0] != '+' and long[0] != '-':
-                raise ValueError("You forgot the sign for the longitude! East is '+' and West is '-'. "
-                                 "Please try again.")
-
+        if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
                 long = float(long)
             except ValueError:
                 long = float(dms_to_dd(long))
 
-            if long <= -180.00 or long >= 180.00:
-                raise ValueError("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)")
-            return long
-        except ValueError as err:
-            log.info(err.args)
-            long = None
+            if -180.00 <= long <= 180.00:
+                return long
+            else:
+                log_info("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)")
+        else:
+            log_info("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
+        long = None
 
 
 def elevation(elev, lat, long):
@@ -329,15 +332,15 @@ def elevation(elev, lat, long):
         try:
             elev = typecast_check(type_=float, val=elev)
             if not elev:
-                log.info("\nEXOTIC is retrieving elevation based on entered "
+                log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
                 elev = open_elevation(lat, long)
                 if not elev:
-                    log.info("\nEXOTIC could not retrieve elevation.")
+                    log_info("\nEXOTIC could not retrieve elevation.")
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
             return elev
         except ValueError:
-            log.info("The entered elevation is incorrect.")
+            log_info("The entered elevation is incorrect.")
             elev = None
 
 
@@ -409,7 +412,7 @@ def comparison_star_coords(comp_stars, rt_bool):
                 num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
                 if 1 <= num_comp_stars <= 10:
                     break
-                log.info("\nThe number of Comparison Stars entered is incorrect.")
+                log_info("\nThe number of Comparison Stars entered is incorrect.")
             else:
                 num_comp_stars = 1
 
@@ -439,7 +442,7 @@ def prereduced_file(file):
             if file == "ok":
                 file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
                 # file = "/Users/rzellem/Downloads/fluxorama.csv
-                log.info("Hello, Rob.")
+                log_info("Hello, Rob.")
 
             file = Path(file)
 
@@ -448,12 +451,12 @@ def prereduced_file(file):
             else:
                 raise FileNotFoundError
         except FileNotFoundError:
-            log.info("Error: Data file not found. Please try again.")
+            log_info("Error: Data file not found. Please try again.")
             file = None
 
 
 def data_file_time(time_format):
-    log.info("\nNOTE: If your file is not in one of the following formats, "
+    log_info("\nNOTE: If your file is not in one of the following formats, "
              "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
 
     while True:
@@ -463,14 +466,14 @@ def data_file_time(time_format):
         time_format = time_format.upper().strip()
 
         if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
-            log.info("Invalid entry; please try again.")
+            log_info("Invalid entry; please try again.")
             time_format = None
         else:
             return time_format
 
 
 def data_file_units(units):
-    log.info("\nNOTE: If your file is not in one of the following units, "
+    log_info("\nNOTE: If your file is not in one of the following units, "
              "\nplease re-reduce your data into one of the units of flux recognized by EXOTIC.")
 
     while True:
@@ -480,7 +483,14 @@ def data_file_units(units):
         units = units.lower().strip()
 
         if units not in ['flux', 'magnitude', 'millimagnitude']:
-            log.info("Invalid entry; please try again.")
+            log_info("Invalid entry; please try again.")
             units = None
         else:
             return units
+
+
+#temp
+def log_info(string):
+    print(string)
+    log.debug(string)
+    return True

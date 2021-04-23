@@ -116,7 +116,6 @@ from io import StringIO
 import pyvo as vo
 import json
 import logging
-import logging.config
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
@@ -140,8 +139,8 @@ from scipy.ndimage import binary_dilation, label, binary_erosion
 # cross correlation imports
 from skimage.transform import SimilarityTransform
 # error handling for scraper
-from tenacity import retry, retry_if_exception_type, retry_if_result, \
-    stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
+    stop_after_delay, wait_exponential
 import warnings
 
 # ########## EXOTIC imports ##########
@@ -195,6 +194,12 @@ plt.style.use(astropy_mpl_style)
 log = logging.getLogger(__name__)
 
 
+def log_info(string):
+    print(string)
+    log.debug(string)
+    return True
+
+
 def sigma_clip(ogdata, sigma=3, dt=21):
     nanmask = np.isnan(ogdata)
     mdata = savgol_filter(ogdata[~nanmask], dt, 2)
@@ -219,7 +224,7 @@ class NASAExoplanetArchive:
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
     def planet_info(self, fancy=False):
-        log.info(f"\nLooking up {self.planet}. Please wait. ...")
+        log_info(f"\nLooking up {self.planet}. Please wait. ...")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
         if not candidate:
@@ -228,7 +233,7 @@ class NASAExoplanetArchive:
                 planets = [data[i]['pl_name'] for i in range(len(data))]
                 idx = planets.index(self.planet)
                 self._get_params(data[idx])
-                log.info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
+                log_info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
 
         # fancy keys matching inits fil
         if fancy:
@@ -284,7 +289,7 @@ class NASAExoplanetArchive:
 
         uri_full = f"{uri_full[:-1]} &format={query.get('format', 'csv')}"
         uri_full = uri_full.replace(' ', '+')
-        log.info(uri_full)
+        log_info(uri_full)
 
         response = requests.get(uri_full, timeout=self.requests_timeout)
         # TODO check status_code?
@@ -380,7 +385,7 @@ class NASAExoplanetArchive:
                             # replace with first index
                             default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
                             # TODO could use mean for some variables (not mid-transit)
-                            # log.info(i,k,edata[k][edata[k].notna()].values[0])
+                            # log_info(i,k,edata[k][edata[k].notna()].values[0])
                         else:
                             # permanent nans - require manual entry
                             if k == 'pl_orblper':  # omega
@@ -566,7 +571,7 @@ def planet_name(planet):
                                 "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
 
         if not planet[-2].isspace():
-            log.info("The convention on the NASA Exoplanet Archive "
+            log_info("The convention on the NASA Exoplanet Archive "
                      "(https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the "
                      "star name and the planet letter. Please confirm that you have properly "
                      "input the planet's name."
@@ -633,7 +638,7 @@ def check_parameters(init_parameters, parameters):
             break
 
     if different:
-        log.info("\nDifference(s) found between initialization file parameters and "
+        log_info("\nDifference(s) found between initialization file parameters and "
                  "those scraped by EXOTIC from the NASA Exoplanet Archive."
                  "\n Would you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
@@ -649,8 +654,8 @@ def check_parameters(init_parameters, parameters):
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
 def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
-    log.info("*******************************************")
-    log.info("Planetary Parameters for Lightcurve Fitting")
+    log_info("*******************************************")
+    log_info("Planetary Parameters for Lightcurve Fitting")
 
     # The order of planet_params list must match the pDict that is declared when scraping the NASA Exoplanet Archive
     planet_params = ["Target Star RA in the form: HH:MM:SS (ignore the decimal values)",
@@ -693,11 +698,11 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
-                log.info(f"\n\n*** WARNING: {pdict['pName']} initialization file's {planet_params[idx]} does not match "
+                log_info(f"\n\n*** WARNING: {pdict['pName']} initialization file's {planet_params[idx]} does not match "
                          "the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n")
-                log.info(f"\tNASA Exoplanet Archive value (degrees): {pdict[item]}")
-                log.info(f"\tInitialization file value (degrees): {userpdict[item]}")
-                log.info("\nWould you like to:"
+                log_info(f"\tNASA Exoplanet Archive value (degrees): {pdict[item]}")
+                log_info(f"\tInitialization file value (degrees): {userpdict[item]}")
+                log_info("\nWould you like to:"
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
                          "\n  (3) enter in a new value.")
@@ -717,7 +722,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
 
     # Exoplanet confirmed in NASA Exoplanet Archive
     if not candplanetbool:
-        log.info(f"*** Here are the values scraped from the NASA Exoplanet Archive for {pdict['pName']} that were not "
+        log_info(f"*** Here are the values scraped from the NASA Exoplanet Archive for {pdict['pName']} that were not "
                  "set (or set to null) in your initialization file. ***")
 
         for i, key in enumerate(userpdict):
@@ -730,11 +735,11 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             # Initialization planetary parameters don't match NASA Exoplanet Archive
             if userpdict[key] is not None:
-                log.info(f"\n\n*** WARNING: {pdict['pName']} initialization file's {planet_params[i]} does not match "
+                log_info(f"\n\n*** WARNING: {pdict['pName']} initialization file's {planet_params[i]} does not match "
                          "the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n")
-                log.info(f"\tNASA Exoplanet Archive value: {pdict[key]}")
-                log.info(f"\tInitialization file value: {userpdict[key]}")
-                log.info("\nWould you like to: "
+                log_info(f"\tNASA Exoplanet Archive value: {pdict[key]}")
+                log_info(f"\tInitialization file value: {userpdict[key]}")
+                log_info("\nWould you like to: "
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
                          "\n  (3) enter in a new value.")
@@ -747,7 +752,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                     userpdict[key] = user_input(f"Enter the {planet_params[i]}: ", type_=type(userpdict[key]))
             # Did not use initialization file or null
             else:
-                log.info(f"\n {pdict['pName']} {planet_params[i]}: {pdict[key]}")
+                log_info(f"\n {pdict['pName']} {planet_params[i]}: {pdict[key]}")
                 agreement = user_input("Do you agree? (y/n): ", type_=str, val1='y', val2='n')
                 if agreement == 'y':
                     userpdict[key] = pdict[key]
@@ -785,7 +790,7 @@ def radec_hours_to_degree(ra, dec):
             c = SkyCoord(ra + ' ' + dec, unit=(u.hourangle, u.deg))
             return c.ra.degree, c.dec.degree
         except ValueError:
-            log.info("Error: The format is not correct, please try again.")
+            log_info("Error: The format is not correct, please try again.")
             ra = input("Input the right ascension of target (HH:MM:SS): ")
             dec = input("Input the declination of target (<sign>DD:MM:SS): ")
 
@@ -826,13 +831,13 @@ class LimbDarkening:
         return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.wl_min * 1000, self.wl_max * 1000
 
     def _standard_list(self):
-        log.info("\n\n***************************")
-        log.info("Limb Darkening Coefficients")
-        log.info("***************************")
-        log.info("\nThe standard bands that are available for limb darkening parameters (https://www.aavso.org/filters)"
+        log_info("\n\n***************************")
+        log_info("Limb Darkening Coefficients")
+        log_info("***************************")
+        log_info("\nThe standard bands that are available for limb darkening parameters (https://www.aavso.org/filters)"
                  "\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n")
         for key, value in self.fwhm.items():
-            log.info(f"\t{key[1]}: {key[0]} - ({value[0]:.2f}-{value[1]:.2f}) nm")
+            log_info(f"\t{key[1]}: {key[0]} - ({value[0]:.2f}-{value[1]:.2f}) nm")
 
     def _standard(self):
         while True:
@@ -848,7 +853,7 @@ class LimbDarkening:
                     raise KeyError
                 break
             except KeyError:
-                log.info("\nError: The entered filter is not in the provided list of standard filters.")
+                log_info("\nError: The entered filter is not in the provided list of standard filters.")
                 self.filter_type = None
 
         self.wl_min = self.fwhm[self.filter_type][0]
@@ -903,7 +908,7 @@ def corruption_check(files):
             hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
             valid_files.append(file)
         except OSError as e:
-            log.info(f"Found corrupted file and removing from reduction: {file}, ({e})")
+            log_info(f"Found corrupted file and removing from reduction: {file}, ({e})")
         finally:
             if getattr(hdul, "close", None) and callable(hdul.close):
                 hdul.close()
@@ -923,7 +928,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
         if wcs_exists:
-            log.info("Your FITS files have WCS information in their headers. EXOTIC will proceed to use these. "
+            log_info("Your FITS files have WCS information in their headers. EXOTIC will proceed to use these. "
                      "NOTE: If you do not trust your WCS coordinates, "
                      "please restart EXOTIC after enabling plate solutions via astrometry.net.")
             return fits_file
@@ -932,7 +937,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 def get_wcs(file, directory=""):
-    log.info("\nGetting the plate solution for your imaging file. Please wait. ...")
+    log_info("\nGetting the plate solution for your imaging file. Please wait. ...")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
     wcs_file = wcs_obj.plate_solution()
@@ -956,13 +961,19 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             uncert = 20 / 3600
             # Margins are within 20 arcseconds
             if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
-                log.info("Error: The X Pixel Coordinate entered does not match the target's right ascension.")
+                log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's right ascension. ***")
                 raise ValueError
             if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
-                log.info("Error: The Y Pixel Coordinate entered does not match the target's declination.")
+                log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's declination. ***")
                 raise ValueError
             return pixx, pixy
         except ValueError:
+            log_info(f"Your input pixel coordinates: [{pixx}, {pixy}]")
+
+            dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
+            exotic_pixy, exotic_pixx = np.unravel_index(dist.argmin(), dist.shape)
+            log_info(f"EXOTIC's calculated pixel coordinates: [{exotic_pixx}, {exotic_pixy}]")
+
             opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, val1='y', val2='n')
 
             # User wants to change their coordinates
@@ -991,42 +1002,57 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 def variableStarCheck(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
+    radius = u.Quantity(20.0, u.arcsec)
 
     # Query GAIA first to check for variability using the phot_variable_flag trait
-    radius = u.Quantity(20.0, u.arcsec)
-    try:
-        gaiaQuery = Gaia.cone_search_async(sample, radius)
-        gaiaResult = gaiaQuery.get_results()
-    except Exception:
-        log.info("Not able to query information from Simbad.")
-        return False
+    gaia_result = gaia_query(sample, radius)
+    if not gaia_result:
+        log_info("WARNING: Your comparison star cannot be resolved in Gaia. Proceed with caution.")
+    else:
+        # Individually go through the phot_variable_flag indicator for each star to see if variable or not
+        variableFlagList = gaia_result.columns["phot_variable_flag"]
+        constantCounter = 0
+        for currFlag in variableFlagList:
+            if currFlag == "VARIABLE":
+                return True
+            elif currFlag == "NOT_AVAILABLE":
+                continue
+            elif currFlag == "CONSTANT":
+                constantCounter += 1
+        if constantCounter == len(variableFlagList):
+            return False
 
-    # Individually go through the phot_variable_flag indicator for each star to see if variable or not
-    variableFlagList = gaiaResult.columns["phot_variable_flag"]
-    constantCounter = 0
-    for currFlag in variableFlagList:
-        if currFlag == "VARIABLE":
-            return True
-        elif currFlag == "NOT_AVAILABLE":
-            continue
-        elif currFlag == "CONSTANT":
-            constantCounter += 1
-    if constantCounter == len(variableFlagList):
-        return False
-
-    # query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    # Query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     # This is a secondary check if GAIA query returns inconclusive results
-    simbad_result = Simbad.query_region(sample, radius=20 * u.arcsec)
-    try:
-        starName = simbad_result['MAIN_ID'][0].decode("utf-8")
-    except:
-        log.info("Your star cannot be resolved in SIMBAD. Proceed with caution.")
+    star_name = simbad_query(sample)
+    if not star_name:
+        log_info("WARNING: Your comparison star cannot be resolved in SIMBAD. Proceed with caution.")
         return False
-    identifiers = Simbad.query_objectids(starName)
-    for currName in identifiers:
-        if "V*" in currName[0]:
-            return True
-    return False
+    else:
+        identifiers = Simbad.query_objectids(star_name)
+
+        for currName in identifiers:
+            if "V*" in currName[0]:
+                return True
+        return False
+
+
+@retry(stop=stop_after_delay(30))
+def gaia_query(sample, radius):
+    try:
+        gaia_query = Gaia.cone_search(sample, radius)
+        return gaia_query.get_results()
+    except Exception:
+        return False
+
+
+@retry(stop=stop_after_delay(30))
+def simbad_query(sample):
+    try:
+        simbad_result = Simbad.query_region(sample, radius=20 * u.arcsec)
+        return simbad_result['MAIN_ID'][0].decode("utf-8")
+    except Exception:
+        return False
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1048,7 +1074,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         return results[0]
     except Exception as ee:
-        log.info(ee)
+        log_info(ee)
 
         for p in [99, 98, 95, 90]:
             for it in [2,1,0]:
@@ -1064,10 +1090,11 @@ def transformation(image_data, num_images, file_name, count, roi=1):
                     results = aa.find_transform(mask1, mask0)
                     return results[0] 
                 except Exception as ee:
-                    log.info(ee)
+                    log_info(ee)
     
-    log.info(f"alignment failed: {file_name}")
+    log_info(f"alignment failed: {file_name}")
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
+
 
 def get_pixel_scale(wcs_header, header, pixel_init):
     astrometry_scale = None
@@ -1090,7 +1117,7 @@ def get_pixel_scale(wcs_header, header, pixel_init):
     elif pixel_init:
         image_scale = f"Image scale in arc-secs/pixel: {pixel_init}"
     else:
-        log.info("Cannot find the pixel scale in the image header.")
+        log_info("Cannot find the pixel scale in the image header.")
         image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
         image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
     return image_scale
@@ -1184,7 +1211,7 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log.info(
+        log_info(
             f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
@@ -1215,7 +1242,8 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     try:
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
-        log.info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. Check if star is present or close to border.")
+        log_info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. "
+                    f"Check if star is present or close to border.")
 
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
@@ -1531,12 +1559,12 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
 
     if np.floor(arrayPhases).max() - np.floor(arrayPhases).min() == 0:
-        log.info("\nWARNING!")
-        log.info(" Estimated mid-transit time is not within the observations")
-        log.info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-        log.info(f"  obs start:{arrayTimes.min()}")
-        log.info(f"    obs end:{arrayTimes.max()}")
-        log.info(f" tmid prior:{prior['tmid']}\n")
+        log_info("\nWARNING!")
+        log_info(" Estimated mid-transit time is not within the observations")
+        log_info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+        log_info(f"  obs start:{arrayTimes.min()}")
+        log_info(f"    obs end:{arrayTimes.max()}")
+        log_info(f" tmid prior:{prior['tmid']}\n")
 
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
@@ -1598,15 +1626,13 @@ def main():
     log.debug("")
     log.debug(f"Python Version: {sys.version}")
 
-    log.info("\n*************************************************************")
-    log.info("Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)")
-    log.info(f"Version {__version__}")
-    log.info("*************************************************************\n")
+    log_info("\n*************************************************************")
+    log_info("Welcome to the EXOplanet Transit Interpretation Code (EXOTIC)")
+    log_info(f"Version {__version__}")
+    log_info("*************************************************************\n")
 
     # ---INITIALIZATION-------------------------------------------------------
     global exotic_infoDict
-
-    exotic_UIprevTPX, exotic_UIprevTPY, exotic_UIprevRPX, exotic_UIprevRPY = 0, 0, 0, 0
 
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
@@ -1635,9 +1661,9 @@ def main():
     #############################
 
     if reduction_opt == 1:
-        log.info("\n**************************************************************")
-        log.info("Real Time Reduction ('Control + C'  or close the plot to quit)")
-        log.info("**************************************************************\n")
+        log_info("\n**************************************************************")
+        log_info("Real Time Reduction ('Control + C'  or close the plot to quit)")
+        log_info("**************************************************************\n")
 
         if args.realtime:
             init_opt = 'y'
@@ -1663,8 +1689,8 @@ def main():
                 continue
             break
 
-        log.info("Real Time Plotting ('Control + C' or close the plot to quit)")
-        log.info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
+        log_info("Real Time Plotting ('Control + C' or close the plot to quit)")
+        log_info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")
 
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1)
@@ -1683,9 +1709,9 @@ def main():
 
     # ----USER INPUTS----------------------------------------------------------
     else:
-        log.info("\n**************************")
-        log.info("Complete Reduction Routine")
-        log.info("**************************")
+        log_info("\n**************************")
+        log_info("Complete Reduction Routine")
+        log_info("**************************")
 
         init_path, wcs_file, wcs_header = None, None, None
 
@@ -1764,7 +1790,7 @@ def main():
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
 
-        log.info("***************************************\n")
+        log_info("***************************************\n")
 
         if fileorcommandline == 2:
             if args.nasaexoarch:
@@ -1798,17 +1824,17 @@ def main():
         for k in pDict:
             if "Unc" in k:
                 if not pDict[k]:
-                    log.info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
+                    log_info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
                     pDict[k] = 1
                 elif pDict[k] == 0 or np.isnan(pDict[k]):
-                    log.info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
+                    log_info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
                     pDict[k] = 1
             elif pDict[k] is None:
-                log.info(f"WARNING! {k} is None. Please use a numeric value in inits.json")
+                log_info(f"WARNING! {k} is None. Please use a numeric value in inits.json")
                 pDict[k] = 0
 
         if fitsortext == 1:
-            log.info("\n**************************"
+            log_info("\n**************************"
                      "\nStarting Reduction Process"
                      "\n**************************\n")
 
@@ -1834,13 +1860,13 @@ def main():
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
+            exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
+            exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
             for ifile in inputfiles:
                 first_image = fits.getdata(ifile, ext=0)
-                args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
-
                 try:
                     args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
                     break
@@ -1849,13 +1875,12 @@ def main():
                 finally:
                     del first_image
 
-            compStarList = exotic_infoDict['comp_stars']
-
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
+            compStarList = exotic_infoDict['comp_stars']
 
             if wcs_file:
-                log.info(f"\nHere is the path to your plate solution: {wcs_file}")
+                log_info(f"\nHere is the path to your plate solution: {wcs_file}")
                 wcs_header = fits.getheader(filename=wcs_file)
                 rafile, decfile = get_radec(wcs_header)
 
@@ -1863,13 +1888,13 @@ def main():
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
-                for comp in exotic_infoDict['comp_stars']:
-                    log.info("\nChecking for variability in Comparison Star: \n"
+                for comp in exotic_infoDict['comp_stars'][:]:
+                    log_info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
-                        log.info("\nCurrent comparison star is variable, proceeding to next star.")
-                    else:
-                        compStarList.remove(comp)
+                        log_info("\nCurrent comparison star is variable, proceeding to next star.")
+                        exotic_infoDict['comp_stars'].remove(comp)
+                compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param
             psf_data = {
@@ -1932,28 +1957,28 @@ def main():
                 # apply cals if applicable
                 if exotic_infoDict['darks']:
                     if i == 0:
-                        log.info("Dark subtracting images.")
+                        log_info("Dark subtracting images.")
                     imageData = imageData - generalDark
                 elif exotic_infoDict['biases']: # if a dark is not available, then at least subtract off the pedestal via the bias
                     if i == 0:
-                        log.info("Bias-correcting images.")
+                        log_info("Bias-correcting images.")
                     imageData = imageData - generalBias
                 else:
                     pass
 
                 if exotic_infoDict['flats']:
                     if i == 0:
-                        log.info("Flattening images.")
+                        log_info("Flattening images.")
                     generalFlat[generalFlat == 0] = 1
                     imageData = imageData / generalFlat
 
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
-                    log.info(f"Reference Image for Alignment: {fileName}")
+                    log_info(f"Reference Image for Alignment: {fileName}")
                     firstImage = np.copy(imageData)
 
-                    #log.info("\nAligning your images from FITS files. Please wait.")
+                    #log_info("\nAligning your images from FITS files. Please wait.")
 
                 # Image Alignment
                 if alignmentBool:
@@ -1982,7 +2007,7 @@ def main():
 
                         # check for change in amplitude of PSF
                         if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
-                            log.info("Can't find target. Trying to align...")
+                            log_info("Can't find target. Trying to align...")
 
                             tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                             
@@ -2015,7 +2040,7 @@ def main():
 
                             # check for change in amplitude of PSF
                             if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                #log.info("Can't find comp. Trying to align...")
+                                #log_info("Can't find comp. Trying to align...")
 
                                 tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 
@@ -2056,7 +2081,7 @@ def main():
             badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
                 aper_data["target"][:, 0, 0])
             if np.sum(~badmask) == 0:
-                log.error("No images to fit...check reference image for alignment (first image of sequence)")
+                log_info("No images to fit...check reference image for alignment (first image of sequence)")
 
             # convert to numpy arrays
             times = np.array(timeList)[~badmask]
@@ -2120,7 +2145,7 @@ def main():
                     finXRefCent = psf_data[ckey][:, 0]
                     finYRefCent = psf_data[ckey][:, 1]
 
-            log.info("Computing best aperture...")
+            log_info("Computing best aperture...")
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
@@ -2206,36 +2231,36 @@ def main():
 
             # log best fit
             if minAperture == 0:  # psf
-                log.info('*********************************************')
-                log.info('Best Comparison Star: #' + str(bestCompStar))
-                log.info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log.info('Optimal Method: PSF photometry')
-                log.info('********************************************\n')
+                log_info('*********************************************')
+                log_info('Best Comparison Star: #' + str(bestCompStar))
+                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                log_info('Optimal Method: PSF photometry')
+                log_info('********************************************\n')
 
             elif minAperture < 0:  # no comp star
-                log.info('*********************************************')
-                log.info('Best Comparison Star: None')
-                log.info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log.info('Optimal Aperture: ' + str(abs(np.round(minAperture, 2))))
-                log.info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
-                log.info('********************************************\n')
+                log_info('*********************************************')
+                log_info('Best Comparison Star: None')
+                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                log_info('Optimal Aperture: ' + str(abs(np.round(minAperture, 2))))
+                log_info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
+                log_info('********************************************\n')
                 bestCompStar = None
 
             else:
-                log.info('*********************************************')
-                log.info('Best Comparison Star: #' + str(bestCompStar))
-                log.info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log.info('Optimal Aperture: ' + str(np.round(minAperture, 2)))
-                log.info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
-                log.info('********************************************\n')
+                log_info('*********************************************')
+                log_info('Best Comparison Star: #' + str(bestCompStar))
+                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
+                log_info('Optimal Aperture: ' + str(np.round(minAperture, 2)))
+                log_info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
+                log_info('********************************************\n')
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
-                log.info("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
-                log.info("Please be patient- this step can take a few minutes.")
+                log_info("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
+                log_info("Please be patient- this step can take a few minutes.")
 
                 animate_toggle(True)
                 try:
@@ -2332,7 +2357,7 @@ def main():
                             f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt.close()
 
-            log.info(f"\nFOV file saved as: {exotic_infoDict['save']}/FOV_{pDict['pName']}_"
+            log_info(f"\nFOV file saved as: {exotic_infoDict['save']}/FOV_{pDict['pName']}_"
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Centroid position plots
@@ -2402,7 +2427,7 @@ def main():
                 for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
                     f.write(f"{round(ti, 8)},{round(fi, 7)},{round(erri, 6)},{round(ami, 2)}\n")
 
-            log.info("\nOutput File Saved")
+            log_info("\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar = None
@@ -2432,10 +2457,10 @@ def main():
         # for k in myfit.bounds.keys():
         #     print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
 
-        log.info("\n")
-        log.info("****************************************")
-        log.info("Fitting a Light Curve Model to Your Data")
-        log.info("****************************************\n")
+        log_info("\n")
+        log_info("****************************************")
+        log_info("Fitting a Light Curve Model to Your Data")
+        log_info("****************************************\n")
 
         ##########################
         # NESTED SAMPLING FITTING
@@ -2460,10 +2485,10 @@ def main():
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
-            log.info("ERROR: Estimated mid-transit not in observation range (check priors or observation time)")
-            log.info(f"start:{goodTimes.min()}")
-            log.info(f"  end:{goodTimes.max()}")
-            log.info(f"prior:{prior['tmid']}")
+            log_info("ERROR: Estimated mid-transit not in observation range (check priors or observation time)")
+            log_info(f"start:{goodTimes.min()}")
+            log_info(f"  end:{goodTimes.max()}")
+            log_info(f"prior:{prior['tmid']}")
 
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
@@ -2653,16 +2678,16 @@ def main():
         # print final extracted planetary parameters
         #######################################################################
 
-        log.info("\n*********************************************************")
-        log.info("FINAL PLANETARY PARAMETERS\n")
-        log.info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
-        log.info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
-        log.info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
-        log.info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
-        log.info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
-        log.info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
-        log.info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
-        log.info("*********************************************************")
+        log_info("\n*********************************************************")
+        log_info("FINAL PLANETARY PARAMETERS\n")
+        log_info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
+        log_info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
+        log_info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
+        log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
+        log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
+        log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
+        log_info("*********************************************************")
 
         comp_star = []
 
@@ -2691,28 +2716,28 @@ def main():
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
-            log.info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
+            log_info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
         try:
             output_files.final_planetary_params()
         except Exception as e:
-            log.info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
+            log_info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
         try:
             output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
-            log.info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
+            log_info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
 
-        log.info("Output File Saved")
+        log_info("Output File Saved")
 
-        log.info("\n************************")
-        log.info("End of Reduction Process")
-        log.info("************************")
+        log_info("\n************************")
+        log_info("End of Reduction Process")
+        log_info("************************")
 
         log.debug("Stopped ...")
 
 
 if __name__ == "__main__":
     # configure logger for standalone execution
-    logging.root.setLevel(logging.NOTSET)
+    logging.root.setLevel(logging.DEBUG)
     fileFormatter = logging.Formatter("%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
                                       "%(funcName)s:%(lineno)d - %(message)s", f"%Y-%m-%dT%H:%M:%S")
     fileHandler = TimedRotatingFileHandler(filename="exotic.log", when="midnight", backupCount=2)

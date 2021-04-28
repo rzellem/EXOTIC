@@ -203,7 +203,7 @@ def solveme(M, e, eps):
     return E
 
 def transit(time, values):
-    sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['ecc'])
+    sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
     return model
 

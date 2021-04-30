@@ -1,16 +1,20 @@
 #! /usr/bin/env python3
 # python3 setup.py --version
 # FOR RELEASE:
-# manually update exotic/version.py
+# (1) manually update exotic/version.py
 # git add exotic/version.py && git commit -m "#<ticket>:Updated version for release" && git push
-# release/tag
-# git checkout exotic/version.py && python3 setup.py sdist bdist_wheel --universal  # upload
+# (2) tag using web ui on github master branch 
+# (3) build and package
+# git checkout exotic/version.py && python3 setup.py sdist bdist_wheel --universal  # build
+# (3) release
 # pip3 install twine  # https://twine.readthedocs.io/en/latest/
-# twine check dist/* && twine upload dist/*
-# LOCAL TESTING:
-# pip3 install --exists-action w --progress-bar ascii --use-feature=2020-resolver -r requirements.txt
-# pip3 install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/
-# rm -r dist && pip3 uninstall exotic
+# twine check dist/* && twine upload dist/*  # upload
+# FOR LOCAL TESTING:
+# python3 setup.py sdist bdist_wheel --universal  # build
+# pip3 install --exists-action w --progress-bar ascii -r requirements.txt  # install req's
+# pip3 install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/  # install locally
+# CLEAN PREVIOUS BUILDS: 
+# rm -r dist *.egg* ; pip3 uninstall exotic ; # pipenv uninstall exotic
 
 import re
 import time
@@ -23,11 +27,11 @@ AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "exoplanetwatch@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
 NAME = "exotic"
-PYTHON_REQUIREMENTS = ">=3.7.0"
+PYTHON_REQUIREMENTS = "3.7"
 URL = "https://github.com/rzellem/EXOTIC"
 
-REQUIREMENTS_SETUP = ['setuptools_scm',
-                      'importlib-metadata ~= 1.7 ; python_version >= "3.7"']
+REQUIREMENTS_SETUP = [f"importlib-metadata>=3.6 ; python_version<='{PYTHON_REQUIREMENTS}'",
+                      "setuptools_scm"]
 
 
 def description_read():
@@ -99,7 +103,7 @@ setuptools.setup(name=NAME,
                  include_package_data=True,
                  zip_safe=False,
                  install_requires=requirements_read(),
-                 python_requires=PYTHON_REQUIREMENTS,
+                 python_requires=f">='{PYTHON_REQUIREMENTS}'",
                  setup_requires=REQUIREMENTS_SETUP,
                  entry_points={
                      'console_scripts': [

@@ -19,22 +19,22 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
             result = type_(input(prompt))
             log.debug(f"{prompt}{result}")
         except ValueError:
-            log.info("Sorry, not a valid datatype.")
+            print("Sorry, not a valid datatype.")
             continue
         if type_ == str and val1 and val2 and val3:
             result = result.lower().strip()
             if result not in (val1, val2, val3):
-                log.info("Sorry, your response was not valid.")
+                print("Sorry, your response was not valid.")
             else:
                 return result
         elif type_ == int and val1 and val2 and val3:
             if result not in (val1, val2, val3):
-                log.info("Sorry, your response was not valid.")
+                print("Sorry, your response was not valid.")
             else:
                 return result
         elif type_ == int and val1 and val2 and val3:
             if result not in (val1, val2, val3):
-                log.info("Sorry, your response was not valid.")
+                print("Sorry, your response was not valid.")
             else:
                 return result
         else:
@@ -44,7 +44,14 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
 def init_params(comp, dict1, dict2):
     for key, value in comp.items():
         try:
-            dict1[key] = dict2[value]
+            if not isinstance(value, tuple):
+                dict1[key] = dict2[value]
+            else:
+                for val in value:
+                    try:
+                        dict1[key] = dict2[val]
+                    except KeyError:
+                        pass
         except KeyError:
             pass
     return dict1

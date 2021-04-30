@@ -15,8 +15,6 @@ from pprint import pprint
 def plot_image(filename, save=False, bg_min=60, bg_max=99):
 
     hdu = fits.open(filename)
-    dheader = dict(hdu[0].header)
-    djson = {'filename':filename}
 
     extension = 0
     image_header = hdu[extension].header
@@ -25,12 +23,13 @@ def plot_image(filename, save=False, bg_min=60, bg_max=99):
         image_header = hdu[extension].header
 
     dheader = dict(hdu[extension].header)
+    djson = {'filename':filename}
     for k in dheader:
         if len(k) >= 2:
             print(f"{k}: {dheader[k]}")
         djson[k] = str(dheader[k])
 
-    data = hdu[0].data
+    data = hdu[extension].data
 
     with open('header.json', 'w') as json_file: 
         json.dump(djson, json_file, indent=4)

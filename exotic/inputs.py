@@ -86,13 +86,14 @@ class Inputs:
 
     def search_init(self, init_file, planet_dict):
         cwd = Path.cwd()
-        log_info(f"\nYour current working directory is: {cwd}")
-        log_info(f"Potential initialization files I've found in {cwd} are: ")
-        [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
         while True:
             try:
                 if not init_file:
+                    log_info(f"\nYour current working directory is: {cwd}")
+                    log_info(f"Potential initialization files I've found in {cwd} are: ")
+                    [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
+
                     init_file = user_input("\nPlease enter the Directory and Filename of "
                                            "your Initialization File: ", type_=str)
                 if init_file == 'ok':
@@ -101,8 +102,14 @@ class Inputs:
                 planet_params = self.comp_params(init_file, planet_dict)
                 return init_file, planet_params
             except (FileNotFoundError, IsADirectoryError) as e:
-                log_info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
+                log_info(f"*** Error: Initialization file not found. \n{e}. \nPlease try again. ***")
+
+                log_info(f"\nYour current working directory is: {cwd}")
+                log_info(f"Potential initialization files I've found in {cwd} are: ")
+                [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
+
                 init_file = None
+
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:

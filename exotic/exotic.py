@@ -255,7 +255,7 @@ class NASAExoplanetArchive:
                 "Ratio of Distance to Stellar Radius (a/Rs)": self.pl_dict['aRs'],
                 "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": self.pl_dict['aRsUnc'],
                 "Orbital Inclination (deg)": self.pl_dict['inc'],
-                "Orbital Inclination (deg) Uncertainity": self.pl_dict['incUnc'],
+                "Orbital Inclination (deg) Uncertainty": self.pl_dict['incUnc'],
                 "Orbital Eccentricity (0 if null)": self.pl_dict['ecc'],
                 "Star Effective Temperature (K)": self.pl_dict['teff'],
                 "Star Effective Temperature (+) Uncertainty": self.pl_dict['teffUncPos'],
@@ -1823,6 +1823,13 @@ def main():
 
         # check for Nans + Zeros
         for k in pDict:
+            if k=='rprs' and (pDict[k] == 0 or np.isnan(pDict[k])):
+                log_info(f"ERROR! {k} value is 0 or NaN. Please use a non-zero value in inits.json")
+                pDict[k] = 0.8 # instead of 1 since priors on RpRs are 0 to RpRs*1.25
+                log_info("EXOTIC will override the Rp/Rs value.")
+            if k=='aRs' and (pDict[k] < 1 or np.isnan(pDict[k])):
+                log_info(f"WARNING! {k} value is <1 or NaN. Please use a non-zero value in inits.json")
+                pDict[k] = user_input("\nPlease enter candidate planet's name: ", type_=float)
             if "Unc" in k:
                 if not pDict[k]:
                     log_info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")

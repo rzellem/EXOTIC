@@ -961,10 +961,10 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
         try:
             uncert = 20 / 3600
             # Margins are within 20 arcseconds
-            if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
+            if expra - uncert >= ralist[int(pixy)][int(pixx)] or ralist[int(pixy)][int(pixx)] >= expra + uncert:
                 log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's right ascension. ***")
                 raise ValueError
-            if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
+            if expdec - uncert >= declist[int(pixy)][int(pixx)] or declist[int(pixy)][int(pixx)] >= expdec + uncert:
                 log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's declination. ***")
                 raise ValueError
             return pixx, pixy
@@ -1899,9 +1899,9 @@ def main():
                 for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
                     log_info("\nChecking for variability in Comparison Star #"+str(compn+1)+" : \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
-                        log_info("\nCurrent comparison star is variable, proceeding to next star.")
-                        exotic_infoDict['comp_stars'].remove(comp)
+                    if variableStarCheck(rafile[int(comp[1])][int(comp[0])], decfile[int(comp[1])][int(comp[0])]):
+                            log_info("\nCurrent comparison star is variable, proceeding to next star.")
+                            exotic_infoDict['comp_stars'].remove(comp)
                 compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param

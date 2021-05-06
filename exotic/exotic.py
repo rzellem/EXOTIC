@@ -1891,9 +1891,9 @@ def main():
                 for comp in exotic_infoDict['comp_stars'][:]:
                     log_info("\nChecking for variability in Comparison Star: \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
-                        log_info("\nCurrent comparison star is variable, proceeding to next star.")
-                        exotic_infoDict['comp_stars'].remove(comp)
+                    if variableStarCheck(rafile[int(comp[1])][int(comp[0])], decfile[int(comp[1])][int(comp[0])]):
+                            log_info("\nCurrent comparison star is variable, proceeding to next star.")
+                            exotic_infoDict['comp_stars'].remove(comp)
                 compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param

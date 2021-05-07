@@ -34,7 +34,7 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
 
     `$ pip3 install exotic`
 
-    **Python 3 may use a different pip command (e.g. pip vs. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation steps including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
+    **Python 3 may use a different pip command (e.g. pip vs. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation steps including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](https://github.com/rzellem/EXOTIC/raw/main/exotic_installation_linux.sh)
 
 - **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 - How EXOTIC Works

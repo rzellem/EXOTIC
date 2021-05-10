@@ -810,7 +810,6 @@ class LimbDarkening:
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
 
     def nonlinear_ld(self):
-
         if self.filter_type and not (self.wl_min or self.wl_max):
             self._standard()
         elif self.wl_min or self.wl_max:
@@ -929,7 +928,8 @@ def check_wcs(fits_file, save_directory, plate_opt):
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
         if wcs_exists:
-            log_info("Your FITS files have WCS information in their headers. EXOTIC will proceed to use these. "
+            log_info("Your FITS files have WCS (World Coordinate System) information in their headers. "
+                     "EXOTIC will proceed to use these. "
                      "NOTE: If you do not trust your WCS coordinates, "
                      "please restart EXOTIC after enabling plate solutions via astrometry.net.")
             return fits_file
@@ -938,7 +938,9 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 def get_wcs(file, directory=""):
-    log_info("\nGetting the plate solution for your imaging file. Please wait....")
+    log_info("\nGetting the plate solution for your imaging file. "
+             "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky. "
+             "\nPlease wait....")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
     wcs_file = wcs_obj.plate_solution()
@@ -959,13 +961,13 @@ def get_radec(header):
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
-            uncert = 20 / 3600
-            # Margins are within 20 arcseconds
-            if expra - uncert >= ralist[int(pixy)][int(pixx)] or ralist[int(pixy)][int(pixx)] >= expra + uncert:
-                log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's right ascension. ***")
+            uncert = 50 / 3600
+            # Margins are within 50 arcseconds
+            if not (expra - uncert <= ralist[int(pixy)][int(pixx)] <= expra + uncert):
+                log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's Right Ascension. ***")
                 raise ValueError
-            if expdec - uncert >= declist[int(pixy)][int(pixx)] or declist[int(pixy)][int(pixx)] >= expdec + uncert:
-                log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's declination. ***")
+            if not (expra - uncert <= declist[int(pixy)][int(pixx)] <= expra + uncert):
+                log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's Declination. ***")
                 raise ValueError
             return pixx, pixy
         except ValueError:
@@ -1008,7 +1010,10 @@ def variableStarCheck(ra, dec):
     # Query GAIA first to check for variability using the phot_variable_flag trait
     gaia_result = gaia_query(sample, radius)
     if not gaia_result:
-        log_info("*** WARNING: Your comparison star cannot be resolved in Gaia; EXOTIC cannot check if it is variable or not. ***\nEXOTIC will still include this star in the reduction. \nPlease proceed with caution as we cannot check for stellar variability.\n")
+        log_info("*** WARNING: Your comparison star cannot be resolved in the Gaia star database; "
+                 "EXOTIC cannot check if it is variable or not. "
+                 "***\nEXOTIC will still include this star in the reduction. "
+                 "\nPlease proceed with caution as we cannot check for stellar variability.\n")
     else:
         # Individually go through the phot_variable_flag indicator for each star to see if variable or not
         variableFlagList = gaia_result.columns["phot_variable_flag"]
@@ -1027,7 +1032,10 @@ def variableStarCheck(ra, dec):
     # This is a secondary check if GAIA query returns inconclusive results
     star_name = simbad_query(sample)
     if not star_name:
-        log_info("*** WARNING: Your comparison star cannot be resolved in SIMBAD; EXOTIC cannot check if it is variable or not. ***\nEXOTIC will still include this star in the reduction. \nPlease proceed with caution as we cannot check for stellar variability.\n")
+        log_info("*** WARNING: Your comparison star cannot be resolved in the SIMBAD star database; "
+                 "EXOTIC cannot check if it is variable or not. "
+                 "***\nEXOTIC will still include this star in the reduction. "
+                 "\nPlease proceed with caution as we cannot check for stellar variability.\n")
         return False
     else:
         identifiers = Simbad.query_objectids(star_name)
@@ -1657,10 +1665,6 @@ def main():
         reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
                                    type_=int, val1=1, val2=2)
 
-    #############################
-    # Real Time Reduction Routine
-    #############################
-
     if reduction_opt == 1:
         log_info("\n**************************************************************")
         log_info("Real Time Reduction ('Control + C'  or close the plot to quit)")
@@ -1703,10 +1707,6 @@ def main():
                              fargs=(userpDict['pName'], ax, distFC, exotic_infoDict['images'], exotic_UIprevTPX, exotic_UIprevTPY,
                                     exotic_UIprevRPX, exotic_UIprevRPY), interval=15000)  # refresh every 15 seconds
         plt.show()
-
-    ###########################
-    # Complete Reduction Routine
-    ###########################
 
     # ----USER INPUTS----------------------------------------------------------
     else:

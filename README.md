@@ -14,25 +14,27 @@ The objective of this pipeline is to help you reduce your images of your transit
 While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you use EXOTIC via the free Google Colab, as it is much easier to get installed and working. However, if you are a user with many images or large images, please message the Exoplanet Watch Team on Slack for guidance.
 
 - **Google Colab Cloud - RECOMMENDED**
-  -  Features: This is the recommended method for using EXOTIC as it does not require the user to install any software locally on their own computer.
-  - Limitations: Requires user to upload their images to a free Gdrive account.
-  - Recommendations: If you run out of space on your default Google/Gdrive account, you can sign up for a new, free account to use. Some users even make a new Google account for every new dataset to avoid running out of space.
+  - Requirements: A no-cost Google Drive account (GDrive) is required. 
+  - Features: No software installations are needed on your own computer. 
+  - Limitations: Images must be uploaded to GDrive over the internet, so fast network connections help.
+  - Recommendations: If you run out of space in an existing GDrive account, you can sign up again. Some users even make a new Google account for every new dataset to avoid running out of space.
   - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
   - [How to use EXOTIC on the Colab written instructions](https://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
   - [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
 
 - Locally On Your Own Computer
-  - Features: Images are read off of the user's harddrive- nothing is uploaded to Gdrive. This method can be helpful for those with large filesizes, many files, or a slow internet connection. EXOTIC can be run via an iPython Jupyter Notebook (similar to the interface for the Google Colab) or the command line.
-  - Limitations: Requires user to install Python3 and multiple subpackages. Using EXOTIC via the Jupyter Notebook or command line can be confusing to some new users.
+  - Requirements: A Python 3 installation is required. (Many systems use Python 2 by default.)
+  - Features: Images are read directly from your own computer's hard drive which can be fast and convenient -- no uploads to GDrive. This may be helpful for users with large filesizes, numerous files, or a slow internet connection. EXOTIC can be run through an iPython Jupyter Notebook (similar to the Google Colab interface) or directly at the command line.
+  - Limitations: Extra software may be required (Python 3) and multiple subpackages must be downloaded and installed with EXOTIC. Using the Jupyter Notebook or command line to run EXOTIC can be confusing to some new users.
   - Installation Instructions:
-   - ​​​​​[Macintosh and Linux](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf)
+   - [Macintosh and Linux](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf)
    - [Windows](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf)
   - [How to Run EXOTIC On Your Own Computer](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/Getting-Started-with-EXOTIC.pdf)
   - The easiest way to install exotic is with pip:
 
-    `$ pip install exotic`
+    `$ pip3 install exotic`
 
-    **Depending on your version of python you may need to use a different pip command (e.g. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation instructions including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](exotic_installation_linux.sh)
+    **Python 3 may use a different pip command (e.g. pip vs. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation steps including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](https://github.com/rzellem/EXOTIC/raw/main/exotic_installation_linux.sh)
 
 - **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 - How EXOTIC Works
@@ -40,9 +42,6 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
   - [Video](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
 
 - Lastly, we offer these documents [in other languages](https://github.com/rzellem/EXOTIC/raw/main/Documentation/)
-
-
-
 
 ## Requirements
 FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC.
@@ -71,8 +70,6 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
 
 *********************************************************
 ```
-
-
 
 ## Initializaton File
 
@@ -138,9 +135,6 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 }
 ```
 
-
-
-
 ## Features and Pipeline Architecture
 
 - Automatic Plate Solution from http://nova.astrometry.net
@@ -166,8 +160,6 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 - Light curve parameter optimization with [Nested Sampling](https://dynesty.readthedocs.io/en/latest/index.html)
 
 ![Chart showing how Nested Sampling iterations reveal light curve optimization results.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/posterior_sample.png)
-
-
 
 ## Contributing to EXOTIC
 

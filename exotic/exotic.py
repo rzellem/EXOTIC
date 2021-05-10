@@ -224,7 +224,7 @@ class NASAExoplanetArchive:
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
     def planet_info(self, fancy=False):
-        log_info(f"\nLooking up {self.planet}. Please wait. ...")
+        log_info(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
         if not candidate:
@@ -255,7 +255,7 @@ class NASAExoplanetArchive:
                 "Ratio of Distance to Stellar Radius (a/Rs)": self.pl_dict['aRs'],
                 "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": self.pl_dict['aRsUnc'],
                 "Orbital Inclination (deg)": self.pl_dict['inc'],
-                "Orbital Inclination (deg) Uncertainity": self.pl_dict['incUnc'],
+                "Orbital Inclination (deg) Uncertainty": self.pl_dict['incUnc'],
                 "Orbital Eccentricity (0 if null)": self.pl_dict['ecc'],
                 "Star Effective Temperature (K)": self.pl_dict['teff'],
                 "Star Effective Temperature (+) Uncertainty": self.pl_dict['teffUncPos'],
@@ -289,7 +289,8 @@ class NASAExoplanetArchive:
 
         uri_full = f"{uri_full[:-1]} &format={query.get('format', 'csv')}"
         uri_full = uri_full.replace(' ', '+')
-        log_info(uri_full)
+        # log_info(uri_full)
+        log.debug(uri_full)
 
         response = requests.get(uri_full, timeout=self.requests_timeout)
         # TODO check status_code?
@@ -809,7 +810,6 @@ class LimbDarkening:
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
 
     def nonlinear_ld(self):
-        self._standard_list()
 
         if self.filter_type and not (self.wl_min or self.wl_max):
             self._standard()
@@ -843,6 +843,7 @@ class LimbDarkening:
         while True:
             try:
                 if not self.filter_type:
+                    self._standard_list()
                     self.filter_type = user_input("\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ):",
                                                   type_=str)
                 for key, value in self.fwhm.items():
@@ -937,7 +938,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 def get_wcs(file, directory=""):
-    log_info("\nGetting the plate solution for your imaging file. Please wait. ...")
+    log_info("\nGetting the plate solution for your imaging file. Please wait....")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
     wcs_file = wcs_obj.plate_solution()
@@ -960,10 +961,10 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
         try:
             uncert = 20 / 3600
             # Margins are within 20 arcseconds
-            if expra - uncert >= ralist[pixy][pixx] or ralist[pixy][pixx] >= expra + uncert:
+            if expra - uncert >= ralist[int(pixy)][int(pixx)] or ralist[int(pixy)][int(pixx)] >= expra + uncert:
                 log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's right ascension. ***")
                 raise ValueError
-            if expdec - uncert >= declist[pixy][pixx] or declist[pixy][pixx] >= expdec + uncert:
+            if expdec - uncert >= declist[int(pixy)][int(pixx)] or declist[int(pixy)][int(pixx)] >= expdec + uncert:
                 log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's declination. ***")
                 raise ValueError
             return pixx, pixy
@@ -1007,7 +1008,7 @@ def variableStarCheck(ra, dec):
     # Query GAIA first to check for variability using the phot_variable_flag trait
     gaia_result = gaia_query(sample, radius)
     if not gaia_result:
-        log_info("WARNING: Your comparison star cannot be resolved in Gaia. Proceed with caution.")
+        log_info("*** WARNING: Your comparison star cannot be resolved in Gaia; EXOTIC cannot check if it is variable or not. ***\nEXOTIC will still include this star in the reduction. \nPlease proceed with caution as we cannot check for stellar variability.\n")
     else:
         # Individually go through the phot_variable_flag indicator for each star to see if variable or not
         variableFlagList = gaia_result.columns["phot_variable_flag"]
@@ -1026,7 +1027,7 @@ def variableStarCheck(ra, dec):
     # This is a secondary check if GAIA query returns inconclusive results
     star_name = simbad_query(sample)
     if not star_name:
-        log_info("WARNING: Your comparison star cannot be resolved in SIMBAD. Proceed with caution.")
+        log_info("*** WARNING: Your comparison star cannot be resolved in SIMBAD; EXOTIC cannot check if it is variable or not. ***\nEXOTIC will still include this star in the reduction. \nPlease proceed with caution as we cannot check for stellar variability.\n")
         return False
     else:
         identifiers = Simbad.query_objectids(star_name)
@@ -1790,7 +1791,7 @@ def main():
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
 
-        log_info("***************************************\n")
+        # log_info("***************************************\n")
 
         if fileorcommandline == 2:
             if args.nasaexoarch:
@@ -1822,6 +1823,13 @@ def main():
 
         # check for Nans + Zeros
         for k in pDict:
+            if k=='rprs' and (pDict[k] == 0 or np.isnan(pDict[k])):
+                log_info(f"ERROR! {k} value is 0 or NaN. Please use a non-zero value in inits.json")
+                pDict[k] = 0.8 # instead of 1 since priors on RpRs are 0 to RpRs*1.25
+                log_info("EXOTIC will override the Rp/Rs value.")
+            if k=='aRs' and (pDict[k] < 1 or np.isnan(pDict[k])):
+                log_info(f"WARNING! {k} value is <1 or NaN. Please use a non-zero value in inits.json")
+                pDict[k] = user_input("\nPlease enter candidate planet's name: ", type_=float)
             if "Unc" in k:
                 if not pDict[k]:
                     log_info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
@@ -1888,12 +1896,12 @@ def main():
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], rafile, decfile)
 
-                for comp in exotic_infoDict['comp_stars'][:]:
-                    log_info("\nChecking for variability in Comparison Star: \n"
+                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
+                    log_info("\nChecking for variability in Comparison Star #"+str(compn+1)+" : \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    if variableStarCheck(rafile[comp[1]][comp[0]], decfile[comp[1]][comp[0]]):
-                        log_info("\nCurrent comparison star is variable, proceeding to next star.")
-                        exotic_infoDict['comp_stars'].remove(comp)
+                    if variableStarCheck(rafile[int(comp[1])][int(comp[0])], decfile[int(comp[1])][int(comp[0])]):
+                            log_info("\nCurrent comparison star is variable, proceeding to next star.")
+                            exotic_infoDict['comp_stars'].remove(comp)
                 compStarList = exotic_infoDict['comp_stars']
 
             # alloc psf fitting param
@@ -1975,13 +1983,15 @@ def main():
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
-                    log_info(f"Reference Image for Alignment: {fileName}")
+                    # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     firstImage = np.copy(imageData)
 
                     #log_info("\nAligning your images from FITS files. Please wait.")
 
                 # Image Alignment
                 if alignmentBool:
+                    # log_info("\n\nAligning your images. Please wait.")
+                    # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
                     tform = SimilarityTransform(scale=1, rotation=0, translation=[0,0])
@@ -2145,7 +2155,7 @@ def main():
                     finXRefCent = psf_data[ckey][:, 0]
                     finYRefCent = psf_data[ckey][:, 1]
 
-            log_info("Computing best aperture...")
+            log_info("Computing best comparison star, aperture, and sky annulus. Please wait.")
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
@@ -2231,14 +2241,14 @@ def main():
 
             # log best fit
             if minAperture == 0:  # psf
-                log_info('*********************************************')
+                log_info('\n\n*********************************************')
                 log_info('Best Comparison Star: #' + str(bestCompStar))
                 log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
                 log_info('Optimal Method: PSF photometry')
                 log_info('********************************************\n')
 
             elif minAperture < 0:  # no comp star
-                log_info('*********************************************')
+                log_info('\n\n*********************************************')
                 log_info('Best Comparison Star: None')
                 log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
                 log_info('Optimal Aperture: ' + str(abs(np.round(minAperture, 2))))
@@ -2247,7 +2257,7 @@ def main():
                 bestCompStar = None
 
             else:
-                log_info('*********************************************')
+                log_info('\n\n*********************************************')
                 log_info('Best Comparison Star: #' + str(bestCompStar))
                 log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
                 log_info('Optimal Aperture: ' + str(np.round(minAperture, 2)))
@@ -2427,7 +2437,7 @@ def main():
                 for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
                     f.write(f"{round(ti, 8)},{round(fi, 7)},{round(erri, 6)},{round(ami, 2)}\n")
 
-            log_info("\nOutput File Saved")
+            log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar = None

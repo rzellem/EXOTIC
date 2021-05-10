@@ -86,13 +86,14 @@ class Inputs:
 
     def search_init(self, init_file, planet_dict):
         cwd = Path.cwd()
-        log_info(f"\nYour current working directory is: {cwd}")
-        log_info(f"Potential initialization files I've found in {cwd} are: ")
-        [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
         while True:
             try:
                 if not init_file:
+                    log_info(f"\nYour current working directory is: {cwd}")
+                    log_info(f"Potential initialization files I've found in {cwd} are: ")
+                    [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
+
                     init_file = user_input("\nPlease enter the Directory and Filename of "
                                            "your Initialization File: ", type_=str)
                 if init_file == 'ok':
@@ -101,8 +102,14 @@ class Inputs:
                 planet_params = self.comp_params(init_file, planet_dict)
                 return init_file, planet_params
             except (FileNotFoundError, IsADirectoryError) as e:
-                log_info(f"Error: Initialization file not found. \n{e}. \nPlease try again.")
+                log_info(f"*** Error: Initialization file not found. \n{e}. \nPlease try again. ***")
+
+                log_info(f"\nYour current working directory is: {cwd}")
+                log_info(f"Potential initialization files I've found in {cwd} are: ")
+                [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
+
                 init_file = None
+
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
@@ -282,8 +289,8 @@ def obs_date(date):
 def latitude(lat):
     while True:
         if not lat:
-            lat = user_input("Enter the longitude (in degrees) of where you observed. "
-                             "(Don't forget the sign where East is '+' and West is '-')! "
+            lat = user_input("Enter the latitude (in degrees) of where you observed. "
+                             "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
         lat = lat.replace(' ', '')
 
@@ -297,9 +304,9 @@ def latitude(lat):
             if -90.00 <= lat <= 90.00:
                 return lat
             else:
-                log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+                log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).")
         else:
-            log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg)")
+            log_info("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
         lat = None
 
 
@@ -308,7 +315,7 @@ def longitude(long):
         if not long:
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
-                              "(Example: -32.12): ", type_=str)
+                              "(Example: +152.51): ", type_=str)
         long = long.replace(' ', '')
 
         if long[0] == '+' or long[0] == '-':
@@ -321,7 +328,7 @@ def longitude(long):
             if -180.00 <= long <= 180.00:
                 return long
             else:
-                log_info("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg)")
+                log_info("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).")
         else:
             log_info("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
         long = None

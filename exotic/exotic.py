@@ -1685,7 +1685,7 @@ def main():
         exotic_UIprevRPY = exotic_infoDict['comp_stars'][1]
 
         while True:
-            carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
+            carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
             if carry_on != 'continue':
                 continue
             break

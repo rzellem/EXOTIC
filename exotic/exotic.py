@@ -626,7 +626,7 @@ def fluxConvert(fluxList, errorList, fluxFormat):
 # Check for difference between NEA and initialization file
 def check_parameters(init_parameters, parameters):
     different = False
-    uncert = 20 / 3600
+    uncert = 1 / 36
 
     for key, value in parameters.items():
         if key in ['ra', 'dec'] and init_parameters[key]:
@@ -791,9 +791,10 @@ def radec_hours_to_degree(ra, dec):
             c = SkyCoord(ra + ' ' + dec, unit=(u.hourangle, u.deg))
             return c.ra.degree, c.dec.degree
         except ValueError:
-            log_info("Error: The format is not correct, please try again.")
-            ra = input("Input the right ascension of target (HH:MM:SS): ")
-            dec = input("Input the declination of target (<sign>DD:MM:SS): ")
+            log_info("Error: The format entered for Right Ascension and/or Declination is not correct, "
+                     "please try again.")
+            ra = input("Input the Right Ascension of target (HH:MM:SS): ")
+            dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
 
 class LimbDarkening:
@@ -938,8 +939,7 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 def get_wcs(file, directory=""):
-    log_info("\nGetting the plate solution for your imaging file. "
-             "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky. "
+    log_info("\nGetting the plate solution for your imaging file to translate pixel coordinates on the sky. "
              "\nPlease wait....")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
@@ -961,12 +961,12 @@ def get_radec(header):
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
-            uncert = 50 / 3600
-            # Margins are within 50 arcseconds
+            uncert = 1 / 36
+            # Margins are within 100 arcseconds
             if not (expra - uncert <= ralist[int(pixy)][int(pixx)] <= expra + uncert):
                 log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's Right Ascension. ***")
                 raise ValueError
-            if not (expra - uncert <= declist[int(pixy)][int(pixx)] <= expra + uncert):
+            if not (expdec - uncert <= declist[int(pixy)][int(pixx)] <= expdec + uncert):
                 log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's Declination. ***")
                 raise ValueError
             return pixx, pixy
@@ -1126,7 +1126,7 @@ def get_pixel_scale(wcs_header, header, pixel_init):
     elif pixel_init:
         image_scale = f"Image scale in arc-secs/pixel: {pixel_init}"
     else:
-        log_info("Cannot find the pixel scale in the image header.")
+        log_info("Not able to find Pixel Scale in the Image Header.")
         image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
         image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
     return image_scale
@@ -1220,8 +1220,7 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log_info(
-            f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
+        log_info(f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
 
@@ -1252,7 +1251,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
         log_info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. "
-                    f"Check if star is present or close to border.")
+                 f"Check if star is present or close to border.")
 
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
@@ -1682,7 +1681,7 @@ def main():
 
         userpDict['pName'] = planet_name(userpDict['pName'])
 
-        exotic_infoDict = inputs_obj.real_time()
+        exotic_infoDict = inputs_obj.real_time(userpDict['pName'])
         exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
         exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
         exotic_UIprevRPX = exotic_infoDict['comp_stars'][0]
@@ -1983,14 +1982,13 @@ def main():
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
-                    # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     firstImage = np.copy(imageData)
 
-                    #log_info("\nAligning your images from FITS files. Please wait.")
+                    if alignmentBool:
+                        log_info("\n\nAligning your images. Please wait.")
 
                 # Image Alignment
                 if alignmentBool:
-                    # log_info("\n\nAligning your images. Please wait.")
                     # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
@@ -2269,7 +2267,8 @@ def main():
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
-                log_info("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
+                log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
+                         "Converting all JDs to BJD_TDBs.")
                 log_info("Please be patient- this step can take a few minutes.")
 
                 animate_toggle(True)

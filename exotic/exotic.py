@@ -1654,7 +1654,7 @@ def main():
     elif args.reduce or args.prereduced:
         reduction_opt = 2
     else:
-        reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while observing) \n\t2: for for Complete Reduction (for analyzing your data after an observing run). \nPlease enter 1 or 2: ",
                                    type_=int, val1=1, val2=2)
 
     #############################

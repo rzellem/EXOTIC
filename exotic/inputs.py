@@ -79,6 +79,8 @@ class Inputs:
         for key, value in list(self.params.items()):
             if key == 'comp_stars':
                 self.info_dict[key] = self.params[key](self.info_dict[key], True)
+            elif key == 'tar_coords':
+                self.info_dict[key] = self.params[key](self.info_dict[key], "Target Star")
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
@@ -259,7 +261,7 @@ def check_calibration(directory, image_type):
 
 def obs_code(code):
     if code is None:
-        code = user_input("Please enter your AAVSO Observer Account Number "
+        code = user_input("\nPlease enter your AAVSO Observer Account Number "
                           "(if none, leave blank and press enter): ", type_=str)
     if not code.replace(' ', ''):
         code = "N/A"
@@ -289,7 +291,7 @@ def obs_date(date):
 def latitude(lat):
     while True:
         if not lat:
-            lat = user_input("Enter the latitude (in degrees) of where you observed. "
+            lat = user_input("\nEnter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
         lat = lat.replace(' ', '')
@@ -422,14 +424,18 @@ def comparison_star_coords(comp_stars, rt_bool):
                 log_info("\nThe number of Comparison Stars entered is incorrect.")
             else:
                 num_comp_stars = 1
+                break
 
         for num in range(num_comp_stars):
-            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
-            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
+            x_pix = user_input(f"\nPlease enter Comparison Star {num + 1}'s X Pixel Coordinate: ", type_=float)
+            y_pix = user_input(f"Please enter Comparison Star {num + 1}'s Y Pixel Coordinate: ", type_=float)
             comp_stars.append([x_pix, y_pix])
 
-    if rt_bool and isinstance(comp_stars[1], list):
-        comp_stars = comp_stars[1]
+    try:
+        if rt_bool and isinstance(comp_stars[0], list):
+            comp_stars = comp_stars[0]
+    except:
+        pass
 
     return comp_stars
 

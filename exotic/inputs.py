@@ -71,7 +71,7 @@ class Inputs:
 
         return self.info_dict
 
-    def real_time(self):
+    def real_time(self, planet):
         rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
                     'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt', 'img_align_opt']
         [self.params.pop(key) for key in rem_list]
@@ -80,7 +80,7 @@ class Inputs:
             if key == 'comp_stars':
                 self.info_dict[key] = self.params[key](self.info_dict[key], True)
             elif key == 'tar_coords':
-                self.info_dict[key] = self.params[key](self.info_dict[key], "Target Star")
+                self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
@@ -111,7 +111,6 @@ class Inputs:
                 [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
                 init_file = None
-
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
@@ -261,7 +260,7 @@ def check_calibration(directory, image_type):
 
 def obs_code(code):
     if code is None:
-        code = user_input("\nPlease enter your AAVSO Observer Account Number "
+        code = user_input("Please enter your AAVSO Observer Account Number "
                           "(if none, leave blank and press enter): ", type_=str)
     if not code.replace(' ', ''):
         code = "N/A"
@@ -291,7 +290,7 @@ def obs_date(date):
 def latitude(lat):
     while True:
         if not lat:
-            lat = user_input("\nEnter the latitude (in degrees) of where you observed. "
+            lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
         lat = lat.replace(' ', '')
@@ -427,15 +426,12 @@ def comparison_star_coords(comp_stars, rt_bool):
                 break
 
         for num in range(num_comp_stars):
-            x_pix = user_input(f"\nPlease enter Comparison Star {num + 1}'s X Pixel Coordinate: ", type_=float)
-            y_pix = user_input(f"Please enter Comparison Star {num + 1}'s Y Pixel Coordinate: ", type_=float)
+            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
+            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
             comp_stars.append([x_pix, y_pix])
 
-    try:
-        if rt_bool and isinstance(comp_stars[0], list):
-            comp_stars = comp_stars[0]
-    except:
-        pass
+    if rt_bool and isinstance(comp_stars[0], list):
+        comp_stars = comp_stars[0]
 
     return comp_stars
 

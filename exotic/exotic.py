@@ -1678,7 +1678,7 @@ def main():
 
         userpDict['pName'] = planet_name(userpDict['pName'])
 
-        exotic_infoDict = inputs_obj.real_time()
+        exotic_infoDict = inputs_obj.real_time(userpDict['pName'])
         exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
         exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
         exotic_UIprevRPX = exotic_infoDict['comp_stars'][0]

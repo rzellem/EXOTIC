@@ -251,7 +251,7 @@ def check_calibration(directory, image_type):
     if not directory:
         opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, val1='y', val2='n')
         if opt == 'y':
-            directory = user_input("Please enter the directory path to your Flats "
+            directory = user_input(f"Please enter the directory path to your {image_type} "
                                    "(must be in their own separate folder): ", type_=str)
     if directory:
         return check_imaging_files(directory, image_type)

@@ -103,7 +103,7 @@ from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStr
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astroscrappy import detect_cosmics
+# from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports
@@ -666,7 +666,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \n(Keep in mind that 1.2e-34 is the same as 1.2 x 10^-34)",
                      "Published Mid-Transit Time (BJD_UTC)",
-                     "Mid-Transit Time Uncertainty (JD)",
+                     "Mid-Transit Time Uncertainty (BJD-UTC)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty",
                      "Ratio of Distance to Stellar Radius (a/Rs)",
@@ -1514,7 +1514,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
     ax.clear()
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
-    ax.set_xlabel('Time (jd)')
+    ax.set_xlabel('Time (JD)')
     ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
@@ -1700,7 +1700,7 @@ def main():
         ax = fig.add_subplot(1, 1, 1)
         ax.set_title(userpDict['pName'])
         ax.set_ylabel('Normalized Flux')
-        ax.set_xlabel('Time (jd)')
+        ax.set_xlabel('Time (JD)')
 
         anim = FuncAnimation(fig, realTimeReduce,
                              fargs=(userpDict['pName'], ax, distFC, exotic_infoDict['images'], exotic_UIprevTPX, exotic_UIprevTPY,

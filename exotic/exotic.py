@@ -1429,6 +1429,14 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
             prevImageData = imageData  # no shift should be registered
 
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
+        tform = transformation(np.array([imageData, firstImageData]), len(timeSortedNames), imageFile, i)
+
+        # apply transform
+        tx, ty = tform([UIprevTPX, UIprevTPY])[0]
+        rx, ry = tform([UIprevRPX, UIprevRPY])[0]
+
+        print(f"Coordinates of target star: ({tx},{ty})")
+        print(f"Coordinates of comp star: ({rx},{ry})")
 
         # corrects for any image shifts that result from a tracking slip
         shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)

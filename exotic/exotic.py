@@ -103,7 +103,7 @@ from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStr
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astroscrappy import detect_cosmics
+# from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports

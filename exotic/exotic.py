@@ -2238,29 +2238,23 @@ def main():
                             finYRefCent = psf_data[ckey][:, 1]
 
             # log best fit
+            log_info("\n\n*********************************************")
             if minAperture == 0:  # psf
-                log_info('\n\n*********************************************')
-                log_info('Best Comparison Star: #' + str(bestCompStar))
-                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log_info('Optimal Method: PSF photometry')
-                log_info('********************************************\n')
-
+                log_info(f"Best Comparison Star: #{bestCompStar}")
+                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                log_info("Optimal Method: PSF photometry")
             elif minAperture < 0:  # no comp star
-                log_info('\n\n*********************************************')
-                log_info('Best Comparison Star: None')
-                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log_info('Optimal Aperture: ' + str(abs(np.round(minAperture, 2))))
-                log_info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
-                log_info('********************************************\n')
+                log_info("Best Comparison Star: None")
+                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
+                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
                 bestCompStar = None
-
             else:
-                log_info('\n\n*********************************************')
-                log_info('Best Comparison Star: #' + str(bestCompStar))
-                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log_info('Optimal Aperture: ' + str(np.round(minAperture, 2)))
-                log_info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
-                log_info('********************************************\n')
+                log_info(f"Best Comparison Star: #{bestCompStar}")
+                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
+                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+            log_info("*********************************************\n")
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
@@ -2313,9 +2307,9 @@ def main():
 
             picframe = 10 * (minAperture + 15 * sigma)
             pltx = [max([0, min([finXTargCent[0], finXRefCent[0]]) - picframe]),
-                    min([np.shape(firstImage)[0], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
+                    min([np.shape(firstImage)[1], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
             plty = [max([0, min([finYTargCent[0], finYRefCent[0]]) - picframe]),
-                    min([np.shape(firstImage)[1], max([finYTargCent[0], finYRefCent[0]]) + picframe])]
+                    min([np.shape(firstImage)[0], max([finYTargCent[0], finYRefCent[0]]) + picframe])]
             plt.close()
 
             for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:

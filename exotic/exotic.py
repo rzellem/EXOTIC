@@ -2699,8 +2699,8 @@ def main():
             comp_dec = None
 
             if wcs_file:
-                comp_ra = rafile[comp_coords[1]][comp_coords[0]]
-                comp_dec = decfile[comp_coords[1]][comp_coords[0]]
+                comp_ra = rafile[int(comp_coords[1])][int(comp_coords[0])]
+                comp_dec = decfile[int(comp_coords[1])][int(comp_coords[0])]
 
             comp_star.append({
                 'ra': str(comp_ra) if comp_ra else comp_ra,

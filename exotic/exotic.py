@@ -1436,6 +1436,14 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
             prevImageData = imageData  # no shift should be registered
 
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
+        tform = transformation(np.array([imageData, firstImageData]), len(timeSortedNames), imageFile, i)
+
+        # apply transform
+        tx, ty = tform([UIprevTPX, UIprevTPY])[0]
+        rx, ry = tform([UIprevRPX, UIprevRPY])[0]
+
+        print(f"Coordinates of target star: ({tx},{ty})")
+        print(f"Coordinates of comp star: ({rx},{ry})")
 
         # corrects for any image shifts that result from a tracking slip
         shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
@@ -1661,7 +1669,7 @@ def main():
     elif args.reduce or args.prereduced:
         reduction_opt = 2
     else:
-        reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while observing) \n\t2: for for Complete Reduction (for analyzing your data after an observing run). \nPlease enter 1 or 2: ",
                                    type_=int, val1=1, val2=2)
 
     if reduction_opt == 1:
@@ -1688,7 +1696,7 @@ def main():
         exotic_UIprevRPY = exotic_infoDict['comp_stars'][1]
 
         while True:
-            carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
+            carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
             if carry_on != 'continue':
                 continue
             break

@@ -71,7 +71,7 @@ class Inputs:
 
         return self.info_dict
 
-    def real_time(self):
+    def real_time(self, planet):
         rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
                     'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt', 'img_align_opt']
         [self.params.pop(key) for key in rem_list]
@@ -79,6 +79,8 @@ class Inputs:
         for key, value in list(self.params.items()):
             if key == 'comp_stars':
                 self.info_dict[key] = self.params[key](self.info_dict[key], True)
+            elif key == 'tar_coords':
+                self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
@@ -109,7 +111,6 @@ class Inputs:
                 [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
                 init_file = None
-
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
@@ -250,7 +251,7 @@ def check_calibration(directory, image_type):
     if not directory:
         opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, val1='y', val2='n')
         if opt == 'y':
-            directory = user_input("Please enter the directory path to your Flats "
+            directory = user_input(f"Please enter the directory path to your {image_type} "
                                    "(must be in their own separate folder): ", type_=str)
     if directory:
         return check_imaging_files(directory, image_type)
@@ -383,6 +384,7 @@ def plate_solution_opt(opt):
         opt = opt.lower().strip()
     if opt not in ('y', 'n'):
         opt = user_input("\nWould you like to upload the your image for a plate solution?"
+                         "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky."
                          "\nDISCLAIMER: One of your imaging files will be publicly viewable on "
                          "nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
     return opt
@@ -422,14 +424,15 @@ def comparison_star_coords(comp_stars, rt_bool):
                 log_info("\nThe number of Comparison Stars entered is incorrect.")
             else:
                 num_comp_stars = 1
+                break
 
         for num in range(num_comp_stars):
             x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
             y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
             comp_stars.append([x_pix, y_pix])
 
-    if rt_bool and isinstance(comp_stars[1], list):
-        comp_stars = comp_stars[1]
+    if rt_bool and isinstance(comp_stars[0], list):
+        comp_stars = comp_stars[0]
 
     return comp_stars
 

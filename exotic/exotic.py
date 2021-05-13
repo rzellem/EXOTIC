@@ -103,7 +103,7 @@ from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStr
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astroscrappy import detect_cosmics
+# from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports
@@ -626,7 +626,7 @@ def fluxConvert(fluxList, errorList, fluxFormat):
 # Check for difference between NEA and initialization file
 def check_parameters(init_parameters, parameters):
     different = False
-    uncert = 20 / 3600
+    uncert = 1 / 36
 
     for key, value in parameters.items():
         if key in ['ra', 'dec'] and init_parameters[key]:
@@ -666,7 +666,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \n(Keep in mind that 1.2e-34 is the same as 1.2 x 10^-34)",
                      "Published Mid-Transit Time (BJD_UTC)",
-                     "Mid-Transit Time Uncertainty (JD)",
+                     "Mid-Transit Time Uncertainty (BJD-UTC)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty",
                      "Ratio of Distance to Stellar Radius (a/Rs)",
@@ -791,9 +791,10 @@ def radec_hours_to_degree(ra, dec):
             c = SkyCoord(ra + ' ' + dec, unit=(u.hourangle, u.deg))
             return c.ra.degree, c.dec.degree
         except ValueError:
-            log_info("Error: The format is not correct, please try again.")
-            ra = input("Input the right ascension of target (HH:MM:SS): ")
-            dec = input("Input the declination of target (<sign>DD:MM:SS): ")
+            log_info("Error: The format entered for Right Ascension and/or Declination is not correct, "
+                     "please try again.")
+            ra = input("Input the Right Ascension of target (HH:MM:SS): ")
+            dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
 
 class LimbDarkening:
@@ -810,7 +811,6 @@ class LimbDarkening:
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
 
     def nonlinear_ld(self):
-
         if self.filter_type and not (self.wl_min or self.wl_max):
             self._standard()
         elif self.wl_min or self.wl_max:
@@ -929,7 +929,8 @@ def check_wcs(fits_file, save_directory, plate_opt):
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
         if wcs_exists:
-            log_info("Your FITS files have WCS information in their headers. EXOTIC will proceed to use these. "
+            log_info("Your FITS files have WCS (World Coordinate System) information in their headers. "
+                     "EXOTIC will proceed to use these. "
                      "NOTE: If you do not trust your WCS coordinates, "
                      "please restart EXOTIC after enabling plate solutions via astrometry.net.")
             return fits_file
@@ -938,7 +939,8 @@ def check_wcs(fits_file, save_directory, plate_opt):
 
 
 def get_wcs(file, directory=""):
-    log_info("\nGetting the plate solution for your imaging file. Please wait....")
+    log_info("\nGetting the plate solution for your imaging file to translate pixel coordinates on the sky. "
+             "\nPlease wait....")
     animate_toggle(True)
     wcs_obj = PlateSolution(file=file, directory=directory)
     wcs_file = wcs_obj.plate_solution()
@@ -959,13 +961,13 @@ def get_radec(header):
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
         try:
-            uncert = 20 / 3600
-            # Margins are within 20 arcseconds
-            if expra - uncert >= ralist[int(pixy)][int(pixx)] or ralist[int(pixy)][int(pixx)] >= expra + uncert:
-                log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's right ascension. ***")
+            uncert = 1 / 36
+            # Margins are within 100 arcseconds
+            if not (expra - uncert <= ralist[int(pixy)][int(pixx)] <= expra + uncert):
+                log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's Right Ascension. ***")
                 raise ValueError
-            if expdec - uncert >= declist[int(pixy)][int(pixx)] or declist[int(pixy)][int(pixx)] >= expdec + uncert:
-                log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's declination. ***")
+            if not (expdec - uncert <= declist[int(pixy)][int(pixx)] <= expdec + uncert):
+                log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's Declination. ***")
                 raise ValueError
             return pixx, pixy
         except ValueError:
@@ -1008,7 +1010,10 @@ def variableStarCheck(ra, dec):
     # Query GAIA first to check for variability using the phot_variable_flag trait
     gaia_result = gaia_query(sample, radius)
     if not gaia_result:
-        log_info("*** WARNING: Your comparison star cannot be resolved in Gaia; EXOTIC cannot check if it is variable or not. ***\nEXOTIC will still include this star in the reduction. \nPlease proceed with caution as we cannot check for stellar variability.\n")
+        log_info("*** WARNING: Your comparison star cannot be resolved in the Gaia star database; "
+                 "EXOTIC cannot check if it is variable or not. "
+                 "***\nEXOTIC will still include this star in the reduction. "
+                 "\nPlease proceed with caution as we cannot check for stellar variability.\n")
     else:
         # Individually go through the phot_variable_flag indicator for each star to see if variable or not
         variableFlagList = gaia_result.columns["phot_variable_flag"]
@@ -1027,7 +1032,10 @@ def variableStarCheck(ra, dec):
     # This is a secondary check if GAIA query returns inconclusive results
     star_name = simbad_query(sample)
     if not star_name:
-        log_info("*** WARNING: Your comparison star cannot be resolved in SIMBAD; EXOTIC cannot check if it is variable or not. ***\nEXOTIC will still include this star in the reduction. \nPlease proceed with caution as we cannot check for stellar variability.\n")
+        log_info("*** WARNING: Your comparison star cannot be resolved in the SIMBAD star database; "
+                 "EXOTIC cannot check if it is variable or not. "
+                 "***\nEXOTIC will still include this star in the reduction. "
+                 "\nPlease proceed with caution as we cannot check for stellar variability.\n")
         return False
     else:
         identifiers = Simbad.query_objectids(star_name)
@@ -1118,7 +1126,7 @@ def get_pixel_scale(wcs_header, header, pixel_init):
     elif pixel_init:
         image_scale = f"Image scale in arc-secs/pixel: {pixel_init}"
     else:
-        log_info("Cannot find the pixel scale in the image header.")
+        log_info("Not able to find Pixel Scale in the Image Header.")
         image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
         image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
     return image_scale
@@ -1212,8 +1220,7 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log_info(
-            f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
+        log_info(f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
 
@@ -1244,7 +1251,7 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
         log_info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. "
-                    f"Check if star is present or close to border.")
+                 f"Check if star is present or close to border.")
 
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
@@ -1429,6 +1436,14 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
             prevImageData = imageData  # no shift should be registered
 
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
+        tform = transformation(np.array([imageData, firstImageData]), len(timeSortedNames), imageFile, i)
+
+        # apply transform
+        tx, ty = tform([UIprevTPX, UIprevTPY])[0]
+        rx, ry = tform([UIprevRPX, UIprevRPY])[0]
+
+        print(f"Coordinates of target star: ({tx},{ty})")
+        print(f"Coordinates of comp star: ({rx},{ry})")
 
         # corrects for any image shifts that result from a tracking slip
         shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
@@ -1507,7 +1522,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
     ax.clear()
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
-    ax.set_xlabel('Time (jd)')
+    ax.set_xlabel('Time (JD)')
     ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
@@ -1654,12 +1669,8 @@ def main():
     elif args.reduce or args.prereduced:
         reduction_opt = 2
     else:
-        reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while observing) \n\t2: for for Complete Reduction (for analyzing your data after an observing run). \nPlease enter 1 or 2: ",
                                    type_=int, val1=1, val2=2)
-
-    #############################
-    # Real Time Reduction Routine
-    #############################
 
     if reduction_opt == 1:
         log_info("\n**************************************************************")
@@ -1678,14 +1689,14 @@ def main():
 
         userpDict['pName'] = planet_name(userpDict['pName'])
 
-        exotic_infoDict = inputs_obj.real_time()
+        exotic_infoDict = inputs_obj.real_time(userpDict['pName'])
         exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
         exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
         exotic_UIprevRPX = exotic_infoDict['comp_stars'][0]
         exotic_UIprevRPY = exotic_infoDict['comp_stars'][1]
 
         while True:
-            carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
+            carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
             if carry_on != 'continue':
                 continue
             break
@@ -1697,16 +1708,12 @@ def main():
         ax = fig.add_subplot(1, 1, 1)
         ax.set_title(userpDict['pName'])
         ax.set_ylabel('Normalized Flux')
-        ax.set_xlabel('Time (jd)')
+        ax.set_xlabel('Time (JD)')
 
         anim = FuncAnimation(fig, realTimeReduce,
                              fargs=(userpDict['pName'], ax, distFC, exotic_infoDict['images'], exotic_UIprevTPX, exotic_UIprevTPY,
                                     exotic_UIprevRPX, exotic_UIprevRPY), interval=15000)  # refresh every 15 seconds
         plt.show()
-
-    ###########################
-    # Complete Reduction Routine
-    ###########################
 
     # ----USER INPUTS----------------------------------------------------------
     else:
@@ -1983,14 +1990,13 @@ def main():
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
-                    # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     firstImage = np.copy(imageData)
 
-                    #log_info("\nAligning your images from FITS files. Please wait.")
+                    if alignmentBool:
+                        log_info("\n\nAligning your images. Please wait.")
 
                 # Image Alignment
                 if alignmentBool:
-                    # log_info("\n\nAligning your images. Please wait.")
                     # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
@@ -2240,36 +2246,31 @@ def main():
                             finYRefCent = psf_data[ckey][:, 1]
 
             # log best fit
+            log_info("\n\n*********************************************")
             if minAperture == 0:  # psf
-                log_info('\n\n*********************************************')
-                log_info('Best Comparison Star: #' + str(bestCompStar))
-                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log_info('Optimal Method: PSF photometry')
-                log_info('********************************************\n')
-
+                log_info(f"Best Comparison Star: #{bestCompStar}")
+                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                log_info("Optimal Method: PSF photometry")
             elif minAperture < 0:  # no comp star
-                log_info('\n\n*********************************************')
-                log_info('Best Comparison Star: None')
-                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log_info('Optimal Aperture: ' + str(abs(np.round(minAperture, 2))))
-                log_info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
-                log_info('********************************************\n')
+                log_info("Best Comparison Star: None")
+                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
+                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
                 bestCompStar = None
-
             else:
-                log_info('\n\n*********************************************')
-                log_info('Best Comparison Star: #' + str(bestCompStar))
-                log_info('Minimum Residual Scatter: ' + str(round(minSTD * 100, 4)) + '%')
-                log_info('Optimal Aperture: ' + str(np.round(minAperture, 2)))
-                log_info('Optimal Annulus: ' + str(np.round(minAnnulus, 2)))
-                log_info('********************************************\n')
+                log_info(f"Best Comparison Star: #{bestCompStar}")
+                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
+                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+            log_info("*********************************************\n")
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
-                log_info("No BJDs in Image Headers. Converting all JDs to BJD_TDBs.")
+                log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
+                         "Converting all JDs to BJD_TDBs.")
                 log_info("Please be patient- this step can take a few minutes.")
 
                 animate_toggle(True)
@@ -2314,9 +2315,9 @@ def main():
 
             picframe = 10 * (minAperture + 15 * sigma)
             pltx = [max([0, min([finXTargCent[0], finXRefCent[0]]) - picframe]),
-                    min([np.shape(firstImage)[0], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
+                    min([np.shape(firstImage)[1], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
             plty = [max([0, min([finYTargCent[0], finYRefCent[0]]) - picframe]),
-                    min([np.shape(firstImage)[1], max([finYTargCent[0], finYRefCent[0]]) + picframe])]
+                    min([np.shape(firstImage)[0], max([finYTargCent[0], finYRefCent[0]]) + picframe])]
             plt.close()
 
             for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
@@ -2706,8 +2707,8 @@ def main():
             comp_dec = None
 
             if wcs_file:
-                comp_ra = rafile[comp_coords[1]][comp_coords[0]]
-                comp_dec = decfile[comp_coords[1]][comp_coords[0]]
+                comp_ra = rafile[int(comp_coords[1])][int(comp_coords[0])]
+                comp_dec = decfile[int(comp_coords[1])][int(comp_coords[0])]
 
             comp_star.append({
                 'ra': str(comp_ra) if comp_ra else comp_ra,

@@ -2517,6 +2517,7 @@ def main():
         # estimate transit duration
         pars = dict(**myfit.parameters)
         times = np.linspace(np.min(myfit.time), np.max(myfit.time), 1000)
+        data_highres = transit(times, pars)
         dt = np.diff(times).mean()
         durs = []
         for r in range(1000):
@@ -2566,7 +2567,8 @@ def main():
         correctedSTD = np.std(myfit.residuals / np.median(myfit.data))
         ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
                        marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
-        ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
+        # ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
+        ax_lc.plot(np.linspace(np.nanmin(myfit.phase), np.nanmax(myfit.phase), 1000), data_highres, 'r', zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
@@ -2598,6 +2600,7 @@ def main():
             f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()
+
 
         ###################################################################################
 

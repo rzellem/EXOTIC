@@ -2567,7 +2567,6 @@ def main():
         correctedSTD = np.std(myfit.residuals / np.median(myfit.data))
         ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
                        marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
-        # ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
         ax_lc.plot(np.linspace(np.nanmin(myfit.phase), np.nanmax(myfit.phase), 1000), data_highres, 'r', zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')

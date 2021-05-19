@@ -11,23 +11,17 @@ This method makes use of a virtual Python Environment builder to create an envir
 
    `python3 --version`
 
-2. Note the installation location of **Python 3**
-
-   `which python3`
-
-3. Ensure that ***virtualenv*** and supporting tools are installed
+2. Ensure that ***virtualenv*** and supporting tools are installed
 
    `sudo zypper install python3-virtualenvwrapper python38-virtualenv python38-virtualenv-clone`
    
-   *Note: This command only performs the installation if the tool is not already installed (and may be ommited in this case)*
+   *Note: This command only performs the installation of these packages if not already installed (and may be ommited in this case)*
 
-4. Create directory for Python virtual environments
+3. Create directory for ***virtualenv***-compatible Python virtual environments
 
    `mkdir ~/env`
    
-   *Note: If a Python virtual environment directory already exists and is desired to be used, this step is omitted*
-
-5. Edit ***.bashrc*** file
+4. Edit ***.bashrc*** file
 
    `echo "export WORKON_HOME=~/env" >> ~/.bashrc`
 
@@ -35,7 +29,7 @@ This method makes use of a virtual Python Environment builder to create an envir
    
    `source ~/.bashrc`
 
-6. Create Python virtual environment for **EXOTIC**
+5. Create Python virtual environment for **EXOTIC**
 
    `mkdir -p $WORKON_HOME` 
 
@@ -56,14 +50,105 @@ This method makes use of a virtual Python Environment builder to create an envir
    (exotic) user@localhost:~>
    ```
       
-### 2.2 Install and Run EXOTIC
+### 2.2 Install EXOTIC
 
-9. Ensure that the **EXOTIC** virtual environment is active (verified by the "*exotic*" prefix in the terminal window)
+9. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
 
 10. Issue the installation command
 
     `pip install exotic`
 
-11. Run **EXOTIC**
+
+### 2.3 Run EXOTIC 
+
+11. If the **EXOTIC** virtual environment is ***not*** active, such as after a computer reboot or when launching a new terminal window, issue the following command:
+
+    `workon exotic`
+
+    *Note: If* ***virtualenvwrapper*** was not added to the ***.bashrc*** *file per Step 7, the above command must be preceded by the* `source virtualenvwrapper` *command*
+
+12. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
+
+13. Run **EXOTIC**
 
     `exotic`
+
+### 2.4 Exiting EXOTIC Virtual Environment
+
+14. This final command is optional, and is to be invoked only if the user desires to exit the **EXOTIC** virtual environment completely:
+
+    `deactivate`
+
+    *Note: After this command is executed, perform Steps 11 - 13 to run* **EXOTIC**. 
+
+## 3 Installation of EXOTIC with Miniconda 
+
+This is an alternate method that makes use of ***Miniconda*** to create an environment dedicated to **EXOTIC** and isolated from the native ***openSUSE*** installation of Python.
+
+### 3.1 Install Miniconda
+
+15. Download a ***Miniconda*** [Linux Installer](https://docs.conda.io/en/latest/miniconda.html#linux-installers) compatible with your computer
+
+16. Install ***Miniconda*** with the following command and follow the script's installation instructions:
+
+    `bash Miniconda3-latest-Linux-x86_64.sh`
+
+    *Note: Replace "Miniconda3-latest-Linux-x86_64.sh" with actual downloaded filename.  Original installation instructions are found at* [conda.io](https://conda.io/projects/conda/en/latest/user-guide/install/linux.html)
+
+### 3.2 Set Up Virtual Environment
+
+17. Ensure that the *base* ***Miniconda*** virtual environment is active, verified by the "**(base)**" prefix in the terminal window
+
+    ```bash
+    (base) user@localhost:~>
+    ```
+    *Note: Depending on the user's selections during installation, the* ***Miniconda*** *virtual environment may activate by default in the terminal window or may require manual activation*
+
+18. Create dedicated virtual environment for **EXOTIC**
+
+    `conda create --clone base --name exotic`
+
+19. Activate the newly created **EXOTIC** virtual environment in preparation for its installation
+
+    `conda activate exotic`
+
+20. Ensure that the *exotic* ***Miniconda*** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
+
+    ```bash
+    (exotic) user@localhost:~>
+    ```
+### 3.3 Install EXOTIC
+
+21. Install pre-requisite ***openSUSE*** packages
+
+    `sudo zypper install gcc gcc-c++`
+
+21. Install pre-requisite Conda packages
+
+    `conda install numpy cython scikit-image`
+
+22. Issue the installation command
+
+    `pip install exotic`
+
+### 3.4 Run EXOTIC 
+
+23. If the **EXOTIC** virtual environment is ***not*** active, such as after a computer reboot or when launching a new terminal window, issue the following command, otherwise skip to the next step:
+
+    `eval "$(~/miniconda3/bin/conda shell.bash hook)"`
+
+    `conda activate exotic`
+
+24. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
+
+25. Run **EXOTIC**
+
+    `exotic`
+
+### 2.4 Exiting EXOTIC Virtual Environment
+
+26. This final command is optional, and is to be invoked only if the user desires to exit the EXOTIC virtual environment completely:
+
+    `conda deactivate`
+
+    *Note: Deactivating the* "**(exotic)**" *virtual environment places the user in the* "**(base)**" *environment.  Running the command above a second time places the user in the default system environment.  After this command is executed, perform Steps 23 - 25 to run* **EXOTIC**. 

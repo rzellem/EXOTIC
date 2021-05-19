@@ -1,12 +1,9 @@
 # EXOTIC Installation Instructions for Windows Users
 
-~<!--Images of running programs and logos have yet to be restored-->~
-
 ## Install DS9 (Astronomical Image Viewing Software)
 
 Before installing EXOTIC itself, you may wish to install the SAOImageDS9 (Astronomical Image Viewing Software) to view the “.FITS” images you obtain during observations. For more information on SAOImageDS9, check out the [User Guide](http://ds9.si.edu/doc/user/index.html)
 
-**!!! INSERT IMAGE OF SAOImageDS9 WEBSITE. !!!**
 
 - Follow [SAOImageDS9 download link](https://sites.google.com/cfa.harvard.edu/saoimageds9/download)
 - Click on "***Windows***" then select "***Windows 64 bit***".
@@ -49,14 +46,10 @@ WLS2 is a new product from Microsoft that sits between Windows and your machine'
 
 Ubuntu is one example of a Linux operating system. Linux underpins over 95% of the servers that power the world wide web and 100% of the world's top supercomputers. Installing Ubuntu with WSL2 will simply allow you to make use of this operating system when (and only when) you are using the app. It should not damage your current Windows setup (but you install it at your own risk) and it will make running EXOTIC a lot easier and faster!
 
-**!!!INSERT IMAGE OF SCREEN WITH UBUNTU RUNNING ALONGSIDE OTHER WINDOWS.!!!**
-
 2. #### Install Windows Subsystem for Linux (WSL2) and Ubuntu 20.04
 
 Go to the Microsoft page: [Windows Subsystem for Linux Installation Guide for Windows 10](https://docs.microsoft.com/en-us/windows/wsl/install-win10) where you will use the special Windows command line tool called PowerShell to install WSL2. Ignore the first section "***Simplified Installation for Windows Insiders***" (unless you have already joined this program and wish to experiment with new upcoming versions of the WSL2 installation process).  Instead, follow the first five steps in the "***Manual Installation Steps***" section, restarting your machine when instructed to do so. 
 Finally, execute '***Step 6 - Install your Linux distribution of choice***' selecting "***Ubuntu 20.04 LTS***" from the choice of Linux distributions in the Microsoft Store. This is a stable version of Ubuntu that was released a year ago and will be supported until 2025.
-
-**!!!INSERT IMAGE OF UBUNTU LOGO!!!**
 
 3. #### Start Ubuntu and open a terminal window 
 
@@ -90,9 +83,9 @@ Start by updating your Ubuntu system to the latest version and then proceed inst
 For example, typing “mk /mnt/c/Users/your_windowsname/exoplanets” will mean that the EXOTIC files will be stored in "C:\Users\your_windowsname\exoplanets" in Windows.
 
 
-   ```python
+```python
    $ mkdir /folder
-   ```
+```
 
    4.4. Switch to your chosen directory and get ready to install the software – replacing ***folder*** with the directory you created above (for example “cd /mnt/c/Users/your_windowsname/exoplanets”). This will also be the location from where you run the program.
 
@@ -114,9 +107,9 @@ $ sudo apt install python3-pip
 
    4.7. When the installation is complete, verify the installation by checking the pip version - enter:
 
-   ```python
+```python
    $ pip3 --version
-   ```
+```
 The version number may vary, but it will look something like this:
 ```output
 $ pip 20.0.2 from /usr/lib/python3/dist-packages/pip (python 3.8)
@@ -124,9 +117,9 @@ $ pip 20.0.2 from /usr/lib/python3/dist-packages/pip (python 3.8)
 
    4.8. Install EXOTIC and all necessary Python packages used to run EXOTIC.
 
-   ```python
+```python
    $ pip3 install exotic
-   ```
+```
    4.9. You will see a list of the various packages required for EXOTIC being collected and then installed. This process will take around 15 minutes or more and you will see many lines of output before the prompt reappears and you can enter further commands.
 
 *Note: If this command fails, you can manually download EXOTIC from GitHub. To do this, follow the instructions below in the section entitled "**Alternative method for Installation of EXOTIC**".*
@@ -158,9 +151,9 @@ If you experienced issues with the downloading and installing EXOTIC above, plea
 
    5.1. Start by copying the EXOTIC project files from GitHub, the repository for EXOTIC. This command will install the software into a directory called "EXOTIC" within the directory you created above.
 
-   ```python
+```python
    $ git clone https://github.com/rzellem/EXOTIC.git
-   ```
+```
 
    5.2 Now you need to step into the directory where the EXOTIC files have just been copied and get ready to install the software. Replacing ***folder*** with the directory you created above (for example “cd /mnt/c/Users/your_windowsname/exoplanets/EXOTIC”). This will also be the location from where you run the program.
 
@@ -170,17 +163,17 @@ $ cd /path/EXOTIC
 
   5.3 One of the files you have downloaded, named “exotic_installation_linux.sh”, is called a "shell script". Such a script consists of a list of commands to be executed in the Ubuntu terminal. Modify this file to make it executable, meaning that you can run it in your terminal.
 
-   ```python
+```python
    $ sudo chmod 755 exotic_installation_linux.sh
-   ```
+```
 
    5.4 Run this script to download or update Python (even if you already have it) and install all the necessary packages to run EXOTIC. Enter the password you created above if prompted.
 
 Finally, the script will run EXOTIC for the first time to test that it is functional.
 
-   ```python
+```python
    $ ./exotic_installation_linux.sh
-   ```
+```
    5.5 Wait a while. This process will take up to around 15 minutes to download and install the complete EXOTIC system. 
 
 Once the process has completed, you should see the introductory header to EXOTIC as shown below, which confirms that it is all up and running! Do not worry if you see a different version of Python or of EXOTIC, since new versions are coming out all the time. 
@@ -204,27 +197,29 @@ $ cd /mnt/c/Users/your_windowsname/your_folder/EXOTIC
 
  Then to start reducing your data with EXOTIC just use the command:
 
-   ```python
+```python
    $ exotic
-   ```
+```
 
 ##### *60-second guide to using the Ubuntu terminal*
 
-*If you make a mistake when entering a command in the Ubuntu terminal, do not try to use the mouse to help you edit the command line. You can only use the left and right cursor keys to move through the line and the Delete and Back keys to remove characters. Everything that you type and the responses to your commands are stored in the terminal window, even though they may scroll off the top of the window. So if you want to repeat a command, then you can use the up and down cursor keys to move through your list of previous commands. Stop at the one you require and just press Enter.* 
+*Many installations of Ubuntu come with a Graphical User Interface (GUI) just like Windows, where you can use the mouse as well as the keyboard to start up and interact with programs. But just using the command line on Ubuntu allows you to perform a wide range of actions on your computer (run Python programs, install Linux applications, edit files, etc.) by typing in commands. If you are interested in learning more about the command line on Ubuntu and the wide range different commands you can use, follow this link: [The Linux command line for beginners](https://ubuntu.com/tutorials/command-line-for-beginners#1-overview). This document refers to Ubuntu version 18.04 but there's no command that you can use in Ubuntu 18.04 that will not work in 20.04.*
+
+*If you make a mistake when entering a command in the Ubuntu terminal, do not try to use the mouse to help you edit the command line. You can only use the left and right cursor keys to move through the line and the Delete and Back keys to remove characters. Be aware that in all Linux systems, including Ubuntu, all commands (as well as file and directory names) are case sensitive. So typing "SUDO apt upgrade", instead of "sudo apt upgrade" to upgrade your Ubuntu installation, will result in an error message.*
+
+*Everything that you type and the responses to your commands are stored in the terminal window, even though they may not be visible because they have scrolled off the top of the window. So if you want to repeat a command, then you can use the up and down cursor keys to move through your list of previous commands. Stop at the one you require and just press Enter. Another feature is that rather that entering a long directory/file name in full, if you start typing and then press the "Alt" key, Ubuntu will try to fill in the rest of the command for you. If two directories/files start with the characters you have entered, the completion mechanism will stop, to let you enter more characters to distinguish between them.*
 
 *If you wish to stop a program running for any reason, (perhaps you realise that you made a mistake in entering your data), then hold down the CTRL key and press the "c" key. This will stop the program almost immediately and return you to the prompt ready for you to enter another command.*
 
 *If you wish to copy some text (like a directory name) from Windows or from your Ubuntu terminal window, first highlight what you wish to copy with your mouse, then hold down the Ctrl key and press the "c" key to copy. Then go to the Ubuntu terminal window, move to where you want to paste the text using the cursor keys and press the right button on your mouse (Ctrl "v" will not work).*
 
-*Ubuntu and other flavours of Linux generally refer to "directories", while Windows uses the term "folders" but these terms mean exactly the same thing and can used interchangeably. You may change to another directory (or folder) with the "cd" command. In executing “cd ~/exoplanets” for example, you are navigating to your "exoplanets" folder, just as you would by double-clicking on "exoplanets" in Windows File Explorer.*
+*Ubuntu and other flavours of Linux generally refer to "directories", while Windows uses the term "folders" but these terms mean exactly the same thing and can used interchangeably. You can see the contents of your Ubuntu directory with the "ls" command (similar for the Windows "dir" command). Changing to another directory (or folder) is done with the "cd" command. In executing “cd ~/exoplanets” for example, you are navigating to your "exoplanets" folder, just as you would by double-clicking on "exoplanets" in Windows File Explorer.*
 
-*The shortcut "~" refers to your "home" directory ("/mnt/c/Users/windows_username"), so instead of typing "cd /mnt/c/Users/windows_username/exoplanets” for example you may just enter "cd ~/exoplanets". A single dot (e.g. ./file) refers to a file in the directory you are in, while a double dot (e.g. ../file) refers to a file in the directory above. So typing cd .. when you are in "/mnt/c/Users/windows_username/exoplanets” takes you to "/mnt/c/Users/windows_username".*
+*A single dot prefix (e.g. ./filename) refers to a file in the directory you are in, while a double dot prefix (e.g. ../filename) refers to a file in the directory above. So typing "cd .." when you are in "/mnt/c/Users/windows_username/exoplanets” takes you to "/mnt/c/Users/windows_username".*
 
 *You will see that when the Ubuntu terminal is waiting for you enter a command, it will show a prompt like this: "ubuntu_username@machine _name: directory". This is made up from the username for the account you are signed into on Windows, the name of your computer and an Ubuntu directory with @ sign and a colon between the three parts. The first part of the Ubuntu directory "/mnt/c/Users/windows_username/” represents your home folder in Windows and the remainder shows which directory you have moved into using the change directory command. This means that you are actually pointing to the windows filing system, in your normal user space so the folders you create and the files that you save in Ubuntu can be seen from Windows itself.* 
 
-*Ubuntu labels your home folder in Windows as"/mnt/c/Users/windows_username/” whereas Windows labels it "C:\Users\your_username" using back slashes not forward slashes. If you look there using Windows file manager you can see that these are in fact one and the same folder with the same content. Be aware that if you create or delete a file or folder here with Windows File Explorer, it will be added or removed from Ubuntu and vice-versa.* 
-
-*Many installations of Ubuntu come with a Graphical User Interface (GUI) just like Windows, where you can use the mouse as well as the keyboard to start up and interact with programs. But just using the command line on Ubuntu allows you to perform a wide range of actions on your computer (run Python programs, install Linux applications, edit files, etc.) by typing in commands. If you are interested in learning more about the command line on Ubuntu and the wide range different commands you can use, follow this link: [The Linux command line for beginners](https://ubuntu.com/tutorials/command-line-for-beginners#1-overview). This document refers to Ubuntu version 18.04 but there's no command that you can use in Ubuntu 18.04 that will not work in 20.04.*
+*Ubuntu labels your home folder in Windows as"/mnt/c/Users/windows_username/” (note the lower case "c" for the "C" drive) whereas Windows labels it "C:\Users\your_username" using back slashes not forward slashes. If you compare the contents using Windows file manager, you can see that these are in fact one and the same folder with the same content. In the Ubuntu filing system a directory named "EXOTIC" is quite separate from one name "exotic but in the Windows filing system you are in fact two references to the same folder. Be aware that if you create or delete a file or folder in your EXOTIC folders with Windows File Explorer, it will be added or removed from Ubuntu and vice-versa.* 
 
 ## Further Help and Support
 

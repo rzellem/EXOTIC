@@ -33,7 +33,7 @@ This method makes use of a virtual Python Environment builder to create an envir
 
    `mkdir -p $WORKON_HOME` 
 
-7. Initialize ***virtualenvwrapper***
+6. Initialize ***virtualenvwrapper***
 
    `virtualenvwrapper`
    
@@ -41,45 +41,45 @@ This method makes use of a virtual Python Environment builder to create an envir
    
    `echo "source virtualenvwrapper" >> ~/.bashrc`
 
-8. Create new Python virtual environment for **EXOTIC**
+7. Create new Python virtual environment for **EXOTIC**
 
    `mkvirtualenv exotic`
    
-   *Note: The virtual Python environment for ***EXOTIC*** is now created and can be confirmed by the "(exotic)" prefix in the terminal:*
+   *Note: The virtual Python environment for* **EXOTIC** *is now created and can be confirmed by the* "***(exotic)***" *prefix in the terminal:*
    ```bash
    (exotic) user@localhost:~>
    ```
       
 ### 2.2 Install EXOTIC
 
-9. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
+8. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
 
-10. Issue the installation command
+9. Issue the installation command
 
     `pip install exotic`
 
 
 ### 2.3 Run EXOTIC 
 
-11. If the **EXOTIC** virtual environment is ***not*** active, such as after a computer reboot or when launching a new terminal window, issue the following command:
+10. If the **EXOTIC** virtual environment is ***not*** active, such as after a computer reboot or when launching a new terminal window, issue the following command:
 
     `workon exotic`
 
-    *Note: If* ***virtualenvwrapper*** was not added to the ***.bashrc*** *file per Step 7, the above command must be preceded by the* `source virtualenvwrapper` *command*
+    *Note: If* ***virtualenvwrapper*** was not added to the ***.bashrc*** *file per Step 6, the above command must be preceded by the* `source virtualenvwrapper` *command*
 
-12. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
+11. Ensure that the **EXOTIC** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
 
-13. Run **EXOTIC**
+12. Run **EXOTIC**
 
     `exotic`
 
 ### 2.4 Exiting EXOTIC Virtual Environment
 
-14. This final command is optional, and is to be invoked only if the user desires to exit the **EXOTIC** virtual environment completely:
+13. This final command is optional, and is to be invoked only if the user desires to exit the **EXOTIC** virtual environment completely:
 
     `deactivate`
 
-    *Note: After this command is executed, perform Steps 11 - 13 to run* **EXOTIC**. 
+    *Note: After this command is executed, perform Steps 10 - 12 to run* **EXOTIC**. 
 
 ## 3 Installation of EXOTIC with Miniconda 
 
@@ -87,9 +87,9 @@ This is an alternate method that makes use of ***Miniconda*** to create an envir
 
 ### 3.1 Install Miniconda
 
-15. Download a ***Miniconda*** [Linux Installer](https://docs.conda.io/en/latest/miniconda.html#linux-installers) compatible with your computer
+14. Download a ***Miniconda*** [Linux Installer](https://docs.conda.io/en/latest/miniconda.html#linux-installers) compatible with your computer
 
-16. Install ***Miniconda*** with the following command and follow the script's installation instructions:
+15. Install ***Miniconda*** with the following command and follow the script's installation instructions:
 
     `bash Miniconda3-latest-Linux-x86_64.sh`
 
@@ -97,29 +97,29 @@ This is an alternate method that makes use of ***Miniconda*** to create an envir
 
 ### 3.2 Set Up Virtual Environment
 
-17. Ensure that the *base* ***Miniconda*** virtual environment is active, verified by the "**(base)**" prefix in the terminal window
+16. Ensure that the *base* ***Miniconda*** virtual environment is active, verified by the "**(base)**" prefix in the terminal window
 
     ```bash
     (base) user@localhost:~>
     ```
     *Note: Depending on the user's selections during installation, the* ***Miniconda*** *virtual environment may activate by default in the terminal window or may require manual activation*
 
-18. Create dedicated virtual environment for **EXOTIC**
+17. Create dedicated virtual environment for **EXOTIC**
 
     `conda create --clone base --name exotic`
 
-19. Activate the newly created **EXOTIC** virtual environment in preparation for its installation
+18. Activate the newly created **EXOTIC** virtual environment in preparation for its installation
 
     `conda activate exotic`
 
-20. Ensure that the *exotic* ***Miniconda*** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
+19. Ensure that the *exotic* ***Miniconda*** virtual environment is active, verified by the "**(exotic)**" prefix in the terminal window
 
     ```bash
     (exotic) user@localhost:~>
     ```
 ### 3.3 Install EXOTIC
 
-21. Install pre-requisite ***openSUSE*** packages
+20. Install pre-requisite ***openSUSE*** packages
 
     `sudo zypper install gcc gcc-c++`
 
@@ -145,10 +145,10 @@ This is an alternate method that makes use of ***Miniconda*** to create an envir
 
     `exotic`
 
-### 2.4 Exiting EXOTIC Virtual Environment
+### 3.5 Exiting EXOTIC Virtual Environment
 
 26. This final command is optional, and is to be invoked only if the user desires to exit the EXOTIC virtual environment completely:
 
     `conda deactivate`
 
-    *Note: Deactivating the* "**(exotic)**" *virtual environment places the user in the* "**(base)**" *environment.  Running the command above a second time places the user in the default system environment.  After this command is executed, perform Steps 23 - 25 to run* **EXOTIC**. 
+    *Note: Deactivating the* "***(exotic)***" *virtual environment places the user in the* "***(base)***" *environment.  Running the command above a second time places the user in the default system environment.  After this command is executed, perform Steps 23 - 25 to run* **EXOTIC**. 

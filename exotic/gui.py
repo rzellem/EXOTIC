@@ -15,7 +15,6 @@ try:  # simple version
 except ImportError:  # package import
     from version import __version__
 
-
 class FolderSelect(tk.Frame):
     def __init__(self,parent=None,folderDescription="",default_text="",**kw):
         tk.Frame.__init__(self,master=parent,**kw)
@@ -52,11 +51,11 @@ class FileSelect(tk.Frame):
     def file_path(self):
         return self.filePath.get()
 
-def doStuff():
-    folder1 = directory1Select.folder_path
-    folder2 = directory2Select.folder_path
-    folder3 = directory3Select.folder_path
-    print("Doing stuff with folder", folder1, folder2, folder3)
+# def doStuff():
+#     folder1 = directory1Select.folder_path
+#     folder2 = directory2Select.folder_path
+#     folder3 = directory3Select.folder_path
+#     print("Doing stuff with folder", folder1, folder2, folder3)
 
 root = tk.Tk()
 root.title(f"EXOTIC v{__version__}")
@@ -191,7 +190,7 @@ if reduction_opt.get() == 2:
             initparams = tk.IntVar()
 
             window_label = tk.Label(root,
-                                    text="""Please enter the following information:""",
+                                    text="""Please enter the following information about your observation:""",
                                     font=("Helvetica 14 bold"),
                                     justify=tk.LEFT,
                                     padx=20)  # .pack()
@@ -233,12 +232,19 @@ if reduction_opt.get() == 2:
             biases_dir.grid(row=i)
             i += 1
 
+            #
+            # obscode2_label = TextInput(root, "AAVSO Obs Code", "RTZ")
+            # obscode2_label.grid(row=1)
+            # i += 1
+
+
             #             # "AAVSO Observer Code (N/A if none)": "RTZ",
             obscode_label = tk.Label(root, text="AAVSO Observer Code (N/A if none)", justify=tk.LEFT)
             obscode_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             obscode_entry.insert(tk.END, "N/A")
             obscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            obscode = obscode_entry.get()
             i += 1
             #
             #
@@ -248,6 +254,7 @@ if reduction_opt.get() == 2:
             secondobscode_entry.insert(tk.END, "N/A")
             secondobscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             secondobscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            secondobscode = secondobscode_entry.get()
             i += 1
             #
             #             # "Observation date": "17-December-2017",
@@ -255,6 +262,7 @@ if reduction_opt.get() == 2:
             obsdate_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             obsdate_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obsdate_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            obsdate = obsdate_entry.get()
             i += 1
             #
             # #             "Obs. Latitude": "+32.41638889",
@@ -262,6 +270,7 @@ if reduction_opt.get() == 2:
             lat_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             lat_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             lat_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            lat = lat_entry.get()
             i += 1
             #
             # #             "Obs. Longitude": "-110.73444444",
@@ -269,6 +278,7 @@ if reduction_opt.get() == 2:
             long_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             long_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             long_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            long = long_entry.get()
             i += 1
             #
             # #             "Obs. Elevation (meters)": 2616,
@@ -276,6 +286,7 @@ if reduction_opt.get() == 2:
             elevation_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             elevation_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             elevation_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            elevation = elevation_entry.get()
             i += 1
             #
             # #             "Camera Type (CCD or DSLR)": "CCD",
@@ -283,6 +294,7 @@ if reduction_opt.get() == 2:
             cameratype_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             cameratype_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             cameratype_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            cameratype = cameratype_entry.get()
             i += 1
             #
             # #             "Pixel Binning": "1x1",
@@ -290,6 +302,7 @@ if reduction_opt.get() == 2:
             pixbin_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             pixbin_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             pixbin_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            pixbin = pixbin_entry.get()
             i += 1
 
             #     "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
@@ -298,6 +311,7 @@ if reduction_opt.get() == 2:
             pixscale_entry.insert(tk.END, "5.21 arcsecs/pixel")
             pixscale_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             pixscale_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            pixscale = pixscale_entry.get()
             i += 1
 
             # # #             "Filter Name (aavso.org/filters)": "V",
@@ -319,6 +333,7 @@ if reduction_opt.get() == 2:
             om1 = tk.OptionMenu(root, filteroptions, *choices)
             om1.grid(row=i, column=1)
             # my_w.mainloop()  # Keep the window open
+            obsfilter = filteroptions.get()
             i += 1
 
             # #             "Observing Notes": "Weather, seeing was nice.",
@@ -326,7 +341,54 @@ if reduction_opt.get() == 2:
             obsnotes_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             obsnotes_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obsnotes_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            obsnotes = obsnotes_entry.get()
             i += 1
+
+
+            # root = tk.Tk()
+            # root.title(f"EXOTIC v{__version__}")
+            #
+            # window_label = tk.Label(root,
+            #                         text="""Please enter the following information:""",
+            #                         font=("Helvetica 15 bold"),
+            #                         justify=tk.LEFT,
+            #                         padx=20)  # .pack()
+            # window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
+
+            # i, j = 1, 0
+            platesolve = tk.BooleanVar()
+            platesolve_check = tk.Checkbutton(root, text='Plate solve my images', variable=platesolve, onvalue=True,
+                                              offvalue=False)
+            platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
+            i += 1
+
+            alignment = tk.BooleanVar()
+            alignment_check = tk.Checkbutton(root, text='Align my images', variable=alignment, onvalue=1, offvalue=0)
+            alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
+            i += 1
+
+            targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
+            targetpos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+            targetpos_entry.insert(tk.END, "[x, y]")
+            targetpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            targetpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            targetpos = targetpos_entry.get()
+            i += 1
+
+            comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position", justify=tk.LEFT)
+            comppos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+            comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")
+            comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            comppos = comppos_entry.get()
+            i += 1
+
+            # # Button for closing
+            # exit_button = tk.Button(root, text="Next", command=root.destroy)
+            # exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
+            # # exit_button.pack(pady=20)
+            # root.update()
+            # root.mainloop()
 
 
             # Button for closing
@@ -373,6 +435,7 @@ if reduction_opt.get() == 2:
                 filtermin_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
                 filtermin_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 filtermin_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+                filtermin = filtermin_entry.get()
                 i += 1
 
                 # "Filter Maximum Wavelength (nm)": null
@@ -380,6 +443,7 @@ if reduction_opt.get() == 2:
                 filtermax_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
                 filtermax_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 filtermax_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+                filtermax = filtermax_entry.get()
                 i += 1
 
                 # Button for closing
@@ -450,6 +514,7 @@ if reduction_opt.get() == 2:
             planet_entry.insert(tk.END, "HAT-P-32 b")
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            planet = planet_entry.get()
             i += 1
 
             #         "Host Star Name": "HAT-P-32",
@@ -458,6 +523,7 @@ if reduction_opt.get() == 2:
             star_entry.insert(tk.END, "HAT-P-32")
             star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             star_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            star = star_entry.get()
             i += 1
 
             #         "Target Star RA": "02:04:10",
@@ -466,14 +532,16 @@ if reduction_opt.get() == 2:
             targetRA_entry.insert(tk.END, "02:04:10")
             targetRA_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             targetRA_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            targetRA = targetRA_entry.get()
             i += 1
 
             #         "Target Star Dec": "+46:41:23",
-            targetRA_label = tk.Label(root, text="Host Star Declination", justify=tk.LEFT)
-            targetRA_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
-            targetRA_entry.insert(tk.END, "+46:41:23")
-            targetRA_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            targetRA_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            targetDEC_label = tk.Label(root, text="Host Star Declination", justify=tk.LEFT)
+            targetDEC_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+            targetDEC_entry.insert(tk.END, "+46:41:23")
+            targetDEC_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            targetDEC_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            targetDEC = targetDEC_entry.get()
             i += 1
 
             #         "Orbital Period (days)": 2.1500082,
@@ -482,6 +550,7 @@ if reduction_opt.get() == 2:
             period_entry.insert(tk.END, "2.1500082")
             period_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             period_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            period = period_entry.get()
             i += 1
 
             #         "Orbital Period Uncertainty": 1.3e-07,
@@ -490,6 +559,7 @@ if reduction_opt.get() == 2:
             perioderr_entry.insert(tk.END, "1.3e-07")
             perioderr_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             perioderr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            perioderr = perioderr_entry.get()
             i += 1
 
             #         "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
@@ -498,6 +568,7 @@ if reduction_opt.get() == 2:
             Tmid_entry.insert(tk.END, "2455867.402743")
             Tmid_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             Tmid_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            Tmid = Tmid_entry.get()
             i += 1
 
             #         "Mid-Transit Time Uncertainty": 4.9e-05,
@@ -506,6 +577,7 @@ if reduction_opt.get() == 2:
             Tmiderr_entry.insert(tk.END, "4.9e-05")
             Tmiderr_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             Tmiderr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            Tmiderr = Tmiderr_entry.get()
             i += 1
 
             #         "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14886235252742716,
@@ -514,6 +586,7 @@ if reduction_opt.get() == 2:
             rprs_entry.insert(tk.END, "0.14886235252742716")
             rprs_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             rprs_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            rprs = rprs_entry.get()
             i += 1
 
             #         "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.0005539487393037134,
@@ -522,6 +595,7 @@ if reduction_opt.get() == 2:
             rprserr_entry.insert(tk.END, "0.0005539487393037134")
             rprserr_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             rprserr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            rprserr = rprserr_entry.get()
             i += 1
 
             #         "Ratio of Distance to Stellar Radius (a/Rs)": 5.344,
@@ -530,6 +604,7 @@ if reduction_opt.get() == 2:
             aRs_entry.insert(tk.END, "5.344")
             aRs_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             aRs_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            aRs = aRs_entry.get()
             i += 1
 
             #         "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.039496835316262996,
@@ -538,6 +613,7 @@ if reduction_opt.get() == 2:
             aRserr_entry.insert(tk.END, "0.039496835316262996")
             aRserr_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             aRserr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            aRserr = aRserr_entry.get()
             i += 1
 
             #         "Orbital Inclination (deg)": 88.98,
@@ -546,6 +622,7 @@ if reduction_opt.get() == 2:
             inc_entry.insert(tk.END, "88.98")
             inc_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             inc_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            inc = inc_entry.get()
             i += 1
 
             #         "Orbital Inclination (deg) Uncertainty": 0.7602631123499285,
@@ -554,6 +631,7 @@ if reduction_opt.get() == 2:
             incerr_entry.insert(tk.END, "0.7602631123499285")
             incerr_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             incerr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            incerr = incerr_entry.get()
             i += 1
 
             #         "Orbital Eccentricity (0 if null)": 0.159,
@@ -562,6 +640,7 @@ if reduction_opt.get() == 2:
             ecc_entry.insert(tk.END, "0.159")
             ecc_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             ecc_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            ecc = ecc_entry.get()
             i += 1
 
             #         "Star Effective Temperature (K)": 6001.0,
@@ -570,6 +649,7 @@ if reduction_opt.get() == 2:
             Teff_entry.insert(tk.END, "6001.0")
             Teff_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             Teff_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            Teff = Teff_entry.get()
             i += 1
 
             #         "Star Effective Temperature (+) Uncertainty": 88.0,
@@ -578,6 +658,7 @@ if reduction_opt.get() == 2:
             Tefferrpos_entry.insert(tk.END, "+88.0")
             Tefferrpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             Tefferrpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            Tefferrpos = Tefferrpos_entry.get()
             i += 1
 
             #         "Star Effective Temperature (-) Uncertainty": -88.0,
@@ -586,6 +667,7 @@ if reduction_opt.get() == 2:
             Tefferrneg_entry.insert(tk.END, "-88.0")
             Tefferrneg_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             Tefferrneg_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            Tefferrneg = Tefferrneg_entry.get()
             i += 1
 
             #         "Star Metallicity ([FE/H])": -0.16,
@@ -594,6 +676,7 @@ if reduction_opt.get() == 2:
             FeH_entry.insert(tk.END, "-0.1")
             FeH_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             FeH_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            FeH = FeH_entry.get()
             i += 1
 
             #         "Star Metallicity (+) Uncertainty": 0.08,
@@ -602,6 +685,7 @@ if reduction_opt.get() == 2:
             FeHerrpos_entry.insert(tk.END, "0.08")
             FeHerrpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             FeHerrpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            FeHerrpos = FeHerrpos_entry.get()
             i += 1
 
             #         "Star Metallicity (-) Uncertainty": -0.08,
@@ -610,6 +694,7 @@ if reduction_opt.get() == 2:
             FeHerrneg_entry.insert(tk.END, "-0.08")
             FeHerrneg_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             FeHerrneg_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            FeHerrneg = FeHerrneg_entry.get()
             i += 1
 
             #         "Star Surface Gravity (log(g))": 4.22,
@@ -618,6 +703,7 @@ if reduction_opt.get() == 2:
             logg_entry.insert(tk.END, "4.22")
             logg_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             logg_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            logg = logg_entry.get()
             i += 1
 
             #         "Star Surface Gravity (+) Uncertainty": 0.04,
@@ -626,6 +712,7 @@ if reduction_opt.get() == 2:
             loggerrpos_entry.insert(tk.END, "4.22")
             loggerrpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             loggerrpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            loggerrpos = loggerrpos_entry.get()
             i += 1
 
             #         "Star Surface Gravity (-) Uncertainty": -0.04
@@ -634,6 +721,7 @@ if reduction_opt.get() == 2:
             loggerrneg_entry.insert(tk.END, "4.22")
             loggerrneg_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             loggerrneg_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            loggerrneg = loggerrneg_entry.get()
             i += 1
 
             # Button for closing
@@ -658,52 +746,54 @@ if reduction_opt.get() == 2:
 
             tk.mainloop()
 
-        else:
-            root = tk.Tk()
-            root.title(f"EXOTIC v{__version__}")
+        # if (obsinfo.get() == "manual"):
+        #     root = tk.Tk()
+        #     root.title(f"EXOTIC v{__version__}")
+        #
+        #     window_label = tk.Label(root,
+        #                             text="""Please enter the following information:""",
+        #                             font=("Helvetica 15 bold"),
+        #                             justify=tk.LEFT,
+        #                             padx=20)  # .pack()
+        #     window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
+        #
+        #     i, j = 1, 0
+        #     platesolve = tk.BooleanVar()
+        #     platesolve_check = tk.Checkbutton(root, text='Plate solve my images', variable=platesolve, onvalue=True,
+        #                                       offvalue=False)
+        #     platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
+        #     i += 1
+        #
+        #     alignment = tk.BooleanVar()
+        #     alignment_check = tk.Checkbutton(root, text='Align my images', variable=alignment, onvalue=1, offvalue=0)
+        #     alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
+        #     i += 1
+        #
+        #     targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
+        #     targetpos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+        #     targetpos_entry.insert(tk.END, "[x, y]")
+        #     targetpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+        #     targetpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+        #     targetpos = targetpos_entry.get()
+        #     i += 1
+        #
+        #     comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position", justify=tk.LEFT)
+        #     comppos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+        #     comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")
+        #     comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+        #     comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+        #     comppos = comppos_entry.get()
+        #     i += 1
+        #
+        #     # Button for closing
+        #     exit_button = tk.Button(root, text="Next", command=root.destroy)
+        #     exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
+        #     # exit_button.pack(pady=20)
+        #     root.update()
+        #     root.mainloop()
 
-            window_label = tk.Label(root,
-                                    text="""Please enter the following information:""",
-                                    font=("Helvetica 15 bold"),
-                                    justify=tk.LEFT,
-                                    padx=20)  # .pack()
-            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
 
-            i, j = 1, 0
-            platesolve = tk.BooleanVar()
-            platesolve_check = tk.Checkbutton(root, text='Plate solve my images', variable=platesolve, onvalue=True,
-                                              offvalue=False)
-            platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
-            i += 1
-
-            alignment = tk.BooleanVar()
-            alignment_check = tk.Checkbutton(root, text='Align my images', variable=alignment, onvalue=1, offvalue=0)
-            alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
-            i += 1
-
-            targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
-            targetpos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
-            targetpos_entry.insert(tk.END, "[x, y]")
-            targetpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            targetpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position", justify=tk.LEFT)
-            comppos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
-            comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")
-            comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            # Button for closing
-            exit_button = tk.Button(root, text="Next", command=root.destroy)
-            exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
-            # exit_button.pack(pady=20)
-            root.update()
-            root.mainloop()
-
-
-        root.mainloop()
+        # root.mainloop()
 
         # Create an initialization file if it does not already exist
         if (planetparams.get() != "inits") or (obsinfo.get() != "inits"):
@@ -737,15 +827,6 @@ if reduction_opt.get() == 2:
 
             tk.mainloop()
 
-            root = tk.Tk()
-            root.title(f"EXOTIC v{__version__}")
-
-            window_label = tk.Label(root,
-                                    text="Your initialization file has been created!",
-                                    font=("Helvetica 14 bold"),
-                                    justify=tk.LEFT,
-                                    padx=20)  # .pack()
-            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
 
             #TODO: create the inits file here
             new_inits = {'inits_guide':{}, 'user_info':{}, 'planetary_parameters':{}, 'optional_info':{}}
@@ -773,29 +854,29 @@ if reduction_opt.get() == 2:
 
             if obsinfo.get() == 'manual':
                 new_inits['user_info'] = {
-                    "Directory with FITS files": "sample-data/HatP32Dec202017",
-                    "Directory to Save Plots": "sample-data/",
-                    "Directory of Flats": null,
-                    "Directory of Darks": null,
-                    "Directory of Biases": null,
+                    "Directory with FITS files": FITS_dir.folder_path,
+                    "Directory to Save Plots": save_dir.folder_path,
+                    "Directory of Flats": flats_dir.folder_path,
+                    "Directory of Darks": darks_dir.folder_path,
+                    "Directory of Biases": biases_dir.folder_path,
 
-                    "AAVSO Observer Code (N/A if none)": "RTZ",
-                    "Secondary Observer Codes (N/A if none)": "N/A",
+                    "AAVSO Observer Code (N/A if none)": obscode,
+                    "Secondary Observer Codes (N/A if none)": secondobscode,
 
-                    "Observation date": "17-December-2017",
-                    "Obs. Latitude": "+32.41638889",
-                    "Obs. Longitude": "-110.73444444",
-                    "Obs. Elevation (meters)": 2616,
-                    "Camera Type (CCD or DSLR)": "CCD",
-                    "Pixel Binning": "1x1",
-                    "Filter Name (aavso.org/filters)": "V",
-                    "Observing Notes": "Weather, seeing was nice.",
+                    "Observation date": obsdate,
+                    "Obs. Latitude": lat,
+                    "Obs. Longitude": long,
+                    "Obs. Elevation (meters)": float(elevation),
+                    "Camera Type (CCD or DSLR)": cameratype,
+                    "Pixel Binning": pixbin,
+                    "Filter Name (aavso.org/filters)": obsfilter,
+                    "Observing Notes": obsnotes,
 
-                    "Plate Solution? (y/n)": "y",
-                    "Align Images? (y/n)": "y",
+                    "Plate Solution? (y/n)": platesolve,
+                    "Align Images? (y/n)": alignment,
 
-                    "Target Star X & Y Pixel": [424, 286],
-                    "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
+                    "Target Star X & Y Pixel": list(targetpos),
+                    "Comparison Star(s) X & Y Pixel": list(comppos)
                 }
             elif obsinfo.get() == 'inits':
                 with open(inits_dir.file_path, "r") as confirmed:
@@ -803,38 +884,38 @@ if reduction_opt.get() == 2:
 
             if (planetparams.get() == "manual"):
                 new_inits['planetary_parameters'] = {
-                    "Target Star RA": "02:04:10",
-                    "Target Star Dec": "+46:41:23",
-                    "Planet Name": "HAT-P-32 b",
-                    "Host Star Name": "HAT-P-32",
-                    "Orbital Period (days)": 2.1500082,
-                    "Orbital Period Uncertainty": 1.3e-07,
-                    "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
-                    "Mid-Transit Time Uncertainty": 4.9e-05,
-                    "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14886235252742716,
-                    "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.0005539487393037134,
-                    "Ratio of Distance to Stellar Radius (a/Rs)": 5.344,
-                    "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.039496835316262996,
-                    "Orbital Inclination (deg)": 88.98,
-                    "Orbital Inclination (deg) Uncertainty": 0.7602631123499285,
-                    "Orbital Eccentricity (0 if null)": 0.159,
-                    "Star Effective Temperature (K)": 6001.0,
-                    "Star Effective Temperature (+) Uncertainty": 88.0,
-                    "Star Effective Temperature (-) Uncertainty": -88.0,
-                    "Star Metallicity ([FE/H])": -0.16,
-                    "Star Metallicity (+) Uncertainty": 0.08,
-                    "Star Metallicity (-) Uncertainty": -0.08,
-                    "Star Surface Gravity (log(g))": 4.22,
-                    "Star Surface Gravity (+) Uncertainty": 0.04,
-                    "Star Surface Gravity (-) Uncertainty": -0.04
+                    "Target Star RA": targetRA,
+                    "Target Star Dec": targetDEC,
+                    "Planet Name": planet,
+                    "Host Star Name": star,
+                    "Orbital Period (days)": float(period),
+                    "Orbital Period Uncertainty": float(perioderr),
+                    "Published Mid-Transit Time (BJD-UTC)": float(Tmid),
+                    "Mid-Transit Time Uncertainty": float(Tmiderr),
+                    "Ratio of Planet to Stellar Radius (Rp/Rs)": float(rprs),
+                    "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": float(rprserr),
+                    "Ratio of Distance to Stellar Radius (a/Rs)": float(aRs),
+                    "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": float(aRserr),
+                    "Orbital Inclination (deg)": float(inc),
+                    "Orbital Inclination (deg) Uncertainty": float(incerr),
+                    "Orbital Eccentricity (0 if null)": float(ecc),
+                    "Star Effective Temperature (K)": float(Teff),
+                    "Star Effective Temperature (+) Uncertainty": float(Tefferrpos),
+                    "Star Effective Temperature (-) Uncertainty": float(Tefferrneg),
+                    "Star Metallicity ([FE/H])": float(FeH),
+                    "Star Metallicity (+) Uncertainty": float(FeHerrpos),
+                    "Star Metallicity (-) Uncertainty": float(FeHerrneg),
+                    "Star Surface Gravity (log(g))": float(logg),
+                    "Star Surface Gravity (+) Uncertainty": float(loggerrpos),
+                    "Star Surface Gravity (-) Uncertainty": float(loggerrneg)
                 }
             elif (planetparams.get() == "nea"):
                 # Just put in dummy values as they will be overwritten by the NEA later
                 new_inits['planetary_parameters'] = {
                     "Target Star RA": "00:00:00",
                     "Target Star Dec": "+00:00:00",
-                    "Planet Name": "ROB-13 b", #TODO: update planet name from user prompt
-                    "Host Star Name": "ROB-13", #TODO: update star name from user prompt
+                    "Planet Name": planet,
+                    "Host Star Name": star,
                     "Orbital Period (days)": 0.,
                     "Orbital Period Uncertainty": 0.,
                     "Published Mid-Transit Time (BJD-UTC)": 0.,
@@ -858,16 +939,27 @@ if reduction_opt.get() == 2:
                 }
 
             new_inits['optional_info'] = {
-                "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
-                "Filter Minimum Wavelength (nm)": null,
-                "Filter Maximum Wavelength (nm)": null
+                "Pixel Scale (Ex: 5.21 arcsecs/pixel)": pixscale,
+                "Filter Minimum Wavelength (nm)": filtermin,
+                "Filter Maximum Wavelength (nm)": filtermax
             }
 
 
+            with open(inits_dir.file_path, "w") as confirmed:
+                data = json.dump(new_inits)
 
-            with open(inits_dir.file_path, "r") as confirmed:
-                data = json.load(confirmed)
+            # with open(inits_dir.file_path, "r") as confirmed:
+            #     data = json.load(confirmed)
 
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+
+            window_label = tk.Label(root,
+                                    text="Your initialization file has been created!",
+                                    font=("Helvetica 14 bold"),
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
 
             window_label = tk.Label(root,
                                     text=f"{initsfile}",

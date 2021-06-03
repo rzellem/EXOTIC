@@ -101,7 +101,7 @@ tk.Label(root,
         padx = 20).pack(anchor=tk.W)
 
 tk.Radiobutton(root,
-               text="Real Time Reduction\n(for analyzing your data while simultaneously observing)",
+               text="Real Time Reduction - COMING SOON\n(for analyzing your data while simultaneously observing)",
                justify = tk.LEFT,
                padx = 20,
                variable=reduction_opt,
@@ -141,7 +141,7 @@ if reduction_opt.get() == 2:
                    value=1).pack(anchor=tk.W)
 
     tk.Radiobutton(root,
-                   text="Start with pre-reduced data in a .txt format",
+                   text="Start with pre-reduced data in a .txt format - COMING SOON",
                    padx=20,
                    variable=fitsortext,
                    state=tk.DISABLED,
@@ -1120,5 +1120,8 @@ if reduction_opt.get() == 2:
                     except:
                         subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname], check=True)
         except:
-            print("Error. Please contact the Exoplanet Watch Team for help on our Slack Channel!")
+            print("\n\n################################################")
+            print("ERROR: Please contact the Exoplanet Watch Team for help on our Slack Workspace in the #data-reduction channel!")
+            print("You can sign up for our free Slack Workspace here: https://join.slack.com/t/uol-ets/shared_invite/zt-mvb4ljbo-LRBgpk3uMmUokbs4ge2JlA")
+            print("################################################\n\n")
             pass

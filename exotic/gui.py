@@ -1061,9 +1061,8 @@ if reduction_opt.get() == 2:
                 new_inits['optional_info']['Pixel Scale (Ex: 5.21 arcsecs/pixel)'] = input_data['pixscale']
 
             now = datetime.now()
-            dt_string = now.strftime("%d_%m_%Y_%H:%M:%S")
-            # fname = os.path.join(input_data['initssave_dir'], "inits_"+dt_string+".json")
-            fname = os.path.join("inits_" + dt_string + ".json")
+            dt_string = now.strftime("%d_%m_%Y__%H_%M_%S")
+            fname = os.path.join(input_data['initssave_dir'], "inits_"+dt_string+".json")
             with open(fname, "w") as initsf:
                 json.dump(new_inits, initsf, indent=4)
             print(f"{fname} saved!")

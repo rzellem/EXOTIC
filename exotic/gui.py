@@ -198,7 +198,7 @@ if reduction_opt.get() == 2:
             window_label = tk.Label(root,
                                     text="""Please enter the following information about your observation:""",
                                     font=("Helvetica 14 bold"),
-                                    justify=tk.LEFT,
+                                    justify=tk.CENTER,
                                     padx=20)  # .pack()
             window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
 
@@ -216,6 +216,14 @@ if reduction_opt.get() == 2:
             # "Directory to Save Plots": "sample-data/",
             save_dir = FolderSelect(root, "Folder to save EXOTIC output")
             save_dir.grid(row=i)
+            i += 1
+
+            window_label = tk.Label(root,
+                                    text="""Please your calibration file information\n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
+                                    # font=("Helvetica 14 bold"),
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=i, column=0, sticky=tk.N, pady=6)
             i += 1
 
             # "Directory of Flats": null,

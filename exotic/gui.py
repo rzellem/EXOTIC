@@ -4,6 +4,9 @@ import tkinter as tk
 import exotic
 import os
 import json
+import ast
+import subprocess
+from datetime import datetime
 
 try:  # filters
     from .api.filters import fwhm as photometric_filters
@@ -382,9 +385,9 @@ if reduction_opt.get() == 2:
             # root.mainloop()
 
             def save_input():
-                input_data['elevation'] = elevation_entry.get()
-                input_data['comppos'] = comppos_entry.get()
-                input_data['targetpos'] = targetpos_entry.get()
+                input_data['elevation'] = float(elevation_entry.get())
+                input_data['comppos'] = ast.literal_eval(comppos_entry.get())
+                input_data['targetpos'] = ast.literal_eval(targetpos_entry.get())
                 input_data['obsnotes'] = obsnotes_entry.get()
                 input_data['obsfilter'] = filteroptions.get()
                 input_data['pixscale'] = pixscale_entry.get()
@@ -395,9 +398,16 @@ if reduction_opt.get() == 2:
                 input_data['lat'] = lat_entry.get()
                 input_data['long'] = long_entry.get()
                 input_data['secondobscode'] = secondobscode_entry.get()
-                
-                input_data['platesolve'] = platesolve.get()
-                input_data['alignment'] = alignment.get()
+
+                if platesolve.get() == True:
+                    input_data['platesolve'] = 'y'
+                else:
+                    input_data['platesolve'] = 'n'
+
+                if platesolve.get() == True:
+                    input_data['alignment'] = 'y'
+                else:
+                    input_data['alignment'] = 'n'
                 
                 root.destroy()
 
@@ -408,7 +418,8 @@ if reduction_opt.get() == 2:
 
             tk.mainloop()
         else:
-            raise(Exception("feature not supported yet"))
+            # raise(Exception("feature not supported yet"))
+            pass
 
         # else:
         #     root = tk.Tk()
@@ -749,6 +760,52 @@ if reduction_opt.get() == 2:
 
             tk.mainloop()
 
+        elif planetparams.get() == 'nea':
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+
+            initparams = tk.IntVar()
+
+            window_label = tk.Label(root,
+                                    text="""Please enter the following information:""",
+                                    font=("Helvetica 15 bold"),
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
+
+            # Set up rows + columns
+            i = 1;
+            j = 0
+
+            #         "Planet Name": "HAT-P-32 b",
+            planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
+            planet_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            #         "Host Star Name": "HAT-P-32",
+            star_label = tk.Label(root, text="Host Star Name", justify=tk.LEFT)
+            star_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
+            star_entry.insert(tk.END, "HAT-P-32")
+            star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            star_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            def save_input():
+                input_data['star'] = star_entry.get()
+                input_data['planet'] = planet_entry.get()
+                root.destroy()
+
+            # Button for closing
+            exit_button = tk.Button(root, text="Next", command=save_input)
+            # exit_button.pack(pady=20)
+            exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
+
+            tk.mainloop()
+
+
         if (planetparams.get() == "inits") or (obsinfo.get() == "inits"):
             root = tk.Tk()
             root.title(f"EXOTIC v{__version__}")
@@ -758,7 +815,7 @@ if reduction_opt.get() == 2:
             inits_dir.grid(row=0)
 
             def save_inputs():
-                input_data['inits_dir'] = inits_dir.get()
+                input_data['inits_dir'] = inits_dir.file_path
                 root.destroy()
 
             # Button for closing
@@ -849,12 +906,12 @@ if reduction_opt.get() == 2:
             # Button for closing
             exit_button = tk.Button(root, text="Next", command=save_input)
             # exit_button.pack(pady=20)
-            exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
+            exit_button.grid(row=1, column=3, sticky=tk.W, pady=10)
 
             tk.mainloop()
 
 
-            #TODO: create the inits file here
+            #create the inits file here
             new_inits = {'inits_guide':{}, 'user_info':{}, 'planetary_parameters':{}, 'optional_info':{}}
             new_inits['inits_guide'] = {
                 "Title": "EXOTIC's Initialization File",
@@ -878,13 +935,15 @@ if reduction_opt.get() == 2:
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
 
+            null = None
+
             if obsinfo.get() == 'manual':
                 new_inits['user_info'] = {
                     "Directory with FITS files": FITS_dir.folder_path,
                     "Directory to Save Plots": save_dir.folder_path,
-                    "Directory of Flats": flats_dir.folder_path,
-                    "Directory of Darks": darks_dir.folder_path,
-                    "Directory of Biases": biases_dir.folder_path,
+                    # "Directory of Flats": flats_dir.folder_path,
+                    # "Directory of Darks": darks_dir.folder_path,
+                    # "Directory of Biases": biases_dir.folder_path,
 
                     "AAVSO Observer Code (N/A if none)": input_data['obscode'],
                     "Secondary Observer Codes (N/A if none)": input_data['secondobscode'],
@@ -904,9 +963,27 @@ if reduction_opt.get() == 2:
                     "Target Star X & Y Pixel": (input_data['targetpos']),
                     "Comparison Star(s) X & Y Pixel": (input_data['comppos'])
                 }
+
+                if flats_dir.folder_path == 'null':
+                    new_inits['user_info']["Directory of Flats"] = null
+                else:
+                    new_inits['user_info']["Directory of Flats"] = flats_dir.folder_path
+
+                if darks_dir.folder_path == 'null':
+                    new_inits['user_info']["Directory of Darks"] = null
+                else:
+                    new_inits['user_info']["Directory of Darks"] = darks_dir.folder_path
+
+                if biases_dir.folder_path == 'null':
+                    new_inits['user_info']["Directory of Biases"] = null
+                else:
+                    new_inits['user_info']["Directory of Biases"] = biases_dir.folder_path
+
             elif obsinfo.get() == 'inits':
                 with open(input_data['inits_dir'], "r") as confirmed:
                     original_inits = json.load(confirmed)
+
+                new_inits['user_info'] = original_inits['user_info']
 
             if (planetparams.get() == "manual"):
                 new_inits['planetary_parameters'] = {
@@ -935,7 +1012,13 @@ if reduction_opt.get() == 2:
                     "Star Surface Gravity (+) Uncertainty": float(input_data['loggerrpos']),
                     "Star Surface Gravity (-) Uncertainty": float(input_data['loggerrneg'])
                 }
-            elif (planetparams.get() == "nea"):
+            elif (planetparams.get() == "inits"):
+                with open(input_data['inits_dir'], "r") as confirmed:
+                    original_inits = json.load(confirmed)
+
+                new_inits['planetary_parameters'] = original_inits['planetary_parameters']
+
+            else:
                 # Just put in dummy values as they will be overwritten by the NEA later
                 new_inits['planetary_parameters'] = {
                     "Target Star RA": "00:00:00",
@@ -964,13 +1047,23 @@ if reduction_opt.get() == 2:
                     "Star Surface Gravity (-) Uncertainty": 0.
                 }
 
+            null = None
             new_inits['optional_info'] = {
-                "Pixel Scale (Ex: 5.21 arcsecs/pixel)": input_data['pixscale'],
-                "Filter Minimum Wavelength (nm)": input_data.get('filtermin',""),
-                "Filter Maximum Wavelength (nm)": input_data.get('filtermax',"")
+                "Filter Minimum Wavelength (nm)": input_data.get('filtermin',null),
+                "Filter Maximum Wavelength (nm)": input_data.get('filtermax',null)
             }
 
-            fname = os.path.join(input_data['initssave_dir'], "new_inits.json")
+            if 'pixscale' not in input_data.keys():
+                new_inits['optional_info']['Pixel Scale (Ex: 5.21 arcsecs/pixel)'] = null
+            elif input_data['pixscale'] == 'null':
+                new_inits['optional_info']['Pixel Scale (Ex: 5.21 arcsecs/pixel)'] = null
+            else:
+                new_inits['optional_info']['Pixel Scale (Ex: 5.21 arcsecs/pixel)'] = input_data['pixscale']
+
+            now = datetime.now()
+            dt_string = now.strftime("%d_%m_%Y_%H:%M:%S")
+            # fname = os.path.join(input_data['initssave_dir'], "inits_"+dt_string+".json")
+            fname = os.path.join("inits_" + dt_string + ".json")
             with open(fname, "w") as initsf:
                 json.dump(new_inits, initsf, indent=4)
             print(f"{fname} saved!")
@@ -993,7 +1086,7 @@ if reduction_opt.get() == 2:
             window_label.grid(row=1, column=0, sticky=tk.N, pady=6)
 
             # Button for closing
-            exit_button = tk.Button(root, text="Run", command=root.destroy)
+            exit_button = tk.Button(root, text="Run EXOTIC", command=root.destroy)
             # exit_button.pack(pady=20)
             exit_button.grid(row=2, column=3, sticky=tk.W, pady=10)
 
@@ -1002,10 +1095,31 @@ if reduction_opt.get() == 2:
         #         If the user already has an inits file, then go for it
         try:
             if planetparams.get() == 'inits':
-                os.system(f'python3 exotic.py --reduce {inits_dir.file_path} -ov')
+                try:
+                    subprocess.run(['exotic', '--reduce', inits_dir.file_path, '-ov'], check=True)
+                except:
+                    try:
+                        subprocess.run(['python3', 'exotic.py', '--reduce', inits_dir.file_path, '-ov'], check=True)
+                    except:
+                        subprocess.run(['python3', 'exotic/exotic.py', '--reduce', inits_dir.file_path, '-ov'], check=True)
+
             elif planetparams.get() == 'nea':
-                os.system(f'python3 exotic.py --reduce {fname} -nea')
+                try:
+                    subprocess.run(['exotic', '--reduce', fname, '-nea'], check=True)
+                except:
+                    try:
+                        subprocess.run(['python3', 'exotic.py', '--reduce', fname, '-nea'], check=True)
+                    except:
+                        subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname, '-nea'], check=True)
+
             else:
-                os.system(f'python3 exotic.py --reduce {fname}')
+                try:
+                    subprocess.run(['exotic', '--reduce', fname], check=True)
+                except:
+                    try:
+                        subprocess.run(['python3', 'exotic.py', '--reduce', fname], check=True)
+                    except:
+                        subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname], check=True)
         except:
+            print("Error. Please contact the Exoplanet Watch Team for help on our Slack Channel!")
             pass

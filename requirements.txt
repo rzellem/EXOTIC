@@ -1,4 +1,6 @@
 # pipreqs /path/to/your/project/
+wheel
+setuptools
 astroalign~=2.0
 astropy>=4.0.1.post1
 astroquery~=0.4
@@ -17,6 +19,4 @@ pyvo~=1.1
 requests~=2.23
 scipy~=1.4
 scikit-image~=0.17
-setuptools
 tenacity~=5.1
-wheel

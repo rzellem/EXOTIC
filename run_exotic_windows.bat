@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+ECHO OFF
 
 pip install wheel
 pip install setuptools

@@ -107,7 +107,7 @@ setuptools.setup(name=NAME,
                  entry_points={
                      'console_scripts': [
                          'exotic = exotic.exotic:main',
-                         'exotic-gui = exotic-gui.exotic-gui:main',
+                         'exotic-gui = exotic.exotic_gui:main',
                      ],
                  }
                  )

@@ -1,6 +1,6 @@
-#!/usr/bin/env sh
+#!/usr/bin/env zsh
 
 pip install wheel
 pip install setuptools
 pip install exotic
-exotic-gui
+zsh -c "exotic-gui"

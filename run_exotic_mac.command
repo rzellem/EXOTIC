@@ -3,4 +3,4 @@
 pip install wheel
 pip install pyvo
 pip install exotic
-exotic
+exotic-gui

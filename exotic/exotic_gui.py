@@ -462,23 +462,6 @@ def main():
                 # raise(Exception("feature not supported yet"))
                 pass
 
-            # else:
-            #     root = tk.Tk()
-            #     root.title(f"EXOTIC v{__version__}")
-            #
-            #     filePath = tk.StringVar()
-            #
-            #     # # "Directory with FITS files": "sample-data/HatP32Dec202017",
-            #     inits_dir = FileSelect(root, "Please select your initialization file")
-            #     inits_dir.grid(row=0)
-            #
-            #     # Button for closing
-            #     exit_button = tk.Button(root, text="Next", command=root.destroy)
-            #     # exit_button.pack(pady=20)
-            #     exit_button.grid(row=1, column=3, sticky=tk.W, pady=10)
-            #
-            #     tk.mainloop()
-
             try:
                 if filteroptions.get() == "N/A":
                     root = tk.Tk()
@@ -509,8 +492,8 @@ def main():
                     i += 1
 
                     def save_input():
-                        input_data['filtermax'] = filtermax_entry.get()
-                        input_data['filtermin'] = filtermin_entry.get()
+                        input_data['filtermax'] = float(filtermax_entry.get())
+                        input_data['filtermin'] = float(filtermin_entry.get())
                         root.destroy()
 
                     # Button for closing

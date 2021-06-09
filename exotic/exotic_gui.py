@@ -36,15 +36,16 @@
 # #    # NOTE: See companion file version.py for version info.
 # # ########################################################################### #
 
+import ast
+from datetime import datetime
 from tkinter import filedialog
 import tkinter as tk
-import exotic
-import os
 import json
+import os
 import python_version
-import ast
 import subprocess
-from datetime import datetime
+
+import exotic
 
 try:  # filters
     from .api.filters import fwhm as photometric_filters
@@ -96,7 +97,7 @@ class FileSelect(tk.Frame):
 
 
 def pause():
-    programPause = raw_input("Press the <ENTER> key to continue. ...")
+    input("Press the <ENTER> key to continue. ...")
 
 
 def main():

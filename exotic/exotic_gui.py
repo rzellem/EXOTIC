@@ -41,6 +41,7 @@ import tkinter as tk
 import exotic
 import os
 import json
+import python_version
 import ast
 import subprocess
 from datetime import datetime
@@ -54,6 +55,7 @@ try:  # simple version
     from .version import __version__
 except ImportError:  # package import
     from version import __version__
+
 
 class FolderSelect(tk.Frame):
     def __init__(self,parent=None,folderDescription="",default_text="",**kw):
@@ -73,6 +75,7 @@ class FolderSelect(tk.Frame):
     def folder_path(self):
         return self.folderPath.get()
 
+
 class FileSelect(tk.Frame):
     def __init__(self,parent=None,folderDescription="",default_text="",**kw):
         tk.Frame.__init__(self,master=parent,**kw)
@@ -91,7 +94,18 @@ class FileSelect(tk.Frame):
     def file_path(self):
         return self.filePath.get()
 
+
+def pause():
+    programPause = raw_input("Press the <ENTER> key to continue. ...")
+
+
 def main():
+
+    try:
+        python_version.check(min=(3, 6, 0), max=(4, 0, 0), exit_on_error=True)
+    except Exception as e:
+        print(repr(e))
+        pause()
 
     root = tk.Tk()
     root.title(f"EXOTIC v{__version__}")
@@ -1149,6 +1163,7 @@ def main():
                 print("You can sign up for our free Slack Workspace here: https://join.slack.com/t/uol-ets/shared_invite/zt-mvb4ljbo-LRBgpk3uMmUokbs4ge2JlA")
                 print("################################################\n\n")
                 pass
+
 
 if __name__ == "__main__":
     main()

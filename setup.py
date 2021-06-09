@@ -27,7 +27,7 @@ AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "exoplanetwatch@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
 NAME = "exotic"
-PYTHON_REQUIREMENTS = "3.8"
+PYTHON_REQUIREMENTS = "3.6"
 URL = "https://github.com/rzellem/EXOTIC"
 
 REQUIREMENTS_SETUP = ["setuptools_scm"]
@@ -102,7 +102,7 @@ setuptools.setup(name=NAME,
                  include_package_data=True,
                  zip_safe=False,
                  install_requires=requirements_read(),
-                 python_requires=f">='{PYTHON_REQUIREMENTS}'",
+                 python_requires=f"'>={PYTHON_REQUIREMENTS}'",
                  setup_requires=REQUIREMENTS_SETUP,
                  entry_points={
                      'console_scripts': [

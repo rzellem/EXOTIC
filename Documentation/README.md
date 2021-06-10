@@ -5,8 +5,6 @@
 - [If you run into any issues with EXOTIC](#if-you-run-into-any-issues-with-exotic)
 - [Initializaton File](#initializaton-file)
 
-<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
-
 
 ## Installation and Running
 

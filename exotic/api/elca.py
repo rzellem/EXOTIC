@@ -43,6 +43,7 @@
 # ########################################################################### #
 
 import copy
+from numba import jit
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -186,13 +187,13 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     z[sft < 0] *= -1e0
     return z, sft
 
-
+@jit(nopython=True)
 def solveme(M, e, eps):
     '''
     G. ROUDIER: Newton Raphson solver for true anomaly
     M is a numpy array
     '''
-    E = np.copy(M)
+    E = M.copy() # numba only allows copy() with no arguments
     for i in np.arange(M.shape[0]):
         while abs(E[i] - e*np.sin(E[i]) - M[i]) > eps:
             num = E[i] - e*np.sin(E[i]) - M[i]

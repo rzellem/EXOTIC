@@ -1,3 +1,13 @@
+- [Installation and Running](#installation-and-running)
+- [Requirements](#requirements)
+- [Sample Data and Outputs](#sample-data-and-outputs)
+- [How to Run EXOTIC with the Sample Data Locally on your Computer](#how-to-run-exotic-with-the-sample-data-locally-on-your-computer)
+- [If you run into any issues with EXOTIC](#if-you-run-into-any-issues-with-exotic)
+- [Initializaton File](#initializaton-file)
+
+<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
+
+
 ## Installation and Running
 
 EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer. You can also use EXOTIC via the free Google Colab, which features cloud computing, many helpful plotting functions, and a simplified installation. However, if you are a user with many images or large images, we recommend running EXOTIC locally on your own computer.

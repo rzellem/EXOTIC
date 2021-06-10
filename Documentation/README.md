@@ -114,7 +114,7 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
     - Align my images - select this option for EXOTIC to align all of your images to provide better tracking of your stars in your images; it is recommended that this option is selected
     - Target Star X & Y Pixel Position - the pixel location of your target exoplanet host star in [x-position, y-position] format
     - Comparison Star(s) X & Y Pixel Position - the pixel location of your comparision star(s) in [x-position, y-position] format; it is recommended that you input at least 2 comparision stars and EXOTIC will automatically select the "best" comparision by the one that produces the least amount of scatter in your data
-    - *NOTE:* In the screenshot above, Rob has already entered all of the information for you for the sample data (with the exception that you'll need to point to the correct directory for your FITS files and your EXOTIC Output)
+    - *NOTE:* In the screenshot below, Rob has already entered all of the information for you for the sample data (with the exception that you'll need to point to the correct directory for your FITS files and your EXOTIC Output)
     
     ![EXOTIC Input Observation Information](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_inputobs.png)
     

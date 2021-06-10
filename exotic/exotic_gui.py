@@ -160,7 +160,7 @@ def main():
              padx=20).pack(anchor=tk.W)
 
     tk.Radiobutton(root,
-                   text="Real Time Reduction - COMING SOON\n(for analyzing your data while simultaneously observing)",
+                   text="Real Time Reduction - COMING SOON\n(for quickly analyzing your data while simultaneously observing)",
                    justify=tk.LEFT,
                    padx=20,
                    variable=reduction_opt,
@@ -232,7 +232,7 @@ def main():
                            value="manual").pack(anchor=tk.W)
 
             tk.Radiobutton(root,
-                           text="From a pre-existing input file (e.g. inits.json)",
+                           text="From a pre-existing input file (e.g. inits.json) - for advanced users",
                            padx=20,
                            variable=obsinfo,
                            value='inits').pack(anchor=tk.W)
@@ -275,7 +275,7 @@ def main():
                 i += 1
 
                 window_label = tk.Label(root,
-                                        text="""Please your calibration file information\n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
+                                        text="""Please enter your calibration file information\n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
                                         # font=("Helvetica 14 bold"),
                                         justify=tk.LEFT,
                                         padx=20)  # .pack()
@@ -332,14 +332,14 @@ def main():
                 i += 1
                 #
                 # #             "Obs. Latitude": "+32.41638889",
-                lat_label = tk.Label(root, text="Obs. Latitude (e.g. +32.41)", justify=tk.LEFT)
+                lat_label = tk.Label(root, text="Obs. Latitude (+ = North; - = South; e.g. +32.41)", justify=tk.LEFT)
                 lat_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 lat_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 lat_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
                 #
                 # #             "Obs. Longitude": "-110.73444444",
-                long_label = tk.Label(root, text="Obs. Longitude (e.g. -110.74) ", justify=tk.LEFT)
+                long_label = tk.Label(root, text="Obs. Longitude (+ = East; - = West; e.g. -110.74) ", justify=tk.LEFT)
                 long_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 long_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 long_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
@@ -541,7 +541,7 @@ def main():
                      padx=20).pack()
 
             tk.Radiobutton(root,
-                           text="Manually",
+                           text="Manually (Recommended for first-time users)",
                            padx=20,
                            variable=planetparams,
                            value="manual").pack(anchor=tk.W)
@@ -553,7 +553,7 @@ def main():
                            value="nea").pack(anchor=tk.W)
 
             tk.Radiobutton(root,
-                           text="From a pre-existing input file (e.g., inits.json)",
+                           text="From a pre-existing input file (e.g., inits.json) - for advanced users",
                            padx=20,
                            variable=planetparams,
                            value="inits").pack(anchor=tk.W)
@@ -732,7 +732,7 @@ def main():
                 #         "Star Metallicity ([FE/H])": -0.16,
                 FeH_label = tk.Label(root, text="Star Metallicity ([Fe/H])", justify=tk.LEFT)
                 FeH_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                FeH_entry.insert(tk.END, "-0.1")
+                FeH_entry.insert(tk.END, "-0.16")
                 FeH_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 FeH_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
@@ -764,7 +764,7 @@ def main():
                 #         "Star Surface Gravity (+) Uncertainty": 0.04,
                 loggerrpos_label = tk.Label(root, text="Star Surface Gravity Positive (+) Uncertainty", justify=tk.LEFT)
                 loggerrpos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                loggerrpos_entry.insert(tk.END, "0.1")
+                loggerrpos_entry.insert(tk.END, "0.04")
                 loggerrpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 loggerrpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
@@ -772,7 +772,7 @@ def main():
                 #         "Star Surface Gravity (-) Uncertainty": -0.04
                 loggerrneg_label = tk.Label(root, text="Star Surface Gravity Negative (-) Uncertainty", justify=tk.LEFT)
                 loggerrneg_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                loggerrneg_entry.insert(tk.END, "-0.1")
+                loggerrneg_entry.insert(tk.END, "-0.04")
                 loggerrneg_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 loggerrneg_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1

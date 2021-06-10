@@ -38,7 +38,7 @@ def description_read():
     description_path = Path("README.md")
     if not description_path.exists():
         return description_long
-    with description_path.open('r') as f:
+    with description_path.open('r', encoding="utf8") as f:
         description_long = f.read()
     return description_long
 
@@ -55,7 +55,7 @@ def requirements_read():
     requirements_path = Path("requirements.txt")
     if not requirements_path.exists():
         return requirements
-    with requirements_path.open('r') as f:
+    with requirements_path.open('r', encoding="utf8") as f:
         for line in f:
             # detect and skip comment lines
             if re.match(r"^\s*#.*", line):

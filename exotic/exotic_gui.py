@@ -38,14 +38,22 @@
 
 import ast
 from datetime import datetime
-from tkinter import filedialog
-import tkinter as tk
 import json
 import os
 import platform
 import python_version
 import subprocess
 import sys
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+except ImportError:
+    print(f"\nERROR: Incomplete Python 3 installation -- missing `GUI` tools. Please\n"
+          "modify with support for 'python3-tk' or 'Tkinter', or reinstall. ... EXITING!\n")
+    print("Press the <ENTER> key to continue. ...")
+    sys.stdin.read(1)
+    exit(79)  # cannot access a shared library
 
 import exotic
 
@@ -102,18 +110,14 @@ class FileSelect(tk.Frame):
         return self.filePath.get()
 
 
-def pause():
-    print("Press the <ENTER> key to continue. ...")
-    sys.stdin.read(1)
-
-
 def main():
     try:
         python_version.check(min=(3, 6, 0), max=(4, 0, 0))
     except Exception as e:
         print(f"\nERROR: EXOTIC {str(e)}. ... EXITING!\n")
-        pause()
-        exit(1)
+        print("Press the <ENTER> key to continue. ...")
+        sys.stdin.read(1)
+        exit(65)  # package is not installed
     else:
         print(f"\nSUCCESS: Valid Python version {platform.python_version()} detected!\n")
 
@@ -137,7 +141,7 @@ def main():
 
     tk.Label(root,
              text="Copyright (c) 2021, California Institute of Technology. "
-                  "All rights reserved. \nBased on Government Sponsored Research "
+                  "All rights reserved.\nBased on Government Sponsored Research "
                   "under contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.",
              font=("Arial", 12),
              justify=tk.CENTER,

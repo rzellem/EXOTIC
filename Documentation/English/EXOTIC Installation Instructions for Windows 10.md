@@ -7,9 +7,9 @@ Alternatively, you can install both Python and the EXOTIC program to your own co
 
 Read the details of these two approaches below and select the best option for you:
 
-### Google Colab - *RECOMMENDED*:
+### Google Colab
 
-Google Colab is a free facility (available to anyone with a Google account) where you may write and run Python programs within your web browser without installing anything on your local machine. Running EXOTIC in the Google Colab is the recommended option for all users as it offers a more user-friendly and interactive experience. It is especially recommended for new EXOTIC users, students and those analysing data via remote observatories. 
+Google Colab is a free facility (available to anyone with a Google account) where you may write and run Python programs within your web browser without installing anything on your local machine. Running EXOTIC in the Google Colab is the better option for all users who are seeking a more user-friendly and interactive experience. It is especially useful for new EXOTIC users, students and those analysing data via remote observatories. 
 
 To use Google Colab to run EXOTIC follow the links on the home page of the [EXOTIC Project on GitHub](https://github.com/rzellem/EXOTIC).
 

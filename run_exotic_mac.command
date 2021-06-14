@@ -77,8 +77,13 @@ then
     echo "INFO: Installing 'Pip Installs Packages' (pip) for Python3. ..."
     echo "      DOWNLOADING ..."
     # install pip3
-    if ! curl -O "${pip_download}" ;
+    if curl &>/dev/null ;
     then
+        curl -O "${pip_download}"
+    elif wget &>/dev/null ;
+    then
+        wget "${pip_download}"
+    else
         echo -e "ERROR: Unable to download package manager. Please install\n" \
                 "       Pip for Python 3. EXITING!"
         echo -e "For more information, see ${pip_instructions}. ...\n"

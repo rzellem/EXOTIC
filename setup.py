@@ -27,7 +27,7 @@ AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "exoplanetwatch@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
 NAME = "exotic"
-PYTHON_REQUIREMENTS = "3.8"
+PYTHON_REQUIREMENTS = "3.6"
 URL = "https://github.com/rzellem/EXOTIC"
 
 REQUIREMENTS_SETUP = ["setuptools_scm"]
@@ -38,7 +38,7 @@ def description_read():
     description_path = Path("README.md")
     if not description_path.exists():
         return description_long
-    with description_path.open('r') as f:
+    with description_path.open('r', encoding="utf8") as f:
         description_long = f.read()
     return description_long
 
@@ -55,7 +55,7 @@ def requirements_read():
     requirements_path = Path("requirements.txt")
     if not requirements_path.exists():
         return requirements
-    with requirements_path.open('r') as f:
+    with requirements_path.open('r', encoding="utf8") as f:
         for line in f:
             # detect and skip comment lines
             if re.match(r"^\s*#.*", line):
@@ -102,7 +102,7 @@ setuptools.setup(name=NAME,
                  include_package_data=True,
                  zip_safe=False,
                  install_requires=requirements_read(),
-                 python_requires=f">='{PYTHON_REQUIREMENTS}'",
+                 python_requires=f"'>={PYTHON_REQUIREMENTS}'",
                  setup_requires=REQUIREMENTS_SETUP,
                  entry_points={
                      'console_scripts': [

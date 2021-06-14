@@ -31,7 +31,7 @@ def plot_image(filename, save=False, bg_min=60, bg_max=99):
 
     data = hdu[extension].data
 
-    with open('header.json', 'w') as json_file: 
+    with open('header.json', 'w') as json_file:
         json.dump(djson, json_file, indent=4)
         print("Image header written to header.json")
 
@@ -39,6 +39,8 @@ def plot_image(filename, save=False, bg_min=60, bg_max=99):
         image_downscaled = downscale_local_mean(data, (4, 4)).astype(int)
     elif data.shape[0] > 2000:
         image_downscaled = downscale_local_mean(data, (2, 2)).astype(int)
+    else:
+        image_downscaled = downscale_local_mean(data, (1, 1)).astype(int)
 
     # quick hot pixel/ cosmic ray mask
     mask, cdata = detect_cosmics(

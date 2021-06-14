@@ -51,9 +51,9 @@ EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer. You can also use
 FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC.
 
 ## Sample Data and Outputs
-We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
+We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
 
-[Sample Data](https://github.com/rzellem/EXOTIC_sampledata)
+[Sample Data](https://github.com/rzellem/EXOTIC_sampledata/releases/)
 
 A lightcurve from the sample dataset is shown below:
 

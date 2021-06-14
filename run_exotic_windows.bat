@@ -2,5 +2,5 @@ ECHO OFF
 
 pip install wheel
 pip install setuptools
-pip install exotic --upgrade
+pip install --upgrade exotic
 start cmd /k exotic-gui

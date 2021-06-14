@@ -105,6 +105,6 @@ echo "INFO: Installing EXOTIC build dependencies. ..."
 ${pip_runner} install wheel
 ${pip_runner} install setuptools
 echo "INFO: Installing EXOTIC core. ..."
-${pip_runner} install exotic --upgrade
+${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
 bash -c "exotic-gui"

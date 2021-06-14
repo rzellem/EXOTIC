@@ -312,18 +312,18 @@ def main():
                 # i += 1
 
                 #             # "AAVSO Observer Code (N/A if none)": "RTZ",
-                obscode_label = tk.Label(root, text="AAVSO Observer Code (N/A if none)", justify=tk.LEFT)
+                obscode_label = tk.Label(root, text="AAVSO Observer Code (leave blank if none)", justify=tk.LEFT)
                 obscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                obscode_entry.insert(tk.END, "N/A")
+                obscode_entry.insert(tk.END, "")
                 obscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 obscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
                 #
                 #
                 #             # "Secondary Observer Codes (N/A if none)": "N/A",
-                secondobscode_label = tk.Label(root, text="Secondary Observer Codes (N/A if none)", justify=tk.LEFT)
+                secondobscode_label = tk.Label(root, text="Secondary Observer Codes (leave blank if none)", justify=tk.LEFT)
                 secondobscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                secondobscode_entry.insert(tk.END, "N/A")
+                secondobscode_entry.insert(tk.END, "")
                 secondobscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 secondobscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1

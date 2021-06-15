@@ -98,7 +98,7 @@ class OutputFiles:
                     f",Am2={round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- {round_to_2(self.fit.errors['a2'])}\n")
 
             f.write("# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science "
-                    "project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. "
+                    "project managed by NASA's Jet Propulsion Laboratory on behalf of NASA's Universe of Learning. "
                     "This work is supported by NASA under award number NNX16AC65A to the "
                     "Space Telescope Science Institute.\n"
                     "# Use of this data is governed by the AAVSO Data Usage Guidelines: "

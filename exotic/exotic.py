@@ -103,7 +103,7 @@ from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStr
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-from astroscrappy import detect_cosmics
+# from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports
@@ -666,7 +666,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \n(Keep in mind that 1.2e-34 is the same as 1.2 x 10^-34)",
                      "Published Mid-Transit Time (BJD_UTC)",
-                     "Mid-Transit Time Uncertainty (JD)",
+                     "Mid-Transit Time Uncertainty (BJD-UTC)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty",
                      "Ratio of Distance to Stellar Radius (a/Rs)",
@@ -1436,6 +1436,14 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
             prevImageData = imageData  # no shift should be registered
 
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
+        tform = transformation(np.array([imageData, firstImageData]), len(timeSortedNames), imageFile, i)
+
+        # apply transform
+        tx, ty = tform([UIprevTPX, UIprevTPY])[0]
+        rx, ry = tform([UIprevRPX, UIprevRPY])[0]
+
+        print(f"Coordinates of target star: ({tx},{ty})")
+        print(f"Coordinates of comp star: ({rx},{ry})")
 
         # corrects for any image shifts that result from a tracking slip
         shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
@@ -1514,7 +1522,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
     ax.clear()
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
-    ax.set_xlabel('Time (jd)')
+    ax.set_xlabel('Time (JD)')
     ax.plot(timeList, normalizedFluxVals, 'bo')
 
 
@@ -1661,7 +1669,7 @@ def main():
     elif args.reduce or args.prereduced:
         reduction_opt = 2
     else:
-        reduction_opt = user_input("\nEnter '1' for Real Time Reduction or '2' for for Complete Reduction: ",
+        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while observing) \n\t2: for for Complete Reduction (for analyzing your data after an observing run). \nPlease enter 1 or 2: ",
                                    type_=int, val1=1, val2=2)
 
     if reduction_opt == 1:
@@ -1688,7 +1696,7 @@ def main():
         exotic_UIprevRPY = exotic_infoDict['comp_stars'][1]
 
         while True:
-            carry_on = user_input(f"Type continue after the first image has been taken and saved: ", type_=str)
+            carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
             if carry_on != 'continue':
                 continue
             break
@@ -1700,7 +1708,7 @@ def main():
         ax = fig.add_subplot(1, 1, 1)
         ax.set_title(userpDict['pName'])
         ax.set_ylabel('Normalized Flux')
-        ax.set_xlabel('Time (jd)')
+        ax.set_xlabel('Time (JD)')
 
         anim = FuncAnimation(fig, realTimeReduce,
                              fargs=(userpDict['pName'], ax, distFC, exotic_infoDict['images'], exotic_UIprevTPX, exotic_UIprevTPY,
@@ -2509,6 +2517,7 @@ def main():
         # estimate transit duration
         pars = dict(**myfit.parameters)
         times = np.linspace(np.min(myfit.time), np.max(myfit.time), 1000)
+        data_highres = transit(times, pars)
         dt = np.diff(times).mean()
         durs = []
         for r in range(1000):
@@ -2558,7 +2567,7 @@ def main():
         correctedSTD = np.std(myfit.residuals / np.median(myfit.data))
         ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
                        marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
-        ax_lc.plot(myfit.phase, myfit.transit, 'r', zorder=1000, lw=2)
+        ax_lc.plot(np.linspace(np.nanmin(myfit.phase), np.nanmax(myfit.phase), 1000), data_highres, 'r', zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
@@ -2590,6 +2599,7 @@ def main():
             f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
         plt.close()
+
 
         ###################################################################################
 
@@ -2699,8 +2709,8 @@ def main():
             comp_dec = None
 
             if wcs_file:
-                comp_ra = rafile[comp_coords[1]][comp_coords[0]]
-                comp_dec = decfile[comp_coords[1]][comp_coords[0]]
+                comp_ra = rafile[int(comp_coords[1])][int(comp_coords[0])]
+                comp_dec = decfile[int(comp_coords[1])][int(comp_coords[0])]
 
             comp_star.append({
                 'ra': str(comp_ra) if comp_ra else comp_ra,

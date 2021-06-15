@@ -9,32 +9,36 @@ The EXOplanet Transit Interpretation Code relies upon the [transit method](https
 
 The objective of this pipeline is to help you reduce your images of your transiting exoplanet into a lightcurve, and fit a model to your data to extract planetary information that is crucial to increasing the efficiency of larger observational platforms, and futhering our astronomical knowledge.
 
-## Installation
+## Installation and Running
 
-While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you use EXOTIC via the free Google Colab, as it is much easier to get installed and working. However, if you are a user with many images or large images, please message the Exoplanet Watch Team on Slack for guidance.
+EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer. You can also use EXOTIC via the free Google Colab, which features cloud computing, many helpful plotting functions, and a simplified installation. However, if you are a user with many images or large images, we recommend running EXOTIC locally on your own computer.
 
-- **Google Colab Cloud - RECOMMENDED**
-  - Requirements: A no-cost Google Drive account (GDrive) is required. 
-  - Features: No software installations are needed on your own computer. 
-  - Limitations: Images must be uploaded to GDrive over the internet, so fast network connections help.
-  - Recommendations: If you run out of space in an existing GDrive account, you can sign up again. Some users even make a new Google account for every new dataset to avoid running out of space.
+ **Google Colab Cloud**
+  - Features: does not require the user to install any software locally on their own computer.
+  - Limitations: Requires user to upload their images to a free Gdrive account.
+  - Recommendations: If you run out of space on your default Google/Gdrive account, you can sign up for a new, free account to use. Some users even make a new Google account for every new dataset to avoid running out of space.
   - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
-  - [How to use EXOTIC on the Colab written instructions](https://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
+  - [How to use EXOTIC on the Colab written instructions](http://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
   - [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
+  
 
-- Locally On Your Own Computer
-  - Requirements: A Python 3 installation is required. (Many systems use Python 2 by default.)
-  - Features: Images are read directly from your own computer's hard drive which can be fast and convenient -- no uploads to GDrive. This may be helpful for users with large filesizes, numerous files, or a slow internet connection. EXOTIC can be run through an iPython Jupyter Notebook (similar to the Google Colab interface) or directly at the command line.
-  - Limitations: Extra software may be required (Python 3) and multiple subpackages must be downloaded and installed with EXOTIC. Using the Jupyter Notebook or command line to run EXOTIC can be confusing to some new users.
+ **Locally On Your Own Computer**
+  - Features: Images are read off of the user's harddrive- nothing is uploaded to Gdrive. This method can be helpful for those with large filesizes, many files, or a slow internet connection.
+  - Limitations: Requires user to install Python3 and multiple subpackages.
+  
   - Installation Instructions:
-   - [Macintosh and Linux](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf)
-   - [Windows](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf)
-  - [How to Run EXOTIC On Your Own Computer](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/Getting-Started-with-EXOTIC.pdf)
-  - The easiest way to install exotic is with pip:
-
-    `$ pip3 install exotic`
-
-    **Python 3 may use a different pip command (e.g. pip vs. pip3).** If you're having trouble installing exotic from pip, please see our documentation for additional installation steps including setting up dependencies for [Mac](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Mac-Users.pdf), [Windows](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/EXOTIC-Installation-Instructions-for-Windows-Users.pdf) and [Linux](https://github.com/rzellem/EXOTIC/raw/main/exotic_installation_linux.sh)
+    1. ​[Download and install the latest release of Python.](https://www.python.org/downloads/)
+        **NOTE FOR WINDOWS USERS:** make sure to check the box "Add Python to PATH" when installing.
+        **NOTE FOR ALL USERS:** please download and install the latest release of Python, even if you have a previous installation already on your computer, to ensure that all Python packages are properly installed.
+    2. [Download the latest release of EXOTIC.](https://github.com/rzellem/EXOTIC/releases)
+    3. Unzip this file.
+    4. Double-click on the appropriate installer for your operating system:
+        - Windows: run_exotic_windows.bat
+        - Macintosh: run_exotic_macintosh.command
+        - Linux: run_exotic_linux.sh
+    5. If you get a security warning about the software being from an unidentified, unsigned, or non-trusted developer, you can bypass it by:
+        - Windows: click "More info" and then the "Run away" box at the bottom of the window.
+        - Macintosh: Please follow [these instructions](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac).
 
 - **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 - How EXOTIC Works
@@ -47,9 +51,9 @@ While EXOTIC can run on a Windows, Mac, or Unix computer, we recommend that you 
 FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC.
 
 ## Sample Data and Outputs
-We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
+We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
 
-[Sample Data](https://github.com/rzellem/EXOTIC_sampledata)
+[Sample Data](https://github.com/rzellem/EXOTIC_sampledata/releases/)
 
 A lightcurve from the sample dataset is shown below:
 

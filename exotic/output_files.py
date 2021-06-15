@@ -64,6 +64,13 @@ class OutputFiles:
 
         params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
 
+        # AAVSO cannot accept N/A as an obscode
+        if (self.i_dict['aavso_num']).lower() == "n/a":
+            self.i_dict['aavso_num'] = ""
+        if (self.i_dict['second_obs']).lower() == "n/a":
+            self.i_dict['second_obs'] = ""
+
+
         with params_file.open('w') as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI

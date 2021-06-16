@@ -1,7 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
 
-from scipy.ndimage.interpolation import rotate
 from scipy.optimize import least_squares
 from scipy.ndimage import median_filter
 from scipy.interpolate import RectBivariateSpline
@@ -14,36 +13,25 @@ from astropy.io import fits
 from skimage.registration import phase_cross_correlation
 
 try:
-    from util import image_cals
-except ImportError: # package import
-    from .util import image_cals
-try:
     from api.elca import lc_fitter, binner, transit
 except ImportError:
     from .api.elca import lc_fitter, binner, transit
 
 
-# Function defines the mesh grid that is used to super sample the image
-def mesh_box_prev(pos, box, mesh=True, npts=-1):
+def mesh_box_prev(pos, box):
     pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
-    if npts == -1:
-        x = np.arange(pos[0] - box, pos[0] + box + 1)
-        y = np.arange(pos[1] - box, pos[1] + box + 1)
-    else:
-        x = np.linspace(pos[0] - box, pos[0] + box + 1, npts)
-        y = np.linspace(pos[1] - box, pos[1] + box + 1, npts)
-
-    if mesh:
-        xv, yv = np.meshgrid(x, y)
-        return xv, yv
-    else:
-        return x, y
+    x = np.arange(pos[0] - box, pos[0] + box + 1)
+    y = np.arange(pos[1] - box, pos[1] + box + 1)
+    xv, yv = np.meshgrid(x, y)
+    return xv.astype(int), yv.astype(int)
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid_prev(data, pos, init=None, psf_output=False, lossfn='linear', box=25):
-    if not init:  # if init is none, then set the values
+def fit_centroid_prev(data, pos, init=None, lossfn='linear', box=10):
+    if init is None:  # if init is none, then set the values
         init = [-1, 5, 5, 0]
+    else:  # remove rotation
+        init = np.delete(init, 3)
 
     # estimate the amplitude and centroid
     if init[0] == -1:
@@ -80,52 +68,14 @@ def fit_centroid_prev(data, pos, init=None, psf_output=False, lossfn='linear', b
     lo = [pos[0] - box, pos[1] - box, 0, 1, 1, 0]
     up = [pos[0] + box, pos[1] + box, 100000, 40, 40, np.max(data[yv, xv])]
     res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], loss=lossfn, jac='3-point')
-    del init
 
-    if psf_output:
-        return psf(*res.x, 0)
-    else:
-        return res.x
+    return np.insert(res.x, 5, 0)
 
 
 # defines the star point spread function as a 2D Gaussian
 def star_psf_prev(x, y, x0, y0, a, sigx, sigy, b):
     gaus = a * np.exp(-(x - x0) ** 2 / (2 * sigx ** 2)) * np.exp(-(y - y0) ** 2 / (2 * sigy ** 2)) + b
     return gaus
-
-
-# Class of star_psf objects with setters and getters
-class psf(object):
-    def __init__(self, x0, y0, a, sigx, sigy, b, rot=0):
-        self.pars = [x0, y0, a, sigx, sigy, b]
-        self.a = a
-        self.x0 = x0
-        self.y0 = y0
-        self.sigx = sigx
-        self.sigy = sigy
-        self.b = b
-        self.rot = rot
-
-    # define the star's rotational orientation and orient the Gaussian to it
-    def eval(self, x, y):
-        if self.rot == 0:
-            return star_psf_prev(x, y, *self.pars)
-        else:
-            return rotate(star_psf_prev(x, y, *self.pars), self.rot, reshape=False)
-
-    @property
-    def gaussian_area(self):
-        # PSF area without background
-        return 2 * np.pi * self.a * self.sigx * self.sigy
-
-    @property
-    def cylinder_area(self):
-        # models background
-        return np.pi * (3 * self.sigx * 3 * self.sigy) * self.b
-
-    @property
-    def area(self):
-        return self.gaussian_area + self.cylinder_area
 
 
 # Method uses the Full Width Half Max to estimate the standard deviation of the star's psf
@@ -246,7 +196,7 @@ class PhotometryOutput:
     comp_coords: list
 
 
-def photometry(input_files, compStarList, targx, targy, pDict, ld0, ld1, ld2, ld3, gdark, gbias, gflat):
+def photometry(input_files, compStarList, targx, targy, pDict, ld0, ld1, ld2, ld3):
     minAperture = max(1, int(2 * max(targsigX, targsigY)))
     maxAperture = int(5 * max(targsigX, targsigY) + 1)
     minAnnulus = 2
@@ -265,8 +215,7 @@ def photometry(input_files, compStarList, targx, targy, pDict, ld0, ld1, ld2, ld
 
         UIprevRPX, UIprevRPY = compStarList[compCounter]
         print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
-        refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid_prev(firstImageData, [UIprevRPX, UIprevRPY],
-                                                                                       box=10)
+        refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid_prev(firstImageData, [UIprevRPX, UIprevRPY])
         print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
 
         # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
@@ -303,8 +252,6 @@ def photometry(input_files, compStarList, targx, targy, pDict, ld0, ld1, ld2, ld
 
                     # IMAGES
                     imageData = hdul[extension].data
-
-                    imageData = image_cals(exotic_infoDict, imageData, gdark, gbias, gflat, i)
 
                     # Find the target star in the image and get its pixel coordinates if it is the first file
                     if fileNumber == 0:
@@ -404,7 +351,7 @@ def photometry(input_files, compStarList, targx, targy, pDict, ld0, ld1, ld2, ld
                             tx, ty, tamplitude, tsigX, tsigY, toff = target_fits[fileNumber]
                         else:
                             tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid_prev(imageData, targPos,
-                                                                                        init=myPriors, box=distFC)
+                                                                                             init=myPriors)
                             target_fits[fileNumber] = [tx, ty, tamplitude, tsigX, tsigY, toff]
 
                         currTPX = tx
@@ -422,7 +369,7 @@ def photometry(input_files, compStarList, targx, targy, pDict, ld0, ld1, ld2, ld
                             rx, ry, ramplitude, rsigX, rsigY, roff = ref_fits[fileNumber]
                         else:
                             rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid_prev(imageData, [prevRPX, prevRPY],
-                                                                                        init=myRefPriors, box=distFC)
+                                                                                             init=myRefPriors)
                             ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff]
                         currRPX = rx
                         currRPY = ry

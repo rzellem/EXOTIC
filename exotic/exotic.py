@@ -156,6 +156,10 @@ try:  # output files
     from inputs import Inputs
 except ImportError:  # package import
     from .inputs import Inputs
+try:  # output files
+    from .fit_centroid_old import fit_centroid_prev
+except ImportError:  # package import
+    from fit_centroid_old import fit_centroid_prev
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
@@ -1105,6 +1109,28 @@ def transformation(image_data, num_images, file_name, count, roi=1):
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 
+def image_cals(info, image_data, gen_dark, gen_bias, gen_flat, count):
+    # apply cals if applicable
+    if info['darks']:
+        if count == 0:
+            print("Dark subtracting images.")
+        image_data = image_data - gen_dark
+    elif info['biases']:  # if a dark is not available, then at least subtract off the pedestal via the bias
+        if count == 0:
+            print("Bias-correcting images.")
+        image_data = image_data - gen_bias
+    else:
+        pass
+
+    if info['flats']:
+        if count == 0:
+            print("Flattening images.")
+        gen_flat[gen_flat == 0] = 1
+        image_data = image_data / gen_flat
+
+    return image_data
+
+
 def get_pixel_scale(wcs_header, header, pixel_init):
     astrometry_scale = None
 
@@ -1722,6 +1748,7 @@ def main():
         log_info("**************************")
 
         init_path, wcs_file, wcs_header = None, None, None
+        generalDark, generalFlat, generalBias = None, None, None
 
         if args.reduce:
             fitsortext = 1
@@ -1911,6 +1938,11 @@ def main():
                             exotic_infoDict['comp_stars'].remove(comp)
                 compStarList = exotic_infoDict['comp_stars']
 
+            if exotic_infoDict['img_align_opt'] == 'n':
+                alignmentBool = False
+            else:
+                alignmentBool = True
+
             # alloc psf fitting param
             psf_data = {
                 # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
@@ -1933,11 +1965,6 @@ def main():
                 psf_data[ckey + "_align"] = np.zeros((len(inputfiles), 2))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
-
-            if exotic_infoDict['img_align_opt'] == 'n':
-                alignmentBool = False
-            else:
-                alignmentBool = True
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
@@ -1969,23 +1996,8 @@ def main():
                 # IMAGES
                 imageData = hdul[extension].data
 
-                # apply cals if applicable
-                if exotic_infoDict['darks']:
-                    if i == 0:
-                        log_info("Dark subtracting images.")
-                    imageData = imageData - generalDark
-                elif exotic_infoDict['biases']: # if a dark is not available, then at least subtract off the pedestal via the bias
-                    if i == 0:
-                        log_info("Bias-correcting images.")
-                    imageData = imageData - generalBias
-                else:
-                    pass
-
-                if exotic_infoDict['flats']:
-                    if i == 0:
-                        log_info("Flattening images.")
-                    generalFlat[generalFlat == 0] = 1
-                    imageData = imageData / generalFlat
+                # CALIBRATIONS
+                imageData = image_cals(exotic_infoDict, imageData, generalDark, generalBias, generalFlat, i)
 
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
@@ -2000,69 +2012,65 @@ def main():
                     # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
-                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0,0])
+                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
                 # apply transform
                 xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
                 psf_data["target_align"][i] = [xrot, yrot]
-                if i == 0:
-                    psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot])
-                else:
-                    if alignmentBool:
-                        psf_data["target"][i] = fit_centroid(
-                            imageData,
-                            [xrot, yrot],
-                            psf_data["target"][0][2:])
+
+                if alignmentBool:
+                    if i == 0:
+                        psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot])
                     else:
-                        # use previous PSF as prior
-                        psf_data["target"][i] = fit_centroid(
-                            imageData,
-                            psf_data["target"][i-1][:2],
-                            psf_data["target"][i-1][2:])
+                        psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], init=psf_data["target"][0][2:])
+                else:
+                    if i == 0:
+                        psf_data["target"][i] = fit_centroid_prev(imageData, [xrot, yrot])
+                    else:  # use previous PSF as prior
+                        psf_data["target"][i] = fit_centroid_prev(imageData, psf_data["target"][i - 1][:2],
+                                                                  init=psf_data["target"][i - 1][2:])
 
                         # check for change in amplitude of PSF
-                        if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
-                            log_info("Can't find target. Trying to align...")
-
-                            tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
-                            
-                            xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
-
-                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:])
+                        # if np.abs((psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
+                        #     log_info("Can't find target. Trying to align...")
+                        #
+                        #     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                        #
+                        #     xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
+                        #
+                        #     psf_data["target"][i] = fit_centroid_prev(imageData, [xrot, yrot], psf_data["target"][0][2:])
 
                 # fit for the centroids in all images
                 for j,coord in enumerate(compStarList):
-                    ckey = "comp{}".format(j+1)
+                    ckey = f"comp{j+1}"
 
                     # apply transformation
                     xrot, yrot = tform(coord)[0]
 
-                    psf_data[ckey+"_align"][i] = [xrot,yrot]
-                    if i == 0:
-                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot])
-                    else:
-                        if alignmentBool:
-                            psf_data[ckey][i] = fit_centroid(
-                                imageData,
-                                [xrot, yrot],
-                                psf_data[ckey][0][2:])
+                    psf_data[ckey+"_align"][i] = [xrot, yrot]
+
+                    if alignmentBool:
+                        if i == 0:
+                            psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot])
                         else:
-                            # use previous PSF as prior
-                            psf_data[ckey][i] = fit_centroid(
-                                imageData,
-                                psf_data[ckey][i-1][:2],
-                                psf_data[ckey][i-1][2:])
+                            psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot], init=psf_data[ckey][0][2:])
+                    else:
+                        if i == 0:
+                            psf_data[ckey][i] = fit_centroid_prev(imageData, [xrot, yrot])
+                        else:  # use previous PSF as prior
+                            psf_data[ckey][i] = fit_centroid_prev(imageData, psf_data[ckey][i - 1][:2],
+                                                                  init=psf_data[ckey][i - 1][2:])
 
                             # check for change in amplitude of PSF
-                            if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                #log_info("Can't find comp. Trying to align...")
-
-                                tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
-
-                                xrot, yrot = tform(coord)[0]
-
-                                psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:])
+                            # if np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
+                            #     #log_info("Can't find comp. Trying to align...")
+                            #
+                            #     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                            #
+                            #     xrot, yrot = tform(coord)[0]
+                            #
+                            #     psf_data[ckey][i] = fit_centroid_prev(imageData, [xrot, yrot], psf_data[ckey][0][2:])
 
                 # aperture photometry
                 if i == 0:

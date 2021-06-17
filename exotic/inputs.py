@@ -7,6 +7,10 @@ try:
     from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
 except ImportError:
     from .util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
+try:
+    from animate import *
+except ImportError:
+    from .animate import *
 
 
 log = logging.getLogger(__name__)
@@ -342,7 +346,9 @@ def elevation(elev, lat, long):
             if not elev:
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
+                animate_toggle(True)
                 elev = open_elevation(lat, long)
+                animate_toggle()
                 if not elev:
                     log_info("\nEXOTIC could not retrieve elevation.")
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)

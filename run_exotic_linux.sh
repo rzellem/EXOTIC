@@ -51,7 +51,7 @@ then
     echo -e "ERROR: Incompatible or missing Python runtime. Please install\n" \
             "       Python 3.6 or above. EXITING!"
     echo -e "For more information, see ${py_download}. ...\n"
-    exit 65
+    exit 127
 fi
 # test for pip
 for app in ${pip_commands} ; do
@@ -77,17 +77,17 @@ then
     echo "INFO: Installing 'Pip Installs Packages' (pip) for Python3. ..."
     echo "      DOWNLOADING ..."
     # install pip3
-    if curl &>/dev/null ;
+    if curl --version &>/dev/null ;
     then
         curl -O "${pip_download}"
-    elif wget &>/dev/null ;
+    elif wget --version &>/dev/null ;
     then
         wget "${pip_download}"
     else
         echo -e "ERROR: Unable to download package manager. Please install\n" \
                 "       Pip for Python 3. EXITING!"
         echo -e "For more information, see ${pip_instructions}. ...\n"
-        exit 65
+        exit 127
     fi
     ${py_runner} get-pip.py
     pip_runner="pip3"
@@ -97,7 +97,7 @@ then
         echo -e "ERROR: Incompatible or missing package manager. Please install\n" \
                 "       Pip for Python 3. EXITING!"
         echo -e "For more information, see ${pip_instructions}. ...\n"
-        exit 65
+        exit 127
     fi
 fi
 # exec commands using determinate pip

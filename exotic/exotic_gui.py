@@ -471,7 +471,7 @@ def main():
                     else:
                         input_data['platesolve'] = 'n'
 
-                    if platesolve.get():
+                    if alignment.get():
                         input_data['alignment'] = 'y'
                     else:
                         input_data['alignment'] = 'n'

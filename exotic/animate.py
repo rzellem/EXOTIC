@@ -14,7 +14,7 @@ def animate():
             sys.stdout.write('\rThinking ... DONE!')
             sys.stdout.write('\n')
             break
-        sys.stdout.write('\rThinking ' + c + ' ... ')
+        sys.stdout.write('\rThinking ' + c + ' ... \r')
         sys.stdout.flush()
         time.sleep(0.11)
     sys.stdout.flush()

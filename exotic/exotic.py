@@ -37,7 +37,6 @@
 # ########################################################################### #
 # -- IMPORTS START ------------------------------------------------------------
 # ########## IMPORTS -- PRELOAD ANIMATION START ##########
-import sys
 
 try:  # animation
     from animate import *
@@ -51,11 +50,15 @@ if __name__ == "__main__":
 
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
+# preload to limit import warnings
+import warnings
+from astropy.utils.exceptions import AstropyDeprecationWarning
+warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
+
+# standard imports
 import argparse
-from datetime import datetime
 # Image alignment import
 import astroalign as aa
-
 aa.PIXEL_TOL = 1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
@@ -68,14 +71,12 @@ from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStr
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-# from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports
 import dateutil.parser as dup
 # Nested Sampling imports
 import dynesty
-import glob as g
 from pathlib import Path
 from io import StringIO
 import pyvo as vo
@@ -86,9 +87,7 @@ from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as PathEffects
-
 import numpy as np
-import os
 # data processing
 import pandas
 # photometry
@@ -102,11 +101,11 @@ from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_dilation, label, binary_erosion
 # cross correlation imports
+from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     stop_after_delay, wait_exponential
-import warnings
 
 # ########## EXOTIC imports ##########
 try:  # science constants
@@ -1571,17 +1570,17 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 def parse_args():
     parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
     parser.add_argument('-rt', '--realtime',
-                        default='', type=str,
+                        nargs='?', default=None, type=str, const='',
                         help="Plots transit in real-time while observing with a telescope. "
-                             "An initialization file (e.g., inits.json) is required to use this command.")
+                             "An initialization file (e.g., inits.json) is optional to use with this command.")
     parser.add_argument('-red', '--reduce',
-                        default='', type=str,
+                        nargs='?', default=None, type=str, const='',
                         help="Performs aperture photometry on FITS files and a reduction on dataset. "
-                             "An initialization file (e.g., inits.json) is required to use this command.")
+                             "An initialization file (e.g., inits.json) is optional to use with this command.")
     parser.add_argument('-pre', '--prereduced',
-                        default='', type=str,
+                        nargs='?', default=None, type=str, const='',
                         help="Performs a reduction on dataset using the nested sampler only. "
-                             "An initialization file (e.g., inits.json) is required to use this command.")
+                             "An initialization file (e.g., inits.json) is optional to use with this command.")
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
@@ -1629,20 +1628,29 @@ def main():
                  'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
     # ---USER INPUTS--------------------------------------------------------------------------
-    if args.realtime:
+    if isinstance(args.realtime, str):
         reduction_opt = 1
-    elif args.reduce or args.prereduced:
+    elif isinstance(args.reduce, str) or isinstance(args.prereduced, str):
         reduction_opt = 2
     else:
-        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while observing) \n\t2: for for Complete Reduction (for analyzing your data after an observing run). \nPlease enter 1 or 2: ",
+        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while "
+                                   "observing) \n\t2: for for Complete Reduction (for analyzing your data after "
+                                   "an observing run). \nPlease enter 1 or 2: ",
                                    type_=int, val1=1, val2=2)
+
+    if not (args.reduce or args.prereduced or args.realtime):
+        fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
+                                       "Enter '1' to use the Command Line or '2' to use an input file: ",
+                                       type_=int, val1=1, val2=2)
+    else:
+        fileorcommandline = 2
 
     if reduction_opt == 1:
         log_info("\n**************************************************************")
         log_info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log_info("**************************************************************\n")
 
-        if args.realtime:
+        if fileorcommandline == 2:
             init_opt = 'y'
         else:
             init_opt = 'n'
@@ -1688,22 +1696,15 @@ def main():
 
         init_path, wcs_file, wcs_header = None, None, None
 
-        if args.reduce:
+        if isinstance(args.reduce, str):
             fitsortext = 1
             init_path = args.reduce
-        elif args.prereduced:
+        elif isinstance(args.prereduced, str):
             fitsortext = 2
             init_path = args.prereduced
         else:
             fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
                                     "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
-
-        if not args.reduce and not args.prereduced:
-            fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
-                                           "Enter '1' to use the Command Line or '2' to use an input file: ",
-                                           type_=int, val1=1, val2=2)
-        else:
-            fileorcommandline = 2
 
         if fileorcommandline == 2:
             init_opt = 'y'

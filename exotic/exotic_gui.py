@@ -1049,7 +1049,7 @@ def main():
 
                     new_inits['user_info'] = original_inits['user_info']
 
-                if planetparams.get() == "manual" or planetparams.get() == "nea":
+                if planetparams.get() in ["manual", "nea"]:
                     new_inits['planetary_parameters'] = {
                         "Target Star RA": input_data['ra'],
                         "Target Star Dec": input_data['dec'],
@@ -1140,12 +1140,12 @@ def main():
 
                 elif planetparams.get() == 'nea':
                     try:
-                        subprocess.run(['exotic', '--reduce', fname, '-nea'], check=True)
+                        subprocess.run(['exotic', '--reduce', fname, '-ov'], check=True)
                     except:
                         try:
-                            subprocess.run(['python3', 'exotic.py', '--reduce', fname, '-nea'], check=True)
+                            subprocess.run(['python3', 'exotic.py', '--reduce', fname, '-ov'], check=True)
                         except:
-                            subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname, '-nea'], check=True)
+                            subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname, '-ov'], check=True)
 
                 else:
                     try:

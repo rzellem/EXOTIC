@@ -2456,7 +2456,6 @@ def main():
             log_info("\nPhotometric Extraction Complete.")
             return
 
-
         log_info("\n")
         log_info("****************************************")
         log_info("Fitting a Light Curve Model to Your Data")

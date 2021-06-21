@@ -2352,7 +2352,7 @@ def main():
                             f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt.close()
 
-            log_info(f"\nFOV file saved as: {exotic_infoDict['save']}/FOV_{pDict['pName']}_"
+            log_info(f"\nFOV file saved as: {exotic_infoDict['save']}FOV_{pDict['pName']}_"
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Centroid position plots

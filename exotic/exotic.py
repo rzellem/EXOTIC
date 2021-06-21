@@ -1028,6 +1028,28 @@ def simbad_query(sample):
         return False
 
 
+# Apply calibrations if applicable
+def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
+    if gen_dark:
+        if i == 0:
+            log_info("Dark subtracting images.")
+        image_data = image_data - gen_dark
+    elif gen_bias:  # if a dark is not available, then at least subtract off the pedestal via the bias
+        if i == 0:
+            log_info("Bias-correcting images.")
+        image_data = image_data - gen_bias
+    else:
+        pass
+
+    if gen_flat:
+        if i == 0:
+            log_info("Flattening images.")
+        gen_flat[gen_flat == 0] = 1
+        image_data = image_data / gen_flat
+
+    return image_data
+
+
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, num_images, file_name, count, roi=1):
     pos = np.zeros((1, 2))
@@ -1581,16 +1603,22 @@ def parse_args():
                         nargs='?', default=None, type=str, const='',
                         help="Performs a reduction on dataset using the nested sampler only. "
                              "An initialization file (e.g., inits.json) is optional to use with this command.")
+    parser.add_argument('-phot', '--photometry',
+                        nargs='?', default=None, type=str, const='',
+                        help="Performs only aperture photometry on FITS files. "
+                             "An initialization file (e.g., inits.json) is optional to use with this command.")
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
-                             "Can be used as an additional argument with -red, --reduce and -pre, --prereduced. "
+                             "Can be used as an additional argument with -rt (--realtime), -red (--reduce), "
+                             "-pre (--prereduced), and -phot (--photometry)."
                              "Do not combine with the -nea, --nasaexoarch argument.")
     parser.add_argument('-nea', '--nasaexoarch',
                         action='store_true',
                         help="Adopts all the NASA Exoplanet Archive planetary parameters from "
-                             "https://exoplanetarchive.ipac.caltech.edu. Can be used as an additional argument with "
-                             "-red, --reduce and -pre, --prereduced. "
+                             "https://exoplanetarchive.ipac.caltech.edu. "
+                             "Can be used as an additional argument with -rt (--realtime), -red (--reduce), "
+                             "-pre (--prereduced), and -phot (--photometry)."
                              "Do not combine with the -ov, --override argument.")
     return parser.parse_args()
 
@@ -1630,7 +1658,7 @@ def main():
     # ---USER INPUTS--------------------------------------------------------------------------
     if isinstance(args.realtime, str):
         reduction_opt = 1
-    elif isinstance(args.reduce, str) or isinstance(args.prereduced, str):
+    elif isinstance(args.reduce, str) or isinstance(args.prereduced, str) or isinstance(args.photometry, str):
         reduction_opt = 2
     else:
         reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while "
@@ -1638,7 +1666,7 @@ def main():
                                    "an observing run). \nPlease enter 1 or 2: ",
                                    type_=int, val1=1, val2=2)
 
-    if not (args.reduce or args.prereduced or args.realtime):
+    if not (args.reduce or args.prereduced or args.realtime or args.photometry):
         fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
                                        "Enter '1' to use the Command Line or '2' to use an input file: ",
                                        type_=int, val1=1, val2=2)
@@ -1695,6 +1723,7 @@ def main():
         log_info("**************************")
 
         init_path, wcs_file, wcs_header = None, None, None
+        generalDark, generalBias, generalFlat = None, None, None
 
         if isinstance(args.reduce, str):
             fitsortext = 1
@@ -1702,6 +1731,9 @@ def main():
         elif isinstance(args.prereduced, str):
             fitsortext = 2
             init_path = args.prereduced
+        elif isinstance(args.photometry, str):
+            fitsortext = 1
+            init_path = args.photometry
         else:
             fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
                                     "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
@@ -1850,7 +1882,7 @@ def main():
             for ifile in inputfiles:
                 first_image = fits.getdata(ifile, ext=0)
                 try:
-                    args = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
+                    get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
                     break
                 except Exception:
                     inc += 1
@@ -1936,23 +1968,8 @@ def main():
                 # IMAGES
                 imageData = hdul[extension].data
 
-                # apply cals if applicable
-                if exotic_infoDict['darks']:
-                    if i == 0:
-                        log_info("Dark subtracting images.")
-                    imageData = imageData - generalDark
-                elif exotic_infoDict['biases']: # if a dark is not available, then at least subtract off the pedestal via the bias
-                    if i == 0:
-                        log_info("Bias-correcting images.")
-                    imageData = imageData - generalBias
-                else:
-                    pass
-
-                if exotic_infoDict['flats']:
-                    if i == 0:
-                        log_info("Flattening images.")
-                    generalFlat[generalFlat == 0] = 1
-                    imageData = imageData / generalFlat
+                # CALS
+                imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
 
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
@@ -2434,6 +2451,10 @@ def main():
 
         # for k in myfit.bounds.keys():
         #     print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
+
+        if args.photometry:
+            log_info("\nPhotometric Extraction Complete.")
+            return
 
         log_info("\n")
         log_info("****************************************")

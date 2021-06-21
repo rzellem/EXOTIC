@@ -55,12 +55,16 @@ except ImportError:
     sys.stdin.read(1)
     exit(79)  # cannot access a shared library
 
-import exotic
 
 try:  # filters
     from .api.filters import fwhm as photometric_filters
 except ImportError:  # package import
     from api.filters import fwhm as photometric_filters
+
+try:  # nea
+    from exotic import NASAExoplanetArchive
+except ImportError:
+    from .exotic import NASAExoplanetArchive
 
 try:  # simple version
     from .version import __version__
@@ -786,30 +790,30 @@ def main():
                 i += 1
 
                 def save_input():
-                    input_data['inc'] = inc_entry.get()
-                    input_data['aRserr'] = aRserr_entry.get()
-                    input_data['aRs'] = aRs_entry.get()
-                    input_data['rprserr'] = rprserr_entry.get()
+                    input_data['ra'] = targetRA_entry.get()
+                    input_data['dec'] = targetDEC_entry.get()
+                    input_data['pName'] = planet_entry.get()
+                    input_data['sName'] = star_entry.get()
+                    input_data['pPer'] = period_entry.get()
+                    input_data['pPerUnc'] = perioderr_entry.get()
+                    input_data['midT'] = Tmid_entry.get()
+                    input_data['midTUnc'] = Tmiderr_entry.get()
                     input_data['rprs'] = rprs_entry.get()
-                    input_data['Tmiderr'] = Tmiderr_entry.get()
-                    input_data['Tmid'] = Tmid_entry.get()
-                    input_data['perioderr'] = perioderr_entry.get()
-                    input_data['period'] = period_entry.get()
-                    input_data['targetDEC'] = targetDEC_entry.get()
-                    input_data['targetRA'] = targetRA_entry.get()
-                    input_data['star'] = star_entry.get()
-                    input_data['planet'] = planet_entry.get()
-                    input_data['loggerrneg'] = loggerrneg_entry.get()
-                    input_data['loggerrpos'] = loggerrpos_entry.get()
-                    input_data['logg'] = logg_entry.get()
-                    input_data['FeHerrneg'] = FeHerrneg_entry.get()
-                    input_data['FeHerrpos'] = FeHerrpos_entry.get()
-                    input_data['Tefferrneg'] = Tefferrneg_entry.get()
-                    input_data['Teff'] = Teff_entry.get()
-                    input_data['Tefferrpos'] = Tefferrpos_entry.get()
-                    input_data['FeH'] = FeH_entry.get()
+                    input_data['rprsUnc'] = rprserr_entry.get()
+                    input_data['aRs'] = aRs_entry.get()
+                    input_data['aRsUnc'] = aRserr_entry.get()
+                    input_data['inc'] = inc_entry.get()
+                    input_data['incUnc'] = incerr_entry.get()
                     input_data['ecc'] = ecc_entry.get()
-                    input_data['incerr'] = incerr_entry.get()
+                    input_data['teff'] = Teff_entry.get()
+                    input_data['teffUncPos'] = Tefferrpos_entry.get()
+                    input_data['teffUncNeg'] = Tefferrneg_entry.get()
+                    input_data['met'] = FeH_entry.get()
+                    input_data['metUncPos'] = FeHerrpos_entry.get()
+                    input_data['metUncNeg'] = FeHerrneg_entry.get()
+                    input_data['logg'] = logg_entry.get()
+                    input_data['loggUncPos'] = loggerrpos_entry.get()
+                    input_data['loggUncNeg'] = loggerrneg_entry.get()
                     root.destroy()
 
                 # Button for closing
@@ -853,8 +857,12 @@ def main():
                 i += 1
 
                 def save_input():
-                    input_data['star'] = star_entry.get()
-                    input_data['planet'] = planet_entry.get()
+                    input_data['sName'] = star_entry.get()
+                    input_data['pName'] = planet_entry.get()
+                    nea_obj = NASAExoplanetArchive(planet=input_data['pName'])
+                    input_data['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+                    for key in pDict:
+                        input_data[key] = pDict[key]
                     root.destroy()
 
                 # Button for closing
@@ -1041,67 +1049,38 @@ def main():
 
                     new_inits['user_info'] = original_inits['user_info']
 
-                if planetparams.get() == "manual":
+                if planetparams.get() in ["manual", "nea"]:
                     new_inits['planetary_parameters'] = {
-                        "Target Star RA": input_data['targetRA'],
-                        "Target Star Dec": input_data['targetDEC'],
-                        "Planet Name": input_data['planet'],
-                        "Host Star Name": input_data['star'],
-                        "Orbital Period (days)": float(input_data['period']),
-                        "Orbital Period Uncertainty": float(input_data['perioderr']),
-                        "Published Mid-Transit Time (BJD-UTC)": float(input_data['Tmid']),
-                        "Mid-Transit Time Uncertainty": float(input_data['Tmiderr']),
+                        "Target Star RA": input_data['ra'],
+                        "Target Star Dec": input_data['dec'],
+                        "Planet Name": input_data['pName'],
+                        "Host Star Name": input_data['sName'],
+                        "Orbital Period (days)": float(input_data['pPer']),
+                        "Orbital Period Uncertainty": float(input_data['pPerUnc']),
+                        "Published Mid-Transit Time (BJD-UTC)": float(input_data['midT']),
+                        "Mid-Transit Time Uncertainty": float(input_data['midTUnc']),
                         "Ratio of Planet to Stellar Radius (Rp/Rs)": float(input_data['rprs']),
-                        "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": float(input_data['rprserr']),
+                        "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": float(input_data['rprsUnc']),
                         "Ratio of Distance to Stellar Radius (a/Rs)": float(input_data['aRs']),
-                        "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": float(input_data['aRserr']),
+                        "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": float(input_data['aRsUnc']),
                         "Orbital Inclination (deg)": float(input_data['inc']),
-                        "Orbital Inclination (deg) Uncertainty": float(input_data['incerr']),
+                        "Orbital Inclination (deg) Uncertainty": float(input_data['incUnc']),
                         "Orbital Eccentricity (0 if null)": float(input_data['ecc']),
-                        "Star Effective Temperature (K)": float(input_data['Teff']),
-                        "Star Effective Temperature (+) Uncertainty": float(input_data['Tefferrpos']),
-                        "Star Effective Temperature (-) Uncertainty": float(input_data['Tefferrneg']),
-                        "Star Metallicity ([FE/H])": float(input_data['FeH']),
-                        "Star Metallicity (+) Uncertainty": float(input_data['FeHerrpos']),
-                        "Star Metallicity (-) Uncertainty": float(input_data['FeHerrneg']),
+                        "Star Effective Temperature (K)": float(input_data['teff']),
+                        "Star Effective Temperature (+) Uncertainty": float(input_data['teffUncPos']),
+                        "Star Effective Temperature (-) Uncertainty": float(input_data['teffUncNeg']),
+                        "Star Metallicity ([FE/H])": float(input_data['met']),
+                        "Star Metallicity (+) Uncertainty": float(input_data['metUncPos']),
+                        "Star Metallicity (-) Uncertainty": float(input_data['metUncNeg']),
                         "Star Surface Gravity (log(g))": float(input_data['logg']),
-                        "Star Surface Gravity (+) Uncertainty": float(input_data['loggerrpos']),
-                        "Star Surface Gravity (-) Uncertainty": float(input_data['loggerrneg'])
+                        "Star Surface Gravity (+) Uncertainty": float(input_data['loggUncPos']),
+                        "Star Surface Gravity (-) Uncertainty": float(input_data['loggUncNeg'])
                     }
                 elif planetparams.get() == "inits":
                     with open(input_data['inits_dir'], "r") as confirmed:
                         original_inits = json.load(confirmed)
 
                     new_inits['planetary_parameters'] = original_inits['planetary_parameters']
-
-                else:
-                    # Just put in dummy values as they will be overwritten by the NEA later
-                    new_inits['planetary_parameters'] = {
-                        "Target Star RA": "00:00:00",
-                        "Target Star Dec": "+00:00:00",
-                        "Planet Name": input_data['planet'],
-                        "Host Star Name": input_data['star'],
-                        "Orbital Period (days)": 0.,
-                        "Orbital Period Uncertainty": 0.,
-                        "Published Mid-Transit Time (BJD-UTC)": 0.,
-                        "Mid-Transit Time Uncertainty": 0.,
-                        "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.,
-                        "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.,
-                        "Ratio of Distance to Stellar Radius (a/Rs)": 0.,
-                        "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": 0.,
-                        "Orbital Inclination (deg)": 0.,
-                        "Orbital Inclination (deg) Uncertainty": 0.,
-                        "Orbital Eccentricity (0 if null)": 0.,
-                        "Star Effective Temperature (K)": 0.,
-                        "Star Effective Temperature (+) Uncertainty": 0.,
-                        "Star Effective Temperature (-) Uncertainty": 0.,
-                        "Star Metallicity ([FE/H])": 0.,
-                        "Star Metallicity (+) Uncertainty": 0.,
-                        "Star Metallicity (-) Uncertainty": 0.,
-                        "Star Surface Gravity (log(g))": 0.,
-                        "Star Surface Gravity (+) Uncertainty": 0.,
-                        "Star Surface Gravity (-) Uncertainty": 0.
-                    }
 
                 null = None
                 new_inits['optional_info'] = {
@@ -1161,12 +1140,12 @@ def main():
 
                 elif planetparams.get() == 'nea':
                     try:
-                        subprocess.run(['exotic', '--reduce', fname, '-nea'], check=True)
+                        subprocess.run(['exotic', '--reduce', fname, '-ov'], check=True)
                     except:
                         try:
-                            subprocess.run(['python3', 'exotic.py', '--reduce', fname, '-nea'], check=True)
+                            subprocess.run(['python3', 'exotic.py', '--reduce', fname, '-ov'], check=True)
                         except:
-                            subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname, '-nea'], check=True)
+                            subprocess.run(['python3', 'exotic/exotic.py', '--reduce', fname, '-ov'], check=True)
 
                 else:
                     try:

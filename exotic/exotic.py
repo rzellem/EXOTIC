@@ -1770,7 +1770,8 @@ def main():
             if args.nasaexoarch:
                 pass
             elif args.override:
-                pDict['ra'], pDict['dec'] = radec_hours_to_degree(pDict['ra'], pDict['dec'])
+                if type(pDict['ra']) and type(pDict['dec']) is str:
+                    pDict['ra'], pDict['dec'] = radec_hours_to_degree(pDict['ra'], pDict['dec'])
             else:
                 diff = False
 

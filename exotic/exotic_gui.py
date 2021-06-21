@@ -181,6 +181,7 @@ def main():
                    padx=20,
                    variable=reduction_opt,
                    value=2).pack(anchor=tk.W)
+    reduction_opt.set(2)
 
     # Button for closing
     exit_button = tk.Button(root, text="Next", command=root.destroy)
@@ -205,6 +206,7 @@ def main():
                        padx=20,
                        variable=fitsortext,
                        value=1).pack(anchor=tk.W)
+        fitsortext.set(1)
 
         tk.Radiobutton(root,
                        text="Start with pre-reduced data in a .txt format - COMING SOON",
@@ -234,10 +236,11 @@ def main():
                      padx=20).pack()
 
             tk.Radiobutton(root,
-                           text="Manually",
+                           text="Manually (Recommended for first-time users)",
                            padx=20,
                            variable=obsinfo,
                            value="manual").pack(anchor=tk.W)
+            obsinfo.set("manual")
 
             tk.Radiobutton(root,
                            text="From a pre-existing input file (e.g. inits.json) - for advanced users",
@@ -553,6 +556,7 @@ def main():
                            padx=20,
                            variable=planetparams,
                            value="manual").pack(anchor=tk.W)
+            planetparams.set("manual")
 
             tk.Radiobutton(root,
                            text="Automatically adopt all planetary parameters\nfrom the NASA Exoplanet Archive",

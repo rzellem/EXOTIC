@@ -37,7 +37,6 @@
 # ########################################################################### #
 # -- IMPORTS START ------------------------------------------------------------
 # ########## IMPORTS -- PRELOAD ANIMATION START ##########
-import sys
 
 try:  # animation
     from animate import *
@@ -51,11 +50,15 @@ if __name__ == "__main__":
 
 # ########## IMPORTS -- PRELOAD ANIMATION END   ##########
 
+# preload to limit import warnings
+import warnings
+from astropy.utils.exceptions import AstropyDeprecationWarning
+warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
+
+# standard imports
 import argparse
-from datetime import datetime
 # Image alignment import
 import astroalign as aa
-
 aa.PIXEL_TOL = 1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
@@ -68,14 +71,12 @@ from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStr
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
-# from astroscrappy import detect_cosmics
 # UTC to BJD converter import
 from barycorrpy import utc_tdb
 # julian conversion imports
 import dateutil.parser as dup
 # Nested Sampling imports
 import dynesty
-import glob as g
 from pathlib import Path
 from io import StringIO
 import pyvo as vo
@@ -86,9 +87,7 @@ from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as PathEffects
-
 import numpy as np
-import os
 # data processing
 import pandas
 # photometry
@@ -102,11 +101,11 @@ from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_dilation, label, binary_erosion
 # cross correlation imports
+from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     stop_after_delay, wait_exponential
-import warnings
 
 # ########## EXOTIC imports ##########
 try:  # science constants

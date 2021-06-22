@@ -364,8 +364,8 @@ def main():
                 elevation_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
                 #
-                # #             "Camera Type (CCD or DSLR)": "CCD",
-                cameratype_label = tk.Label(root, text="Camera Type (e.g. CCD or DSLR)", justify=tk.LEFT)
+                # #             "Camera Type (CCD/CMOS or DSLR)": "CCD",
+                cameratype_label = tk.Label(root, text="Camera Type (e.g. CCD/CMOS or DSLR)", justify=tk.LEFT)
                 cameratype_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 cameratype_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 cameratype_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
@@ -1016,7 +1016,7 @@ def main():
                         "Obs. Latitude": input_data['lat'],
                         "Obs. Longitude": input_data['long'],
                         "Obs. Elevation (meters)": float(input_data.get('elevation', 0)),
-                        "Camera Type (CCD or DSLR)": input_data['cameratype'],
+                        "Camera Type (CCD/CMOS or DSLR)": input_data['cameratype'],
                         "Pixel Binning": input_data['pixbin'],
                         "Filter Name (aavso.org/filters)": input_data['obsfilter'],
                         "Observing Notes": input_data['obsnotes'],

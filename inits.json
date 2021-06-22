@@ -34,7 +34,7 @@
             "Obs. Latitude": "+32.41638889",
             "Obs. Longitude": "-110.73444444",
             "Obs. Elevation (meters)": 2616,
-            "Camera Type (CCD or DSLR)": "CCD",
+            "Camera Type (CCD/CMOS or DSLR)": "CCD",
             "Pixel Binning": "1x1",
             "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",

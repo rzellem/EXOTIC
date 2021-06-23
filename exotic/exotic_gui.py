@@ -364,8 +364,12 @@ def main():
                 elevation_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
                 #
-                # #             "Camera Type (CCD/CMOS or DSLR)": "CCD",
-                cameratype_label = tk.Label(root, text="Camera Type (e.g. CCD/CMOS or DSLR)", justify=tk.LEFT)
+                # #             "Camera Type (CCD or DSLR)": "CCD",
+                cameratype_label = tk.Label(root,
+                                            text="Camera Type (e.g., CCD or DSLR;\n"
+                                                 "Note: if you are using a CMOS, please enter CCD here and\n"
+                                                 "then note your actual camera type under \"Observing Notes\" below)",
+                                            justify=tk.LEFT)
                 cameratype_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 cameratype_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 cameratype_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)

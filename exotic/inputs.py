@@ -360,8 +360,15 @@ def elevation(elev, lat, long):
 
 
 def camera(c_type):
-    if not c_type:
-        c_type = user_input("\nPlease enter the camera type (CCD/CMOS or DSLR): ", type_=str)
+    while True:
+        c_type = c_type.strip().upper()
+        if c_type not in ["CCD", "DSLR"]:
+            c_type = user_input("\nPlease enter the camera type (e.g., CCD or DSLR;\n"
+                                "Note: if you are using a CMOS, please enter CCD here and\n"
+                                "then note your actual camera type in \"Observing Notes\"): ", type_=str)
+        else:
+            break
+
     return c_type
 
 

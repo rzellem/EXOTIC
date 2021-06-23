@@ -126,7 +126,7 @@ class Inputs:
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
             'elev': 'Obs. Elevation (meters)',
-            'camera': ('Camera Type (CCD/CMOS or DSLR)', 'Camera Type (CCD or DSLR)'),
+            'camera': 'Camera Type (CCD or DSLR)',
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
             'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',

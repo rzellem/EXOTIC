@@ -1020,7 +1020,7 @@ def main():
                         "Obs. Latitude": input_data['lat'],
                         "Obs. Longitude": input_data['long'],
                         "Obs. Elevation (meters)": float(input_data.get('elevation', 0)),
-                        "Camera Type (CCD/CMOS or DSLR)": input_data['cameratype'],
+                        "Camera Type (CCD or DSLR)": input_data['cameratype'],
                         "Pixel Binning": input_data['pixbin'],
                         "Filter Name (aavso.org/filters)": input_data['obsfilter'],
                         "Observing Notes": input_data['obsnotes'],

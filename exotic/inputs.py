@@ -125,9 +125,10 @@ class Inputs:
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
-            'elev': 'Obs. Elevation (meters)', 'camera': 'Camera Type (CCD or DSLR)', 'pixel_bin': 'Pixel Binning',
-            'filter': 'Filter Name (aavso.org/filters)', 'notes': 'Observing Notes',
-            'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
+            'elev': 'Obs. Elevation (meters)',
+            'camera': 'Camera Type (CCD or DSLR)',
+            'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
+            'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
         planet_params = {
@@ -359,8 +360,15 @@ def elevation(elev, lat, long):
 
 
 def camera(c_type):
-    if not c_type:
-        c_type = user_input("\nPlease enter the camera type (CCD or DSLR): ", type_=str)
+    while True:
+        c_type = c_type.strip().upper()
+        if c_type not in ["CCD", "DSLR"]:
+            c_type = user_input("\nPlease enter the camera type (e.g., CCD or DSLR;\n"
+                                "Note: if you are using a CMOS, please enter CCD here and\n"
+                                "then note your actual camera type in \"Observing Notes\"): ", type_=str)
+        else:
+            break
+
     return c_type
 
 

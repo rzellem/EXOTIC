@@ -1,7 +1,7 @@
 import logging
-import json
 import sys
 from pathlib import Path
+from json import load
 
 try:
     from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
@@ -115,10 +115,13 @@ class Inputs:
                 [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
                 init_file = None
+            except ValueError as e:
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}")
+                init_file = None
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
-            data = json.load(json_file)
+            data = load(json_file)
 
         user_info = {
             'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',

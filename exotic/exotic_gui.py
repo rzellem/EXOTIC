@@ -36,6 +36,12 @@
 # #    # NOTE: See companion file version.py for version info.
 # # ########################################################################### #
 
+try:
+    from animate import *
+except ImportError:
+    from .animate import *
+animate_toggle(True)
+
 import ast
 from datetime import datetime
 import json
@@ -71,6 +77,7 @@ try:  # simple version
 except ImportError:  # package import
     from version import __version__
 
+animate_toggle()
 
 class FolderSelect(tk.Frame):
     def __init__(self, parent=None, folderDescription="", default_text="", **kw):
@@ -379,9 +386,9 @@ def main():
                 i += 1
 
                 #     "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
-                pixscale_label = tk.Label(root, text="Pixel Scale (null if unknown)", justify=tk.LEFT)
+                pixscale_label = tk.Label(root, text="Pixel Scale (e.g., 5.21 arcsecs/pixel; null if unknown)", justify=tk.LEFT)
                 pixscale_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                pixscale_entry.insert(tk.END, "5.21 arcsecs/pixel")
+                # pixscale_entry.insert(tk.END, "")
                 pixscale_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 pixscale_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
@@ -444,7 +451,7 @@ def main():
                 targetpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
 
-                comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position", justify=tk.LEFT)
+                comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    (Note: You can use the AAVSO's VSP to help you find\n    good comparison stars: https://app.aavso.org/vsp/)", justify=tk.LEFT)
                 comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")
                 comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)

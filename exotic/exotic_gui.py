@@ -403,8 +403,8 @@ def main():
                 filteroptions = tk.StringVar(root)
                 filteroptions.set(choices[0])  # default value
 
-                l3 = tk.Label(root, text='Filter (use N/A for custom)', width=25)
-                l3.grid(row=i, column=0)
+                l3 = tk.Label(root, text='Filter (use N/A for custom)', justify=tk.LEFT)
+                l3.grid(row=i, column=j, sticky=tk.W, pady=2)
 
                 om1 = tk.OptionMenu(root, filteroptions, *choices)
                 om1.grid(row=i, column=1)
@@ -430,14 +430,15 @@ def main():
 
                 # i, j = 1, 0
                 platesolve = tk.BooleanVar()
-                platesolve_check = tk.Checkbutton(root, text='Plate solve my images', variable=platesolve, onvalue=True,
-                                                  offvalue=False)
+                platesolve_check = tk.Checkbutton(root, text='Plate solve my first image', variable=platesolve,
+                                                  onvalue=True, offvalue=False)
                 platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1
 
                 alignment = tk.BooleanVar()
-                alignment_check = tk.Checkbutton(root, text='Align my images', variable=alignment, onvalue=1,
-                                                 offvalue=0)
+                alignment_check = tk.Checkbutton(root, text="Align my images\n(Note: Do not check if you'd like to use"
+                                                            "\nWCS in header for tracking targets)",
+                                                 variable=alignment, onvalue=1, offvalue=0, justify=tk.LEFT)
                 alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1
 

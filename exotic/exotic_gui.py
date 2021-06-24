@@ -293,7 +293,8 @@ def main():
                 i += 1
 
                 window_label = tk.Label(root,
-                                        text="""Please enter your calibration file information\n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
+                                        text="""Please enter your calibration file information
+                                        \n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
                                         # font=("Helvetica 14 bold"),
                                         justify=tk.LEFT,
                                         padx=20)  # .pack()
@@ -410,8 +411,8 @@ def main():
                 filteroptions = tk.StringVar(root)
                 filteroptions.set(choices[0])  # default value
 
-                l3 = tk.Label(root, text='Filter (use N/A for custom)', width=25)
-                l3.grid(row=i, column=0)
+                l3 = tk.Label(root, text='Filter (use N/A for custom)', justify=tk.LEFT)
+                l3.grid(row=i, column=j, sticky=tk.W, pady=2)
 
                 om1 = tk.OptionMenu(root, filteroptions, *choices)
                 om1.grid(row=i, column=1)
@@ -437,14 +438,18 @@ def main():
 
                 # i, j = 1, 0
                 platesolve = tk.BooleanVar()
-                platesolve_check = tk.Checkbutton(root, text='Plate solve my images', variable=platesolve, onvalue=True,
-                                                  offvalue=False)
+                platesolve_check = tk.Checkbutton(root, text='Plate solve my first image'
+                                                             '\n(Note: Do not check if all images are'
+                                                             '\nplate solved and you trust it)',
+                                                  variable=platesolve, onvalue=True, offvalue=False, justify=tk.LEFT)
                 platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1
 
                 alignment = tk.BooleanVar()
-                alignment_check = tk.Checkbutton(root, text='Align my images', variable=alignment, onvalue=1,
-                                                 offvalue=0)
+                alignment_check = tk.Checkbutton(root, text="Align my images"
+                                                            "\n(Note: Do not check if you'd like to use"
+                                                            "\nplate solution in header for tracking targets)",
+                                                 variable=alignment, onvalue=1, offvalue=0, justify=tk.LEFT)
                 alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1
 
@@ -455,7 +460,10 @@ def main():
                 targetpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
 
-                comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    (Note: You can use the AAVSO's VSP to help you find\n    good comparison stars: https://app.aavso.org/vsp/)", justify=tk.LEFT)
+                comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    "
+                                                    "(Note: You can use the AAVSO's VSP to help you find\n    "
+                                                    "good comparison stars: https://app.aavso.org/vsp/)",
+                                         justify=tk.LEFT)
                 comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")
                 comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)

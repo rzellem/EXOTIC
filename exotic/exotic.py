@@ -1875,6 +1875,14 @@ def main():
                     header = fits.getheader(filename=ifile, ext=extension)
                 times.append(getJulianTime(header))
 
+            # checks for MOBS data
+            mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
+            if "MicroObservatory" in mobs_header['CREATOR']:
+                if exotic_infoDict['second_obs'].upper() != "N/A":
+                    exotic_infoDict['second_obs'] += ",MOBS"
+                else:
+                    exotic_infoDict['second_obs'] = "MOBS"
+
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
@@ -1948,6 +1956,8 @@ def main():
             else:
                 alignmentBool = True
 
+            wcs_hdr = None
+
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
@@ -1981,8 +1991,6 @@ def main():
                 # CALS
                 imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
 
-                print(i)
-
                 if i == 0:
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
@@ -1991,11 +1999,11 @@ def main():
                     if alignmentBool:
                         log_info("\n\nAligning your images. Please wait.")
 
-                wcs_hdr = search_wcs(fileName)
                 # Image Alignment
                 if alignmentBool:
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
+                    wcs_hdr = search_wcs(fileName)
                     tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
                 # apply transform
@@ -2012,8 +2020,8 @@ def main():
                             psf_data["target"][0][2:])
                     else:
                         if wcs_hdr.is_celestial:
-                            ra_file, dec_file = get_radec(wcs_header)
-                            yrot, xrot = deg_to_pix(tar_radec[0], tar_radec[1], ra_file, dec_file)
+                            pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
+                            yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
                             psf_data["target"][i] = fit_centroid(
                                 imageData,
                                 [xrot, yrot],
@@ -2053,8 +2061,8 @@ def main():
                                 psf_data[ckey][0][2:])
                         else:
                             if wcs_hdr.is_celestial:
-                                ra_file, dec_file = get_radec(wcs_header)
-                                yrot, xrot = deg_to_pix(comp_radec[j][0], comp_radec[j][1], ra_file, dec_file)
+                                pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                                yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
                                 psf_data[ckey][i] = fit_centroid(
                                     imageData,
                                     [xrot, yrot],
@@ -2067,7 +2075,7 @@ def main():
 
                             # check for change in amplitude of PSF
                             if np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                log_info("Can't find comp. Trying to align...")
+                                # log_info("Can't find comp. Trying to align...")
 
                                 tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 

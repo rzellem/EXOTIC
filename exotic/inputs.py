@@ -1,6 +1,6 @@
 import logging
-import json
 import sys
+import json
 from pathlib import Path
 
 try:
@@ -114,6 +114,9 @@ class Inputs:
                 log_info(f"Potential initialization files I've found in {cwd} are: ")
                 [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
+                init_file = None
+            except ValueError as e:
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}")
                 init_file = None
 
     def comp_params(self, init_file, planet_dict):

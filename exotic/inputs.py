@@ -1,7 +1,7 @@
 import logging
 import sys
+import json
 from pathlib import Path
-from json import load
 
 try:
     from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
@@ -121,7 +121,7 @@ class Inputs:
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
-            data = load(json_file)
+            data = json.load(json_file)
 
         user_info = {
             'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',

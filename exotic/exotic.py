@@ -2641,73 +2641,73 @@ def main():
         ##########
         # PSF data
         ##########
-
-        fig, ax = plt.subplots(3,2, figsize=(12,10))
-        fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
-        ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
-        ax[0,0].set_ylabel("X-Centroid [px]")
-        ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
-        ax[0,1].set_ylabel("Y-Centroid [px]")
-        ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
-        ax[1,0].set_ylabel("Seeing [px]")
-        ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
-        ax[1,1].set_ylabel("Airmass")
-        ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
-        ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
-        ax[2,0].set_ylabel("Amplitude [ADU]")
-        ax[2,1].set_ylabel("Background [ADU]")
-        ax[0,0].set_xlabel("Time [BJD]")
-        ax[0,1].set_xlabel("Time [BJD]")
-        ax[1,0].set_xlabel("Time [BJD]")
-        ax[1,1].set_xlabel("Time [BJD]")
-        ax[2,0].set_xlabel("Time [BJD]")
-        ax[2,1].set_xlabel("Time [BJD]")
-        plt.tight_layout()
-
-        try:
-            fig.savefig(Path(exotic_infoDict['save']) /
-                        f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except:
-            pass
-        fig.savefig(Path(exotic_infoDict['save']) /
-                    f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-        plt.close()
-
-        # PSF DATA for COMP STARS
-        for j,coord in enumerate(compStarList):
-            ctitle = "Comp Star {}".format(j+1)
-            ckey = "comp{}".format(j+1)
-
+        if fitsortext == 1:
             fig, ax = plt.subplots(3,2, figsize=(12,10))
-            fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
-            ax[0,0].plot(myfit.time, psf_data[ckey][si,0][gi], 'k.')
+            fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
+            ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
             ax[0,0].set_ylabel("X-Centroid [px]")
-            ax[0,1].plot(myfit.time, psf_data[ckey][si,1][gi], 'k.')
+            ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
             ax[0,1].set_ylabel("Y-Centroid [px]")
-            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data[ckey][si,3][gi] + psf_data[ckey][si,4][gi]), 'k.')
+            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
             ax[1,0].set_ylabel("Seeing [px]")
             ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
             ax[1,1].set_ylabel("Airmass")
-            ax[2,0].plot(myfit.time, psf_data[ckey][si,2][gi], 'k.')
-            ax[2,1].plot(myfit.time, psf_data[ckey][si,6][gi], 'k.')
+            ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
+            ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
             ax[2,0].set_ylabel("Amplitude [ADU]")
             ax[2,1].set_ylabel("Background [ADU]")
-            ax[0,0].set_xlabel("Time [BJD_TBD]")
-            ax[0,1].set_xlabel("Time [BJD_TBD]")
-            ax[1,0].set_xlabel("Time [BJD_TBD]")
-            ax[1,1].set_xlabel("Time [BJD_TBD]")
-            ax[2,0].set_xlabel("Time [BJD_TBD]")
-            ax[2,1].set_xlabel("Time [BJD_TBD]")
+            ax[0,0].set_xlabel("Time [BJD]")
+            ax[0,1].set_xlabel("Time [BJD]")
+            ax[1,0].set_xlabel("Time [BJD]")
+            ax[1,1].set_xlabel("Time [BJD]")
+            ax[2,0].set_xlabel("Time [BJD]")
+            ax[2,1].set_xlabel("Time [BJD]")
             plt.tight_layout()
 
             try:
                 fig.savefig(Path(exotic_infoDict['save']) /
-                            f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+                            f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
             except:
                 pass
             fig.savefig(Path(exotic_infoDict['save']) /
-                        f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+                        f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             plt.close()
+
+            # PSF DATA for COMP STARS
+            for j,coord in enumerate(compStarList):
+                ctitle = "Comp Star {}".format(j+1)
+                ckey = "comp{}".format(j+1)
+
+                fig, ax = plt.subplots(3,2, figsize=(12,10))
+                fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
+                ax[0,0].plot(myfit.time, psf_data[ckey][si,0][gi], 'k.')
+                ax[0,0].set_ylabel("X-Centroid [px]")
+                ax[0,1].plot(myfit.time, psf_data[ckey][si,1][gi], 'k.')
+                ax[0,1].set_ylabel("Y-Centroid [px]")
+                ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data[ckey][si,3][gi] + psf_data[ckey][si,4][gi]), 'k.')
+                ax[1,0].set_ylabel("Seeing [px]")
+                ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
+                ax[1,1].set_ylabel("Airmass")
+                ax[2,0].plot(myfit.time, psf_data[ckey][si,2][gi], 'k.')
+                ax[2,1].plot(myfit.time, psf_data[ckey][si,6][gi], 'k.')
+                ax[2,0].set_ylabel("Amplitude [ADU]")
+                ax[2,1].set_ylabel("Background [ADU]")
+                ax[0,0].set_xlabel("Time [BJD_TBD]")
+                ax[0,1].set_xlabel("Time [BJD_TBD]")
+                ax[1,0].set_xlabel("Time [BJD_TBD]")
+                ax[1,1].set_xlabel("Time [BJD_TBD]")
+                ax[2,0].set_xlabel("Time [BJD_TBD]")
+                ax[2,1].set_xlabel("Time [BJD_TBD]")
+                plt.tight_layout()
+
+                try:
+                    fig.savefig(Path(exotic_infoDict['save']) /
+                                f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+                except:
+                    pass
+                fig.savefig(Path(exotic_infoDict['save']) /
+                            f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+                plt.close()
 
 
         #######################################################################

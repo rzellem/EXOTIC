@@ -87,6 +87,7 @@ from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as PathEffects
+from numba import njit
 import numpy as np
 # data processing
 import pandas
@@ -1175,6 +1176,7 @@ def find_target(target, hdufile, verbose=False):
     return pixcoord[0]
 
 
+@njit
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     rx = (x - x0) * np.cos(rot) - (y - y0) * np.sin(rot)
     ry = (x - x0) * np.sin(rot) + (y - y0) * np.cos(rot)
@@ -1877,11 +1879,12 @@ def main():
 
             # checks for MOBS data
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
-            if "MicroObservatory" in mobs_header['CREATOR']:
-                if exotic_infoDict['second_obs'].upper() != "N/A":
-                    exotic_infoDict['second_obs'] += ",MOBS"
-                else:
-                    exotic_infoDict['second_obs'] = "MOBS"
+            if 'CREATOR' in mobs_header:
+                if "MicroObservatory" in mobs_header['CREATOR']:
+                    if exotic_infoDict['second_obs'].upper() != "N/A":
+                        exotic_infoDict['second_obs'] += ",MOBS"
+                    else:
+                        exotic_infoDict['second_obs'] = "MOBS"
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]

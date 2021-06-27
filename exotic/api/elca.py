@@ -43,7 +43,7 @@
 # ########################################################################### #
 
 import copy
-from numba import njit
+from numba import njit, types
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -54,6 +54,9 @@ from dynesty.utils import resample_equal
 from scipy.optimize import least_squares
 from scipy.ndimage import gaussian_filter as norm_kde
 from scipy.stats import gaussian_kde
+
+import time
+
 
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
@@ -88,14 +91,19 @@ def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     return ldlc
 
 
+@njit
 def vecistar(xrs, g1, g2, g3, g4):
     '''
     G. ROUDIER: Stellar surface extinction model
     '''
     ldnorm = (-g1/10e0 - g2/6e0 - 3e0*g3/14e0 - g4/4e0 + 5e-1)*2e0*np.pi
-    select = xrs < 1e0
     mu = np.zeros(xrs.shape)
-    mu[select] = (1e0 - xrs[select]**2)**(1e0/4e0)
+    M = mu.shape[0]
+    N = mu.shape[1]
+    for i in range(M):
+        for j in range(N):
+            if xrs[i, j] < 1e0:
+                mu[i, j] = (1e0 - xrs[i, j]**2)**(1e0/4e0)
     s1 = g1*(1e0 - mu)
     s2 = g2*(1e0 - mu**2)
     s3 = g3*(1e0 - mu**3)
@@ -108,27 +116,36 @@ def vecoccs(z, xrs, rprs):
     '''
     G. ROUDIER: Stellar surface occulation model
     '''
-    out = np.zeros(xrs.shape)
     vecxrs = xrs.copy()
     selx = vecxrs > 0e0
-    veczsel = np.array([z.copy()]*xrs.shape[0])
-    veczsel[veczsel < 0e0] = 0e0
-    select1 = (vecxrs <= rprs - veczsel) & selx
-    select2 = (vecxrs >= rprs + veczsel) & selx
-    select = (~select1) & (~select2) & selx
+    veczsel = np.array([z.copy()]*xrs.shape[0])  # this
+    veczsel[veczsel < 0e0] = 0e0                 # this
+    select1 = (vecxrs <= rprs - veczsel) & selx  # this
+    select2 = (vecxrs >= rprs + veczsel) & selx  # this
+    select = (~select1) & (~select2) & selx      # this
+    return mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2)
+
+
+@njit
+def mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2):
+    out = np.zeros(xrs.shape)
     zzero = veczsel == 0e0
-    if True in select1 & zzero:
-        out[select1 & zzero] = np.pi*(np.square(vecxrs[select1 & zzero]))
+
+    if check_bool(select1, zzero):
+        out = check_1(select1, zzero, vecxrs)
         pass
-    if True in select2 & zzero: out[select2 & zzero] = np.pi*(rprs**2)
-    if True in select & zzero: out[select & zzero] = np.pi*(rprs**2)
-    if True in select1 & ~zzero:
-        out[select1 & ~zzero] = np.pi*(np.square(vecxrs[select1 & ~zzero]))
+    if check_bool(select1, ~zzero):
+        out = check_1(select1, ~zzero, vecxrs)
         pass
-    if True in select2: out[select2 & ~zzero] = np.pi*(rprs**2)
-    if True in select & ~zzero:
-        redxrs = vecxrs[select & ~zzero]
-        redz = veczsel[select & ~zzero]
+    if check_bool(select2, zzero):
+        out = check_2(select2, zzero, rprs)
+    if check_bool(select, zzero):
+        out = check_2(select, zzero, rprs)
+    if check_bool(select2, np.full((select2.shape[0], select2.shape[1]), True)):
+        out = check_2(select2, ~zzero, rprs)
+    if check_bool(select, ~zzero):
+        redxrs = check_4(select, ~zzero, vecxrs)
+        redz = check_4(select, ~zzero, veczsel)
         s1 = (np.square(redz) + np.square(redxrs) - rprs**2)/(2e0*redz*redxrs)
         s1[s1 > 1e0] = 1e0
         s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*(rprs+0.0001))
@@ -139,11 +156,83 @@ def vecoccs(z, xrs, rprs):
         os3 = redz + redxrs + rprs
         s3 = fs3*ss3*ts3*os3
         zselect = s3 < 0e0
-        if True in zselect: s3[zselect] = 0e0
-        out[select & ~zzero] = (np.square(redxrs)*np.arccos(s1) +
-                                (rprs**2)*np.arccos(s2) - (5e-1)*np.sqrt(s3))
+        if True in zselect:
+            s3[zselect] = 0e0
+        # out[select & ~zzero] = (np.square(redxrs)*np.arccos(s1) +
+        #                        (rprs**2)*np.arccos(s2) - (5e-1)*np.sqrt(s3))
+        out = check_3(select, ~zzero, rprs, redxrs, s1, s2, s3)
         pass
     return out
+
+
+@njit
+def check_1(arr1, arr2, vecxrs):
+    out_ = np.zeros(arr1.shape)
+    check = np.bitwise_and(arr1, arr2)
+    M = arr1.shape[0]
+    N = arr1.shape[1]
+    for i in range(M):
+        for j in range(N):
+            if check[i, j]:
+                out_[i, j] = np.pi * (np.square(vecxrs[i, j]))
+    return out_
+
+
+@njit
+def check_2(arr1, arr2, rprs):
+    out_ = np.zeros(arr1.shape)
+    check = np.bitwise_and(arr1, arr2)
+    M = arr1.shape[0]
+    N = arr1.shape[1]
+    for i in range(M):
+        for j in range(N):
+            if check[i, j]:
+                out_[i, j] = np.pi * (rprs ** 2)
+    return out_
+
+
+@njit
+def check_3(arr1, arr2, rprs, redxrs_, s1_, s2_, s3_):
+    out_ = np.zeros(arr1.shape)
+    check = np.bitwise_and(arr1, arr2)
+    M = arr1.shape[0]
+    N = arr1.shape[1]
+    count = 0
+    for i in range(M):
+        for j in range(N):
+            if check[i, j]:
+                out_[i, j] = (np.square(redxrs_[count])*np.arccos(s1_[count]) +
+                              (rprs**2)*np.arccos(s2_[count]) - (5e-1)*np.sqrt(s3_[count]))
+                count += 1
+    return out_
+
+
+@njit
+def check_4(arr1, arr2, arr3):
+    check = np.bitwise_and(arr1, arr2)
+    count = np.count_nonzero(check)
+    counter = 0
+    out_ = np.empty(count)
+    M = arr1.shape[0]
+    N = arr1.shape[1]
+    for i in range(M):
+        for j in range(N):
+            if check[i, j]:
+                out_[counter] = arr3[i, j]
+                counter += 1
+    return out_
+
+
+@njit
+def check_bool(arr1, arr2):
+    check = np.bitwise_and(arr1, arr2)
+    M = arr1.shape[0]
+    N = arr1.shape[1]
+    for i in range(M):
+        for j in range(N):
+            if check[i, j]:
+                return True
+    return False
 
 
 @njit
@@ -208,9 +297,11 @@ def solveme(M, e, eps):
     return E
 
 
-def transit(time, values):
-    sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
+def transit(times, values):
+    sep,phase = time2z(times, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
+    #start_time = time.time()
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
+    #print("--- %s seconds ---" % (time.time() - start_time))
     return model
 
 

@@ -90,7 +90,7 @@ def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     return ldlc
 
 
-@njit
+@njit(cache=True)
 def vecistar(xrs, g1, g2, g3, g4):
     '''
     G. ROUDIER: Stellar surface extinction model
@@ -125,7 +125,7 @@ def vecoccs(z, xrs, rprs):
     return mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2)
 
 
-@njit
+@njit(cache=True)
 def mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2):
     out = np.zeros(xrs.shape)
     zzero = veczsel == 0e0
@@ -164,7 +164,7 @@ def mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2):
     return out
 
 
-@njit
+@njit(cache=True)
 def check_1(arr1, arr2, vecxrs):
     out_ = np.zeros(arr1.shape)
     check = np.bitwise_and(arr1, arr2)
@@ -177,7 +177,7 @@ def check_1(arr1, arr2, vecxrs):
     return out_
 
 
-@njit
+@njit(cache=True)
 def check_2(arr1, arr2, rprs):
     out_ = np.zeros(arr1.shape)
     check = np.bitwise_and(arr1, arr2)
@@ -190,7 +190,7 @@ def check_2(arr1, arr2, rprs):
     return out_
 
 
-@njit
+@njit(cache=True)
 def check_3(arr1, arr2, rprs, redxrs_, s1_, s2_, s3_):
     out_ = np.zeros(arr1.shape)
     check = np.bitwise_and(arr1, arr2)
@@ -206,7 +206,7 @@ def check_3(arr1, arr2, rprs, redxrs_, s1_, s2_, s3_):
     return out_
 
 
-@njit
+@njit(cache=True)
 def check_4(arr1, arr2, arr3):
     check = np.bitwise_and(arr1, arr2)
     count = np.count_nonzero(check)
@@ -222,7 +222,7 @@ def check_4(arr1, arr2, arr3):
     return out_
 
 
-@njit
+@njit(cache=True)
 def check_bool(arr1, arr2):
     check = np.bitwise_and(arr1, arr2)
     M = arr1.shape[0]
@@ -234,7 +234,7 @@ def check_bool(arr1, arr2):
     return False
 
 
-@njit
+@njit(cache=True)
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     '''
     G. ROUDIER: Time samples in [Days] to separation in [R*]
@@ -279,7 +279,7 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     return z, sft
 
 
-@njit
+@njit(cache=True)
 def solveme(M, e, eps):
     '''
     G. ROUDIER: Newton Raphson solver for true anomaly

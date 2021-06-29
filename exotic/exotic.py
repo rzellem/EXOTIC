@@ -502,20 +502,12 @@ def getPhase(curTime, pPeriod, tMid):
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(hdul, ra, dec, lati, longit, elevation):
-    # Determine the correct image header extension to use
-    extension = 0
-    image_header = hdul[extension].header
-    while image_header["NAXIS"] == 0:
-        extension += 1
-        image_header = hdul[extension].header
-
+def getAirMass(image_header, ra, dec, lati, longit, elevation):
     # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
-    if 'AIRMASS' in hdul[extension].header:
-        am = float(hdul[extension].header['AIRMASS'])
-    elif 'TELALT' in hdul[extension].header:
-        alt = float(hdul[extension].header[
-                        'TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
+    if 'AIRMASS' in image_header:
+        am = float(image_header['AIRMASS'])
+    elif 'TELALT' in image_header:
+        alt = float(image_header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
         cosam = np.cos((np.pi / 180) * (90.0 - alt))
         am = 1 / cosam
     else:
@@ -523,7 +515,7 @@ def getAirMass(hdul, ra, dec, lati, longit, elevation):
         pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
 
         location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
-        atime = astropy.time.Time(getJulianTime(hdul[extension].header), format='jd', scale='utc', location=location)
+        atime = astropy.time.Time(getJulianTime(image_header), format='jd', scale='utc', location=location)
         pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
         am = float(pointingAltAz.secz)
     return am
@@ -1120,6 +1112,20 @@ def get_pixel_scale(wcs_header, header, pixel_init):
         image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
         image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
     return image_scale
+
+
+def exp_time_med(exptimes):
+    # exposure time
+    consistent_et = False
+    if len(exptimes) > 0:
+        consistent_et = all(elem == exptimes[0] for elem in exptimes)
+
+    exptimes = np.array(exptimes)
+
+    if consistent_et:
+        return exptimes[0]
+    else:
+        return np.median(exptimes)
 
 
 # finds target in WCS image after applying proper motion correction from SIMBAD
@@ -1960,240 +1966,189 @@ def main():
                 alignmentBool = True
 
             wcs_hdr = None
+            new_routine = False
 
-            # open files, calibrate, align, photometry
-            for i, fileName in enumerate(inputfiles):
-                hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
-                                 ignore_missing_end=True)
+            if new_routine:
+                # open files, calibrate, align, photometry
+                for i, fileName in enumerate(inputfiles):
+                    hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
+                                     ignore_missing_end=True)
 
-                extension = 0
-                image_header = hdul[extension].header
-                while image_header["NAXIS"] == 0:
-                    extension += 1
+                    extension = 0
                     image_header = hdul[extension].header
+                    while image_header["NAXIS"] == 0:
+                        extension += 1
+                        image_header = hdul[extension].header
 
-                # TIME
-                timeVal = getJulianTime(image_header)
-                timeList.append(timeVal)
+                    # TIME
+                    timeVal = getJulianTime(image_header)
+                    timeList.append(timeVal)
 
-                # AIRMASS
-                airMass = getAirMass(hdul, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
-                                     exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
-                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+                    # AIRMASS
+                    airMass = getAirMass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
+                                         exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
+                    airMassList.append(airMass)  # adds that airmass value to the list of airmasses
 
-                # EXPOSURE_TIME
-                exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
-                if exp:
-                    exptimes.append(image_header['EXPTIME'])
-                else:
-                    exptimes.append(image_header['EXPOSURE'])
-
-                # IMAGES
-                imageData = hdul[extension].data
-
-                # CALS
-                imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
-
-                if i == 0:
-                    image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
-
-                    firstImage = np.copy(imageData)
-
-                    if alignmentBool:
-                        log_info("\n\nAligning your images. Please wait.")
-
-                # Image Alignment
-                if alignmentBool:
-                    tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
-                else:
-                    wcs_hdr = search_wcs(fileName)
-                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-
-                # apply transform
-                xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
-
-                psf_data["target_align"][i] = [xrot, yrot]
-                if i == 0:
-                    psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot])
-                else:
-                    if alignmentBool:
-                        psf_data["target"][i] = fit_centroid(
-                            imageData,
-                            [xrot, yrot],
-                            psf_data["target"][0][2:])
+                    # EXPOSURE_TIME
+                    exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
+                    if exp:
+                        exptimes.append(image_header['EXPTIME'])
                     else:
-                        if wcs_hdr.is_celestial:
-                            pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
-                            yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
+                        exptimes.append(image_header['EXPOSURE'])
+
+                    # IMAGES
+                    imageData = hdul[extension].data
+
+                    # CALS
+                    imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
+
+                    if i == 0:
+                        image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
+
+                        firstImage = np.copy(imageData)
+
+                        if alignmentBool:
+                            log_info("\n\nAligning your images. Please wait.")
+
+                    # Image Alignment
+                    if alignmentBool:
+                        tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                    else:
+                        wcs_hdr = search_wcs(fileName)
+                        tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+
+                    # apply transform
+                    xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
+
+                    psf_data["target_align"][i] = [xrot, yrot]
+                    if i == 0:
+                        psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot])
+                    else:
+                        if alignmentBool:
                             psf_data["target"][i] = fit_centroid(
                                 imageData,
                                 [xrot, yrot],
                                 psf_data["target"][0][2:])
                         else:
-                            # use previous PSF as prior
-                            psf_data["target"][i] = fit_centroid(
-                                imageData,
-                                psf_data["target"][i-1][:2],
-                                psf_data["target"][i-1][2:])
-
-                        # check for change in amplitude of PSF
-                        if np.abs((psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
-                            log_info("Can't find target. Trying to align...")
-
-                            tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
-                            
-                            xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
-
-                            psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], psf_data["target"][0][2:])
-
-                # fit for the centroids in all images
-                for j, coord in enumerate(compStarList):
-                    ckey = "comp{}".format(j+1)
-
-                    # apply transformation
-                    xrot, yrot = tform(coord)[0]
-
-                    psf_data[ckey+"_align"][i] = [xrot, yrot]
-                    if i == 0:
-                        psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot])
-                    else:
-                        if alignmentBool:
-                            psf_data[ckey][i] = fit_centroid(
-                                imageData,
-                                [xrot, yrot],
-                                psf_data[ckey][0][2:])
-                        else:
                             if wcs_hdr.is_celestial:
-                                pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                                pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
                                 yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
+                                psf_data["target"][i] = fit_centroid(
+                                    imageData,
+                                    [xrot, yrot],
+                                    psf_data["target"][0][2:])
+                            else:
+                                # use previous PSF as prior
+                                psf_data["target"][i] = fit_centroid(
+                                    imageData,
+                                    psf_data["target"][i-1][:2],
+                                    psf_data["target"][i-1][2:])
+
+                            # check for change in amplitude of PSF
+                            if np.abs((psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
+                                log_info("Can't find target. Trying to align...")
+
+                                tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+
+                                xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
+
+                                psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], psf_data["target"][0][2:])
+
+                    # fit for the centroids in all images
+                    for j, coord in enumerate(compStarList):
+                        ckey = "comp{}".format(j+1)
+
+                        # apply transformation
+                        xrot, yrot = tform(coord)[0]
+
+                        psf_data[ckey+"_align"][i] = [xrot, yrot]
+                        if i == 0:
+                            psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot])
+                        else:
+                            if alignmentBool:
                                 psf_data[ckey][i] = fit_centroid(
                                     imageData,
                                     [xrot, yrot],
                                     psf_data[ckey][0][2:])
-                            else:  # use previous PSF as prior
-                                psf_data[ckey][i] = fit_centroid(
-                                    imageData,
-                                    psf_data[ckey][i-1][:2],
-                                    psf_data[ckey][i-1][2:])
+                            else:
+                                if wcs_hdr.is_celestial:
+                                    pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                                    yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
+                                    psf_data[ckey][i] = fit_centroid(
+                                        imageData,
+                                        [xrot, yrot],
+                                        psf_data[ckey][0][2:])
+                                else:  # use previous PSF as prior
+                                    psf_data[ckey][i] = fit_centroid(
+                                        imageData,
+                                        psf_data[ckey][i-1][:2],
+                                        psf_data[ckey][i-1][2:])
 
-                            # check for change in amplitude of PSF
-                            if np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                # log_info("Can't find comp. Trying to align...")
+                                # check for change in amplitude of PSF
+                                if np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
+                                    # log_info("Can't find comp. Trying to align...")
 
-                                tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                                    tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 
-                                xrot, yrot = tform(coord)[0]
+                                    xrot, yrot = tform(coord)[0]
 
-                                psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:])
+                                    psf_data[ckey][i] = fit_centroid( imageData, [xrot, yrot], psf_data[ckey][0][2:])
 
-                # aperture photometry
-                if i == 0:
-                    sigma = float((psf_data["target"][0][3] + psf_data["target"][0][4]) * 0.5)
-                    apers *= sigma
-                    annuli *= sigma
+                    # aperture photometry
+                    if i == 0:
+                        sigma = float((psf_data["target"][0][3] + psf_data["target"][0][4]) * 0.5)
+                        apers *= sigma
+                        annuli *= sigma
 
-                for a, aper in enumerate(apers):
-                    for an, annulus in enumerate(annuli):
-                        aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                   psf_data["target"][
-                                                                                                       i, 0],
-                                                                                                   psf_data["target"][
-                                                                                                       i, 1],
-                                                                                                   aper, annulus)
+                    for a, aper in enumerate(apers):
+                        for an, annulus in enumerate(annuli):
+                            aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
+                                                                                                       psf_data["target"][
+                                                                                                           i, 0],
+                                                                                                       psf_data["target"][
+                                                                                                           i, 1],
+                                                                                                       aper, annulus)
 
-                        # loop through comp stars
-                        for j, coord in enumerate(compStarList):
-                            ckey = "comp{}".format(j + 1)
-                            aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                    psf_data[ckey][
-                                                                                                        i, 0],
-                                                                                                    psf_data[ckey][
-                                                                                                        i, 1],
-                                                                                                    aper, annulus)
+                            # loop through comp stars
+                            for j, coord in enumerate(compStarList):
+                                ckey = "comp{}".format(j + 1)
+                                aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
+                                                                                                        psf_data[ckey][
+                                                                                                            i, 0],
+                                                                                                        psf_data[ckey][
+                                                                                                            i, 1],
+                                                                                                        aper, annulus)
 
-                # close file + delete from memory
-                hdul.close()
-                del hdul
+                    # close file + delete from memory
+                    hdul.close()
+                    del hdul
 
-            # filter bad images
-            badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
-                aper_data["target"][:, 0, 0])
-            if np.sum(~badmask) == 0:
-                log_info("No images to fit...check reference image for alignment (first image of sequence)")
+                # filter bad images
+                badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
+                    aper_data["target"][:, 0, 0])
+                if np.sum(~badmask) == 0:
+                    log_info("No images to fit...check reference image for alignment (first image of sequence)")
 
-            # convert to numpy arrays
-            times = np.array(timeList)[~badmask]
-            airmass = np.array(airMassList)[~badmask]
-            psf_data["target"] = psf_data["target"][~badmask]
-            psf_data["target_align"] = psf_data["target_align"][~badmask]
-            si = np.argsort(times)
+                # convert to numpy arrays
+                times = np.array(timeList)[~badmask]
+                airmass = np.array(airMassList)[~badmask]
+                psf_data["target"] = psf_data["target"][~badmask]
+                psf_data["target_align"] = psf_data["target_align"][~badmask]
+                si = np.argsort(times)
 
-            # exposure time
-            consistent_et = False
-            if len(exptimes) > 0:
-                consistent_et = all(elem == exptimes[0] for elem in exptimes)
+                exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
-            exptimes = np.array(exptimes)
+                # PSF flux
+                tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
 
-            if consistent_et:
-                exotic_infoDict['exposure'] = exptimes[0]
-            else:
-                exotic_infoDict['exposure'] = np.median(exptimes)
+                # loop over comp stars
+                for j, coord in enumerate(compStarList):
+                    ckey = "comp{}".format(j + 1)
+                    psf_data[ckey] = psf_data[ckey][~badmask]
+                    psf_data[ckey + "_align"] = psf_data[ckey + "_align"][~badmask]
 
-            # PSF flux
-            tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
-
-            # loop over comp stars
-            for j, coord in enumerate(compStarList):
-                ckey = "comp{}".format(j + 1)
-                psf_data[ckey] = psf_data[ckey][~badmask]
-                psf_data[ckey + "_align"] = psf_data[ckey + "_align"][~badmask]
-
-                cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
-                for k in myfit.bounds.keys():
-                    log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
-
-                log.debug('The Residual Standard Deviation is: ' + str(
-                    round(100 * myfit.residuals.std() / np.median(myfit.data), 6)) + "%")
-                log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals ** 2), 6)) + '\n')
-
-                resstd = myfit.residuals.std() / np.median(myfit.data)
-                if minSTD > resstd:  # If the standard deviation is less than the previous min
-                    bestCompStar = j + 1
-                    comp_coords = coord
-                    minSTD = resstd
-                    minAperture = 0
-                    minAnnulus = 15 * sigma
-                    arrayNormUnc = myfit.dataerr
-
-                    # sets the lists we want to print to correspond to the optimal aperature
-                    goodFluxes = np.copy(myfit.data)
-                    goodNormUnc = np.copy(myfit.dataerr)
-                    nonBJDTimes = np.copy(myfit.time)
-                    goodAirmasses = np.copy(myfit.airmass)
-                    goodTargets = tFlux
-                    goodReferences = cFlux
-                    goodTUnc = tFlux ** 0.5
-                    goodRUnc = cFlux ** 0.5
-                    bestlmfit = myfit
-
-                    finXTargCent = psf_data["target"][:, 0]
-                    finYTargCent = psf_data["target"][:, 1]
-                    finXRefCent = psf_data[ckey][:, 0]
-                    finYRefCent = psf_data[ckey][:, 1]
-
-            log_info("Computing best comparison star, aperture, and sky annulus. Please wait.")
-
-            # Aperture Photometry
-            for a, aper in enumerate(apers):
-
-                for an, annulus in enumerate(annuli):
-                    tFlux = aper_data['target'][:, a, an]
-
-                    # fit without a comparison star
-                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
-
+                    cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
+                    myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
                     for k in myfit.bounds.keys():
                         log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
 
@@ -2203,22 +2158,22 @@ def main():
 
                     resstd = myfit.residuals.std() / np.median(myfit.data)
                     if minSTD > resstd:  # If the standard deviation is less than the previous min
+                        bestCompStar = j + 1
+                        comp_coords = coord
                         minSTD = resstd
-                        minAperture = -aper
-                        minAnnulus = annulus
-                        arrayNormUnc = tFlux**0.5
+                        minAperture = 0
+                        minAnnulus = 15 * sigma
+                        arrayNormUnc = myfit.dataerr
 
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
                         goodNormUnc = np.copy(myfit.dataerr)
                         nonBJDTimes = np.copy(myfit.time)
-                        nonBJDPhases = np.copy(myfit.phase)
                         goodAirmasses = np.copy(myfit.airmass)
                         goodTargets = tFlux
                         goodReferences = cFlux
                         goodTUnc = tFlux ** 0.5
                         goodRUnc = cFlux ** 0.5
-                        goodResids = myfit.residuals
                         bestlmfit = myfit
 
                         finXTargCent = psf_data["target"][:, 0]
@@ -2226,12 +2181,16 @@ def main():
                         finXRefCent = psf_data[ckey][:, 0]
                         finYRefCent = psf_data[ckey][:, 1]
 
-                    # try to fit data with comp star
-                    for j, coord in enumerate(compStarList):
-                        ckey = "comp{}".format(j + 1)
-                        cFlux = aper_data[ckey][:, a, an]
+                log_info("Computing best comparison star, aperture, and sky annulus. Please wait.")
 
-                        myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                # Aperture Photometry
+                for a, aper in enumerate(apers):
+
+                    for an, annulus in enumerate(annuli):
+                        tFlux = aper_data['target'][:, a, an]
+
+                        # fit without a comparison star
+                        myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
                         for k in myfit.bounds.keys():
                             log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
@@ -2242,12 +2201,10 @@ def main():
 
                         resstd = myfit.residuals.std() / np.median(myfit.data)
                         if minSTD > resstd:  # If the standard deviation is less than the previous min
-                            bestCompStar = j + 1
-                            comp_coords = coord
                             minSTD = resstd
-                            minAperture = aper
+                            minAperture = -aper
                             minAnnulus = annulus
-                            arrayNormUnc = arrayNormUnc
+                            arrayNormUnc = tFlux**0.5
 
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = np.copy(myfit.data)
@@ -2267,24 +2224,568 @@ def main():
                             finXRefCent = psf_data[ckey][:, 0]
                             finYRefCent = psf_data[ckey][:, 1]
 
-            # log best fit
-            log_info("\n\n*********************************************")
-            if minAperture == 0:  # psf
-                log_info(f"Best Comparison Star: #{bestCompStar}")
-                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
-                log_info("Optimal Method: PSF photometry")
-            elif minAperture < 0:  # no comp star
-                log_info("Best Comparison Star: None")
-                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
-                log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
-                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
-                bestCompStar = None
+                        # try to fit data with comp star
+                        for j, coord in enumerate(compStarList):
+                            ckey = "comp{}".format(j + 1)
+                            cFlux = aper_data[ckey][:, a, an]
+
+                            myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+
+                            for k in myfit.bounds.keys():
+                                log.debug("  {}: {:.6f}".format(k, myfit.parameters[k]))
+
+                            log.debug('The Residual Standard Deviation is: ' + str(
+                                round(100 * myfit.residuals.std() / np.median(myfit.data), 6)) + "%")
+                            log.debug('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals ** 2), 6)) + '\n')
+
+                            resstd = myfit.residuals.std() / np.median(myfit.data)
+                            if minSTD > resstd:  # If the standard deviation is less than the previous min
+                                bestCompStar = j + 1
+                                comp_coords = coord
+                                minSTD = resstd
+                                minAperture = aper
+                                minAnnulus = annulus
+                                arrayNormUnc = arrayNormUnc
+
+                                # sets the lists we want to print to correspond to the optimal aperature
+                                goodFluxes = np.copy(myfit.data)
+                                goodNormUnc = np.copy(myfit.dataerr)
+                                nonBJDTimes = np.copy(myfit.time)
+                                nonBJDPhases = np.copy(myfit.phase)
+                                goodAirmasses = np.copy(myfit.airmass)
+                                goodTargets = tFlux
+                                goodReferences = cFlux
+                                goodTUnc = tFlux ** 0.5
+                                goodRUnc = cFlux ** 0.5
+                                goodResids = myfit.residuals
+                                bestlmfit = myfit
+
+                                finXTargCent = psf_data["target"][:, 0]
+                                finYTargCent = psf_data["target"][:, 1]
+                                finXRefCent = psf_data[ckey][:, 0]
+                                finYRefCent = psf_data[ckey][:, 1]
+
+                # log best fit
+                log_info("\n\n*********************************************")
+                if minAperture == 0:  # psf
+                    log_info(f"Best Comparison Star: #{bestCompStar}")
+                    log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                    log_info("Optimal Method: PSF photometry")
+                elif minAperture < 0:  # no comp star
+                    log_info("Best Comparison Star: None")
+                    log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                    log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
+                    log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+                    bestCompStar = None
+                else:
+                    log_info(f"Best Comparison Star: #{bestCompStar}")
+                    log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                    log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
+                    log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+                log_info("*********************************************\n")
             else:
-                log_info(f"Best Comparison Star: #{bestCompStar}")
-                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
-                log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
-                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
-            log_info("*********************************************\n")
+                targetFluxVals, referenceFluxVals, normalizedFluxVals, targUncertanties, refUncertanties, timesListed, phasesList, airMassList = (
+                    [] for l in range(8))
+
+                fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
+                    [] for m in range(10))
+                firstImage = fits.getdata(inputfiles[0], ext=0)
+
+                targx, targy, targamplitude, targsigX, targsigY, targrot, targoff = fit_centroid(firstImage,
+                                                                                                 [exotic_UIprevTPX, exotic_UIprevTPY],
+                                                                                                 box=10)
+                ext_list = []
+                for i, fileName in enumerate(inputfiles):
+                    extension = 0
+
+                    image_header = fits.getheader(fileName, ext=extension)
+                    while image_header["NAXIS"] == 0:
+                        extension += 1
+                        image_header = fits.getheader(fileName, ext=extension)
+
+                    ext_list.append(extension)
+
+                    # TIME
+                    timeVal = getJulianTime(image_header)
+                    timesListed.append(timeVal)
+
+                    # AIRMASS
+                    airMass = getAirMass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
+                                         exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
+                    airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+
+                    # EXPOSURE_TIME
+                    exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
+                    if exp:
+                        exptimes.append(image_header['EXPTIME'])
+                    else:
+                        exptimes.append(image_header['EXPOSURE'])
+
+                    if i == 0:
+                        image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
+
+                exotic_infoDict['exposure'] = exp_time_med(exptimes)
+
+                minAperture = max(1, int(2 * max(targsigX, targsigY)))
+                maxAperture = int(5 * max(targsigX, targsigY) + 1)
+                minAnnulus = 2
+                maxAnnulus = 5
+
+                # exit()
+                # fit centroids for first image to determine priors to be used later
+                for compCounter in range(0, len(compStarList)):
+                    print('\n\n***************************************************************')
+                    print('Determining Optimal Aperture and Annulus Size for Comp Star #' + str(compCounter + 1))
+                    print('***************************************************************')
+
+                    # #just in case comp star drifted off and timeSortedNames had to be altered, reset it for the new comp star
+                    # timeSortedNames = tsnCopy
+
+                    UIprevRPX, UIprevRPY = compStarList[compCounter]
+                    print('Target X: ' + str(round(targx)) + ' Target Y: ' + str(round(targy)))
+                    refx, refy, refamplitude, refsigX, refsigY, retrot, refoff = fit_centroid(firstImage,
+                                                                                              [UIprevRPX, UIprevRPY],
+                                                                                              box=10)
+                    print('Comparison X: ' + str(round(refx)) + ' Comparison Y: ' + str(round(refy)) + '\n')
+
+                    # determines the aperture and annulus combinations to iterate through based on the sigmas of the LM fit
+                    aperture_min = int(3 * np.nanmax([targsigX, targsigY]))
+                    aperture_max = int(5 * np.nanmax([targsigX, targsigY]))
+
+                    # Run through only 5 different aperture sizes, all interger pixel values
+                    aperture_step = np.nanmax(
+                        [1, (aperture_max + 1 - aperture_min) // 5])  # forces step size to be at least 1
+                    aperture_sizes = np.arange(aperture_min, aperture_max + 1, aperture_step)
+                    if aperture_min <= 1:
+                        aperture_sizes = np.arange(1, 10, 2)
+
+                    # single annulus size
+                    annulus_sizes = [5]
+
+                    target_fits = {}
+                    ref_fits = {}
+                    reg_trans = {}
+
+                    for apertureR in aperture_sizes:  # aperture loop
+                        for annulusR in annulus_sizes:  # annulus loop # no need
+                            # don't reprocess
+                            if apertureR < 0 and compCounter > 0:
+                                continue
+
+                                # only do PSF fit in first annulus for loop
+                            if apertureR == 0 and annulusR != annulus_sizes[0]:
+                                continue
+
+                            if apertureR == 0:
+                                print('Testing Comparison Star #' + str(compCounter + 1) + ' with a PSF photometry.')
+                            elif apertureR < 0 and compCounter == 0:
+                                print('Testing NO Comparison Star with a ' + str(
+                                    abs(apertureR)) + ' pixel aperture and a ' + str(abs(annulusR)) + ' pixel annulus.')
+                            else:
+                                print('Testing Comparison Star #' + str(compCounter + 1) + ' with a ' + str(
+                                    apertureR) + ' pixel aperture and a ' + str(annulusR) + ' pixel annulus.')
+
+                            for fileNumber, imageFile in enumerate(inputfiles):
+
+                                hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False)  # opens the fits file
+                                imageData = hdul[ext_list[fileNumber]].data  # Extracts data from the image file
+
+                                imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, fileNumber)
+
+                                if apertureR == 0:  # psf fit
+                                    continue
+
+                                # Find the target star in the image and get its pixel coordinates if it is the first file
+                                if fileNumber == 0:
+                                    # Initializing the star location guess as the user inputted pixel coordinates
+                                    prevTPX, prevTPY, prevRPX, prevRPY = exotic_UIprevTPX, exotic_UIprevTPY, UIprevRPX, UIprevRPY  # 398, 275, 419, 203
+                                    prevTSigX, prevTSigY, prevRSigX, prevRSigY = targsigX, targsigY, refsigX, refsigY
+                                    prevImageData = imageData  # no shift should be registered
+
+                                # ------ CENTROID FITTING ----------------------------------------
+
+                                # corrects for any image shifts that result from a tracking slip
+                                # shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
+                                if fileNumber in reg_trans.keys():
+                                    shift, error, diffphase = reg_trans[fileNumber]
+                                else:
+                                    shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
+                                    reg_trans[fileNumber] = [shift, error, diffphase]
+
+                                xShift = shift[1]
+                                yShift = shift[0]
+
+                                prevTPX = prevTPX - xShift
+                                prevTPY = prevTPY - yShift
+                                prevRPX = prevRPX - xShift
+                                prevRPY = prevRPY - yShift
+
+                                # set target search area
+                                txmin = int(prevTPX) - distFC  # left
+                                txmax = int(prevTPX) + distFC  # right
+                                tymin = int(prevTPY) - distFC  # top
+                                tymax = int(prevTPY) + distFC  # bottom
+
+                                # boolean that represents if either the target or comp star gets too close to the detector
+                                driftBool = False
+
+                                # check if your target star is too close to the edge of the detector
+                                if txmin <= 0 or tymin <= 0 or txmax >= len(imageData) or tymax >= len(imageData[0]):
+                                    print('*************************************************************************************')
+                                    print('WARNING: In image ' + str(fileNumber) + ', your target star has drifted too close to the edge of the detector.')
+                                    # tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
+                                    print('All the remaining images after image #' + str(fileNumber - 1) + ' will be ignored')
+                                    driftBool = True
+
+                                    # mask off the rest of timeSortedNames and then ignore the rest of the procedure until
+
+                                # Set reference search area
+                                rxmin = int(prevRPX) - distFC  # left
+                                rxmax = int(prevRPX) + distFC  # right
+                                rymin = int(prevRPY) - distFC  # top
+                                rymax = int(prevRPY) + distFC  # bottom
+
+                                # check if the reference is too close to the edge of the detector
+                                if (rxmin <= 0 or rymin <= 0 or rxmax >= len(imageData[0]) or rymax >= len(imageData)):
+                                    print('*************************************************************************************')
+                                    print('WARNING: In image ' + str(fileNumber) + ', your reference star has drifted too close to the edge of the detector.')
+                                    # tooClose = int(input('Enter "1" to pick a new comparison star or enter "2" to continue using the same comp star, with the images with all the remaining images ignored \n'))
+                                    print('All the remaining images after image #' + str(fileNumber - 1) + ' will be ignored for this comparison star')
+                                    print('*************************************************************************************')
+                                    driftBool = True
+
+                                # if the star isn't too close, then proceed as normal
+                                if not driftBool:
+                                    targSearchA = imageData[tymin:tymax, txmin:txmax]
+                                    refSearchA = imageData[rymin:rymax, rxmin:rxmax]
+
+                                    targPos = [prevTPX, prevTPY]
+
+                                    # get minimum background value bigger than 0
+                                    targImFlat = np.sort(np.array(targSearchA).ravel())
+
+                                    # Initialize the variable
+                                    tGuessBkg = 0
+                                    for el in targImFlat:
+                                        if el > 0:
+                                            tGuessBkg = el
+                                            break
+
+                                    refImFlat = np.sort(np.array(refSearchA).ravel())
+                                    for rel in refImFlat:
+                                        if rel > 0:
+                                            rGuessBkg = rel
+                                            break
+
+                                    # Guess at Gaussian Parameters and feed them in to help gaussian fitter
+
+                                    tGuessAmp = targSearchA.max() - tGuessBkg
+                                    if tGuessAmp < 0:
+                                        print('Error: the Darks have a higher pixel counts than the image itself')
+                                    myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, tGuessBkg]
+
+                                    # tx, ty, tamplitude, tsigX, tsigY, toff = fit_centroid(imageData, targPos,
+                                    #                                                     init=myPriors, box=distFC)
+                                    if fileNumber in target_fits.keys():
+                                        tx, ty, tamplitude, tsigX, tsigY, toff = target_fits[fileNumber]
+                                    else:
+                                        tx, ty, tamplitude, tsigX, tsigY, trot, toff = fit_centroid(imageData, targPos,
+                                                                                                    init=myPriors,
+                                                                                                    box=distFC)
+                                        target_fits[fileNumber] = [tx, ty, tamplitude, tsigX, tsigY, toff]
+
+                                    currTPX = tx
+                                    currTPY = ty
+
+                                    # append to list of target centroid positions for later plotting
+                                    xTargCent.append(currTPX)
+                                    yTargCent.append(currTPY)
+
+                                    rGuessAmp = refSearchA.max() - rGuessBkg
+                                    myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, rGuessBkg]
+                                    # rx, ry, ramplitude, rsigX, rsigY, roff = fit_centroid(imageData, [prevRPX, prevRPY],
+                                    # init=myRefPriors, box=distFC)
+                                    if fileNumber in ref_fits.keys():
+                                        rx, ry, ramplitude, rsigX, rsigY, roff = ref_fits[fileNumber]
+                                    else:
+                                        rx, ry, ramplitude, rsigX, rsigY, rrot, roff = fit_centroid(imageData,
+                                                                                                    [prevRPX, prevRPY],
+                                                                                                    init=myRefPriors,
+                                                                                                    box=distFC)
+                                        ref_fits[fileNumber] = [rx, ry, ramplitude, rsigX, rsigY, roff]
+                                    currRPX = rx
+                                    currRPY = ry
+
+                                    # append to list of reference centroid positions for later plotting
+                                    xRefCent.append(currRPX)
+                                    yRefCent.append(currRPY)
+
+                                    if tamplitude < 0 or tsigX < 0 or tsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
+                                        print('Could not fit 2D gaussian to Target for File Number' + str(fileNumber))
+
+                                    elif ramplitude < 0 or rsigX < 0 or rsigY < 0:  # gets rid of negative amplitude values that indicate it couldn't fit gaussian
+                                        print('Could not fit 2D gaussian to Comparison Star for File Number' + str(
+                                            fileNumber))
+
+                                    else:
+                                        # ------FLUX CALCULATION WITH BACKGROUND SUBTRACTION----------------------------------
+
+                                        # gets the flux value of the target star and subtracts the background light
+                                        tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, abs(apertureR),
+                                                                    annulusR)
+                                        targetFluxVals.append(
+                                            tFluxVal)  # adds tFluxVal to the total list of flux values of target star
+                                        targUncertanties.append(np.sqrt(
+                                            tFluxVal))  # uncertanty on each point is the sqrt of the total counts
+
+                                        # gets the flux value of the reference star and subracts the background light
+                                        rFluxVal, rTotCts = aperPhot(imageData, currRPX, currRPY, abs(apertureR),
+                                                                    annulusR)
+                                        referenceFluxVals.append(
+                                            rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
+                                        refUncertanties.append(np.sqrt(rFluxVal))
+
+                                        # # TIME
+                                        # currTime = getJulianTime(hDul)
+                                        # timesListed.append(currTime)
+
+                                        # ORBITAL PHASE
+                                        currentPhase = getPhase(timesListed[fileNumber], pDict['pPer'], pDict['midT'])
+                                        phasesList.append(currentPhase)  # adds to list of phases
+
+                                        # # AIRMASS
+                                        # airMass = getAirMass(hDul)  # gets the airmass at the time the image was taken
+                                        # airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+
+                                        # UPDATE PIXEL COORDINATES and SIGMAS
+                                        # target
+                                        prevTPX = currTPX
+                                        prevTPY = currTPY
+                                        prevTSigX = tsigX
+                                        prevTSigY = tsigY
+                                        # reference
+                                        prevRPX = currRPX
+                                        prevRPY = currRPY
+                                        prevRSigX = rsigX
+                                        prevTSigY = rsigY
+
+                                    # UPDATE FILE COUNT
+                                    prevImageData = imageData
+                                    # fileNumber = fileNumber + 1
+                                    # hDul.close()  # close the stream
+
+                                # otherwise, mask off the rest of the files from time sorted names including the current one
+                                else:
+                                    print("\nFiltering data to account for drifting target.")
+                                    # timeSortedNames = timeSortedNames[:fileNumber]
+
+                                    # TIME
+                                    timesListed = timesListed[:fileNumber]
+
+                                    # AIRMASS
+                                    airMassList = airMassList[:fileNumber]
+
+                                    # ALL IMAGES
+                                    inputfiles = inputfiles[:fileNumber]
+
+                                    break
+
+                            # EXIT THE FILE LOOP
+
+                            # Convert Everything to numpy Arrays
+                            arrayTimes = np.array(timesListed)
+                            arrayPhases = np.array(phasesList)
+                            arrayAirmass = np.array(airMassList)
+
+                            if apertureR == 0:  # psf fit
+                                tpsfflux = []
+                                rpsfflux = []
+                                for k in target_fits.keys():
+                                    xc, yc, amp, sigx, sigy, off = target_fits[k]
+                                    tpsfflux.append(2 * PI * sigx * sigy * amp)
+                                    xc, yc, amp, sigx, sigy, off = ref_fits[k]
+                                    rpsfflux.append(2 * PI * sigx * sigy * amp)
+                                arrayReferences = np.array(rpsfflux)
+                                arrayTUnc = arrayFinalFlux ** 0.5
+                                arrayRUnc = arrayReferences ** 0.5
+
+                                arrayFinalFlux = np.array(tpsfflux) / arrayReferences
+                                arrayNormUnc = arrayTUnc / arrayReferences
+                            elif apertureR < 0:  # no comp star
+                                arrayReferences = np.array(referenceFluxVals)
+                                arrayTUnc = np.array(targUncertanties)
+                                arrayRUnc = np.array(refUncertanties)
+
+                                arrayFinalFlux = np.array(targetFluxVals)
+                                arrayNormUnc = np.array(targUncertanties)
+                            else:
+                                # aperture phot
+                                arrayReferences = np.array(referenceFluxVals)
+                                arrayTUnc = np.array(targUncertanties)
+                                arrayRUnc = np.array(refUncertanties)
+
+                                arrayFinalFlux = np.array(targetFluxVals) / arrayReferences
+                                arrayNormUnc = arrayTUnc / arrayReferences
+
+                            # Execute sigma_clip
+                            try:
+                                filtered_data = sigma_clip(arrayFinalFlux, sigma=3)
+                            except TypeError:
+                                filtered_data = sigma_clip(arrayFinalFlux, sigma=3)
+
+                            # -----LM LIGHTCURVE FIT--------------------------------------
+                            prior = {
+                                'rprs': pDict['rprs'],  # Rp/Rs
+                                'ars': pDict['aRs'],  # a/Rs
+                                'per': pDict['pPer'],  # Period [day]
+                                'inc': pDict['inc'],  # Inclination [deg]
+                                'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
+                                'ecc': pDict['ecc'],  # Eccentricity
+                                'omega': 0,  # Arg of periastron
+                                'tmid': pDict['midT'],  # time of mid transit [day]
+                                'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
+                                'a2': 0,  # Flux lower bound
+                            }
+
+                            phase = (arrayTimes[~filtered_data] - pDict['midT']) / prior['per']
+                            prior['tmid'] = pDict['midT'] + np.floor(phase).max() * prior['per']
+                            upper = prior['tmid'] + np.abs(
+                                25 * pDict['midTUnc'] + np.floor(phase).max() * 25 * pDict['pPerUnc'])
+                            lower = prior['tmid'] - np.abs(
+                                25 * pDict['midTUnc'] + np.floor(phase).max() * 25 * pDict['pPerUnc'])
+
+                            if np.floor(phase).max() - np.floor(phase).min() == 0:
+                                print("WARNING!")
+                                print(" Estimated mid-transit time is not within the observations")
+                                print(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
+                                print('  obs start:', arrayTimes[~filtered_data].min())
+                                print('    obs end:', arrayTimes[~filtered_data].max())
+                                print(' tmid prior:', prior['tmid'])
+
+                            # check for Nans + Zeros
+                            for k in pDict:
+                                if "Unc" in k:
+                                    if not pDict[k]:
+                                        print(
+                                            " WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(
+                                                k))
+                                        pDict[k] = 1
+                                    elif pDict[k] == 0 or np.isnan(pDict[k]):
+                                        print(
+                                            " WARNING! {} uncertainty is 0. Please use a non-zero value in inits.json".format(
+                                                k))
+                                        pDict[k] = 1
+                                elif pDict[k] == None:
+                                    print(" WARNING! {} is None. Please use a numeric value in inits.json".format(k))
+                                    pDict[k] = 0
+
+                            mybounds = {
+                                'rprs': [0, pDict['rprs'] + 3 * pDict['rprsUnc']],
+                                'tmid': [max(lower, arrayTimes[~filtered_data].min()),
+                                         min(arrayTimes[~filtered_data].max(), upper)],
+                                'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
+
+                                'a1': [0, 3 * max(arrayFinalFlux[~filtered_data])],
+                                'a2': [-3, 3],
+                                # 'a3':[0, max(arrayFinalFlux[~filtered_data])]
+                            }
+
+                            myfit = lc_fitter(
+                                arrayTimes[~filtered_data],
+                                arrayFinalFlux[~filtered_data],
+                                arrayNormUnc[~filtered_data],
+                                arrayAirmass[~filtered_data],
+                                prior,
+                                mybounds,
+                                mode='lm'
+                            )
+
+                            for k in myfit.bounds.keys():
+                                print("  {}: {:.6f}".format(k, myfit.parameters[k]))  # , myfit.errors[k]))
+
+                            print('The Residual Standard Deviation is: ' + str(
+                                round(100 * myfit.residuals.std() / np.median(myfit.data), 6)) + "%")
+                            print('The Mean Squared Error is: ' + str(round(np.sum(myfit.residuals ** 2), 6)) + '\n')
+                            resstd = myfit.residuals.std() / np.median(myfit.data)
+                            if minSTD > resstd:  # If the standard deviation is less than the previous min
+                                bestCompStar = compCounter + 1
+                                comp_coords = [UIprevRPX, UIprevRPY]
+                                minSTD = resstd  # set the minimum standard deviation to that
+
+                                arrayNormUnc = arrayNormUnc * np.sqrt(
+                                    myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
+                                minAnnulus = annulusR  # then set min aperature and annulus to those values
+                                minAperture = apertureR
+
+                                if len(xTargCent) > 0:
+                                    # gets the centroid trace plots to ensure tracking is working
+                                    finXTargCentArray = np.array(xTargCent)
+                                    finYTargCentArray = np.array(yTargCent)
+                                    finXRefCentArray = np.array(xRefCent)
+                                    finYRefCentArray = np.array(yRefCent)
+                                else:
+                                    # PSF fit usually
+                                    finXTargCentArray = np.array([target_fits[k][0] for k in target_fits])
+                                    finYTargCentArray = np.array([target_fits[k][1] for k in target_fits])
+                                    finYRefCentArray = np.array([ref_fits[k][1] for k in ref_fits])
+                                    finXRefCentArray = np.array([ref_fits[k][0] for k in ref_fits])
+                                    arrayPhases = getPhase(arrayTimes, pDict['pPer'], myfit.parameters['tmid'])
+
+                                # APPLY DATA FILTER
+                                # apply data filter sets the lists we want to print to correspond to the optimal aperature
+                                finXTargCent = finXTargCentArray[~filtered_data]
+                                finYTargCent = finYTargCentArray[~filtered_data]
+                                finXRefCent = finXRefCentArray[~filtered_data]
+                                finYRefCent = finYRefCentArray[~filtered_data]
+
+                                # sets the lists we want to print to correspond to the optimal aperature
+                                goodFluxes = arrayFinalFlux[~filtered_data]
+                                nonBJDTimes = arrayTimes[~filtered_data]
+                                nonBJDPhases = arrayPhases[~filtered_data]
+                                goodAirmasses = arrayAirmass[~filtered_data]
+                                goodTargets = arrayFinalFlux[~filtered_data]
+                                goodReferences = arrayReferences[~filtered_data]
+                                goodTUnc = arrayTUnc[~filtered_data]
+                                goodRUnc = arrayRUnc[~filtered_data]
+                                goodNormUnc = arrayNormUnc[~filtered_data]
+                                goodResids = myfit.residuals
+                                bestlmfit = myfit
+
+                            # Reinitialize the the arrays to be empty
+                            # airMassList = []
+                            phasesList = []
+                            # timesListed = []
+                            targetFluxVals = []
+                            referenceFluxVals = []
+                            targUncertanties = []
+                            refUncertanties = []
+                            normUncertainties = []
+                            xTargCent = []
+                            yTargCent = []
+                            xRefCent = []
+                            yRefCent = []
+
+                        # Exit aperture loop
+                        # Exit annulus loop
+                        # Exit the Comp Stars Loop
+
+                    log_info("\n\n*********************************************")
+                    if minAperture == 0:  # psf
+                        log_info(f"Best Comparison Star: #{bestCompStar}")
+                        log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                        log_info("Optimal Method: PSF photometry")
+                    elif minAperture < 0:  # no comp star
+                        log_info("Best Comparison Star: None")
+                        log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                        log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
+                        log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+                        bestCompStar = None
+                    else:
+                        log_info(f"Best Comparison Star: #{bestCompStar}")
+                        log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+                        log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
+                        log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+                    log_info("*********************************************\n")
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
@@ -2335,7 +2836,10 @@ def main():
             goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = goodAirmasses[si][gi]
 
-            picframe = 10 * (minAperture + 15 * sigma)
+            if new_routine:
+                picframe = 10 * (minAperture + 15 * sigma)
+            else:
+                picframe = 10 * (minAperture + 15)
             pltx = [max([0, min([finXTargCent[0], finXRefCent[0]]) - picframe]),
                     min([np.shape(firstImage)[1], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
             plty = [max([0, min([finYTargCent[0], finYRefCent[0]]) - picframe]),

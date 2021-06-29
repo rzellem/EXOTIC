@@ -1877,11 +1877,12 @@ def main():
 
             # checks for MOBS data
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
-            if "MicroObservatory" in mobs_header['CREATOR']:
-                if exotic_infoDict['second_obs'].upper() != "N/A":
-                    exotic_infoDict['second_obs'] += ",MOBS"
-                else:
-                    exotic_infoDict['second_obs'] = "MOBS"
+            if 'CREATOR' in mobs_header:
+                if "MicroObservatory" in mobs_header['CREATOR']:
+                    if exotic_infoDict['second_obs'].upper() != "N/A":
+                        exotic_infoDict['second_obs'] += ",MOBS"
+                    else:
+                        exotic_infoDict['second_obs'] = "MOBS"
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]

@@ -1861,8 +1861,6 @@ def main():
 
             allImageData, timeList, airMassList, exptimes = [], [], [], []
 
-            # TODO filter input files to get good reference for image alignment
-
             inputfiles = corruption_check(exotic_infoDict['images'])
 
             # time sort images

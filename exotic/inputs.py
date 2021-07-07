@@ -483,11 +483,11 @@ def prereduced_file(file):
 
 
 def data_file_time(time_format):
-    log_info("\nNOTE: If your file is not in one of the following formats, "
-             "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
-
     while True:
         if not time_format:
+            log_info("\nNOTE: If your file is not in one of the following formats, "
+                     "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
+
             time_format = user_input("\nWhich of the following time formats is your data file stored in? "
                                      "\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
         time_format = time_format.upper().strip()
@@ -500,11 +500,11 @@ def data_file_time(time_format):
 
 
 def data_file_units(units):
-    log_info("\nNOTE: If your file is not in one of the following units, "
-             "\nplease re-reduce your data into one of the units of flux recognized by EXOTIC.")
-
     while True:
         if not units:
+            log_info("\nNOTE: If your file is not in one of the following units, "
+                     "\nplease re-reduce your data into one of the units of flux recognized by EXOTIC.")
+
             units = user_input("\nWhich of the following units of flux is your data file stored in? "
                                "\nflux / magnitude / millimagnitude: ", type_=str)
         units = units.lower().strip()

@@ -1306,6 +1306,27 @@ def nearestTransitTime(timeData, period, originalT):
     return nearT
 
 
+def save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords):
+    comp_star = []
+
+    if bestCompStar:
+        comp_ra = None
+        comp_dec = None
+
+        if wcs_file:
+            comp_ra = ra_file[int(comp_coords[1])][int(comp_coords[0])]
+            comp_dec = dec_file[int(comp_coords[1])][int(comp_coords[0])]
+
+        comp_star.append({
+            'ra': str(comp_ra) if comp_ra else comp_ra,
+            'dec': str(comp_dec) if comp_dec else comp_dec,
+            'x': str(comp_coords[0]) if comp_coords[0] else comp_coords[0],
+            'y': str(comp_coords[1]) if comp_coords[1] else comp_coords[1]
+        })
+
+    return comp_star
+
+
 # make plots of the centroid positions as a function of time
 def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     times = np.array(times)
@@ -3133,17 +3154,17 @@ def main():
 
         ###################################################################################
 
-        # triangle plot
-        fig, axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4, 0.85],
-                                               smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
-                                               hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()),
-                                      fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
-        fig.savefig(Path(exotic_infoDict['save']) / "temp" /
-                    f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
-        plt.close()
-
-        phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
+        #triangle plot
+        # fig, axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4, 0.85],
+        #                                        smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
+        #                                        hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
+        # dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()),
+        #                               fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
+        # fig.savefig(Path(exotic_infoDict['save']) / "temp" /
+        #             f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
+        # plt.close()
+        #
+        # phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
 
         ##########
         # PSF data
@@ -3232,23 +3253,6 @@ def main():
         log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
-        comp_star = []
-
-        if bestCompStar:
-            comp_ra = None
-            comp_dec = None
-
-            if wcs_file:
-                comp_ra = ra_file[int(comp_coords[1])][int(comp_coords[0])]
-                comp_dec = dec_file[int(comp_coords[1])][int(comp_coords[0])]
-
-            comp_star.append({
-                'ra': str(comp_ra) if comp_ra else comp_ra,
-                'dec': str(comp_dec) if comp_dec else comp_dec,
-                'x': str(comp_coords[0]) if comp_coords[0] else comp_coords[0],
-                'y': str(comp_coords[1]) if comp_coords[1] else comp_coords[1]
-            })
-
         ##########
         # SAVE DATA
         ##########
@@ -3265,11 +3269,12 @@ def main():
         except Exception as e:
             log_info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
         try:
-            output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
+            output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
+                               goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
 
-        log_info("Output File Saved")
+        log_info("Output Files Saved")
 
         log_info("\n************************")
         log_info("End of Reduction Process")

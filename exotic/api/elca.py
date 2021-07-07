@@ -43,7 +43,7 @@
 # ########################################################################### #
 
 import copy
-from numba import njit, types
+from numba import njit
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -53,9 +53,10 @@ from dynesty.utils import resample_equal
 
 from scipy.optimize import least_squares
 from scipy.ndimage import gaussian_filter as norm_kde
+from scipy.signal import savgol_filter
 from scipy.stats import gaussian_kde
 
-import time
+import ultranest
 
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
@@ -90,19 +91,14 @@ def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     return ldlc
 
 
-@njit(cache=True)
 def vecistar(xrs, g1, g2, g3, g4):
     '''
     G. ROUDIER: Stellar surface extinction model
     '''
     ldnorm = (-g1/10e0 - g2/6e0 - 3e0*g3/14e0 - g4/4e0 + 5e-1)*2e0*np.pi
+    select = xrs < 1e0
     mu = np.zeros(xrs.shape)
-    M = mu.shape[0]
-    N = mu.shape[1]
-    for i in range(M):
-        for j in range(N):
-            if xrs[i, j] < 1e0:
-                mu[i, j] = (1e0 - xrs[i, j]**2)**(1e0/4e0)
+    mu[select] = (1e0 - xrs[select]**2)**(1e0/4e0)
     s1 = g1*(1e0 - mu)
     s2 = g2*(1e0 - mu**2)
     s3 = g3*(1e0 - mu**3)
@@ -115,36 +111,27 @@ def vecoccs(z, xrs, rprs):
     '''
     G. ROUDIER: Stellar surface occulation model
     '''
+    out = np.zeros(xrs.shape)
     vecxrs = xrs.copy()
     selx = vecxrs > 0e0
-    veczsel = np.array([z.copy()]*xrs.shape[0])  # this
-    veczsel[veczsel < 0e0] = 0e0                 # this
-    select1 = (vecxrs <= rprs - veczsel) & selx  # this
-    select2 = (vecxrs >= rprs + veczsel) & selx  # this
-    select = (~select1) & (~select2) & selx      # this
-    return mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2)
-
-
-@njit(cache=True)
-def mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2):
-    out = np.zeros(xrs.shape)
+    veczsel = np.array([z.copy()]*xrs.shape[0])
+    veczsel[veczsel < 0e0] = 0e0
+    select1 = (vecxrs <= rprs - veczsel) & selx
+    select2 = (vecxrs >= rprs + veczsel) & selx
+    select = (~select1) & (~select2) & selx
     zzero = veczsel == 0e0
-
-    if check_bool(select1, zzero):
-        out = check_1(select1, zzero, vecxrs)
+    if True in select1 & zzero:
+        out[select1 & zzero] = np.pi*(np.square(vecxrs[select1 & zzero]))
         pass
-    if check_bool(select1, ~zzero):
-        out = check_1(select1, ~zzero, vecxrs)
+    if True in select2 & zzero: out[select2 & zzero] = np.pi*(rprs**2)
+    if True in select & zzero: out[select & zzero] = np.pi*(rprs**2)
+    if True in select1 & ~zzero:
+        out[select1 & ~zzero] = np.pi*(np.square(vecxrs[select1 & ~zzero]))
         pass
-    if check_bool(select2, zzero):
-        out = check_2(select2, zzero, rprs)
-    if check_bool(select, zzero):
-        out = check_2(select, zzero, rprs)
-    if check_bool(select2, np.full((select2.shape[0], select2.shape[1]), True)):
-        out = check_2(select2, ~zzero, rprs)
-    if check_bool(select, ~zzero):
-        redxrs = check_4(select, ~zzero, vecxrs)
-        redz = check_4(select, ~zzero, veczsel)
+    if True in select2: out[select2 & ~zzero] = np.pi*(rprs**2)
+    if True in select & ~zzero:
+        redxrs = vecxrs[select & ~zzero]
+        redz = veczsel[select & ~zzero]
         s1 = (np.square(redz) + np.square(redxrs) - rprs**2)/(2e0*redz*redxrs)
         s1[s1 > 1e0] = 1e0
         s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*(rprs+0.0001))
@@ -155,86 +142,14 @@ def mid_way(veczsel, vecxrs, rprs, xrs, select, select1, select2):
         os3 = redz + redxrs + rprs
         s3 = fs3*ss3*ts3*os3
         zselect = s3 < 0e0
-        if True in zselect:
-            s3[zselect] = 0e0
-        # out[select & ~zzero] = (np.square(redxrs)*np.arccos(s1) +
-        #                        (rprs**2)*np.arccos(s2) - (5e-1)*np.sqrt(s3))
-        out = check_3(select, ~zzero, rprs, redxrs, s1, s2, s3) # ERROR
+        if True in zselect: s3[zselect] = 0e0
+        out[select & ~zzero] = (np.square(redxrs)*np.arccos(s1) +
+                                (rprs**2)*np.arccos(s2) - (5e-1)*np.sqrt(s3))
         pass
     return out
 
 
-@njit(cache=True)
-def check_1(arr1, arr2, vecxrs):
-    out_ = np.zeros(arr1.shape)
-    check = np.bitwise_and(arr1, arr2)
-    M = arr1.shape[0]
-    N = arr1.shape[1]
-    for i in range(M):
-        for j in range(N):
-            if check[i, j]:
-                out_[i, j] = np.pi * (np.square(vecxrs[i, j]))
-    return out_
-
-
-@njit(cache=True)
-def check_2(arr1, arr2, rprs):
-    out_ = np.zeros(arr1.shape)
-    check = np.bitwise_and(arr1, arr2)
-    M = arr1.shape[0]
-    N = arr1.shape[1]
-    for i in range(M):
-        for j in range(N):
-            if check[i, j]:
-                out_[i, j] = np.pi * (rprs ** 2)
-    return out_
-
-
-@njit(cache=True)
-def check_3(arr1, arr2, rprs, redxrs_, s1_, s2_, s3_):
-    out_ = np.zeros(arr1.shape)
-    check = np.bitwise_and(arr1, arr2)
-    M = arr1.shape[0]
-    N = arr1.shape[1]
-    count = 0
-    for i in range(M):
-        for j in range(N):
-            if check[i, j]:
-                out_[i, j] = (np.square(redxrs_[count])*np.arccos(s1_[count]) +
-                              (rprs**2)*np.arccos(s2_[count]) - (5e-1)*np.sqrt(s3_[count]))
-                count += 1
-    return out_
-
-
-@njit(cache=True)
-def check_4(arr1, arr2, arr3):
-    check = np.bitwise_and(arr1, arr2)
-    count = np.count_nonzero(check)
-    counter = 0
-    out_ = np.empty(count)
-    M = arr1.shape[0]
-    N = arr1.shape[1]
-    for i in range(M):
-        for j in range(N):
-            if check[i, j]:
-                out_[counter] = arr3[i, j]
-                counter += 1
-    return out_
-
-
-@njit(cache=True)
-def check_bool(arr1, arr2):
-    check = np.bitwise_and(arr1, arr2)
-    M = arr1.shape[0]
-    N = arr1.shape[1]
-    for i in range(M):
-        for j in range(N):
-            if check[i, j]:
-                return True
-    return False
-
-
-@njit(cache=True)
+@njit
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     '''
     G. ROUDIER: Time samples in [Days] to separation in [R*]
@@ -279,7 +194,7 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     return z, sft
 
 
-@njit(cache=True)
+@njit
 def solveme(M, e, eps):
     '''
     G. ROUDIER: Newton Raphson solver for true anomaly
@@ -297,10 +212,8 @@ def solveme(M, e, eps):
 
 
 def transit(times, values):
-    #start_time = time.time()
-    sep,phase = time2z(times, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
+    sep, phase = time2z(times, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
-    #print("--- %s seconds ---" % (time.time() - start_time))
     return model
 
 
@@ -341,13 +254,15 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns'):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns', verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
         self.airmass = airmass
         self.prior = prior
         self.bounds = bounds
+        self.max_ncalls = 2e5
+        self.verbose = verbose
         if mode == "lm":
             self.fit_LM()
         elif mode == "ns":
@@ -367,12 +282,12 @@ class lc_fitter(object):
 
         try:
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
-                bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
+                bounds =[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
         except Exception as e:
             print(e)
             print("bounded light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
 
-            for i,k in enumerate(freekeys):
+            for i, k in enumerate(freekeys):
                 if not boundarray[i,0] < self.prior[k] < boundarray[i,1]:
                     print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
 
@@ -382,15 +297,20 @@ class lc_fitter(object):
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
 
-        for i,k in enumerate(freekeys):
+        for i, k in enumerate(freekeys):
             self.parameters[k] = res.x[i]
             self.errors[k] = 0
 
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
+        self.phase = (self.time - self.parameters['tmid']+0.25*self.parameters['per']) / self.parameters['per'] % 1 - 0.25
         self.transit = transit(self.time, self.parameters)
+        # TODO monte carlo the error prop for a1
+        model = self.transit*np.exp(self.parameters['a2']*self.airmass)
+        detrend = self.data/model
+        self.parameters['a1'] = np.median(detrend)
+        self.errors['a1'] = detrend.std()
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
@@ -399,82 +319,66 @@ class lc_fitter(object):
         self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
         self.bic = len(self.bounds) * np.log(len(self.time)) - 2*np.log(self.chi2)
 
+        # compare fit chi2 to smoothed data chi2
+        dt = np.diff(np.sort(self.time)).mean()
+        si = np.argsort(self.time)
+        try:
+            self.sdata = savgol_filter(self.data[si], 1+2*int(0.5/24/dt), 2)
+        except:
+            self.sdata = np.ones(len(self.time))
+
+        schi2 = np.sum((self.data[si] - self.sdata)**2/self.dataerr[si]**2)
+        self.quality = schi2/self.chi2
+
+        # measured duration
+        tdur = (self.transit < 1).sum() * np.median(np.diff(np.sort(self.time)))
+
+        # test for partial transit
+        newtime = np.linspace(self.parameters['tmid']-0.2, self.parameters['tmid']+0.2, 10000)
+        newtran = transit(newtime, self.parameters)
+        masktran = newtran < 1
+        newdur = np.diff(newtime).mean()*masktran.sum()
+
+        self.duration_measured = tdur
+        self.duration_expected = newdur
+
     def fit_nested(self):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
-        bounddiff = np.diff(boundarray,1).reshape(-1)
+        bounddiff = np.diff(boundarray, 1).reshape(-1)
 
         def loglike(pars):
             # chi-squared
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass))
-            return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
+            model *= np.exp(self.prior['a2']*self.airmass)
+            detrend = self.data / model  # used to estimate a1
+            model *= np.median(detrend)
+            return -0.5 * np.sum(((self.data-model) / self.dataerr)**2)
 
         def prior_transform(upars):
+            boundarray[3][0] -= 3
             # transform unit cube to prior volume
-            return (boundarray[:,0] + bounddiff*upars)
+            return boundarray[:, 0] + bounddiff*upars
 
-        dsampler = dynesty.DynamicNestedSampler(
-            loglike, prior_transform,
-            ndim=len(freekeys), bound='multi', sample='unif',
-            maxiter_init=5000, dlogz_init=1, dlogz=0.05,
-            maxiter_batch=100, maxbatch=10, nlive_batch=100
-        )
-        dsampler.run_nested(maxcall=1e6)
-        self.results = dsampler.results
+        # include vectorized=True
+        test = ultranest.ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir="-red /Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/inits.json")
+        self.results = test.run(max_ncalls=int(self.max_ncalls))
+
+        test.plot()
 
         # alloc data for best fit + error
         self.errors = {}
         self.quantiles = {}
         self.parameters = copy.deepcopy(self.prior)
 
-        tests = [copy.deepcopy(self.prior) for i in range(6)]
-
-        # Derive kernel density estimate for best fit
-        weights = np.exp(self.results.logwt - self.results.logz[-1])
-        samples = self.results['samples']
-        logvol = self.results['logvol']
-        wt_kde = gaussian_kde(resample_equal(-logvol, weights))  # KDE
-        logvol_grid = np.linspace(logvol[0], logvol[-1], 1000)  # resample
-        wt_grid = wt_kde.pdf(-logvol_grid)  # evaluate KDE PDF
-        self.weights = np.interp(-logvol, -logvol_grid, wt_grid)  # interpolate
-
-        # errors + final values
-        mean, cov = dynesty.utils.mean_and_cov(self.results.samples, weights)
-        mean2, cov2 = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
-        for i in range(len(freekeys)):
-            self.errors[freekeys[i]] = cov[i,i]**0.5
-            tests[0][freekeys[i]] = mean[i]
-            tests[1][freekeys[i]] = mean2[i]
-
-            counts, bins = np.histogram(samples[:,i], bins=100, weights=weights)
-            mi = np.argmax(counts)
-            tests[5][freekeys[i]] = bins[mi] + 0.5*np.mean(np.diff(bins))
-
-            # finds median and +- 2sigma, will vary from mode if non-gaussian
-            self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=weights)
-            tests[2][freekeys[i]] = self.quantiles[freekeys[i]][1]
-
-        # find minimum near weighted mean
-        mask = (samples[:,0] < self.parameters[freekeys[0]]+2*self.errors[freekeys[0]]) & (samples[:,0] > self.parameters[freekeys[0]]-2*self.errors[freekeys[0]])
-        bi = np.argmin(self.weights[mask])
-
-        for i in range(len(freekeys)):
-            tests[3][freekeys[i]] = samples[mask][bi,i]
-            tests[4][freekeys[i]] = np.average(samples[mask][:,i],weights=self.weights[mask],axis=0)
-
-        # find best fit
-        chis = []
-        for i in range(len(tests)):
-            lightcurve = transit(self.time, tests[i])
-            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass)
-            residuals = self.data - (lightcurve*airmass)
-            chis.append( np.sum(residuals**2) )
-
-        mi = np.argmin(chis)
-        self.parameters = copy.deepcopy(tests[mi])
+        for i, key in enumerate(freekeys):
+            self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+            self.errors[key] = self.results['posterior']['stdev'][i]
+            self.quantiles[key] = [
+                self.results['posterior']['errlo'][i],
+                self.results['posterior']['errup'][i]]
 
         # final model
         self.create_fit_variables()

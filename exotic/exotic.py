@@ -164,15 +164,18 @@ def log_info(string):
     return True
 
 
-def sigma_clip(ogdata, sigma=3, dt=21):
+def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     nanmask = np.isnan(ogdata)
-    mdata = savgol_filter(ogdata[~nanmask], dt, 2)
-    # mdata = median_filter(ogdata[~nanmask], dt)
-    res = ogdata[~nanmask] - mdata
-    std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
-    # std = np.nanstd(res) # biased from large outliers
-    sigmask = np.abs(res) > sigma * std
-    nanmask[~nanmask] = sigmask
+
+    if po < dt <= len(ogdata):
+        mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
+        # mdata = median_filter(ogdata[~nanmask], dt)
+        res = ogdata[~nanmask] - mdata
+        std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
+        # std = np.nanstd(res) # biased from large outliers
+        sigmask = np.abs(res) > sigma * std
+        nanmask[~nanmask] = sigmask
+
     return nanmask
 
 

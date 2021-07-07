@@ -1810,7 +1810,8 @@ def main():
             else:
                 diff = False
 
-                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+                if type(userpDict['ra']) and type(userpDict['dec']) is str:
+                    userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
 
                 if not CandidatePlanetBool:
                     diff = check_parameters(userpDict, pDict)

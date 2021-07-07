@@ -1810,7 +1810,8 @@ def main():
             else:
                 diff = False
 
-                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+                if type(userpDict['ra']) and type(userpDict['dec']) is str:
+                    userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
 
                 if not CandidatePlanetBool:
                     diff = check_parameters(userpDict, pDict)
@@ -1860,8 +1861,6 @@ def main():
             #########################################
 
             allImageData, timeList, airMassList, exptimes = [], [], [], []
-
-            # TODO filter input files to get good reference for image alignment
 
             inputfiles = corruption_check(exotic_infoDict['images'])
 

@@ -45,7 +45,7 @@
             "Align Images? (y/n)": "y",
 
             "Target Star X & Y Pixel": [424, 286],
-            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
+            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]
     },
     "planetary_parameters": {
             "Target Star RA": "02:04:10",
@@ -74,8 +74,15 @@
             "Star Surface Gravity (-) Uncertainty": -0.04
     },
     "optional_info": {
-            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
+            "Pre-reduced File:": "/sample-data/NormalizedFlux_HAT-P-32 b_December 17, 2017.txt",
+            "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
+            "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
+
             "Filter Minimum Wavelength (nm)": null,
-            "Filter Maximum Wavelength (nm)": null
+            "Filter Maximum Wavelength (nm)": null,
+
+            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
+
+            "Exposure Time (s)": 60.0
     }
 }

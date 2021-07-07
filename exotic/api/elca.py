@@ -146,7 +146,7 @@ def vecoccs(z, xrs, rprs):
     return out
 
 
-@njit
+# @njit
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     '''
     G. ROUDIER: Time samples in [Days] to separation in [R*]

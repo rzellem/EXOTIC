@@ -43,7 +43,7 @@
 # ########################################################################### #
 
 import copy
-from numba import jit
+from numba import njit
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -146,10 +146,12 @@ def vecoccs(z, xrs, rprs):
     return out
 
 
+# @njit
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     '''
     G. ROUDIER: Time samples in [Days] to separation in [R*]
     '''
+    tperii = 0
     if tperi is not None:
         ft0 = (tperi - tknot) % orbperiod
         ft0 /= orbperiod
@@ -161,14 +163,15 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
         w = np.angle(np.complex(realf, imagf))
         if abs(ft0) < epsilon:
             w = np.pi/2e0
-            tperi = tknot
+            tperii = tknot
             pass
         pass
     else:
         w = np.pi/2e0
-        tperi = tknot
+        tperii = tknot
         pass
-    ft = (time - tperi) % orbperiod
+
+    ft = (time - tperii) % orbperiod
     ft /= orbperiod
     sft = np.copy(ft)
     sft[(sft > 0.5)] += -1e0
@@ -187,7 +190,8 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     z[sft < 0] *= -1e0
     return z, sft
 
-@jit(nopython=True)
+
+@njit
 def solveme(M, e, eps):
     '''
     G. ROUDIER: Newton Raphson solver for true anomaly
@@ -203,14 +207,17 @@ def solveme(M, e, eps):
         pass
     return E
 
+
 def transit(time, values):
     sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
     return model
 
+
 def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid) / pPeriod
     return phase - int(np.nanmin(phase))
+
 
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):
@@ -224,6 +231,7 @@ def time_bin(time, flux, dt):
             btime[i] = np.nanmean(time[mask])
     zmask = (bflux==0) | (btime==0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask]
+
 
 # Function that bins an array
 def binner(arr, n, err=''):
@@ -457,6 +465,7 @@ class lc_fitter(object):
         fig,axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
         dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
         return fig, axs
+
 
 if __name__ == "__main__":
 

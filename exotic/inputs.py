@@ -1,6 +1,6 @@
 import logging
-import json
 import sys
+import json
 from pathlib import Path
 
 try:
@@ -115,6 +115,9 @@ class Inputs:
                 [log_info(f"\t{file}") for file in cwd.glob('*.json') if file.is_file()]
 
                 init_file = None
+            except ValueError as e:
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}")
+                init_file = None
 
     def comp_params(self, init_file, planet_dict):
         with init_file.open('r') as json_file:
@@ -125,9 +128,10 @@ class Inputs:
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
-            'elev': 'Obs. Elevation (meters)', 'camera': 'Camera Type (CCD or DSLR)', 'pixel_bin': 'Pixel Binning',
-            'filter': 'Filter Name (aavso.org/filters)', 'notes': 'Observing Notes',
-            'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
+            'elev': 'Obs. Elevation (meters)',
+            'camera': 'Camera Type (CCD or DSLR)',
+            'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
+            'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
         planet_params = {
@@ -359,8 +363,15 @@ def elevation(elev, lat, long):
 
 
 def camera(c_type):
-    if not c_type:
-        c_type = user_input("\nPlease enter the camera type (CCD or DSLR): ", type_=str)
+    while True:
+        c_type = c_type.strip().upper()
+        if c_type not in ["CCD", "DSLR"]:
+            c_type = user_input("\nPlease enter the camera type (e.g., CCD or DSLR;\n"
+                                "Note: if you are using a CMOS, please enter CCD here and\n"
+                                "then note your actual camera type in \"Observing Notes\"): ", type_=str)
+        else:
+            break
+
     return c_type
 
 
@@ -472,11 +483,11 @@ def prereduced_file(file):
 
 
 def data_file_time(time_format):
-    log_info("\nNOTE: If your file is not in one of the following formats, "
-             "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
-
     while True:
         if not time_format:
+            log_info("\nNOTE: If your file is not in one of the following formats, "
+                     "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
+
             time_format = user_input("\nWhich of the following time formats is your data file stored in? "
                                      "\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
         time_format = time_format.upper().strip()
@@ -489,11 +500,11 @@ def data_file_time(time_format):
 
 
 def data_file_units(units):
-    log_info("\nNOTE: If your file is not in one of the following units, "
-             "\nplease re-reduce your data into one of the units of flux recognized by EXOTIC.")
-
     while True:
         if not units:
+            log_info("\nNOTE: If your file is not in one of the following units, "
+                     "\nplease re-reduce your data into one of the units of flux recognized by EXOTIC.")
+
             units = user_input("\nWhich of the following units of flux is your data file stored in? "
                                "\nflux / magnitude / millimagnitude: ", type_=str)
         units = units.lower().strip()

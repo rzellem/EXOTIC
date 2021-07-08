@@ -164,15 +164,18 @@ def log_info(string):
     return True
 
 
-def sigma_clip(ogdata, sigma=3, dt=21):
+def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     nanmask = np.isnan(ogdata)
-    mdata = savgol_filter(ogdata[~nanmask], dt, 2)
-    # mdata = median_filter(ogdata[~nanmask], dt)
-    res = ogdata[~nanmask] - mdata
-    std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
-    # std = np.nanstd(res) # biased from large outliers
-    sigmask = np.abs(res) > sigma * std
-    nanmask[~nanmask] = sigmask
+
+    if po < dt <= len(ogdata):
+        mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
+        # mdata = median_filter(ogdata[~nanmask], dt)
+        res = ogdata[~nanmask] - mdata
+        std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
+        # std = np.nanstd(res) # biased from large outliers
+        sigmask = np.abs(res) > sigma * std
+        nanmask[~nanmask] = sigmask
+
     return nanmask
 
 
@@ -883,16 +886,12 @@ def corruption_check(files):
 
 
 def check_wcs(fits_file, save_directory, plate_opt):
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', category=FITSFixedWarning)
-        header = fits.getheader(filename=fits_file)
-        wcs_header = WCS(header)
-        wcs_exists = wcs_header.is_celestial
+    wcs_header = search_wcs(fits_file)
 
     if plate_opt == 'y':
         return get_wcs(fits_file, save_directory)
     elif plate_opt == 'n':
-        if wcs_exists:
+        if wcs_header.is_celestial:
             log_info("Your FITS files have WCS (World Coordinate System) information in their headers. "
                      "EXOTIC will proceed to use these. "
                      "NOTE: If you do not trust your WCS coordinates, "
@@ -900,6 +899,13 @@ def check_wcs(fits_file, save_directory, plate_opt):
             return fits_file
         else:
             return False
+
+
+def search_wcs(file):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', category=FITSFixedWarning)
+        header = fits.getheader(filename=file)
+        return WCS(header)
 
 
 def get_wcs(file, directory=""):
@@ -921,6 +927,11 @@ def get_radec(header):
     return wcs_header.all_pix2world(x, y, 1)
 
 
+def deg_to_pix(exp_ra, exp_dec, ra_list, dec_list):
+    dist = (ra_list - exp_ra) ** 2 + (dec_list - exp_dec) ** 2
+    return np.unravel_index(dist.argmin(), dist.shape)
+
+
 # Check the ra and dec against the plate solution to see if the user entered in the correct values
 def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
     while True:
@@ -936,26 +947,21 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             return pixx, pixy
         except ValueError:
             log_info(f"Your input pixel coordinates: [{pixx}, {pixy}]")
-
-            dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
-            exotic_pixy, exotic_pixx = np.unravel_index(dist.argmin(), dist.shape)
+            exotic_pixy, exotic_pixx = deg_to_pix(expra, expdec, ralist, declist)
             log_info(f"EXOTIC's calculated pixel coordinates: [{exotic_pixx}, {exotic_pixy}]")
 
             opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, val1='y', val2='n')
 
             # User wants to change their coordinates
             if opt == 'y':
-                # Checks for the closest pixel location in ralist and declist for expected ra and dec
-                dist = (ralist - expra) ** 2 + (declist - expdec) ** 2
-                pixy, pixx = np.unravel_index(dist.argmin(), dist.shape)
                 searchopt = user_input(f"Here are the suggested pixel coordinates:"
-                                       f"  X Pixel: {pixx}"
-                                       f"  Y Pixel: {pixy}"
+                                       f"  X Pixel: {exotic_pixx}"
+                                       f"  Y Pixel: {exotic_pixy}"
                                        "\nWould you like to use these? (y/n): ",
                                        type_=str, val1='y', val2='n')
                 # Use the coordinates found by code
                 if searchopt == 'y':
-                    return pixx, pixy
+                    return exotic_pixx, exotic_pixy
                 # User enters their own coordinates to be re-checked
                 else:
                     pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
@@ -1807,7 +1813,8 @@ def main():
             else:
                 diff = False
 
-                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+                if type(userpDict['ra']) and type(userpDict['dec']) is str:
+                    userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
 
                 if not CandidatePlanetBool:
                     diff = check_parameters(userpDict, pDict)
@@ -1858,8 +1865,6 @@ def main():
 
             allImageData, timeList, airMassList, exptimes = [], [], [], []
 
-            # TODO filter input files to get good reference for image alignment
-
             inputfiles = corruption_check(exotic_infoDict['images'])
 
             # time sort images
@@ -1871,6 +1876,15 @@ def main():
                     extension += 1
                     header = fits.getheader(filename=ifile, ext=extension)
                 times.append(getJulianTime(header))
+
+            # checks for MOBS data
+            mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
+            if 'CREATOR' in mobs_header:
+                if "MicroObservatory" in mobs_header['CREATOR']:
+                    if exotic_infoDict['second_obs'].upper() != "N/A":
+                        exotic_infoDict['second_obs'] += ",MOBS"
+                    else:
+                        exotic_infoDict['second_obs'] = "MOBS"
 
             si = np.argsort(times)
             inputfiles = np.array(inputfiles)[si]
@@ -1892,20 +1906,27 @@ def main():
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
+            tar_radec, comp_radec = None, []
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
                 wcs_header = fits.getheader(filename=wcs_file)
-                rafile, decfile = get_radec(wcs_header)
+                ra_file, dec_file = get_radec(wcs_header)
 
                 # Checking pixel coordinates against plate solution
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                          pDict['ra'], pDict['dec'], rafile, decfile)
+                                                                          pDict['ra'], pDict['dec'], ra_file, dec_file)
+                tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
+                             dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
                 for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
+                    ra = ra_file[int(comp[1])][int(comp[0])]
+                    dec = dec_file[int(comp[1])][int(comp[0])]
+                    comp_radec.append((ra, dec))
+
                     log_info("\nChecking for variability in Comparison Star #"+str(compn+1)+" : \n"
                              f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    if variableStarCheck(rafile[int(comp[1])][int(comp[0])], decfile[int(comp[1])][int(comp[0])]):
+                    if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
                             log_info("\nCurrent comparison star is variable, proceeding to next star.")
                             exotic_infoDict['comp_stars'].remove(comp)
                 compStarList = exotic_infoDict['comp_stars']
@@ -1937,6 +1958,8 @@ def main():
                 alignmentBool = False
             else:
                 alignmentBool = True
+
+            wcs_hdr = None
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
@@ -1981,10 +2004,10 @@ def main():
 
                 # Image Alignment
                 if alignmentBool:
-                    # log_info(f"\nReference Image for Alignment: {fileName}\n")
                     tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                 else:
-                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0,0])
+                    wcs_hdr = search_wcs(fileName)
+                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
                 # apply transform
                 xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
@@ -1999,30 +2022,38 @@ def main():
                             [xrot, yrot],
                             psf_data["target"][0][2:])
                     else:
-                        # use previous PSF as prior
-                        psf_data["target"][i] = fit_centroid(
-                            imageData,
-                            psf_data["target"][i-1][:2],
-                            psf_data["target"][i-1][2:])
+                        if wcs_hdr.is_celestial:
+                            pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
+                            yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
+                            psf_data["target"][i] = fit_centroid(
+                                imageData,
+                                [xrot, yrot],
+                                psf_data["target"][0][2:])
+                        else:
+                            # use previous PSF as prior
+                            psf_data["target"][i] = fit_centroid(
+                                imageData,
+                                psf_data["target"][i-1][:2],
+                                psf_data["target"][i-1][2:])
 
                         # check for change in amplitude of PSF
-                        if np.abs( (psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
+                        if np.abs((psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
                             log_info("Can't find target. Trying to align...")
 
                             tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                             
                             xrot, yrot = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
-                            psf_data["target"][i] = fit_centroid( imageData, [xrot, yrot], psf_data["target"][0][2:])
+                            psf_data["target"][i] = fit_centroid(imageData, [xrot, yrot], psf_data["target"][0][2:])
 
                 # fit for the centroids in all images
-                for j,coord in enumerate(compStarList):
+                for j, coord in enumerate(compStarList):
                     ckey = "comp{}".format(j+1)
 
                     # apply transformation
                     xrot, yrot = tform(coord)[0]
 
-                    psf_data[ckey+"_align"][i] = [xrot,yrot]
+                    psf_data[ckey+"_align"][i] = [xrot, yrot]
                     if i == 0:
                         psf_data[ckey][i] = fit_centroid(imageData, [xrot, yrot])
                     else:
@@ -2032,15 +2063,22 @@ def main():
                                 [xrot, yrot],
                                 psf_data[ckey][0][2:])
                         else:
-                            # use previous PSF as prior
-                            psf_data[ckey][i] = fit_centroid(
-                                imageData,
-                                psf_data[ckey][i-1][:2],
-                                psf_data[ckey][i-1][2:])
+                            if wcs_hdr.is_celestial:
+                                pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                                yrot, xrot = pix_coords[1].take(0), pix_coords[0].take(0)
+                                psf_data[ckey][i] = fit_centroid(
+                                    imageData,
+                                    [xrot, yrot],
+                                    psf_data[ckey][0][2:])
+                            else:  # use previous PSF as prior
+                                psf_data[ckey][i] = fit_centroid(
+                                    imageData,
+                                    psf_data[ckey][i-1][:2],
+                                    psf_data[ckey][i-1][2:])
 
                             # check for change in amplitude of PSF
-                            if np.abs( (psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                #log_info("Can't find comp. Trying to align...")
+                            if np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
+                                # log_info("Can't find comp. Trying to align...")
 
                                 tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
 
@@ -2606,73 +2644,73 @@ def main():
         ##########
         # PSF data
         ##########
-
-        fig, ax = plt.subplots(3,2, figsize=(12,10))
-        fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
-        ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
-        ax[0,0].set_ylabel("X-Centroid [px]")
-        ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
-        ax[0,1].set_ylabel("Y-Centroid [px]")
-        ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
-        ax[1,0].set_ylabel("Seeing [px]")
-        ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
-        ax[1,1].set_ylabel("Airmass")
-        ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
-        ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
-        ax[2,0].set_ylabel("Amplitude [ADU]")
-        ax[2,1].set_ylabel("Background [ADU]")
-        ax[0,0].set_xlabel("Time [BJD]")
-        ax[0,1].set_xlabel("Time [BJD]")
-        ax[1,0].set_xlabel("Time [BJD]")
-        ax[1,1].set_xlabel("Time [BJD]")
-        ax[2,0].set_xlabel("Time [BJD]")
-        ax[2,1].set_xlabel("Time [BJD]")
-        plt.tight_layout()
-
-        try:
-            fig.savefig(Path(exotic_infoDict['save']) /
-                        f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except:
-            pass
-        fig.savefig(Path(exotic_infoDict['save']) /
-                    f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-        plt.close()
-
-        # PSF DATA for COMP STARS
-        for j,coord in enumerate(compStarList):
-            ctitle = "Comp Star {}".format(j+1)
-            ckey = "comp{}".format(j+1)
-
+        if fitsortext == 1:
             fig, ax = plt.subplots(3,2, figsize=(12,10))
-            fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
-            ax[0,0].plot(myfit.time, psf_data[ckey][si,0][gi], 'k.')
+            fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
+            ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
             ax[0,0].set_ylabel("X-Centroid [px]")
-            ax[0,1].plot(myfit.time, psf_data[ckey][si,1][gi], 'k.')
+            ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
             ax[0,1].set_ylabel("Y-Centroid [px]")
-            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data[ckey][si,3][gi] + psf_data[ckey][si,4][gi]), 'k.')
+            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
             ax[1,0].set_ylabel("Seeing [px]")
             ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
             ax[1,1].set_ylabel("Airmass")
-            ax[2,0].plot(myfit.time, psf_data[ckey][si,2][gi], 'k.')
-            ax[2,1].plot(myfit.time, psf_data[ckey][si,6][gi], 'k.')
+            ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
+            ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
             ax[2,0].set_ylabel("Amplitude [ADU]")
             ax[2,1].set_ylabel("Background [ADU]")
-            ax[0,0].set_xlabel("Time [BJD_TBD]")
-            ax[0,1].set_xlabel("Time [BJD_TBD]")
-            ax[1,0].set_xlabel("Time [BJD_TBD]")
-            ax[1,1].set_xlabel("Time [BJD_TBD]")
-            ax[2,0].set_xlabel("Time [BJD_TBD]")
-            ax[2,1].set_xlabel("Time [BJD_TBD]")
+            ax[0,0].set_xlabel("Time [BJD]")
+            ax[0,1].set_xlabel("Time [BJD]")
+            ax[1,0].set_xlabel("Time [BJD]")
+            ax[1,1].set_xlabel("Time [BJD]")
+            ax[2,0].set_xlabel("Time [BJD]")
+            ax[2,1].set_xlabel("Time [BJD]")
             plt.tight_layout()
 
             try:
                 fig.savefig(Path(exotic_infoDict['save']) /
-                            f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+                            f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
             except:
                 pass
             fig.savefig(Path(exotic_infoDict['save']) /
-                        f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+                        f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
             plt.close()
+
+            # PSF DATA for COMP STARS
+            for j,coord in enumerate(compStarList):
+                ctitle = "Comp Star {}".format(j+1)
+                ckey = "comp{}".format(j+1)
+
+                fig, ax = plt.subplots(3,2, figsize=(12,10))
+                fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
+                ax[0,0].plot(myfit.time, psf_data[ckey][si,0][gi], 'k.')
+                ax[0,0].set_ylabel("X-Centroid [px]")
+                ax[0,1].plot(myfit.time, psf_data[ckey][si,1][gi], 'k.')
+                ax[0,1].set_ylabel("Y-Centroid [px]")
+                ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data[ckey][si,3][gi] + psf_data[ckey][si,4][gi]), 'k.')
+                ax[1,0].set_ylabel("Seeing [px]")
+                ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
+                ax[1,1].set_ylabel("Airmass")
+                ax[2,0].plot(myfit.time, psf_data[ckey][si,2][gi], 'k.')
+                ax[2,1].plot(myfit.time, psf_data[ckey][si,6][gi], 'k.')
+                ax[2,0].set_ylabel("Amplitude [ADU]")
+                ax[2,1].set_ylabel("Background [ADU]")
+                ax[0,0].set_xlabel("Time [BJD_TBD]")
+                ax[0,1].set_xlabel("Time [BJD_TBD]")
+                ax[1,0].set_xlabel("Time [BJD_TBD]")
+                ax[1,1].set_xlabel("Time [BJD_TBD]")
+                ax[2,0].set_xlabel("Time [BJD_TBD]")
+                ax[2,1].set_xlabel("Time [BJD_TBD]")
+                plt.tight_layout()
+
+                try:
+                    fig.savefig(Path(exotic_infoDict['save']) /
+                                f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
+                except:
+                    pass
+                fig.savefig(Path(exotic_infoDict['save']) /
+                            f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+                plt.close()
 
 
         #######################################################################
@@ -2697,8 +2735,8 @@ def main():
             comp_dec = None
 
             if wcs_file:
-                comp_ra = rafile[int(comp_coords[1])][int(comp_coords[0])]
-                comp_dec = decfile[int(comp_coords[1])][int(comp_coords[0])]
+                comp_ra = ra_file[int(comp_coords[1])][int(comp_coords[0])]
+                comp_dec = dec_file[int(comp_coords[1])][int(comp_coords[0])]
 
             comp_star.append({
                 'ra': str(comp_ra) if comp_ra else comp_ra,

@@ -220,7 +220,6 @@ def main():
                        padx=20,
                        variable=fitsortext,
                        value=2).pack(anchor=tk.W)
-        fitsortext.set(2)
 
         # Button for closing
         exit_button = tk.Button(root, text="Next", command=root.destroy)
@@ -228,6 +227,53 @@ def main():
         input_data = {}  # for saving entries
 
         root.mainloop()
+
+        if fitsortext.get() == 2:
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+            i=0; j=0
+
+            prered_file = FileSelect(root, "Pre-reduced Data File")
+            prered_file.grid(row=i)
+            i += 1
+
+            #            # "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
+            pretime_label = tk.Label(root, text="Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)",
+                                     justify=tk.LEFT)
+            pretime_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            pretime_entry.insert(tk.END, "")
+            pretime_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            pretime_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            #            # "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
+            preunit_label = tk.Label(root, text="Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)",
+                                     justify=tk.LEFT)
+            preunit_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            preunit_entry.insert(tk.END, "")
+            preunit_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            preunit_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            #              "Exposure Time (s)": 60.0
+            exp_label = tk.Label(root, text="Exposure Time (s)", justify=tk.LEFT)
+            exp_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            exp_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            exp_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            def save_input():
+                input_data['file_time'] = pretime_entry.get()
+                input_data['file_units'] = preunit_entry.get()
+                input_data['exp'] = float(exp_entry.get())
+                root.destroy()
+
+            # Button for closing
+            exit_button = tk.Button(root, text="Next", command=save_input)
+            # exit_button.pack(pady=20)
+            exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
+
+            root.mainloop()
 
         # First ask user how they want to enter the observing information
         root = tk.Tk()
@@ -260,6 +306,7 @@ def main():
 
         root.mainloop()
 
+
         if obsinfo.get() == "manual":
             root = tk.Tk()
             root.title(f"EXOTIC v{__version__}")
@@ -290,61 +337,60 @@ def main():
             save_dir.grid(row=i)
             i += 1
 
-            if fitsortext.get() == 1:
-                window_label = tk.Label(root,
-                                        text="""Please enter your calibration file information
-                                        \n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
-                                        # font=("Helvetica 14 bold"),
-                                        justify=tk.LEFT,
-                                        padx=20)  # .pack()
-                window_label.grid(row=i, column=0, sticky=tk.N, pady=6)
-                i += 1
+            window_label = tk.Label(root,
+                                    text="""Please enter your calibration file information
+                                    \n(Note: each calibration type must be in its OWN, SEPARATE folder)""",
+                                    # font=("Helvetica 14 bold"),
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=i, column=0, sticky=tk.N, pady=6)
+            i += 1
 
-                # "Directory of Flats": null,
-                flats_dir = FolderSelect(root, "Folder with your flats (null if none)", "null")
-                flats_dir.grid(row=i)
-                i += 1
+            # "Directory of Flats": null,
+            flats_dir = FolderSelect(root, "Folder with your flats (null if none)", "null")
+            flats_dir.grid(row=i)
+            i += 1
 
-                # "Directory of Darks": null,
-                darks_dir = FolderSelect(root, "Folder with your darks (null if none)", "null")
-                darks_dir.grid(row=i)
-                i += 1
+            # "Directory of Darks": null,
+            darks_dir = FolderSelect(root, "Folder with your darks (null if none)", "null")
+            darks_dir.grid(row=i)
+            i += 1
 
-                # "Directory of Biases": null,
-                biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
-                biases_dir.grid(row=i)
-                i += 1
+            # "Directory of Biases": null,
+            biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
+            biases_dir.grid(row=i)
+            i += 1
 
-                # "Directory of Biases": null,
-                # biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
-                # biases_dir.grid(row=i)
-                # i += 1
+            # "Directory of Biases": null,
+            # biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
+            # biases_dir.grid(row=i)
+            # i += 1
 
-                #
-                # obscode2_label = TextInput(root, "AAVSO Obs Code", "RTZ")
-                # obscode2_label.grid(row=1)
-                # i += 1
+            #
+            # obscode2_label = TextInput(root, "AAVSO Obs Code", "RTZ")
+            # obscode2_label.grid(row=1)
+            # i += 1
 
-            if fitsortext.get() == 2:
-                prered_file = FileSelect(root, "Pre-reduced Data File Path")
-                prered_file.grid(row=i)
-                i += 1
-
-                #            # "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
-                pretime_label = tk.Label(root, text="Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)", justify=tk.LEFT)
-                pretime_entry  = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                pretime_entry.insert(tk.END, "")
-                pretime_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-                pretime_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-                i += 1
-
-                #            # "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
-                preunit_label = tk.Label(root, text="Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)", justify=tk.LEFT)
-                preunit_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                preunit_entry.insert(tk.END, "")
-                preunit_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-                preunit_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-                i += 1
+            # if fitsortext.get() == 2:
+            #     prered_file = FileSelect(root, "Pre-reduced Data File Path")
+            #     prered_file.grid(row=i)
+            #     i += 1
+            #
+            #     #            # "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
+            #     pretime_label = tk.Label(root, text="Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)", justify=tk.LEFT)
+            #     pretime_entry  = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            #     pretime_entry.insert(tk.END, "")
+            #     pretime_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            #     pretime_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            #     i += 1
+            #
+            #     #            # "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
+            #     preunit_label = tk.Label(root, text="Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)", justify=tk.LEFT)
+            #     preunit_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            #     preunit_entry.insert(tk.END, "")
+            #     preunit_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            #     preunit_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            #     i += 1
 
             #             # "AAVSO Observer Code (N/A if none)": "RTZ",
             obscode_label = tk.Label(root, text="AAVSO Observer Code (leave blank if none)", justify=tk.LEFT)
@@ -411,13 +457,12 @@ def main():
             i += 1
 
             #     "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
-            if fitsortext.get() == 1:
-                pixscale_label = tk.Label(root, text="Pixel Scale (e.g., 5.21 arcsecs/pixel; null if unknown)", justify=tk.LEFT)
-                pixscale_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                # pixscale_entry.insert(tk.END, "")
-                pixscale_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-                pixscale_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-                i += 1
+            pixscale_label = tk.Label(root, text="Pixel Scale (e.g., 5.21 arcsecs/pixel; null if unknown)", justify=tk.LEFT)
+            pixscale_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            # pixscale_entry.insert(tk.END, "")
+            pixscale_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            pixscale_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
 
             # # #             "Filter Name (aavso.org/filters)": "V",
             # filtername_label = tk.Label(root, text="Filter Name (please see aavso.org/filters)", justify=tk.LEFT)
@@ -440,13 +485,13 @@ def main():
             # my_w.mainloop()  # Keep the window open
             i += 1
 
-            if fitsortext.get() == 2:
-                #              "Exposure Time (s)": 60.0
-                exp_label = tk.Label(root, text="Exposure Time (s)", justify=tk.LEFT)
-                exp_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-                exp_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-                exp_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-                i += 1
+            # if fitsortext.get() == 2:
+            #     #              "Exposure Time (s)": 60.0
+            #     exp_label = tk.Label(root, text="Exposure Time (s)", justify=tk.LEFT)
+            #     exp_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            #     exp_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            #     exp_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            #     i += 1
 
             #              "Observing Notes": "Weather, seeing was nice.",
             obsnotes_label = tk.Label(root, text="Observing Notes", justify=tk.LEFT)
@@ -1135,19 +1180,20 @@ def main():
                         "Observing Notes": input_data['obsnotes'],
                     }
 
-                    new_inits['optional_info'] = {
-                        "Pre-reduced File:": prered_file.file_path,
-                        "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
-                        "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
-
-                        "Exposure Time (s)": input_data['exp']
-                    }
 
                 elif obsinfo.get() == 'inits':
                     with open(input_data['inits_dir'], "r") as confirmed:
                         original_inits = json.load(confirmed)
 
                     new_inits['user_info'] = original_inits['user_info']
+
+                new_inits['optional_info'] = {
+                    "Pre-reduced File:": prered_file.file_path,
+                    "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
+                    "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
+
+                    "Exposure Time (s)": input_data['exp']
+                }
 
             if planetparams.get() in ["manual", "nea"]:
                 new_inits['planetary_parameters'] = {

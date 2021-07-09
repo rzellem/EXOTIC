@@ -149,7 +149,7 @@ def vecoccs(z, xrs, rprs):
     return out
 
 
-@njit
+@njit(cache=True)
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     '''
     G. ROUDIER: Time samples in [Days] to separation in [R*]
@@ -194,7 +194,7 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     return z, sft
 
 
-@njit
+@njit(cache=True)
 def solveme(M, e, eps):
     '''
     G. ROUDIER: Newton Raphson solver for true anomaly
@@ -363,7 +363,7 @@ class lc_fitter(object):
             return boundarray[:, 0] + bounddiff*upars
 
         # include vectorized=True
-        test = ultranest.ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir="-red /Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/inits.json")
+        test = ultranest.ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir="/comparison_runs/ultranest/ultranest_4")
         self.results = test.run(max_ncalls=int(self.max_ncalls))
 
         test.plot()

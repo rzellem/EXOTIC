@@ -2751,20 +2751,20 @@ def main():
         ##########
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
-        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+        error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
-            log_info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
         try:
             output_files.final_planetary_params()
         except Exception as e:
-            log_info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n{e}")
         try:
             output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
-            log_info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n{e}")
 
         log_info("Output File Saved")
 

@@ -1907,6 +1907,7 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
+            ra_file, dec_file = None, None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -2750,20 +2751,20 @@ def main():
         ##########
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
-        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+        error_txt = "Please report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
-            log_info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}")
         try:
             output_files.final_planetary_params()
         except Exception as e:
-            log_info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}")
         try:
             output_files.aavso(comp_star, goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
-            log_info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}")
 
         log_info("Output File Saved")
 

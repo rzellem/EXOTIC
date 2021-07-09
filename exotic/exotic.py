@@ -1907,6 +1907,7 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
+            ra_file, dec_file = None, None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")

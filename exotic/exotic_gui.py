@@ -514,7 +514,7 @@ def main():
             if fitsortext.get() == 1:
                 platesolve = tk.BooleanVar()
                 platesolve_check = tk.Checkbutton(root, text='Plate solve my first image'
-                                                             '\n(Note: Do not check if all images are'
+                                                             '\n(Note: Do not select if all images are'
                                                              '\nplate solved and you trust it)',
                                                   variable=platesolve, onvalue=True, offvalue=False, justify=tk.LEFT)
                 platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
@@ -522,7 +522,7 @@ def main():
 
                 alignment = tk.BooleanVar()
                 alignment_check = tk.Checkbutton(root, text="Align my images"
-                                                            "\n(Note: Do not check if you'd like to use"
+                                                            "\n(Note: Do not select if you'd like to use"
                                                             "\nplate solution in header for tracking targets)",
                                                  variable=alignment, onvalue=1, offvalue=0, justify=tk.LEFT)
                 alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)

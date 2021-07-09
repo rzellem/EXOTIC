@@ -165,15 +165,18 @@ def log_info(string):
     return True
 
 
-def sigma_clip(ogdata, sigma=3, dt=21):
+def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     nanmask = np.isnan(ogdata)
-    mdata = savgol_filter(ogdata[~nanmask], dt, 2)
-    # mdata = median_filter(ogdata[~nanmask], dt)
-    res = ogdata[~nanmask] - mdata
-    std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
-    # std = np.nanstd(res) # biased from large outliers
-    sigmask = np.abs(res) > sigma * std
-    nanmask[~nanmask] = sigmask
+
+    if po < dt <= len(ogdata):
+        mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
+        # mdata = median_filter(ogdata[~nanmask], dt)
+        res = ogdata[~nanmask] - mdata
+        std = np.nanmedian([np.nanstd(np.random.choice(res, 25)) for i in range(100)])
+        # std = np.nanstd(res) # biased from large outliers
+        sigmask = np.abs(res) > sigma * std
+        nanmask[~nanmask] = sigmask
+
     return nanmask
 
 
@@ -1839,7 +1842,8 @@ def main():
             else:
                 diff = False
 
-                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+                if type(userpDict['ra']) and type(userpDict['dec']) is str:
+                    userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
 
                 if not CandidatePlanetBool:
                     diff = check_parameters(userpDict, pDict)
@@ -1889,8 +1893,6 @@ def main():
             #########################################
 
             allImageData, timeList, airMassList, exptimes = [], [], [], []
-
-            # TODO filter input files to get good reference for image alignment
 
             inputfiles = corruption_check(exotic_infoDict['images'])
 
@@ -3259,21 +3261,21 @@ def main():
         ##########
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
-        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+        error_txt = "Please report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
-            log_info(f"Error: Could not create FinalLightCurve.csv. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}")
         try:
             output_files.final_planetary_params()
         except Exception as e:
-            log_info(f"Error: Could not create FinalParams.json. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}")
         try:
             output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
                                goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
-            log_info(f"Error: Could not create AAVSO.txt. {error_txt}\n{e}")
+            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}")
 
         log_info("Output Files Saved")
 

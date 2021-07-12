@@ -159,8 +159,13 @@ plt.style.use(astropy_mpl_style)
 log = logging.getLogger(__name__)
 
 
-def log_info(string):
-    print(string)
+def log_info(string, warn=False, error=False):
+    if error:
+        print(f"\033[91m {string}\033[00m")
+    elif warn:
+        print(f"\033[93m {string}\033[00m")
+    else:
+        print(string)
     log.debug(string)
     return True
 
@@ -659,14 +664,14 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             if pdict[item] - uncert <= userpdict[item] <= pdict[item] + uncert:
                 continue
             else:
-                log_info(f"\n\n*** WARNING: {pdict['pName']} initialization file's {planet_params[idx]} does not match "
-                         "the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n")
-                log_info(f"\tNASA Exoplanet Archive value (degrees): {pdict[item]}")
-                log_info(f"\tInitialization file value (degrees): {userpdict[item]}")
+                log_info(f"\n\nWarning: {pdict['pName']} initialization file's {planet_params[idx]} does not match "
+                         "the value scraped by EXOTIC from the NASA Exoplanet Archive.\n", warn=True)
+                log_info(f"\tNASA Exoplanet Archive value (degrees): {pdict[item]}", warn=True)
+                log_info(f"\tInitialization file value (degrees): {userpdict[item]}", warn=True)
                 log_info("\nWould you like to:"
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
-                         "\n  (3) enter in a new value.")
+                         "\n  (3) enter in a new value.", warn=True)
                 option = user_input("Which option do you choose? (1/2/3): ", type_=int, val1=1, val2=2, val3=3)
 
                 if option == 1:
@@ -696,14 +701,14 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 continue
             # Initialization planetary parameters don't match NASA Exoplanet Archive
             if userpdict[key] is not None:
-                log_info(f"\n\n*** WARNING: {pdict['pName']} initialization file's {planet_params[i]} does not match "
-                         "the value scraped by EXOTIC from the NASA Exoplanet Archive. ***\n")
-                log_info(f"\tNASA Exoplanet Archive value: {pdict[key]}")
-                log_info(f"\tInitialization file value: {userpdict[key]}")
+                log_info(f"\n\nWarning: {pdict['pName']} initialization file's {planet_params[i]} does not match "
+                         "the value scraped by EXOTIC from the NASA Exoplanet Archive.\n", warn=True)
+                log_info(f"\tNASA Exoplanet Archive value: {pdict[key]}", warn=True)
+                log_info(f"\tInitialization file value: {userpdict[key]}", warn=True)
                 log_info("\nWould you like to: "
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
-                         "\n  (3) enter in a new value.")
+                         "\n  (3) enter in a new value.", warn=True)
                 option = user_input("Which option do you choose? (1/2/3): ", type_=int, val1=1, val2=2, val3=3)
                 if option == 1:
                     userpdict[key] = pdict[key]
@@ -752,7 +757,7 @@ def radec_hours_to_degree(ra, dec):
             return c.ra.degree, c.dec.degree
         except ValueError:
             log_info("Error: The format entered for Right Ascension and/or Declination is not correct, "
-                     "please try again.")
+                     "please try again.", error=True)
             ra = input("Input the Right Ascension of target (HH:MM:SS): ")
             dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
@@ -814,7 +819,7 @@ class LimbDarkening:
                     raise KeyError
                 break
             except KeyError:
-                log_info("\nError: The entered filter is not in the provided list of standard filters.")
+                log_info("\nError: The entered filter is not in the provided list of standard filters.", error=True)
                 self.filter_type = None
 
         self.wl_min = self.fwhm[self.filter_type][0]
@@ -869,7 +874,7 @@ def corruption_check(files):
             hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
             valid_files.append(file)
         except OSError as e:
-            log_info(f"Found corrupted file and removing from reduction: {file}, ({e})")
+            log_info(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}", warn=True)
         finally:
             if getattr(hdul, "close", None) and callable(hdul.close):
                 hdul.close()
@@ -932,10 +937,10 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             uncert = 1 / 36
             # Margins are within 100 arcseconds
             if not (expra - uncert <= ralist[int(pixy)][int(pixx)] <= expra + uncert):
-                log_info("\n*** Warning: The X Pixel Coordinate entered does not match the target's Right Ascension. ***")
+                log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
                 raise ValueError
             if not (expdec - uncert <= declist[int(pixy)][int(pixx)] <= expdec + uncert):
-                log_info("\n*** Warning: The Y Pixel Coordinate entered does not match the target's Declination. ***")
+                log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
                 raise ValueError
             return pixx, pixy
         except ValueError:
@@ -973,10 +978,10 @@ def variableStarCheck(ra, dec):
     # Query GAIA first to check for variability using the phot_variable_flag trait
     gaia_result = gaia_query(sample, radius)
     if not gaia_result:
-        log_info("*** WARNING: Your comparison star cannot be resolved in the Gaia star database; "
+        log_info("Warning: Your comparison star cannot be resolved in the Gaia star database; "
                  "EXOTIC cannot check if it is variable or not. "
-                 "***\nEXOTIC will still include this star in the reduction. "
-                 "\nPlease proceed with caution as we cannot check for stellar variability.\n")
+                 "\nEXOTIC will still include this star in the reduction. "
+                 "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
     else:
         # Individually go through the phot_variable_flag indicator for each star to see if variable or not
         variableFlagList = gaia_result.columns["phot_variable_flag"]
@@ -995,10 +1000,10 @@ def variableStarCheck(ra, dec):
     # This is a secondary check if GAIA query returns inconclusive results
     star_name = simbad_query(sample)
     if not star_name:
-        log_info("*** WARNING: Your comparison star cannot be resolved in the SIMBAD star database; "
+        log_info("Warning: Your comparison star cannot be resolved in the SIMBAD star database; "
                  "EXOTIC cannot check if it is variable or not. "
-                 "***\nEXOTIC will still include this star in the reduction. "
-                 "\nPlease proceed with caution as we cannot check for stellar variability.\n")
+                 "\nEXOTIC will still include this star in the reduction. "
+                 "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
         return False
     else:
         identifiers = Simbad.query_objectids(star_name)
@@ -1220,7 +1225,7 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log_info(f"CAUTION: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
+        log_info(f"Warning: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?", warn=True)
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
 
@@ -1250,8 +1255,8 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     try:
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
-        log_info(f"IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}. "
-                 f"Check if star is present or close to border.")
+        log_info(f"Warning: IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}."
+                 f"\nCheck if star is present or close to border.", warn=True)
 
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
@@ -1596,12 +1601,12 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
 
     if np.floor(arrayPhases).max() - np.floor(arrayPhases).min() == 0:
-        log_info("\nWARNING!")
-        log_info(" Estimated mid-transit time is not within the observations")
-        log_info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.")
-        log_info(f"  obs start:{arrayTimes.min()}")
-        log_info(f"    obs end:{arrayTimes.max()}")
-        log_info(f" tmid prior:{prior['tmid']}\n")
+        log_info("\nWarning:", warn=True)
+        log_info(" Estimated mid-transit time is not within the observations", warn=True)
+        log_info(" Check Period & Mid-transit time in inits.json. Make sure the uncertainties are not 0 or Nan.", warn=True)
+        log_info(f"  obs start:{arrayTimes.min()}", warn=True)
+        log_info(f"    obs end:{arrayTimes.max()}", warn=True)
+        log_info(f" tmid prior:{prior['tmid']}\n", warn=True)
 
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
@@ -1865,22 +1870,22 @@ def main():
 
         # check for Nans + Zeros
         for k in pDict:
-            if k=='rprs' and (pDict[k] == 0 or np.isnan(pDict[k])):
-                log_info(f"ERROR! {k} value is 0 or NaN. Please use a non-zero value in inits.json")
+            if k == 'rprs' and (pDict[k] == 0 or np.isnan(pDict[k])):
+                log_info(f"Error: {k} value is 0 or NaN. Please use a non-zero value in inits.json", error=True)
                 pDict[k] = 0.8 # instead of 1 since priors on RpRs are 0 to RpRs*1.25
                 log_info("EXOTIC will override the Rp/Rs value.")
-            if k=='aRs' and (pDict[k] < 1 or np.isnan(pDict[k])):
-                log_info(f"WARNING! {k} value is <1 or NaN. Please use a non-zero value in inits.json")
+            if k == 'aRs' and (pDict[k] < 1 or np.isnan(pDict[k])):
+                log_info(f"Warning: {k} value is <1 or NaN. Please use a non-zero value in inits.json", warn=True)
                 pDict[k] = user_input("\nPlease enter candidate planet's name: ", type_=float)
             if "Unc" in k:
                 if not pDict[k]:
-                    log_info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
+                    log_info(f"Warning: {k} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
                     pDict[k] = 1
                 elif pDict[k] == 0 or np.isnan(pDict[k]):
-                    log_info(f"WARNING! {k} uncertainty is 0. Please use a non-zero value in inits.json")
+                    log_info(f"Warning: {k} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
                     pDict[k] = 1
             elif pDict[k] is None:
-                log_info(f"WARNING! {k} is None. Please use a numeric value in inits.json")
+                log_info(f"Warning: {k} is None. Please use a numeric value in inits.json", warn=True)
                 pDict[k] = 0
 
         if fitsortext == 1:
@@ -3050,10 +3055,10 @@ def main():
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
-            log_info("ERROR: Estimated mid-transit not in observation range (check priors or observation time)")
-            log_info(f"start:{goodTimes.min()}")
-            log_info(f"  end:{goodTimes.max()}")
-            log_info(f"prior:{prior['tmid']}")
+            log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)
+            log_info(f"start:{goodTimes.min()}", error=True)
+            log_info(f"  end:{goodTimes.max()}", error=True)
+            log_info(f"prior:{prior['tmid']}", error=True)
 
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
@@ -3261,21 +3266,21 @@ def main():
         ##########
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
-        error_txt = "Please report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
-            log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}")
+            log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
             output_files.final_planetary_params()
         except Exception as e:
-            log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}")
+            log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
             output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
                                goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
-            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}")
+            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 
         log_info("Output Files Saved")
 

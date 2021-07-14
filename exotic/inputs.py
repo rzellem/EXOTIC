@@ -30,7 +30,7 @@ class Inputs:
             'images': None, 'save': None, 'flats': None, 'darks': None, 'biases': None,
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
-            'plate_opt': None, 'img_align_opt': None, 'tar_coords': None, 'comp_stars': None,
+            'plate_opt': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
@@ -38,7 +38,7 @@ class Inputs:
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
             'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
             'pixel_bin': pixel_bin, 'filter': filter_type, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
-            'img_align_opt': image_align_opt, 'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
+            'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
     def complete_red(self, planet):
@@ -60,7 +60,7 @@ class Inputs:
         return self.info_dict
 
     def prereduced(self):
-        rem_list = ['images', 'plate_opt', 'img_align_opt', 'tar_coords', 'comp_stars']
+        rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
 
         self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
@@ -77,7 +77,7 @@ class Inputs:
 
     def real_time(self, planet):
         rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
-                    'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt', 'img_align_opt']
+                    'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt']
         [self.params.pop(key) for key in rem_list]
 
         for key, value in list(self.params.items()):
@@ -131,7 +131,7 @@ class Inputs:
             'elev': ('Obs. Elevation (meters)', 'Obs. Elevation (meters; Note: leave blank if unknown)'),
             'camera': 'Camera Type (CCD or DSLR)',
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
-            'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
+            'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
         planet_params = {
@@ -409,14 +409,6 @@ def plate_solution_opt(opt):
                          "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky."
                          "\nDISCLAIMER: One of your imaging files will be publicly viewable on "
                          "nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
-    return opt
-
-
-def image_align_opt(opt):
-    if opt:
-        opt = opt.lower().strip()
-    if opt not in ('y', 'n'):
-        opt = user_input("\nWould you like to align your images (y/n): ", type_=str, val1='y', val2='n')
     return opt
 
 

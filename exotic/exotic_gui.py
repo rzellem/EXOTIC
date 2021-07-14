@@ -520,14 +520,6 @@ def main():
                 platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1
 
-                alignment = tk.BooleanVar()
-                alignment_check = tk.Checkbutton(root, text="Align my images"
-                                                            "\n(Note: Do not select if you'd like to use"
-                                                            "\nplate solution in header for tracking targets)",
-                                                 variable=alignment, onvalue=1, offvalue=0, justify=tk.LEFT)
-                alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
-                i += 1
-
                 targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
                 targetpos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 targetpos_entry.insert(tk.END, "[x, y]")
@@ -573,10 +565,6 @@ def main():
                     else:
                         input_data['platesolve'] = 'n'
 
-                    if alignment.get():
-                        input_data['alignment'] = 'y'
-                    else:
-                        input_data['alignment'] = 'n'
                 elif fitsortext.get() == 2:
                     input_data['file_time'] = pretime_entry.get()
                     input_data['file_units'] = preunit_entry.get()
@@ -1008,11 +996,6 @@ def main():
             #     platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
             #     i += 1
             #
-            #     alignment = tk.BooleanVar()
-            #     alignment_check = tk.Checkbutton(root, text='Align my images', variable=alignment, onvalue=1, offvalue=0)
-            #     alignment_check.grid(row=i, column=j, sticky=tk.W, pady=2)
-            #     i += 1
-            #
             #     targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
             #     targetpos_entry = tk.Entry(root, font=("Helvetica 12"), justify=tk.LEFT)
             #     targetpos_entry.insert(tk.END, "[x, y]")
@@ -1122,7 +1105,6 @@ def main():
                         "Observing Notes": input_data['obsnotes'],
 
                         "Plate Solution? (y/n)": input_data['platesolve'],
-                        "Align Images? (y/n)": input_data['alignment'],
 
                         "Target Star X & Y Pixel": (input_data['targetpos']),
                         "Comparison Star(s) X & Y Pixel": (input_data['comppos'])

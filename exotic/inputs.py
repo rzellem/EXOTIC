@@ -108,7 +108,7 @@ class Inputs:
                 planet_params = self.comp_params(init_file, planet_dict)
                 return init_file, planet_params
             except (FileNotFoundError, IsADirectoryError) as e:
-                log_info(f"*** Error: Initialization file not found. \n{e}. \nPlease try again. ***")
+                log_info(f"Error: Initialization file not found. \n{e}. \nPlease try again.", error=True)
 
                 log_info(f"\nYour current working directory is: {cwd}")
                 log_info(f"Potential initialization files I've found in {cwd} are: ")
@@ -116,7 +116,7 @@ class Inputs:
 
                 init_file = None
             except ValueError as e:
-                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}")
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}", error=True)
                 init_file = None
 
     def comp_params(self, init_file, planet_dict):
@@ -128,7 +128,7 @@ class Inputs:
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
-            'elev': 'Obs. Elevation (meters)',
+            'elev': ('Obs. Elevation (meters)', 'Obs. Elevation (meters; Note: leave blank if unknown)'),
             'camera': 'Camera Type (CCD or DSLR)',
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
             'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
@@ -184,7 +184,8 @@ def check_imaging_files(directory, img_type):
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.")
+            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.",
+                     error=True)
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
                              type_=str, val1='y', val2='n')
             if opt == 'y':
@@ -194,7 +195,7 @@ def check_imaging_files(directory, img_type):
                 directory = user_input(f"Enter the directory path where {img_type} files are located "
                                        f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
         except (NotADirectoryError, OSError):
-            log_info("\nError: No such directory exists when searching for FITS files. Please try again.")
+            log_info("\nError: No such directory exists when searching for FITS files. Please try again.", error=True)
             directory = user_input(f"Enter the directory path where {img_type} files are located "
                                    f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
 
@@ -220,7 +221,7 @@ def save_directory(directory):
             return directory
         except (NotADirectoryError, OSError):
             log_info("Error: The directory entered does not exist. Please try again. Make sure to follow this "
-                     "\nformatting (using whichever directory you choose): /sample-data/results")
+                     "\nformatting (using whichever directory you choose): /sample-data/results", error=True)
             directory = None
 
 
@@ -232,7 +233,7 @@ def create_directory():
             save_path = save_path / directory
             Path(save_path).mkdir()
         except OSError:
-            log_info(f"Creation of the directory {save_path}/{directory} failed.")
+            log_info(f"Error: Creation of the directory {save_path}/{directory} failed.", error=True)
         else:
             log_info(f"Successfully created the directory {save_path}.")
             return save_path
@@ -313,9 +314,11 @@ def latitude(lat):
             if -90.00 <= lat <= 90.00:
                 return lat
             else:
-                log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).")
+                log_info("Error: Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).",
+                         error=True)
         else:
-            log_info("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
+            log_info("Error: You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.",
+                     error=True)
         lat = None
 
 
@@ -337,9 +340,11 @@ def longitude(long):
             if -180.00 <= long <= 180.00:
                 return long
             else:
-                log_info("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).")
+                log_info("Error: Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).",
+                         error=True)
         else:
-            log_info("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
+            log_info("Error: You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.",
+                     error=True)
         long = None
 
 
@@ -354,11 +359,11 @@ def elevation(elev, lat, long):
                 elev = open_elevation(lat, long)
                 animate_toggle()
                 if not elev:
-                    log_info("\nEXOTIC could not retrieve elevation.")
+                    log_info("\nWarning: EXOTIC could not retrieve elevation.", warn=True)
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
             return elev
         except ValueError:
-            log_info("The entered elevation is incorrect.")
+            log_info("Error: The entered elevation is incorrect.", error=True)
             elev = None
 
 
@@ -438,7 +443,7 @@ def comparison_star_coords(comp_stars, rt_bool):
                 num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
                 if 1 <= num_comp_stars <= 10:
                     break
-                log_info("\nThe number of Comparison Stars entered is incorrect.")
+                log_info("\nError: The number of Comparison Stars entered is incorrect.", error=True)
             else:
                 num_comp_stars = 1
                 break
@@ -478,7 +483,7 @@ def prereduced_file(file):
             else:
                 raise FileNotFoundError
         except FileNotFoundError:
-            log_info("Error: Data file not found. Please try again.")
+            log_info("Error: Data file not found. Please try again.", error=True)
             file = None
 
 
@@ -493,7 +498,7 @@ def data_file_time(time_format):
         time_format = time_format.upper().strip()
 
         if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
-            log_info("Invalid entry; please try again.")
+            log_info("Error: Invalid entry; please try again.", error=True)
             time_format = None
         else:
             return time_format
@@ -510,14 +515,19 @@ def data_file_units(units):
         units = units.lower().strip()
 
         if units not in ['flux', 'magnitude', 'millimagnitude']:
-            log_info("Invalid entry; please try again.")
+            log_info("Error: Invalid entry; please try again.", error=True)
             units = None
         else:
             return units
 
 
 #temp
-def log_info(string):
-    print(string)
+def log_info(string, warn=False, error=False):
+    if error:
+        print(f"\033[91m {string}\033[00m")
+    elif warn:
+        print(f"\033[93m {string}\033[00m")
+    else:
+        print(string)
     log.debug(string)
     return True

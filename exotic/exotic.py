@@ -2067,6 +2067,7 @@ def main():
                                 if not (tar_comp_dist[ckey][0] - 2 <= abs(int(cx) - int(tx)) <= tar_comp_dist[ckey][0] + 2 and
                                         tar_comp_dist[ckey][1] - 2 <= abs(int(cy) - int(ty)) <= tar_comp_dist[ckey][1] + 2) or \
                                         np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
+                                    update_comp = []
                                     cor_opt = False
                                     raise Exception
                                 update_comp.append([cx, cy])

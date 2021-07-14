@@ -1969,8 +1969,6 @@ def main():
             # aperture sizes in stdev (sigma) of PSF
             apers = np.linspace(3, 6, 7)
             annuli = np.linspace(6, 15, 19)
-            # apers = np.linspace(2, 6, 10)
-            # annuli = np.linspace(6, 15, 10)
 
             # alloc psf fitting param
             psf_data = {
@@ -1981,17 +1979,18 @@ def main():
                 'target': np.zeros((len(inputfiles), len(apers), len(annuli))),
                 'target_bg': np.zeros((len(inputfiles), len(apers), len(annuli)))
             }
+            tar_comp_dist = {}
 
             for i, coord in enumerate(compStarList):
                 ckey = f"comp{i + 1}"
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                tar_comp_dist[ckey] = np.zeros(2, dtype=int)
 
             cor_opt = False
             comp_stars, update_comp = compStarList, []
 
-            start_time = time.time()
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
@@ -2049,39 +2048,56 @@ def main():
                     except Exception:
                         try:
                             shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
-                            if False:
-                                cor_opt = False
-                                raise Exception
-                            cor_opt = True
                             tx -= shift[1]
                             ty -= shift[0]
-                            print(i)
+
+                            psf_data["target"][i] = fit_centroid(imageData, [tx, ty])
+                            tx, ty = psf_data["target"][i][0], psf_data["target"][i][1]
+
+                            if np.abs((psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
+                                cor_opt = False
+                                raise Exception
+                            
+                            for j, coord in enumerate(comp_stars):
+                                ckey = f"comp{j + 1}"
+                                cx = coord[0] - shift[1]
+                                cy = coord[1] - shift[0]
+                                psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                                cx, cy = psf_data[ckey][i][0], psf_data[ckey][i][1]
+                                if not (tar_comp_dist[ckey][0] - 2 <= abs(int(cx) - int(tx)) <= tar_comp_dist[ckey][0] + 2 and
+                                        tar_comp_dist[ckey][1] - 2 <= abs(int(cy) - int(ty)) <= tar_comp_dist[ckey][1] + 2) or \
+                                        np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
+                                    cor_opt = False
+                                    raise Exception
+                                update_comp.append([cx, cy])
+                            cor_opt = True
                         except Exception:
                             tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
                             tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
+                if not cor_opt:
                     psf_data["target"][i] = fit_centroid(imageData, [tx, ty])
                     tx, ty = psf_data["target"][i][0], psf_data["target"][i][1]
+                    # fit for the centroids in all images
+                    for j, coord in enumerate(comp_stars):
+                        ckey = f"comp{j + 1}"
 
-                # fit for the centroids in all images
-                for j, coord in enumerate(comp_stars):
-                    ckey = f"comp{j + 1}"
+                        if wcs_hdr.is_celestial:
+                            pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                            cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
+                        elif i == 0:
+                            cx, cy = coord[0], coord[1]
+                        else:
+                            cx, cy = tform(compStarList[j])[0]
 
-                    if wcs_hdr.is_celestial:
-                        pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
-                        cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-                    elif i == 0:
-                        cx, cy = coord[0], coord[1]
-                    elif cor_opt:
-                        cx = coord[0] - shift[1]
-                        cy = coord[1] - shift[0]
-                    else:
-                        cx, cy = tform(compStarList[j])[0]
+                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        cx, cy = psf_data[ckey][i][0], psf_data[ckey][i][1]
 
-                    psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
-                    cx, cy = psf_data[ckey][i][0], psf_data[ckey][i][1]
-                    update_comp.append([cx, cy])
+                        if i == 0:
+                            tar_comp_dist[ckey][0] = abs(int(cx) - int(tx))
+                            tar_comp_dist[ckey][1] = abs(int(cy) - int(ty))
 
+                        update_comp.append([cx, cy])
                 comp_stars = update_comp
                 update_comp = []
 
@@ -2273,8 +2289,6 @@ def main():
                 log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
                 log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
             log_info("*********************************************\n")
-
-            print("--- %s seconds ---" % (time.time() - start_time))
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:

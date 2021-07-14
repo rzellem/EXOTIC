@@ -128,7 +128,7 @@ class Inputs:
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
-            'elev': 'Obs. Elevation (meters)',
+            'elev': ('Obs. Elevation (meters)', 'Obs. Elevation (meters; Note: leave blank if unknown)'),
             'camera': 'Camera Type (CCD or DSLR)',
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
             'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',

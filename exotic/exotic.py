@@ -1091,7 +1091,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
                 except Exception as ee:
                     log_info(ee)
     
-    log_info(f"alignment failed: {file_name}")
+    log_info(f"Alignment failed: {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 
@@ -1959,8 +1959,8 @@ def main():
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
 
-                    log_info("\nChecking for variability in Comparison Star #"+str(compn+1)+" : \n"
-                             f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
+                    log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
+                             f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
                             log_info("\nCurrent comparison star is variable, proceeding to next star.")
                             exotic_infoDict['comp_stars'].remove(comp)

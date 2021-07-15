@@ -48,7 +48,7 @@ class Inputs:
         for key, value in list(self.params.items()):
             if key == 'elev':
                 self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
-                                                       self.info_dict['long'], hdr)
+                                                       self.info_dict['long'], hdr=hdr)
             elif key == 'tar_coords':
                 self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             elif key == 'comp_stars':
@@ -363,7 +363,7 @@ def longitude(long, hdr):
         long = None
 
 
-def elevation(elev, lat, long, hdr):
+def elevation(elev, lat, long, hdr=None):
     while True:
         try:
             elev = typecast_check(type_=float, val=elev)

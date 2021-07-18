@@ -187,7 +187,7 @@ def check_imaging_files(directory, img_type):
             log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.",
                      error=True)
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
-                             type_=str, val1='y', val2='n')
+                             type_=str, values=['y', 'n'])
             if opt == 'y':
                 add_ext = user_input("Please enter the extension you want to add (EX: .FITS): ", type_=str)
                 file_extensions.append(add_ext)
@@ -244,7 +244,7 @@ def image_calibrations(flats_dir, darks_dir, biases_dir, init):
 
     if init == 'n':
         opt = user_input("\nDo you have any Calibration Images? (Flats, Darks or Biases)? (y/n): ",
-                         type_=str, val1='y', val2='n')
+                         type_=str, values=['y', 'n'])
 
     if opt == 'y' or flats_dir:
         flats_list = check_calibration(flats_dir, 'Flats')
@@ -258,7 +258,7 @@ def image_calibrations(flats_dir, darks_dir, biases_dir, init):
 
 def check_calibration(directory, image_type):
     if not directory:
-        opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, val1='y', val2='n')
+        opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, values=['y', 'n'])
         if opt == 'y':
             directory = user_input(f"Please enter the directory path to your {image_type} "
                                    "(must be in their own separate folder): ", type_=str)
@@ -408,7 +408,7 @@ def plate_solution_opt(opt):
         opt = user_input("\nWould you like to upload the your image for a plate solution?"
                          "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky."
                          "\nDISCLAIMER: One of your imaging files will be publicly viewable on "
-                         "nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
+                         "nova.astrometry.net. (y/n): ", type_=str, values=['y', 'n'])
     return opt
 
 

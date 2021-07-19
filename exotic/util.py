@@ -105,7 +105,7 @@ def get_val(hdr, ks):
         new_key = key[0] + key[1:len(key)].lower()  # first letter capitalized
         if new_key in hdr.keys():
             return hdr[new_key]
-    return ""
+    return None
 
 
 # Provided by: Kalee Tock
@@ -155,11 +155,11 @@ def find(hdr, ks, obs=None):
 
     if obs == "Boyce":
         boyce_val = get_val(boyce, ks)
-        if boyce_val != "":
+        if boyce_val:
             return boyce_val
     if obs == "MObs":
         mobs_val = get_val(mobs, ks)
-        if mobs_val != "":
+        if mobs_val:
             return mobs_val
 
     val = get_val(hdr, ks)

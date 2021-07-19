@@ -2,11 +2,12 @@ import logging
 import sys
 import json
 from pathlib import Path
+from astropy.io import fits
 
 try:
-    from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
+    from util import *
 except ImportError:
-    from .util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
+    from .util import *
 try:
     from animate import *
 except ImportError:
@@ -30,7 +31,7 @@ class Inputs:
             'images': None, 'save': None, 'flats': None, 'darks': None, 'biases': None,
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
-            'plate_opt': None, 'img_align_opt': None, 'tar_coords': None, 'comp_stars': None,
+            'plate_opt': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
@@ -38,18 +39,25 @@ class Inputs:
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
             'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
             'pixel_bin': pixel_bin, 'filter': filter_type, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
-            'img_align_opt': image_align_opt, 'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
+            'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
     def complete_red(self, planet):
+        hdr = None
+
         for key, value in list(self.params.items()):
             if key == 'elev':
                 self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
-                                                       self.info_dict['long'])
+                                                       self.info_dict['long'], hdr=hdr)
             elif key == 'tar_coords':
                 self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             elif key == 'comp_stars':
                 self.info_dict[key] = self.params[key](self.info_dict[key], False)
+            elif key == 'images':
+                self.info_dict[key] = self.params[key](self.info_dict[key])
+                hdr = fits.getheader(self.info_dict[key][0])
+            elif key in ('lat', 'long'):
+                self.info_dict[key] = self.params[key](self.info_dict[key], hdr)
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
             if key == 'save':
@@ -60,7 +68,7 @@ class Inputs:
         return self.info_dict
 
     def prereduced(self):
-        rem_list = ['images', 'plate_opt', 'img_align_opt', 'tar_coords', 'comp_stars']
+        rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
 
         self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
@@ -77,7 +85,7 @@ class Inputs:
 
     def real_time(self, planet):
         rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
-                    'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt', 'img_align_opt']
+                    'camera', 'pixel_bin', 'filter', 'notes', 'plate_opt']
         [self.params.pop(key) for key in rem_list]
 
         for key, value in list(self.params.items()):
@@ -108,7 +116,7 @@ class Inputs:
                 planet_params = self.comp_params(init_file, planet_dict)
                 return init_file, planet_params
             except (FileNotFoundError, IsADirectoryError) as e:
-                log_info(f"*** Error: Initialization file not found. \n{e}. \nPlease try again. ***")
+                log_info(f"Error: Initialization file not found. \n{e}. \nPlease try again.", error=True)
 
                 log_info(f"\nYour current working directory is: {cwd}")
                 log_info(f"Potential initialization files I've found in {cwd} are: ")
@@ -116,7 +124,7 @@ class Inputs:
 
                 init_file = None
             except ValueError as e:
-                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}")
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}", error=True)
                 init_file = None
 
     def comp_params(self, init_file, planet_dict):
@@ -128,10 +136,10 @@ class Inputs:
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
-            'elev': 'Obs. Elevation (meters)',
+            'elev': ('Obs. Elevation (meters)', 'Obs. Elevation (meters; Note: leave blank if unknown)'),
             'camera': 'Camera Type (CCD or DSLR)',
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
-            'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)', 'img_align_opt': 'Align Images? (y/n)',
+            'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
         planet_params = {
@@ -184,9 +192,10 @@ def check_imaging_files(directory, img_type):
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.")
+            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.",
+                     error=True)
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
-                             type_=str, val1='y', val2='n')
+                             type_=str, values=['y', 'n'])
             if opt == 'y':
                 add_ext = user_input("Please enter the extension you want to add (EX: .FITS): ", type_=str)
                 file_extensions.append(add_ext)
@@ -194,7 +203,7 @@ def check_imaging_files(directory, img_type):
                 directory = user_input(f"Enter the directory path where {img_type} files are located "
                                        f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
         except (NotADirectoryError, OSError):
-            log_info("\nError: No such directory exists when searching for FITS files. Please try again.")
+            log_info("\nError: No such directory exists when searching for FITS files. Please try again.", error=True)
             directory = user_input(f"Enter the directory path where {img_type} files are located "
                                    f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
 
@@ -220,7 +229,7 @@ def save_directory(directory):
             return directory
         except (NotADirectoryError, OSError):
             log_info("Error: The directory entered does not exist. Please try again. Make sure to follow this "
-                     "\nformatting (using whichever directory you choose): /sample-data/results")
+                     "\nformatting (using whichever directory you choose): /sample-data/results", error=True)
             directory = None
 
 
@@ -232,7 +241,7 @@ def create_directory():
             save_path = save_path / directory
             Path(save_path).mkdir()
         except OSError:
-            log_info(f"Creation of the directory {save_path}/{directory} failed.")
+            log_info(f"Error: Creation of the directory {save_path}/{directory} failed.", error=True)
         else:
             log_info(f"Successfully created the directory {save_path}.")
             return save_path
@@ -243,7 +252,7 @@ def image_calibrations(flats_dir, darks_dir, biases_dir, init):
 
     if init == 'n':
         opt = user_input("\nDo you have any Calibration Images? (Flats, Darks or Biases)? (y/n): ",
-                         type_=str, val1='y', val2='n')
+                         type_=str, values=['y', 'n'])
 
     if opt == 'y' or flats_dir:
         flats_list = check_calibration(flats_dir, 'Flats')
@@ -257,7 +266,7 @@ def image_calibrations(flats_dir, darks_dir, biases_dir, init):
 
 def check_calibration(directory, image_type):
     if not directory:
-        opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, val1='y', val2='n')
+        opt = user_input(f"\nDo you have {image_type}? (y/n): ", type_=str, values=['y', 'n'])
         if opt == 'y':
             directory = user_input(f"Please enter the directory path to your {image_type} "
                                    "(must be in their own separate folder): ", type_=str)
@@ -295,16 +304,19 @@ def obs_date(date):
     return date
 
 
-def latitude(lat):
+def latitude(lat, hdr):
     while True:
         if not lat:
+            lat = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
+            if lat:
+                return lat
             lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
         lat = lat.replace(' ', '')
 
         if lat[0] == '+' or lat[0] == '-':
-            # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
+            # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
             try:
                 lat = float(lat)
             except ValueError:
@@ -313,18 +325,24 @@ def latitude(lat):
             if -90.00 <= lat <= 90.00:
                 return lat
             else:
-                log_info("Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).")
+                log_info("Error: Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).",
+                         error=True)
         else:
-            log_info("You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.")
+            log_info("Error: You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.",
+                     error=True)
         lat = None
 
 
-def longitude(long):
+def longitude(long, hdr):
     while True:
         if not long:
+            long = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
+            if long:
+                return long
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
                               "(Example: +152.51): ", type_=str)
+
         long = long.replace(' ', '')
 
         if long[0] == '+' or long[0] == '-':
@@ -337,28 +355,33 @@ def longitude(long):
             if -180.00 <= long <= 180.00:
                 return long
             else:
-                log_info("Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).")
+                log_info("Error: Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).",
+                         error=True)
         else:
-            log_info("You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.")
+            log_info("Error: You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.",
+                     error=True)
         long = None
 
 
-def elevation(elev, lat, long):
+def elevation(elev, lat, long, hdr=None):
     while True:
         try:
             elev = typecast_check(type_=float, val=elev)
             if not elev:
+                elev = find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'])
+                if elev:
+                    return int(elev)
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
                 animate_toggle(True)
                 elev = open_elevation(lat, long)
                 animate_toggle()
                 if not elev:
-                    log_info("\nEXOTIC could not retrieve elevation.")
+                    log_info("\nWarning: EXOTIC could not retrieve elevation.", warn=True)
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
             return elev
         except ValueError:
-            log_info("The entered elevation is incorrect.")
+            log_info("Error: The entered elevation is incorrect.", error=True)
             elev = None
 
 
@@ -403,15 +426,7 @@ def plate_solution_opt(opt):
         opt = user_input("\nWould you like to upload the your image for a plate solution?"
                          "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky."
                          "\nDISCLAIMER: One of your imaging files will be publicly viewable on "
-                         "nova.astrometry.net. (y/n): ", type_=str, val1='y', val2='n')
-    return opt
-
-
-def image_align_opt(opt):
-    if opt:
-        opt = opt.lower().strip()
-    if opt not in ('y', 'n'):
-        opt = user_input("\nWould you like to align your images (y/n): ", type_=str, val1='y', val2='n')
+                         "nova.astrometry.net. (y/n): ", type_=str, values=['y', 'n'])
     return opt
 
 
@@ -438,7 +453,7 @@ def comparison_star_coords(comp_stars, rt_bool):
                 num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
                 if 1 <= num_comp_stars <= 10:
                     break
-                log_info("\nThe number of Comparison Stars entered is incorrect.")
+                log_info("\nError: The number of Comparison Stars entered is incorrect.", error=True)
             else:
                 num_comp_stars = 1
                 break
@@ -478,7 +493,7 @@ def prereduced_file(file):
             else:
                 raise FileNotFoundError
         except FileNotFoundError:
-            log_info("Error: Data file not found. Please try again.")
+            log_info("Error: Data file not found. Please try again.", error=True)
             file = None
 
 
@@ -493,7 +508,7 @@ def data_file_time(time_format):
         time_format = time_format.upper().strip()
 
         if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
-            log_info("Invalid entry; please try again.")
+            log_info("Error: Invalid entry; please try again.", error=True)
             time_format = None
         else:
             return time_format
@@ -510,14 +525,19 @@ def data_file_units(units):
         units = units.lower().strip()
 
         if units not in ['flux', 'magnitude', 'millimagnitude']:
-            log_info("Invalid entry; please try again.")
+            log_info("Error: Invalid entry; please try again.", error=True)
             units = None
         else:
             return units
 
 
 #temp
-def log_info(string):
-    print(string)
+def log_info(string, warn=False, error=False):
+    if error:
+        print(f"\033[91m {string}\033[00m")
+    elif warn:
+        print(f"\033[93m {string}\033[00m")
+    else:
+        print(string)
     log.debug(string)
     return True

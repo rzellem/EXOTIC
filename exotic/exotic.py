@@ -1055,7 +1055,7 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def transformation(image_data, num_images, file_name, count, roi=1):
+def transformation(image_data, file_name, roi=1):
     pos = np.zeros((1, 2))
 
     # crop image to ROI
@@ -1066,10 +1066,6 @@ def transformation(image_data, num_images, file_name, count, roi=1):
 
     # Find transformation from .FITS files and catch exceptions if not able to.
     try:
-        sys.stdout.write(f"Finding transformation {count + 1} of {num_images}\r")
-        log.debug(f"Finding transformation {count + 1} of {num_images}\r")
-        sys.stdout.flush()
-
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         return results[0]
     except Exception as ee:
@@ -1091,7 +1087,7 @@ def transformation(image_data, num_images, file_name, count, roi=1):
                 except Exception as ee:
                     log_info(ee)
     
-    log_info(f"alignment failed: {file_name}")
+    log_info(f"Alignment failed: {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 
@@ -1462,7 +1458,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
             prevImageData = imageData  # no shift should be registered
 
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
-        tform = transformation(np.array([imageData, firstImageData]), len(timeSortedNames), imageFile, i)
+        tform = transformation(np.array([imageData, firstImageData]), imageFile)
 
         # apply transform
         tx, ty = tform([UIprevTPX, UIprevTPY])[0]
@@ -1959,8 +1955,8 @@ def main():
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
 
-                    log_info("\nChecking for variability in Comparison Star #"+str(compn+1)+" : \n"
-                             f"Pixel X: {comp[0]} Pixel Y: {comp[1]}")
+                    log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
+                             f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
                             log_info("\nCurrent comparison star is variable, proceeding to next star.")
                             exotic_infoDict['comp_stars'].remove(comp)
@@ -2035,6 +2031,10 @@ def main():
 
                 wcs_hdr = search_wcs(fileName)
 
+                sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+                log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+                sys.stdout.flush()
+
                 try:
                     if not wcs_hdr.is_celestial:
                         raise Exception
@@ -2073,7 +2073,7 @@ def main():
                                 update_comp.append([cx, cy])
                             cor_opt = True
                         except Exception:
-                            tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                            tform = transformation(np.array([imageData, firstImage]), fileName)
                             tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
                 if not cor_opt:

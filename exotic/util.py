@@ -1,4 +1,5 @@
 import logging
+import re
 import requests
 from numpy import floor, log10
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
@@ -8,7 +9,6 @@ try:
     from api.plate_solution import is_false, result_if_max_retry_count
 except ImportError:
     from .api.plate_solution import is_false, result_if_max_retry_count
-
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +88,83 @@ def dms_to_dd(dms_in):
     if float(degrees) < 0.:
         dec = dec * -1.
     return dec
+
+
+# Provided by: Kalee Tock
+def get_val(hdr, ks):
+    for key in ks:
+        if key in hdr.keys():
+            return hdr[key]
+        if key.lower() in hdr.keys():
+            return hdr[key.lower()]
+        new_key = key[0] + key[1:len(key)].lower()  # first letter capitalized
+        if new_key in hdr.keys():
+            return hdr[new_key]
+    return None
+
+
+# Provided by: Kalee Tock
+def add_sign(var):
+    str_var = str(var)
+    m = re.search(r"^[+\-]", str_var)
+
+    if m:
+        return str_var
+    if float(var) >= 0:
+        return f"+{float(var)}.6f"
+    else:
+        return f"-{float(var)}.6f"
+
+
+# Provided by: Kalee Tock
+def process_lat_long(val, key):
+    m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val)
+    if m:
+        deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
+        if deg < 0:
+            v = deg - (((60 * min) + sec) / 3600)
+        else:
+            v = deg + (((60 * min) + sec) / 3600)
+        return add_sign(v)
+
+    m = re.search("^\'?([+-]?\d+\.\d+)", val)
+
+    if m:
+        v = float(m.group(1))
+        return add_sign(v)
+    else:
+        print(f"Cannot match value {val}, which is meant to be {key}.")
+
+
+# Provided by: Kalee Tock
+def find(hdr, ks, obs=None):
+    # Special stuff for MObs and Boyce-Astro Observatories
+    boyce = {"LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405}
+    mobs = {"LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606}
+
+    if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
+        obs = "MObs"
+
+    #  if "USERID" in hdr.keys() and hdr["USERID"] == 'PatBoyce':
+    #    obs = "Boyce"
+
+    if obs == "Boyce":
+        boyce_val = get_val(boyce, ks)
+        if boyce_val:
+            return boyce_val
+    if obs == "MObs":
+        mobs_val = get_val(mobs, ks)
+        if mobs_val:
+            return mobs_val
+
+    val = get_val(hdr, ks)
+
+    if ks[0] == "LATITUDE" and val:
+        return process_lat_long(str(val), "latitude")
+    if ks[0] == "LONGITUD" and val:
+        return process_lat_long(str(val), "longitude")
+
+    return val
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),

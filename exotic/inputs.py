@@ -2,11 +2,12 @@ import logging
 import sys
 import json
 from pathlib import Path
+from astropy.io import fits
 
 try:
-    from util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
+    from util import *
 except ImportError:
-    from .util import user_input, dms_to_dd, open_elevation, typecast_check, init_params
+    from .util import *
 try:
     from animate import *
 except ImportError:
@@ -42,14 +43,21 @@ class Inputs:
         }
 
     def complete_red(self, planet):
+        hdr = None
+
         for key, value in list(self.params.items()):
             if key == 'elev':
                 self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
-                                                       self.info_dict['long'])
+                                                       self.info_dict['long'], hdr=hdr)
             elif key == 'tar_coords':
                 self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             elif key == 'comp_stars':
                 self.info_dict[key] = self.params[key](self.info_dict[key], False)
+            elif key == 'images':
+                self.info_dict[key] = self.params[key](self.info_dict[key])
+                hdr = fits.getheader(self.info_dict[key][0])
+            elif key in ('lat', 'long'):
+                self.info_dict[key] = self.params[key](self.info_dict[key], hdr)
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
             if key == 'save':
@@ -296,16 +304,19 @@ def obs_date(date):
     return date
 
 
-def latitude(lat):
+def latitude(lat, hdr):
     while True:
         if not lat:
+            lat = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
+            if lat:
+                return lat
             lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
         lat = lat.replace(' ', '')
 
         if lat[0] == '+' or lat[0] == '-':
-            # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
+            # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
             try:
                 lat = float(lat)
             except ValueError:
@@ -322,12 +333,16 @@ def latitude(lat):
         lat = None
 
 
-def longitude(long):
+def longitude(long, hdr):
     while True:
         if not long:
+            long = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
+            if long:
+                return long
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
                               "(Example: +152.51): ", type_=str)
+
         long = long.replace(' ', '')
 
         if long[0] == '+' or long[0] == '-':
@@ -348,11 +363,14 @@ def longitude(long):
         long = None
 
 
-def elevation(elev, lat, long):
+def elevation(elev, lat, long, hdr=None):
     while True:
         try:
             elev = typecast_check(type_=float, val=elev)
             if not elev:
+                elev = find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'])
+                if elev:
+                    return int(elev)
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
                 animate_toggle(True)

@@ -13,7 +13,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def user_input(prompt, type_, val1=None, val2=None, val3=None):
+def user_input(prompt, type_, values=None):
     while True:
         try:
             result = type_(input(prompt))
@@ -21,19 +21,14 @@ def user_input(prompt, type_, val1=None, val2=None, val3=None):
         except ValueError:
             print("Sorry, not a valid datatype.")
             continue
-        if type_ == str and val1 and val2 and val3:
+        if type_ == str and values is not None:
             result = result.lower().strip()
-            if result not in (val1, val2, val3):
+            if result not in values:
                 print("Sorry, your response was not valid.")
             else:
                 return result
-        elif type_ == int and val1 and val2 and val3:
-            if result not in (val1, val2, val3):
-                print("Sorry, your response was not valid.")
-            else:
-                return result
-        elif type_ == int and val1 and val2 and val3:
-            if result not in (val1, val2, val3):
+        elif type_ == int and values is not None:
+            if result not in values:
                 print("Sorry, your response was not valid.")
             else:
                 return result

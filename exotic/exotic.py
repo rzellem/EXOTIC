@@ -545,7 +545,7 @@ def planet_name(planet):
                      f"\n  (1) {planet} is correct."
                      "\n  (2) The planet name needs to be changed.")
 
-            opt = user_input("\nPlease select 1 or 2: ", type_=int, val1=1, val2=2)
+            opt = user_input("\nPlease select 1 or 2: ", type_=int, values=[1, 2])
         else:
             opt = 1
 
@@ -609,9 +609,9 @@ def check_parameters(init_parameters, parameters):
                  "\n Would you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
                  "\n  (2) to review the ones scraped from the Archive that differ?")
-        opt = user_input("\nPlease enter 1 or 2: ", type_=str, val1='1', val2='2')
+        opt = user_input("\nPlease enter 1 or 2: ", type_=int, values=[1, 2])
 
-        if opt == '2':
+        if opt == 2:
             return True
         else:
             return False
@@ -672,7 +672,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
                          "\n  (3) enter in a new value.", warn=True)
-                option = user_input("Which option do you choose? (1/2/3): ", type_=int, val1=1, val2=2, val3=3)
+                option = user_input("Which option do you choose? (1/2/3): ", type_=int, values=[1, 2, 3])
 
                 if option == 1:
                     userpdict[item] = pdict[item]
@@ -709,7 +709,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                          "\n  (1) use NASA Exoplanet Archive value, "
                          "\n  (2) use initialization file value, or "
                          "\n  (3) enter in a new value.", warn=True)
-                option = user_input("Which option do you choose? (1/2/3): ", type_=int, val1=1, val2=2, val3=3)
+                option = user_input("Which option do you choose? (1/2/3): ", type_=int, values=[1, 2, 3])
                 if option == 1:
                     userpdict[key] = pdict[key]
                 elif option == 2:
@@ -719,7 +719,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             # Did not use initialization file or null
             else:
                 log_info(f"\n {pdict['pName']} {planet_params[i]}: {pdict[key]}")
-                agreement = user_input("Do you agree? (y/n): ", type_=str, val1='y', val2='n')
+                agreement = user_input("Do you agree? (y/n): ", type_=str, values=['y', 'n'])
                 if agreement == 'y':
                     userpdict[key] = pdict[key]
                 else:
@@ -733,7 +733,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
             # Used initialization file and is not empty
             if userpdict[key] is not None:
                 agreement = user_input(f"{planet_params[i]}: {userpdict[key]} \nDo you agree? (y/n): ",
-                                       type_=str, val1='y', val2='n')
+                                       type_=str, values=['y', 'n'])
                 if agreement == 'y':
                     continue
                 else:
@@ -782,11 +782,11 @@ class LimbDarkening:
             self._custom()
         else:
             opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
-                             "with uncertainties? (y/n):", type_=str, val1='y', val2='n')
+                             "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
 
             if opt == 'y':
                 opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
-                                 type_=int, val1=1, val2=2)
+                                 type_=int, values=[1, 2])
                 if opt == 1:
                     self._standard()
                 elif opt == 2:
@@ -948,7 +948,7 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
             exotic_pixy, exotic_pixx = deg_to_pix(expra, expdec, ralist, declist)
             log_info(f"EXOTIC's calculated pixel coordinates: [{exotic_pixx}, {exotic_pixy}]")
 
-            opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, val1='y', val2='n')
+            opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, values=['y', 'n'])
 
             # User wants to change their coordinates
             if opt == 'y':
@@ -956,7 +956,7 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
                                        f"  X Pixel: {exotic_pixx}"
                                        f"  Y Pixel: {exotic_pixy}"
                                        "\nWould you like to use these? (y/n): ",
-                                       type_=str, val1='y', val2='n')
+                                       type_=str, values=['y', 'n'])
                 # Use the coordinates found by code
                 if searchopt == 'y':
                     return exotic_pixx, exotic_pixy
@@ -1700,12 +1700,12 @@ def main():
         reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while "
                                    "observing) \n\t2: for for Complete Reduction (for analyzing your data after "
                                    "an observing run). \nPlease enter 1 or 2: ",
-                                   type_=int, val1=1, val2=2)
+                                   type_=int, values=[1, 2])
 
     if not (args.reduce or args.prereduced or args.realtime or args.photometry):
         fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
                                        "Enter '1' to use the Command Line or '2' to use an input file: ",
-                                       type_=int, val1=1, val2=2)
+                                       type_=int, values=[1, 2])
     else:
         fileorcommandline = 2
 
@@ -1772,7 +1772,7 @@ def main():
             init_path = args.photometry
         else:
             fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                    "pre-reduced data in a .txt format: ", type_=int, val1=1, val2=2)
+                                    "pre-reduced data in a .txt format: ", type_=int, values=[1, 2])
 
         if fileorcommandline == 2:
             init_opt = 'y'

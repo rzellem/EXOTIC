@@ -1055,7 +1055,7 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
-def transformation(image_data, num_images, file_name, count, roi=1):
+def transformation(image_data, file_name, roi=1):
     pos = np.zeros((1, 2))
 
     # crop image to ROI
@@ -1066,10 +1066,6 @@ def transformation(image_data, num_images, file_name, count, roi=1):
 
     # Find transformation from .FITS files and catch exceptions if not able to.
     try:
-        sys.stdout.write(f"Finding transformation {count + 1} of {num_images}\r")
-        log.debug(f"Finding transformation {count + 1} of {num_images}\r")
-        sys.stdout.flush()
-
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         return results[0]
     except Exception as ee:
@@ -1462,7 +1458,7 @@ def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprev
             prevImageData = imageData  # no shift should be registered
 
         # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
-        tform = transformation(np.array([imageData, firstImageData]), len(timeSortedNames), imageFile, i)
+        tform = transformation(np.array([imageData, firstImageData]), imageFile)
 
         # apply transform
         tx, ty = tform([UIprevTPX, UIprevTPY])[0]
@@ -2035,6 +2031,10 @@ def main():
 
                 wcs_hdr = search_wcs(fileName)
 
+                sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+                log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+                sys.stdout.flush()
+
                 try:
                     if not wcs_hdr.is_celestial:
                         raise Exception
@@ -2073,7 +2073,7 @@ def main():
                                 update_comp.append([cx, cy])
                             cor_opt = True
                         except Exception:
-                            tform = transformation(np.array([imageData, firstImage]), len(inputfiles), fileName, i)
+                            tform = transformation(np.array([imageData, firstImage]), fileName)
                             tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
 
                 if not cor_opt:

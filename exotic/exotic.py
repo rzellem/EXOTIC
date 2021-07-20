@@ -1758,7 +1758,7 @@ def main():
         log_info("Complete Reduction Routine")
         log_info("**************************")
 
-        init_path, wcs_file, wcs_header = None, None, None
+        init_path, wcs_file, wcs_header, ra_file, dec_file = None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
 
         if isinstance(args.reduce, str):
@@ -1937,7 +1937,6 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
-            ra_file, dec_file = None, None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -2468,6 +2467,7 @@ def main():
             log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
+            bestCompStar, comp_coords = None, None
 
             with exotic_infoDict['prered_file'].open('r') as f:
                 for processed_data in f:
@@ -2764,11 +2764,8 @@ def main():
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
-            if fitsortext == 1:
-                output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
-                                   goodAirmasses, ld0, ld1, ld2, ld3)
-            else:
-                output_files.aavso([], goodAirmasses, ld0, ld1, ld2, ld3)
+            output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
+                               goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 

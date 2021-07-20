@@ -90,7 +90,7 @@ def dms_to_dd(dms_in):
     return dec
 
 
-# Provided by: Kalee Tock
+# Credit: Kalee Tock
 def get_val(hdr, ks):
     for key in ks:
         if key in hdr.keys():
@@ -103,7 +103,7 @@ def get_val(hdr, ks):
     return None
 
 
-# Provided by: Kalee Tock
+# Credit: Kalee Tock
 def add_sign(var):
     str_var = str(var)
     m = re.search(r"^[+\-]", str_var)
@@ -116,7 +116,7 @@ def add_sign(var):
         return f"-{float(var)}.6f"
 
 
-# Provided by: Kalee Tock
+# Credit: Kalee Tock
 def process_lat_long(val, key):
     m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val)
     if m:
@@ -136,7 +136,7 @@ def process_lat_long(val, key):
         print(f"Cannot match value {val}, which is meant to be {key}.")
 
 
-# Provided by: Kalee Tock
+# Credit: Kalee Tock
 def find(hdr, ks, obs=None):
     # Special stuff for MObs and Boyce-Astro Observatories
     boyce = {"LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405}

@@ -5,9 +5,9 @@ from pathlib import Path
 from astropy.io import fits
 
 try:
-    from util import *
+    from utils import *
 except ImportError:
-    from .util import *
+    from .utils import *
 try:
     from animate import *
 except ImportError:
@@ -304,12 +304,13 @@ def obs_date(date):
     return date
 
 
-def latitude(lat, hdr):
+def latitude(lat, hdr=None):
     while True:
         if not lat:
-            lat = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
-            if lat:
-                return lat
+            if hdr:
+                lat = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
+                if lat:
+                    return lat
             lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
@@ -333,12 +334,13 @@ def latitude(lat, hdr):
         lat = None
 
 
-def longitude(long, hdr):
+def longitude(long, hdr=None):
     while True:
         if not long:
-            long = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
-            if long:
-                return long
+            if hdr:
+                long = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
+                if long:
+                    return long
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
                               "(Example: +152.51): ", type_=str)
@@ -368,9 +370,10 @@ def elevation(elev, lat, long, hdr=None):
         try:
             elev = typecast_check(type_=float, val=elev)
             if not elev:
-                elev = find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'])
-                if elev:
-                    return int(elev)
+                if hdr:
+                    elev = find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'])
+                    if elev:
+                        return int(elev)
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
                 animate_toggle(True)

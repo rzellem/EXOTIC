@@ -138,9 +138,9 @@ try: # output files
 except ImportError:  # package import
     from .output_files import OutputFiles
 try: # tools
-    from util import round_to_2, user_input
+    from utils import round_to_2, user_input
 except ImportError: # package import
-    from .util import round_to_2, user_input
+    from .utils import round_to_2, user_input
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -1087,7 +1087,7 @@ def transformation(image_data, file_name, roi=1):
                 except Exception as ee:
                     log_info(ee)
     
-    log_info(f"Alignment failed: {file_name}", warn=True)
+    log_info(f"Warning: Alignment failed - {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 
@@ -1758,7 +1758,7 @@ def main():
         log_info("Complete Reduction Routine")
         log_info("**************************")
 
-        init_path, wcs_file, wcs_header = None, None, None
+        init_path, wcs_file, wcs_header, ra_file, dec_file = None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
 
         if isinstance(args.reduce, str):
@@ -1937,7 +1937,6 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
-            ra_file, dec_file = None, None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -2468,7 +2467,7 @@ def main():
             log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
-            bestCompStar = None
+            bestCompStar, comp_coords = None, None
 
             with exotic_infoDict['prered_file'].open('r') as f:
                 for processed_data in f:
@@ -2730,6 +2729,17 @@ def main():
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        if fitsortext == 1:
+            if minAperture >= 0:
+                log_info(f"                Best Comparison Star: #{bestCompStar} - {comp_coords}")
+            else:
+                log_info("                 Best Comparison Star: None")
+            if minAperture == 0:
+                log_info("                       Optimal Method: PSF photometry")
+            else:
+                log_info(f"                    Optimal Aperture: {abs(np.round(minAperture, 2))}")
+                log_info(f"                     Optimal Annulus: {np.round(minAnnulus, 2)}")
+
         log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
@@ -2738,14 +2748,19 @@ def main():
         ##########
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
-        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+        error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
-            output_files.final_planetary_params()
+            if fitsortext == 1:
+                output_files.final_planetary_params(phot_opt=True, comp_star=bestCompStar, comp_coords=comp_coords,
+                                                    min_aper=np.round(minAperture, 2),
+                                                    min_annul=np.round(minAnnulus, 2))
+            else:
+                output_files.final_planetary_params(phot_opt=False)
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:

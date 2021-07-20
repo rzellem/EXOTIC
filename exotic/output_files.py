@@ -32,7 +32,7 @@ class OutputFiles:
                                                             self.fit.transit, self.fit.airmass_model):
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
-    def final_planetary_params(self, phot_opt, comp_star=None, min_aper=None, min_annul=None):
+    def final_planetary_params(self, phot_opt, comp_star=None, comp_coords=None, min_aper=None, min_annul=None):
         params_file = self.dir / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         params_num = {
@@ -52,7 +52,7 @@ class OutputFiles:
         }
 
         if phot_opt:
-            phot_ext = {"Best Comparison Star": f"#{comp_star}" if min_aper >= 0 else str(comp_star)}
+            phot_ext = {"Best Comparison Star": f"#{comp_star} - {comp_coords}" if min_aper >= 0 else str(comp_star)}
             if min_aper == 0:
                 phot_ext["Optimal Method"] = "PSF photometry"
             else:
@@ -77,7 +77,6 @@ class OutputFiles:
             self.i_dict['aavso_num'] = ""
         if (self.i_dict['second_obs']).lower() == "n/a":
             self.i_dict['second_obs'] = ""
-
 
         with params_file.open('w') as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed

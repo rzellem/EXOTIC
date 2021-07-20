@@ -2731,7 +2731,7 @@ def main():
         log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
         if fitsortext == 1:
             if minAperture >= 0:
-                log_info(f"                Best Comparison Star: #{bestCompStar}")
+                log_info(f"                Best Comparison Star: #{bestCompStar} - {comp_coords}")
             else:
                 log_info("                 Best Comparison Star: None")
             if minAperture == 0:
@@ -2756,7 +2756,7 @@ def main():
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
             if fitsortext == 1:
-                output_files.final_planetary_params(phot_opt=True, comp_star=bestCompStar,
+                output_files.final_planetary_params(phot_opt=True, comp_star=bestCompStar, comp_coords=comp_coords,
                                                     min_aper=np.round(minAperture, 2),
                                                     min_annul=np.round(minAnnulus, 2))
             else:

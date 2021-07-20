@@ -3,9 +3,9 @@ from numpy import mean, median, std
 from pathlib import Path
 
 try:
-    from util import round_to_2
+    from utils import round_to_2
 except ImportError:
-    from .util import round_to_2
+    from .utils import round_to_2
 try:
     from version import __version__
 except ImportError:
@@ -32,7 +32,7 @@ class OutputFiles:
                                                             self.fit.transit, self.fit.airmass_model):
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
-    def final_planetary_params(self):
+    def final_planetary_params(self, phot_opt, comp_star=None, min_aper=None, min_annul=None):
         params_file = self.dir / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         params_num = {
@@ -49,10 +49,18 @@ class OutputFiles:
             "Airmass coefficient 2 (a2)": f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
                                           f"{round_to_2(self.fit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * std(self.fit.residuals / median(self.fit.data)))} %",
-            "Transit Duration (day)": f"{round_to_2(mean(self.durs))} +/- "
-                                      f"{round_to_2(std(self.durs))}"
         }
 
+        if phot_opt:
+            phot_ext = {"Best Comparison Star": f"#{comp_star}" if min_aper >= 0 else str(comp_star)}
+            if min_aper == 0:
+                phot_ext["Optimal Method"] = "PSF photometry"
+            else:
+                phot_ext["Optimal Aperture"] = f"{abs(min_aper)}"
+                phot_ext["Optimal Annulus"] = f"{min_annul}"
+            params_num.update(phot_ext)
+
+        params_num["Transit Duration (day)"] = f"{round_to_2(mean(self.durs))} +/- {round_to_2(std(self.durs))}"
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 
         with params_file.open('w') as f:

@@ -138,9 +138,9 @@ try: # output files
 except ImportError:  # package import
     from .output_files import OutputFiles
 try: # tools
-    from util import round_to_2, user_input
+    from utils import round_to_2, user_input
 except ImportError: # package import
-    from .util import round_to_2, user_input
+    from .utils import round_to_2, user_input
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -1087,7 +1087,7 @@ def transformation(image_data, file_name, roi=1):
                 except Exception as ee:
                     log_info(ee)
     
-    log_info(f"Alignment failed: {file_name}", warn=True)
+    log_info(f"Warning: Alignment failed - {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
 
@@ -2468,7 +2468,6 @@ def main():
             log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
-            bestCompStar = None
 
             with exotic_infoDict['prered_file'].open('r') as f:
                 for processed_data in f:
@@ -2730,6 +2729,17 @@ def main():
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        if fitsortext == 1:
+            if minAperture >= 0:
+                log_info(f"                Best Comparison Star: #{bestCompStar}")
+            else:
+                log_info("                 Best Comparison Star: None")
+            if minAperture == 0:
+                log_info("                       Optimal Method: PSF photometry")
+            else:
+                log_info(f"                    Optimal Aperture: {abs(np.round(minAperture, 2))}")
+                log_info(f"                     Optimal Annulus: {np.round(minAnnulus, 2)}")
+
         log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
@@ -2738,19 +2748,27 @@ def main():
         ##########
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
-        error_txt = "\nPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+        error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
-            output_files.final_planetary_params()
+            if fitsortext == 1:
+                output_files.final_planetary_params(phot_opt=True, comp_star=bestCompStar,
+                                                    min_aper=np.round(minAperture, 2),
+                                                    min_annul=np.round(minAnnulus, 2))
+            else:
+                output_files.final_planetary_params(phot_opt=False)
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
-            output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
-                               goodAirmasses, ld0, ld1, ld2, ld3)
+            if fitsortext == 1:
+                output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
+                                   goodAirmasses, ld0, ld1, ld2, ld3)
+            else:
+                output_files.aavso([], goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 

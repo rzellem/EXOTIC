@@ -316,9 +316,7 @@ class NASAExoplanetArchive:
         }
         default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
-        new_index = []
-        for planet in default.pl_name.values:
-            new_index.append(planet.lower().replace(' ', '').replace('-', ''))
+        new_index = [planet.lower().replace(' ', '').replace('-', '') for planet in default.pl_name.values]
 
         planets = dict(zip(new_index, default.pl_name.values))
         with open(filename, "w") as f:

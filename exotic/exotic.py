@@ -52,6 +52,7 @@ if __name__ == "__main__":
 
 # preload to limit import warnings
 import warnings
+import os
 from astropy.utils.exceptions import AstropyDeprecationWarning
 warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
@@ -185,6 +186,10 @@ def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     return nanmask
 
 
+def result_if_max_retry_count(retry_state):
+    pass
+
+
 # ################### START ARCHIVE SCRAPER (PRIORS) ##########################
 class NASAExoplanetArchive:
 
@@ -196,7 +201,8 @@ class NASAExoplanetArchive:
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
-    def planet_info(self, fancy=False):
+    def planet_info(self, planet, fancy=False):
+        self.planet = planet
         log_info(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
         self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
 
@@ -295,6 +301,30 @@ class NASAExoplanetArchive:
             return True
 
     @retry(stop=stop_after_attempt(3),
+           wait=wait_exponential(multiplier=1, min=10, max=20),
+           retry=(retry_if_exception_type(requests.exceptions.RequestException) |
+                  retry_if_exception_type(ConnectionError)),
+           retry_error_callback=result_if_max_retry_count)
+    def planet_names(self, filename="pl_names.json"):
+        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
+        uri_ipac_query = {
+            "select": "pl_name",
+            "from": "ps",
+            "where": "tran_flag = 1 and default_flag = 1",
+            "order by": "pl_pubdate desc",
+            "format": "csv"
+        }
+        default = self._tap_query(uri_ipac_base, uri_ipac_query)
+
+        new_index = []
+        for planet in default.pl_name.values:
+            new_index.append(planet.lower().replace(' ', '').replace('-', ''))
+
+        planets = dict(zip(new_index, default.pl_name.values))
+        with open(filename, "w") as f:
+            f.write(json.dumps(planets, indent=4))
+
+    @retry(stop=stop_after_attempt(3),
            wait=wait_exponential(multiplier=1, min=17, max=1024),
            retry=(retry_if_exception_type(requests.exceptions.RequestException) |
                   retry_if_exception_type(ConnectionError)))
@@ -303,7 +333,6 @@ class NASAExoplanetArchive:
         # scrape_new()
         uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
         uri_ipac_query = {
-            # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
             "select": "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
                       "pl_ratdor,pl_ratdorerr1,pl_ratdorerr2,pl_orbincl,pl_orbinclerr1,pl_orbinclerr2,"
                       "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
@@ -312,7 +341,7 @@ class NASAExoplanetArchive:
                       "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                       "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
                       "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
-            "from": "ps",  # Table name
+            "from": "ps",
             "where": "tran_flag = 1 and default_flag = 1",
             "order by": "pl_pubdate desc",
             "format": "csv"
@@ -527,31 +556,6 @@ def getAirMass(image_header, ra, dec, lati, longit, elevation):
         pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
         am = float(pointingAltAz.secz)
     return am
-
-
-def planet_name(planet):
-    while True:
-        if not planet:
-            planet = user_input("\nEnter the Planet Name. Make sure it matches the case sensitive name "
-                                "and spacing used on Exoplanet Archive "
-                                "(https://exoplanetarchive.ipac.caltech.edu/index.html): ", type_=str)
-
-        if not planet[-2].isspace():
-            log_info("The convention on the NASA Exoplanet Archive "
-                     "(https://exoplanetarchive.ipac.caltech.edu/index.html) is to have a space between the "
-                     "star name and the planet letter. Please confirm that you have properly "
-                     "input the planet's name."
-                     "\nPlease confirm:"
-                     f"\n  (1) {planet} is correct."
-                     "\n  (2) The planet name needs to be changed.")
-
-            opt = user_input("\nPlease select 1 or 2: ", type_=int, values=[1, 2])
-        else:
-            opt = 1
-
-        if opt == 1:
-            return planet
-        planet = None
 
 
 # Convert time units to BJD_TDB if pre-reduced file not in proper units
@@ -1724,8 +1728,6 @@ def main():
         if init_opt == 'y':
             init_path, userpDict = inputs_obj.search_init(args.realtime, userpDict)
 
-        userpDict['pName'] = planet_name(userpDict['pName'])
-
         exotic_infoDict = inputs_obj.real_time(userpDict['pName'])
         exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
         exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
@@ -1784,8 +1786,6 @@ def main():
         if init_opt == 'y':
             init_path, userpDict = inputs_obj.search_init(init_path, userpDict)
 
-        userpDict['pName'] = planet_name(userpDict['pName'])
-
         if fitsortext == 1:
             exotic_infoDict = inputs_obj.complete_red(userpDict['pName'])
         else:
@@ -1796,7 +1796,16 @@ def main():
 
         if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
-            userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+            if not os.path.exists('pl_names.json') or time.time() - os.path.getmtime('pl_names.json') > 2592000:
+                nea_obj.planet_names(filename="pl_names.json")
+            if os.path.exists('pl_names.json'):
+                with open("pl_names.json", "r") as f:
+                    planets = json.load(f)
+                    for key, value in planets.items():
+                        if userpDict['pName'].lower().replace(' ', '').replace('-', '') == key:
+                            userpDict['pName'] = value
+                            break
+            userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info(planet=userpDict['pName'])
         else:
             pDict = userpDict
             CandidatePlanetBool = False

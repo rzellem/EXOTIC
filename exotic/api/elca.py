@@ -146,7 +146,7 @@ def vecoccs(z, xrs, rprs):
     return out
 
 
-# @njit
+@njit(cache=True)
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     '''
     G. ROUDIER: Time samples in [Days] to separation in [R*]
@@ -179,19 +179,15 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
     E = solveme(M, ecc, epsilon)
     realf = np.sqrt(1. - ecc)*np.cos(E/2e0)
     imagf = np.sqrt(1. + ecc)*np.sin(E/2e0)
-    f = []
-    for r, i in zip(realf, imagf):
-        cn = np.complex(r, i)
-        f.append(2e0*np.angle(cn))
-        pass
-    f = np.array(f)
+    st = np.vstack((realf, imagf))
+    f = np.array([2e0 * np.angle(np.complex(st[0][i], st[1][i])) for i in range(len(imagf))])
     r = sma*(1e0 - ecc**2)/(1e0 + ecc*np.cos(f))
     z = r*np.sqrt(1e0**2 - (np.sin(w+f)**2)*(np.sin(ipct*np.pi/180e0))**2)
     z[sft < 0] *= -1e0
     return z, sft
 
 
-@njit
+@njit(cache=True)
 def solveme(M, e, eps):
     '''
     G. ROUDIER: Newton Raphson solver for true anomaly

@@ -884,19 +884,19 @@ def corruption_check(files):
 
 
 def check_wcs(fits_file, save_directory, plate_opt):
-    wcs_header = search_wcs(fits_file)
+    wcs_file = None
 
     if plate_opt == 'y':
-        return get_wcs(fits_file, save_directory)
-    elif plate_opt == 'n':
-        if wcs_header.is_celestial:
+        wcs_file = get_wcs(fits_file, save_directory)
+    if not wcs_file:
+        if search_wcs(fits_file).is_celestial:
             log_info("Your FITS files have WCS (World Coordinate System) information in their headers. "
                      "EXOTIC will proceed to use these. "
                      "NOTE: If you do not trust your WCS coordinates, "
                      "please restart EXOTIC after enabling plate solutions via astrometry.net.")
-            return fits_file
-        else:
-            return False
+            wcs_file = fits_file
+
+    return wcs_file
 
 
 def search_wcs(file):

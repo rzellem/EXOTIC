@@ -218,6 +218,11 @@ def getPhase(curTime, pPeriod, tMid):
     return phase - int(np.nanmin(phase))
 
 
+@njit(fastmath=True)
+def a1_mc(a1):
+    print('hi')
+
+
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):
     bins = int(np.floor((max(time) - min(time))/dt))

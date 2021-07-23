@@ -134,7 +134,8 @@ class Inputs:
         user_info = {
             'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
-            'aavso_num': 'AAVSO Observer Code (N/A if none)', 'second_obs': 'Secondary Observer Codes (N/A if none)',
+            'aavso_num': ('AAVSO Observer Code (N/A if none)', 'AAVSO Observer Code (blank if none)'),
+            'second_obs': ('Secondary Observer Codes (N/A if none)', 'Secondary Observer Codes (blank if none)'),
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
             'elev': ('Obs. Elevation (meters)', 'Obs. Elevation (meters; Note: leave blank if unknown)'),
             'camera': 'Camera Type (CCD or DSLR)',
@@ -279,8 +280,9 @@ def obs_code(code):
     if code is None:
         code = user_input("Please enter your AAVSO Observer Account Number "
                           "(if none, leave blank and press enter): ", type_=str)
-    if not code.replace(' ', ''):
-        code = "N/A"
+    code = code.replace(' ', '')
+    if code.lower() == 'n/a':
+        code = ""
     return code
 
 
@@ -288,8 +290,9 @@ def second_obs_code(code):
     if code is None:
         code = user_input("Please enter your comma-separated Secondary Observer Codes "
                           "(if none, leave blank and press enter): ", type_=str)
-    if not code.replace(' ', ''):
-        code = "N/A"
+    code = code.replace(' ', '')
+    if code.lower() == 'n/a':
+        code = ""
     return code
 
 

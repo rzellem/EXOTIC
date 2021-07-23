@@ -897,8 +897,6 @@ def check_wcs(fits_file, save_directory, plate_opt):
                      "NOTE: If you do not trust your WCS coordinates, "
                      "please restart EXOTIC after enabling plate solutions via astrometry.net.")
             wcs_file = fits_file
-        else:
-            wcs_file = None
 
     return wcs_file
 

@@ -53,7 +53,10 @@ from dynesty.utils import resample_equal
 
 from scipy.optimize import least_squares
 from scipy.ndimage import gaussian_filter as norm_kde
+from scipy.signal import savgol_filter
 from scipy.stats import gaussian_kde
+
+import ultranest
 
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
@@ -204,12 +207,13 @@ def solveme(M, e, eps):
     return E
 
 
-def transit(time, values):
-    sep,phase = time2z(time, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
+def transit(times, values):
+    sep, phase = time2z(times, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
     model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
     return model
 
 
+@njit(fastmath=True)
 def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid) / pPeriod
     return phase - int(np.nanmin(phase))
@@ -247,13 +251,15 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns'):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns', verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
         self.airmass = airmass
         self.prior = prior
         self.bounds = bounds
+        self.max_ncalls = 2e5
+        self.verbose = verbose
         if mode == "lm":
             self.fit_LM()
         elif mode == "ns":
@@ -273,12 +279,12 @@ class lc_fitter(object):
 
         try:
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
-                bounds=[boundarray[:,0], boundarray[:,1]], jac='3-point', loss='linear')
+                bounds =[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
         except Exception as e:
             print(e)
             print("bounded light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
 
-            for i,k in enumerate(freekeys):
+            for i, k in enumerate(freekeys):
                 if not boundarray[i,0] < self.prior[k] < boundarray[i,1]:
                     print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
 
@@ -288,15 +294,20 @@ class lc_fitter(object):
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
 
-        for i,k in enumerate(freekeys):
+        for i, k in enumerate(freekeys):
             self.parameters[k] = res.x[i]
             self.errors[k] = 0
 
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.phase = getPhase(self.time, self.parameters['per'], self.parameters['tmid'])
+        self.phase = (self.time - self.parameters['tmid']+0.25*self.parameters['per']) / self.parameters['per'] % 1 - 0.25
         self.transit = transit(self.time, self.parameters)
+        # TODO monte carlo the error prop for a1
+        model = self.transit*np.exp(self.parameters['a2']*self.airmass)
+        detrend = self.data/model
+        self.parameters['a1'] = np.median(detrend)
+        self.errors['a1'] = detrend.std()
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
@@ -305,82 +316,66 @@ class lc_fitter(object):
         self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
         self.bic = len(self.bounds) * np.log(len(self.time)) - 2*np.log(self.chi2)
 
+        # compare fit chi2 to smoothed data chi2
+        dt = np.diff(np.sort(self.time)).mean()
+        si = np.argsort(self.time)
+        try:
+            self.sdata = savgol_filter(self.data[si], 1+2*int(0.5/24/dt), 2)
+        except:
+            self.sdata = np.ones(len(self.time))
+
+        schi2 = np.sum((self.data[si] - self.sdata)**2/self.dataerr[si]**2)
+        self.quality = schi2/self.chi2
+
+        # measured duration
+        tdur = (self.transit < 1).sum() * np.median(np.diff(np.sort(self.time)))
+
+        # test for partial transit
+        newtime = np.linspace(self.parameters['tmid']-0.2, self.parameters['tmid']+0.2, 10000)
+        newtran = transit(newtime, self.parameters)
+        masktran = newtran < 1
+        newdur = np.diff(newtime).mean()*masktran.sum()
+
+        self.duration_measured = tdur
+        self.duration_expected = newdur
+
     def fit_nested(self):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
-        bounddiff = np.diff(boundarray,1).reshape(-1)
+        bounddiff = np.diff(boundarray, 1).reshape(-1)
 
         def loglike(pars):
             # chi-squared
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= (self.prior['a1']*np.exp(self.prior['a2']*self.airmass))
-            return -0.5 * np.sum( ((self.data-model)/self.dataerr)**2 )
+            model *= np.exp(self.prior['a2']*self.airmass)
+            detrend = self.data / model  # used to estimate a1
+            model *= np.median(detrend)
+            return -0.5 * np.sum(((self.data-model) / self.dataerr)**2)
 
         def prior_transform(upars):
+            boundarray[3][0] -= 3
             # transform unit cube to prior volume
-            return (boundarray[:,0] + bounddiff*upars)
+            return boundarray[:, 0] + bounddiff*upars
 
-        dsampler = dynesty.DynamicNestedSampler(
-            loglike, prior_transform,
-            ndim=len(freekeys), bound='multi', sample='unif',
-            maxiter_init=5000, dlogz_init=1, dlogz=0.05,
-            maxiter_batch=100, maxbatch=10, nlive_batch=100
-        )
-        dsampler.run_nested(maxcall=1e6)
-        self.results = dsampler.results
+        # include vectorized=True
+        test = ultranest.ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir="-red /Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/inits.json")
+        self.results = test.run(max_ncalls=int(self.max_ncalls))
+
+        test.plot()
 
         # alloc data for best fit + error
         self.errors = {}
         self.quantiles = {}
         self.parameters = copy.deepcopy(self.prior)
 
-        tests = [copy.deepcopy(self.prior) for i in range(6)]
-
-        # Derive kernel density estimate for best fit
-        weights = np.exp(self.results.logwt - self.results.logz[-1])
-        samples = self.results['samples']
-        logvol = self.results['logvol']
-        wt_kde = gaussian_kde(resample_equal(-logvol, weights))  # KDE
-        logvol_grid = np.linspace(logvol[0], logvol[-1], 1000)  # resample
-        wt_grid = wt_kde.pdf(-logvol_grid)  # evaluate KDE PDF
-        self.weights = np.interp(-logvol, -logvol_grid, wt_grid)  # interpolate
-
-        # errors + final values
-        mean, cov = dynesty.utils.mean_and_cov(self.results.samples, weights)
-        mean2, cov2 = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
-        for i in range(len(freekeys)):
-            self.errors[freekeys[i]] = cov[i,i]**0.5
-            tests[0][freekeys[i]] = mean[i]
-            tests[1][freekeys[i]] = mean2[i]
-
-            counts, bins = np.histogram(samples[:,i], bins=100, weights=weights)
-            mi = np.argmax(counts)
-            tests[5][freekeys[i]] = bins[mi] + 0.5*np.mean(np.diff(bins))
-
-            # finds median and +- 2sigma, will vary from mode if non-gaussian
-            self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:,i], [0.025, 0.5, 0.975], weights=weights)
-            tests[2][freekeys[i]] = self.quantiles[freekeys[i]][1]
-
-        # find minimum near weighted mean
-        mask = (samples[:,0] < self.parameters[freekeys[0]]+2*self.errors[freekeys[0]]) & (samples[:,0] > self.parameters[freekeys[0]]-2*self.errors[freekeys[0]])
-        bi = np.argmin(self.weights[mask])
-
-        for i in range(len(freekeys)):
-            tests[3][freekeys[i]] = samples[mask][bi,i]
-            tests[4][freekeys[i]] = np.average(samples[mask][:,i],weights=self.weights[mask],axis=0)
-
-        # find best fit
-        chis = []
-        for i in range(len(tests)):
-            lightcurve = transit(self.time, tests[i])
-            airmass = tests[i]['a1']*np.exp(tests[i]['a2']*self.airmass)
-            residuals = self.data - (lightcurve*airmass)
-            chis.append( np.sum(residuals**2) )
-
-        mi = np.argmin(chis)
-        self.parameters = copy.deepcopy(tests[mi])
+        for i, key in enumerate(freekeys):
+            self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+            self.errors[key] = self.results['posterior']['stdev'][i]
+            self.quantiles[key] = [
+                self.results['posterior']['errlo'][i],
+                self.results['posterior']['errup'][i]]
 
         # final model
         self.create_fit_variables()

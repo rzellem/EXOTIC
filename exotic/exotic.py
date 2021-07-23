@@ -1588,7 +1588,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         'ecc': pDict['ecc'],  # Eccentricity
         'omega': 0,  # Arg of periastron
         'tmid': pDict['midT'],  # time of mid transit [day]
-        'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
+        # 'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
         'a2': 0,  # Flux lower bound
     }
 
@@ -1609,8 +1609,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
+        'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
         'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
-        'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
+        # 'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
 
@@ -2523,7 +2524,7 @@ def main():
             'ecc': pDict['ecc'],  # Eccentricity
             'omega': 0,  # Arg of periastron
             'tmid': pDict['midT'],  # time of mid transit [day]
-            'a1': goodFluxes.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
+            # 'a1': goodFluxes.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
             'a2': 0,  # Flux lower bound
         }
 
@@ -2541,13 +2542,15 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
+            'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
             'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
-            'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
+            # 'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
             'a2': [-3, 3],
         }
 
         # final light curve fit
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds,
+                          log_dir=Path(exotic_infoDict['save']) / "temp", mode='ns')
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 
@@ -2635,19 +2638,6 @@ def main():
         except:
             f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        plt.close()
-
-
-        ###################################################################################
-
-        # triangle plot
-        fig, axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4, 0.85],
-                                               smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
-                                               hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()),
-                                      fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
-        fig.savefig(Path(exotic_infoDict['save']) / "temp" /
-                    f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
         plt.close()
 
         phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])

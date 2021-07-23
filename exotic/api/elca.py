@@ -46,31 +46,25 @@ import copy
 from numba import njit
 import numpy as np
 import matplotlib.pyplot as plt
-
-import dynesty
-from dynesty import plotting
-from dynesty.utils import resample_equal
-
 from scipy.optimize import least_squares
-from scipy.ndimage import gaussian_filter as norm_kde
+# from scipy.ndimage import gaussian_filter as norm_kde
 from scipy.signal import savgol_filter
-from scipy.stats import gaussian_kde
-
-import ultranest
+# from scipy.stats import gaussian_kde
+from ultranest import ReactiveNestedSampler
 
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
-    '''
+    """
     G. ROUDIER: Light curve model
-    '''
+    """
     ldlc = np.zeros(z.size)
     xin = z.copy() - rprs
     xin[xin < 0e0] = 0e0
     xout = z.copy() + rprs
     xout[xout > 1e0] = 1e0
     select = xin > 1e0
-    if True in select: ldlc[select] = 1e0
-    inldlc = []
+    if True in select:
+        ldlc[select] = 1e0
     xint = np.linspace(1e0, 0e0, nint)
     znot = z.copy()[~select]
     xinnot = np.arccos(xin[~select])
@@ -79,7 +73,7 @@ def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     xrs = np.cos(xrs)
     diffxrs = np.diff(xrs, axis=0)
     extxrs = np.zeros((xrs.shape[0]+1, xrs.shape[1]))
-    extxrs[1:-1, :] = xrs[1:,:] - diffxrs/2.
+    extxrs[1:-1, :] = xrs[1:, :] - diffxrs/2.
     extxrs[0, :] = xrs[0, :] - diffxrs[0]/2.
     extxrs[-1, :] = xrs[-1, :] + diffxrs[-1]/2.
     occulted = vecoccs(znot, extxrs, rprs)
@@ -92,9 +86,9 @@ def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
 
 
 def vecistar(xrs, g1, g2, g3, g4):
-    '''
+    """
     G. ROUDIER: Stellar surface extinction model
-    '''
+    """
     ldnorm = (-g1/10e0 - g2/6e0 - 3e0*g3/14e0 - g4/4e0 + 5e-1)*2e0*np.pi
     select = xrs < 1e0
     mu = np.zeros(xrs.shape)
@@ -108,9 +102,9 @@ def vecistar(xrs, g1, g2, g3, g4):
 
 
 def vecoccs(z, xrs, rprs):
-    '''
+    """
     G. ROUDIER: Stellar surface occulation model
-    '''
+    """
     out = np.zeros(xrs.shape)
     vecxrs = xrs.copy()
     selx = vecxrs > 0e0
@@ -123,12 +117,15 @@ def vecoccs(z, xrs, rprs):
     if True in select1 & zzero:
         out[select1 & zzero] = np.pi*(np.square(vecxrs[select1 & zzero]))
         pass
-    if True in select2 & zzero: out[select2 & zzero] = np.pi*(rprs**2)
-    if True in select & zzero: out[select & zzero] = np.pi*(rprs**2)
+    if True in select2 & zzero:
+        out[select2 & zzero] = np.pi*(rprs**2)
+    if True in select & zzero:
+        out[select & zzero] = np.pi*(rprs**2)
     if True in select1 & ~zzero:
         out[select1 & ~zzero] = np.pi*(np.square(vecxrs[select1 & ~zzero]))
         pass
-    if True in select2: out[select2 & ~zzero] = np.pi*(rprs**2)
+    if True in select2:
+        out[select2 & ~zzero] = np.pi*(rprs**2)
     if True in select & ~zzero:
         redxrs = vecxrs[select & ~zzero]
         redz = veczsel[select & ~zzero]
@@ -142,7 +139,8 @@ def vecoccs(z, xrs, rprs):
         os3 = redz + redxrs + rprs
         s3 = fs3*ss3*ts3*os3
         zselect = s3 < 0e0
-        if True in zselect: s3[zselect] = 0e0
+        if True in zselect:
+            s3[zselect] = 0e0
         out[select & ~zzero] = (np.square(redxrs)*np.arccos(s1) +
                                 (rprs**2)*np.arccos(s2) - (5e-1)*np.sqrt(s3))
         pass
@@ -151,14 +149,15 @@ def vecoccs(z, xrs, rprs):
 
 @njit(cache=True)
 def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
-    '''
+    """
     G. ROUDIER: Time samples in [Days] to separation in [R*]
-    '''
+    """
     tperii = 0
     if tperi is not None:
         ft0 = (tperi - tknot) % orbperiod
         ft0 /= orbperiod
-        if ft0 > 0.5: ft0 += -1e0
+        if ft0 > 0.5:
+            ft0 += -1e0
         M0 = 2e0*np.pi*ft0
         E0 = solveme(M0, ecc, epsilon)
         realf = np.sqrt(1e0 - ecc)*np.cos(E0/2e0)
@@ -192,11 +191,11 @@ def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
 
 @njit(cache=True)
 def solveme(M, e, eps):
-    '''
+    """
     G. ROUDIER: Newton Raphson solver for true anomaly
     M is a numpy array
-    '''
-    E = M.copy() # numba only allows copy() with no arguments
+    """
+    E = M.copy()  # numba only allows copy() with no arguments
     for i in np.arange(M.shape[0]):
         while abs(E[i] - e*np.sin(E[i]) - M[i]) > eps:
             num = E[i] - e*np.sin(E[i]) - M[i]
@@ -251,7 +250,7 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns', verbose=True):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, log_dir=None, mode='ns', verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -259,6 +258,7 @@ class lc_fitter(object):
         self.prior = prior
         self.bounds = bounds
         self.max_ncalls = 2e5
+        self.log_dir = log_dir
         self.verbose = verbose
         if mode == "lm":
             self.fit_LM()
@@ -266,7 +266,6 @@ class lc_fitter(object):
             self.fit_nested()
 
     def fit_LM(self):
-
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
 
@@ -274,12 +273,12 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= self.prior['a1']*np.exp(self.prior['a2']*self.airmass)
+            model *= np.exp(self.prior['a2']*self.airmass)
             return ((self.data-model)/self.dataerr)**2
 
         try:
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
-                bounds =[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
+                                bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
         except Exception as e:
             print(e)
             print("bounded light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
@@ -354,15 +353,16 @@ class lc_fitter(object):
             model *= np.median(detrend)
             return -0.5 * np.sum(((self.data-model) / self.dataerr)**2)
 
+        @njit(fastmath=True)
         def prior_transform(upars):
-            boundarray[3][0] -= 3
             # transform unit cube to prior volume
             return boundarray[:, 0] + bounddiff*upars
 
-        # include vectorized=True
-        test = ultranest.ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir="-red /Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/inits.json")
+        # TODO vectorize loglike
+        test = ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir=self.log_dir)
         self.results = test.run(max_ncalls=int(self.max_ncalls))
 
+        # plots
         test.plot()
 
         # alloc data for best fit + error
@@ -395,12 +395,9 @@ class lc_fitter(object):
 
             ecks = self.time
 
-
         # clip plot to get rid of white space
         ax_res.set_xlim([min(ecks), max(ecks)])
         ax_lc.set_xlim([min(ecks), max(ecks)])
-
-
 
         # making borders and tick labels black
         ax_lc.spines['bottom'].set_color('black')
@@ -449,37 +446,30 @@ class lc_fitter(object):
         # remove vertical whitespace
         f.subplots_adjust(hspace=0)
 
-        return f,(ax_lc, ax_res)
-
-    def plot_triangle(self):
-        # TO DO
-        fig,axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
-        dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-        return fig, axs
+        return f, (ax_lc, ax_res)
 
 
 if __name__ == "__main__":
 
     prior = {
-        'rprs':0.03,        # Rp/Rs
-        'ars':14.25,        # a/Rs
-        'per':3.336817,     # Period [day]
-        'inc':87.5,        # Inclination [deg]
-        'u0': 1.8, 'u1': -3.3, 'u2': 3.9, 'u3': -1.5,  # limb darkening (nonlinear)
-        'ecc':0,            # Eccentricity
-        'omega':0,          # Arg of periastron
-        'tmid':0.75,         # time of mid transit [day],
-
-        'a1':50,            # airmass coeffcients
-        'a2':0.25
+        'rprs': 0.03,                                   # Rp/Rs
+        'ars': 14.25,                                   # a/Rs
+        'per': 3.336817,                                # Period [day]
+        'inc': 87.5,                                    # Inclination [deg]
+        'u0': 1.8, 'u1': -3.3, 'u2': 3.9, 'u3': -1.5,   # limb darkening (nonlinear)
+        'ecc': 0,                                       # Eccentricity
+        'omega': 0,                                     # Arg of periastron
+        'tmid': 0.75,                                   # Time of mid transit [day],
+        # 'a1': 50,                                     # Airmass coefficients
+        'a2': 0.25
     }
 
-    time = np.linspace(0.65,0.85,150) # [day]
+    time = np.linspace(0.65, 0.85, 150)  # [day]
 
     # simulate extinction from airmass
     stime = time-time[0]
-    alt = 90* np.cos(4*stime-np.pi/6)
-    airmass = 1./np.cos( np.deg2rad(90-alt))
+    alt = 90 * np.cos(4*stime-np.pi/6)
+    airmass = 1./np.cos(np.deg2rad(90-alt))
 
     # GENERATE NOISY DATA
     data = transit(time, prior)*prior['a1']*np.exp(prior['a2']*airmass)
@@ -488,26 +478,18 @@ if __name__ == "__main__":
 
     # add bounds for free parameters only
     mybounds = {
-        'rprs':[0,0.1],
-        'tmid':[min(time),max(time)],
-        'ars':[13,15],
-
-        'a1':[25,75],
-        'a2':[0,0.3]
+        'rprs': [0, 0.1],
+        'tmid': [min(time), max(time)],
+        'ars': [13, 15],
+        # 'a1': [25, 75],
+        'a2': [0, 0.3]
     }
 
     myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds, mode='ns')
 
     for k in myfit.bounds.keys():
-        print("{:.6f} +- {}".format( myfit.parameters[k], myfit.errors[k]))
+        print(f"{myfit.parameters[k]:.6f} +- {myfit.errors[k]}")
 
-    fig,axs = myfit.plot_bestfit()
+    fig, axs = myfit.plot_bestfit()
     plt.tight_layout()
     plt.show()
-
-    # triangle plot
-    fig,axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4,0.85], smooth=0.015, show_titles=True,use_math_text=True, title_fmt='.2e',hist2d_kwargs={'alpha':1,'zorder':2,'fill_contours':False})
-    dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()), fig=[fig,axs[1:,:-1]],plot_kwargs={'alpha':0.1,'zorder':1,} )
-    plt.tight_layout()
-    plt.show()
-    #plt.savefig("temp.png")

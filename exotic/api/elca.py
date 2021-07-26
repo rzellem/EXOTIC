@@ -285,12 +285,12 @@ class lc_fitter(object):
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
                                 bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
         except Exception as e:
-            print(e)
-            print("bounded light curve fitting failed...check priors (e.g. estimated mid-transit time + orbital period)")
+            print(f"{e} \nbounded light curve fitting failed...check priors "
+                  "(e.g. estimated mid-transit time + orbital period)")
 
             for i, k in enumerate(freekeys):
-                if not boundarray[i,0] < self.prior[k] < boundarray[i,1]:
-                    print(f"bound: [{boundarray[i,0]}, {boundarray[i,1]}] prior: {self.prior[k]}")
+                if not boundarray[i, 0] < self.prior[k] < boundarray[i, 1]:
+                    print(f"bound: [{boundarray[i, 0]}, {boundarray[i, 1]}] prior: {self.prior[k]}")
 
             print("removing bounds and trying again...")
             res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], method='lm', jac='3-point', loss='linear')

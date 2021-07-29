@@ -1231,16 +1231,14 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
-def aperPhot(data, xc, yc, r=5, dr=5):
+def aperPhot(data, xc, yc, sub_data, r=5, dr=5):
     if dr > 0:
         bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r + 2, dr)
     else:
-        bgflux, sigmabg, Nbg = 0, 0
-    positions = [(xc, yc)]
-    bdata = data - bgflux
+        bgflux, sigmabg, Nbg = 0, 0, 0
 
-    apertures = CircularAperture(positions, r=r)
-    phot_table = aperture_photometry(bdata, apertures, method='exact')
+    apertures = CircularAperture(positions=[(10, 10)], r=r)
+    phot_table = aperture_photometry(sub_data - bgflux, apertures, method='exact')
 
     return float(phot_table['aperture_sum']), bgflux
 
@@ -1990,9 +1988,6 @@ def main():
                 aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 tar_comp_dist[ckey] = np.zeros(2, dtype=int)
 
-            cor_opt = False
-            comp_stars, update_comp = compStarList, []
-
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
@@ -2020,9 +2015,6 @@ def main():
                 else:
                     exptimes.append(image_header['EXPOSURE'])
 
-                if i != 0:
-                    prevImageData = imageData
-
                 # IMAGES
                 imageData = hdul[extension].data
 
@@ -2033,110 +2025,100 @@ def main():
                     image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
 
                     firstImage = np.copy(imageData)
-                    prevImageData = np.copy(imageData)
-
-                wcs_hdr = search_wcs(fileName)
 
                 sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
                 log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
                 sys.stdout.flush()
 
                 try:
+                    wcs_hdr = search_wcs(fileName)
                     if not wcs_hdr.is_celestial:
                         raise Exception
-                    pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
-                    tx, ty = pix_coords[0].take(0), pix_coords[1].take(0)
-                except Exception:
-                    try:
-                        if i != 0:
-                            raise Exception
+
+                    if i == 0:
                         tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
-                    except Exception:
-                        try:
-                            shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
-                            tx -= shift[1]
-                            ty -= shift[0]
+                    else:
+                        pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
+                        tx, ty = pix_coords[0].take(0), pix_coords[1].take(0)
 
-                            psf_data["target"][i] = fit_centroid(imageData, [tx, ty])
-                            tx, ty = psf_data["target"][i][0], psf_data["target"][i][1]
+                    psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
 
-                            if np.abs((psf_data["target"][i][2]-psf_data["target"][i-1][2])/psf_data["target"][i-1][2]) > 0.5:
-                                cor_opt = False
-                                raise Exception
-                            
-                            for j, coord in enumerate(comp_stars):
-                                ckey = f"comp{j + 1}"
-                                cx = coord[0] - shift[1]
-                                cy = coord[1] - shift[0]
-                                psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
-                                cx, cy = psf_data[ckey][i][0], psf_data[ckey][i][1]
-                                if not (tar_comp_dist[ckey][0] - 2 <= abs(int(cx) - int(tx)) <= tar_comp_dist[ckey][0] + 2 and
-                                        tar_comp_dist[ckey][1] - 2 <= abs(int(cy) - int(ty)) <= tar_comp_dist[ckey][1] + 2) or \
-                                        np.abs((psf_data[ckey][i][2]-psf_data[ckey][i-1][2])/psf_data[ckey][i-1][2]) > 0.5:
-                                    update_comp = []
-                                    cor_opt = False
-                                    raise Exception
-                                update_comp.append([cx, cy])
-                            cor_opt = True
-                        except Exception:
-                            tform = transformation(np.array([imageData, firstImage]), fileName)
-                            tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
+                    # TODO: Add check for flux on target/comp stars relative to others in the field
+                    # in case of cloudy data, large changes, etc.
+                    if i != 0 and np.abs((psf_data['target'][i][2] - psf_data['target'][i - 1][2])
+                                         / psf_data['target'][i - 1][2]) > 0.5:
+                        raise Exception
 
-                if not cor_opt:
-                    psf_data["target"][i] = fit_centroid(imageData, [tx, ty])
-                    tx, ty = psf_data["target"][i][0], psf_data["target"][i][1]
-                    # fit for the centroids in all images
-                    for j, coord in enumerate(comp_stars):
+                    for j in range(len(compStarList)):
                         ckey = f"comp{j + 1}"
 
-                        if wcs_hdr.is_celestial:
-                            pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
-                            cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-                        elif i == 0:
-                            cx, cy = coord[0], coord[1]
-                        else:
-                            cx, cy = tform(compStarList[j])[0]
-
+                        pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                        cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
                         psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
-                        cx, cy = psf_data[ckey][i][0], psf_data[ckey][i][1]
+
+                        if i != 0:
+                            if not (tar_comp_dist[ckey][0] - 2 <= abs(int(psf_data[ckey][j][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 2 and
+                                    tar_comp_dist[ckey][1] - 2 <= abs(int(psf_data[ckey][j][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist[ckey][1] + 2) or \
+                                    np.abs((psf_data[ckey][i][2] - psf_data[ckey][i - 1][2]) / psf_data[ckey][i - 1][2]) > 0.5:
+                                raise Exception
+                        else:
+                            tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
+                            tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
+                except Exception:
+                    if i == 0:
+                        tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+                    else:
+                        tform = transformation(np.array([imageData, firstImage]), fileName)
+
+                    tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
+                    psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
+
+                    for j, coord in enumerate(compStarList):
+                        ckey = f"comp{j + 1}"
+
+                        cx, cy = tform(coord)[0]
+                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
 
                         if i == 0:
-                            tar_comp_dist[ckey][0] = abs(int(cx) - int(tx))
-                            tar_comp_dist[ckey][1] = abs(int(cy) - int(ty))
-
-                        update_comp.append([cx, cy])
-                comp_stars = update_comp
-                update_comp = []
+                            tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
+                            tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
 
                 # aperture photometry
                 if i == 0:
-                    sigma = float((psf_data["target"][0][3] + psf_data["target"][0][4]) * 0.5)
+                    sigma = float((psf_data['target'][0][3] + psf_data['target'][0][4]) * 0.5)
                     apers *= sigma
                     annuli *= sigma
+
+                mesh_box_dict = {}
+                for j in range(len(compStarList) + 1):
+                    if j == 0:
+                        key = "target"
+                    else:
+                        key = f"comp{j}"
+                    xv, yv = mesh_box([psf_data[key][i, 0], psf_data[key][i, 1]], 10)
+                    mesh_box_dict[key] = imageData[yv, xv]
 
                 for a, aper in enumerate(apers):
                     for an, annulus in enumerate(annuli):
                         aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                   psf_data["target"][
-                                                                                                       i, 0],
-                                                                                                   psf_data["target"][
-                                                                                                       i, 1],
+                                                                                                   psf_data['target'][i, 0],
+                                                                                                   psf_data['target'][i, 1],
+                                                                                                   mesh_box_dict['target'],
                                                                                                    aper, annulus)
 
                         # loop through comp stars
                         for j in range(len(compStarList)):
                             ckey = f"comp{j + 1}"
                             aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                    psf_data[ckey][
-                                                                                                        i, 0],
-                                                                                                    psf_data[ckey][
-                                                                                                        i, 1],
+                                                                                                    psf_data[ckey][i, 0],
+                                                                                                    psf_data[ckey][i, 1],
+                                                                                                    mesh_box_dict[ckey],
                                                                                                     aper, annulus)
 
                 # close file + delete from memory
                 hdul.close()
                 del hdul
-            del imageData, prevImageData
+            del imageData
 
             # filter bad images
             badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
@@ -2181,7 +2163,7 @@ def main():
 
                     # sets the lists we want to print to correspond to the optimal aperature
                     goodFluxes = np.copy(myfit.data)
-                    goodNormUnc = np.copy(myfit.dataerr)
+                    # goodNormUnc = np.copy(myfit.dataerr)
                     nonBJDTimes = np.copy(myfit.time)
                     goodAirmasses = np.copy(myfit.airmass)
                     goodTargets = tFlux
@@ -2221,15 +2203,15 @@ def main():
 
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
-                        goodNormUnc = np.copy(myfit.dataerr)
+                        # goodNormUnc = np.copy(myfit.dataerr)
                         nonBJDTimes = np.copy(myfit.time)
-                        nonBJDPhases = np.copy(myfit.phase)
+                        # nonBJDPhases = np.copy(myfit.phase)
                         goodAirmasses = np.copy(myfit.airmass)
                         goodTargets = tFlux
                         goodReferences = cFlux
                         goodTUnc = tFlux ** 0.5
                         goodRUnc = cFlux ** 0.5
-                        goodResids = myfit.residuals
+                        # goodResids = myfit.residuals
                         bestlmfit = myfit
 
                         finXTargCent = psf_data["target"][:, 0]
@@ -2262,15 +2244,15 @@ def main():
 
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = np.copy(myfit.data)
-                            goodNormUnc = np.copy(myfit.dataerr)
+                            # goodNormUnc = np.copy(myfit.dataerr)
                             nonBJDTimes = np.copy(myfit.time)
-                            nonBJDPhases = np.copy(myfit.phase)
+                            # nonBJDPhases = np.copy(myfit.phase)
                             goodAirmasses = np.copy(myfit.airmass)
                             goodTargets = tFlux
                             goodReferences = cFlux
                             goodTUnc = tFlux ** 0.5
                             goodRUnc = cFlux ** 0.5
-                            goodResids = myfit.residuals
+                            # goodResids = myfit.residuals
                             bestlmfit = myfit
 
                             finXTargCent = psf_data["target"][:, 0]
@@ -2688,30 +2670,30 @@ def main():
             plt.close()
 
             # PSF DATA for COMP STARS
-            for j,coord in enumerate(compStarList):
+            for j, coord in enumerate(compStarList):
                 ctitle = f"Comp Star {j + 1}"
                 ckey = f"comp{j + 1}"
 
-                fig, ax = plt.subplots(3,2, figsize=(12,10))
+                fig, ax = plt.subplots(3, 2, figsize=(12, 10))
                 fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
-                ax[0,0].plot(myfit.time, psf_data[ckey][si,0][gi], 'k.')
-                ax[0,0].set_ylabel("X-Centroid [px]")
-                ax[0,1].plot(myfit.time, psf_data[ckey][si,1][gi], 'k.')
-                ax[0,1].set_ylabel("Y-Centroid [px]")
-                ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data[ckey][si,3][gi] + psf_data[ckey][si,4][gi]), 'k.')
-                ax[1,0].set_ylabel("Seeing [px]")
-                ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
-                ax[1,1].set_ylabel("Airmass")
-                ax[2,0].plot(myfit.time, psf_data[ckey][si,2][gi], 'k.')
-                ax[2,1].plot(myfit.time, psf_data[ckey][si,6][gi], 'k.')
-                ax[2,0].set_ylabel("Amplitude [ADU]")
-                ax[2,1].set_ylabel("Background [ADU]")
-                ax[0,0].set_xlabel("Time [BJD_TBD]")
-                ax[0,1].set_xlabel("Time [BJD_TBD]")
-                ax[1,0].set_xlabel("Time [BJD_TBD]")
-                ax[1,1].set_xlabel("Time [BJD_TBD]")
-                ax[2,0].set_xlabel("Time [BJD_TBD]")
-                ax[2,1].set_xlabel("Time [BJD_TBD]")
+                ax[0, 0].plot(myfit.time, psf_data[ckey][si, 0][gi], 'k.')
+                ax[0, 0].set_ylabel("X-Centroid [px]")
+                ax[0, 1].plot(myfit.time, psf_data[ckey][si, 1][gi], 'k.')
+                ax[0, 1].set_ylabel("Y-Centroid [px]")
+                ax[1, 0].plot(myfit.time, 2.355 * 0.5 * (psf_data[ckey][si, 3][gi] + psf_data[ckey][si, 4][gi]), 'k.')
+                ax[1, 0].set_ylabel("Seeing [px]")
+                ax[1, 1].plot(myfit.time, myfit.airmass, 'k.')
+                ax[1, 1].set_ylabel("Airmass")
+                ax[2, 0].plot(myfit.time, psf_data[ckey][si, 2][gi], 'k.')
+                ax[2, 1].plot(myfit.time, psf_data[ckey][si, 6][gi], 'k.')
+                ax[2, 0].set_ylabel("Amplitude [ADU]")
+                ax[2, 1].set_ylabel("Background [ADU]")
+                ax[0, 0].set_xlabel("Time [BJD_TBD]")
+                ax[0, 1].set_xlabel("Time [BJD_TBD]")
+                ax[1, 0].set_xlabel("Time [BJD_TBD]")
+                ax[1, 1].set_xlabel("Time [BJD_TBD]")
+                ax[2, 0].set_xlabel("Time [BJD_TBD]")
+                ax[2, 1].set_xlabel("Time [BJD_TBD]")
                 plt.tight_layout()
 
                 try:
@@ -2730,8 +2712,9 @@ def main():
 
         log_info("\n*********************************************************")
         log_info("FINAL PLANETARY PARAMETERS\n")
-        log_info(f"              Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
+        log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log_info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
+        log_info(f"           Transit depth [(Rp/Rs)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
         log_info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")

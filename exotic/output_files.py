@@ -42,8 +42,8 @@ class OutputFiles:
                                                          f"{round_to_2(self.fit.errors['rprs'])}",
             "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
                                        f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
-            "Inclination (deg)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
-                                 f"{round_to_2(self.fit.errors['inc'])}",
+            # "Inclination (deg)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
+            #                      f"{round_to_2(self.fit.errors['inc'])}",
             "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- "
                                                   f"{round_to_2(self.fit.errors['ars'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "

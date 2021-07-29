@@ -1609,7 +1609,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
+        # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
         'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
         # 'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
@@ -2542,7 +2542,7 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
-            'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
+            # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
             'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
             # 'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
             'a2': [-3, 3],

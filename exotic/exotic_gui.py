@@ -947,7 +947,16 @@ def main():
                 input_data['sName'] = star_entry.get()
                 input_data['pName'] = planet_entry.get()
                 nea_obj = NASAExoplanetArchive(planet=input_data['pName'])
-                input_data['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+                if not os.path.exists('pl_names.json') or time.time() - os.path.getmtime('pl_names.json') > 2592000:
+                    nea_obj.planet_names(filename="pl_names.json")
+                if os.path.exists('pl_names.json'):
+                    with open("pl_names.json", "r") as f:
+                        planets = json.load(f)
+                        for key, value in planets.items():
+                            if input_data['pName'].lower().replace(' ', '').replace('-', '') == key:
+                                input_data['pName'] = value
+                                break
+                input_data['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info(planet=input_data['pName'])
                 for key in pDict:
                     input_data[key] = pDict[key]
                 root.destroy()
@@ -1161,7 +1170,6 @@ def main():
                         "Filter Name (aavso.org/filters)": input_data['obsfilter'],
                         "Observing Notes": input_data['obsnotes'],
                     }
-
 
                 elif obsinfo.get() == 'inits':
                     with open(input_data['inits_dir'], "r") as confirmed:

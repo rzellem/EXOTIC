@@ -1230,17 +1230,19 @@ def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
     return res.x
 
 
-# Method calculates the flux of the star (uses the skybg_phot method to do backgorund sub)
-def aperPhot(data, xc, yc, sub_data, r=5, dr=5):
+# Method calculates the flux of the star (uses the skybg_phot method to do background sub)
+def aperPhot(data, xc, yc, r=5, dr=5):
     if dr > 0:
         bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r + 2, dr)
     else:
         bgflux, sigmabg, Nbg = 0, 0, 0
 
-    apertures = CircularAperture(positions=[(10, 10)], r=r)
-    phot_table = aperture_photometry(sub_data - bgflux, apertures, method='exact')
+    aperture = CircularAperture(positions=[(xc, yc)], r=r)
+    mask = aperture.to_mask(method='exact')[0]
+    data_cutout = mask.cutout(data)
+    aperture_sum = (mask.data * (data_cutout - bgflux)).sum()
 
-    return float(phot_table['aperture_sum']), bgflux
+    return aperture_sum, bgflux
 
 
 def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
@@ -2089,21 +2091,11 @@ def main():
                     apers *= sigma
                     annuli *= sigma
 
-                mesh_box_dict = {}
-                for j in range(len(compStarList) + 1):
-                    if j == 0:
-                        key = "target"
-                    else:
-                        key = f"comp{j}"
-                    xv, yv = mesh_box([psf_data[key][i, 0], psf_data[key][i, 1]], 10)
-                    mesh_box_dict[key] = imageData[yv, xv]
-
                 for a, aper in enumerate(apers):
                     for an, annulus in enumerate(annuli):
                         aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
                                                                                                    psf_data['target'][i, 0],
                                                                                                    psf_data['target'][i, 1],
-                                                                                                   mesh_box_dict['target'],
                                                                                                    aper, annulus)
 
                         # loop through comp stars
@@ -2112,7 +2104,6 @@ def main():
                             aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
                                                                                                     psf_data[ckey][i, 0],
                                                                                                     psf_data[ckey][i, 1],
-                                                                                                    mesh_box_dict[ckey],
                                                                                                     aper, annulus)
 
                 # close file + delete from memory

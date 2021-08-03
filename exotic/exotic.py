@@ -202,16 +202,6 @@ class NASAExoplanetArchive:
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
     def planet_info(self, fancy=False):
-        self.planet, candidate = self._new_scrape(filename="eaConf.json")
-
-        if not candidate:
-            with open("eaConf.json", "r") as confirmed:
-                data = json.load(confirmed)
-                planets = [data[i]['pl_name'] for i in range(len(data))]
-                idx = planets.index(self.planet)
-                self._get_params(data[idx])
-                log_info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
-
         # fancy keys matching inits fil
         if fancy:
             coord = SkyCoord(ra=self.pl_dict['ra'] * u.degree, dec=self.pl_dict['dec'] * u.degree)
@@ -246,8 +236,18 @@ class NASAExoplanetArchive:
             }
 
             return json.dumps(flabels, indent=4)
+        else:
+            self.planet, candidate = self._new_scrape(filename="eaConf.json")
 
-        return self.planet, candidate, self.pl_dict
+            if not candidate:
+                with open("eaConf.json", "r") as confirmed:
+                    data = json.load(confirmed)
+                    planets = [data[i]['pl_name'] for i in range(len(data))]
+                    idx = planets.index(self.planet)
+                    self._get_params(data[idx])
+                    log_info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
+
+            return self.planet, candidate, self.pl_dict
 
     @staticmethod
     def dataframe_to_jsonfile(dataframe, filename):

@@ -956,7 +956,7 @@ def main():
                             if input_data['pName'].lower().replace(' ', '').replace('-', '') == key:
                                 input_data['pName'] = value
                                 break
-                input_data['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info(planet=input_data['pName'])
+                input_data['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
                 for key in pDict:
                     input_data[key] = pDict[key]
                 root.destroy()

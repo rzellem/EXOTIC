@@ -122,7 +122,7 @@ try:  # filters
     from .api.filters import fwhm
 except ImportError:  # package import
     from api.filters import fwhm
-try:  # filters
+try:  # nea
     from .api.nea import NASAExoplanetArchive
 except ImportError:  # package import
     from api.nea import NASAExoplanetArchive

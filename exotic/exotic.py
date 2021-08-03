@@ -201,10 +201,8 @@ class NASAExoplanetArchive:
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
-    def planet_info(self, planet, fancy=False):
-        self.planet = planet
-        log_info(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
-        self.planet, candidate = self._new_scrape(filename="eaConf.json", target=self.planet)
+    def planet_info(self, fancy=False):
+        self.planet, candidate = self._new_scrape(filename="eaConf.json")
 
         if not candidate:
             with open("eaConf.json", "r") as confirmed:
@@ -326,7 +324,7 @@ class NASAExoplanetArchive:
            wait=wait_exponential(multiplier=1, min=17, max=1024),
            retry=(retry_if_exception_type(requests.exceptions.RequestException) |
                   retry_if_exception_type(ConnectionError)))
-    def _new_scrape(self, filename="eaConf.json", target=None):
+    def _new_scrape(self, filename="eaConf.json"):
 
         # scrape_new()
         uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
@@ -345,28 +343,39 @@ class NASAExoplanetArchive:
             "format": "csv"
         }
 
-        if target:
-            uri_ipac_query["where"] += f" and pl_name = '{target}'"
+        if not os.path.exists('pl_names.json') or time.time() - os.path.getmtime('pl_names.json') > 2592000:
+            self.planet_names(filename="pl_names.json")
+        if os.path.exists('pl_names.json'):
+            with open("pl_names.json", "r") as f:
+                planets = json.load(f)
+                for key, value in planets.items():
+                    if self.planet.lower().replace(' ', '').replace('-', '') == key:
+                        self.planet = value
+                        break
+        log_info(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
+
+        if self.planet:
+            uri_ipac_query["where"] += f" and pl_name = '{self.planet}'"
 
         default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         # fill in missing columns
         uri_ipac_query['where'] = 'tran_flag=1'
 
-        if target:
-            uri_ipac_query["where"] += f" and pl_name = '{target}'"
+        if self.planet:
+            uri_ipac_query["where"] += f" and pl_name = '{self.planet}'"
 
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
-            target = input(
-                f"Cannot find target ({target}) in NASA Exoplanet Archive. Check case sensitivity and spacing and"
-                "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
-            if target.strip().lower() == 'candidate':
-                target = user_input("\nPlease enter candidate planet's name: ", type_=str)
-                return target, True
+            self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive. "
+                                f"Check case sensitivity and spacing and "
+                                "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
+            if self.planet.strip().lower() == 'candidate':
+                self.planet = user_input("\nPlease enter candidate planet's name: ", type_=str)
+                return self.planet, True
             else:
-                return self._new_scrape(filename="eaConf.json", target=target)
+                return self._new_scrape(filename="eaConf.json")
         else:
             # replaces NEA default with most recent publication
             default.iloc[0] = extra.iloc[0]
@@ -406,7 +415,7 @@ class NASAExoplanetArchive:
                                 default.loc[default.pl_name == i, k] = 0
 
             NASAExoplanetArchive.dataframe_to_jsonfile(default, filename)
-            return target, False
+            return self.planet, False
 
     def _get_params(self, data):
         # translate data from Archive keys to Ethan Keys
@@ -1794,16 +1803,7 @@ def main():
 
         if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
-            if not os.path.exists('pl_names.json') or time.time() - os.path.getmtime('pl_names.json') > 2592000:
-                nea_obj.planet_names(filename="pl_names.json")
-            if os.path.exists('pl_names.json'):
-                with open("pl_names.json", "r") as f:
-                    planets = json.load(f)
-                    for key, value in planets.items():
-                        if userpDict['pName'].lower().replace(' ', '').replace('-', '') == key:
-                            userpDict['pName'] = value
-                            break
-            userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info(planet=userpDict['pName'])
+            userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
         else:
             pDict = userpDict
             CandidatePlanetBool = False

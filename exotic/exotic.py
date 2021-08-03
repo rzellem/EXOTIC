@@ -368,9 +368,9 @@ class NASAExoplanetArchive:
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
-            self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive. "
-                                f"Check case sensitivity and spacing and "
-                                "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
+            self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
+                                f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"
+                                "\nre-enter the planet's name or type 'candidate' if this is a planet candidate: ")
             if self.planet.strip().lower() == 'candidate':
                 self.planet = user_input("\nPlease enter candidate planet's name: ", type_=str)
                 return self.planet, True

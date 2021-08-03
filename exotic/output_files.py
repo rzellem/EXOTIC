@@ -176,10 +176,10 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'value': str(round_to_2(fit.parameters['rprs'], fit.errors['rprs'])),
             'uncertainty': str(round_to_2(fit.errors['rprs']))
         },
-        'Inc': {
-            'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
-            'uncertainty': str(round_to_2(fit.errors['inc']))
-        },
+        # 'Inc': {
+        #     'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
+        #     'uncertainty': str(round_to_2(fit.errors['inc']))
+        # },
         'Am1': {
             'value': str(round_to_2(fit.parameters['a1'], fit.errors['a1'])),
             'uncertainty': str(round_to_2(fit.errors['a1']))

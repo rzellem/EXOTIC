@@ -62,7 +62,7 @@ import astroalign as aa
 aa.PIXEL_TOL = 1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
-from astropy import units as u
+import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
@@ -90,11 +90,13 @@ import numpy as np
 # photometry
 from photutils import CircularAperture
 # scipy imports
-from scipy.ndimage import median_filter, generic_filter
+from scipy.ndimage import median_filter
+# from scipy.ndimage import generic_filter
 from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
-from scipy.ndimage import binary_dilation, label, binary_erosion
+from scipy.ndimage import binary_erosion
+# from scipy.ndimage import binary_dilation, label
 # cross correlation imports
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform

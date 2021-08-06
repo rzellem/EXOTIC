@@ -1149,7 +1149,7 @@ def realTimeReduce(i, target_name, ax):
 
     # aperture size in stdev (sigma) of PSF
     aper = 3 * max(targ_sig_xy)
-    annulus = 10 * max(targ_sig_xy)
+    annulus = 10 
 
     # alloc psf fitting param
     psf_data = {

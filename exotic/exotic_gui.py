@@ -614,7 +614,7 @@ def main():
             #     preunit_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             #     i += 1
 
-            #             # "AAVSO Observer Code (N/A if none)": "RTZ",
+            #             # "AAVSO Observer Code (blank if none)": "RTZ",
             obscode_label = tk.Label(root, text="AAVSO Observer Code (leave blank if none)", justify=tk.LEFT)
             obscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             obscode_entry.insert(tk.END, "")
@@ -623,7 +623,7 @@ def main():
             i += 1
             #
             #
-            #             # "Secondary Observer Codes (N/A if none)": "N/A",
+            #             # "Secondary Observer Codes (blank if none)": "",
             secondobscode_label = tk.Label(root, text="Secondary Observer Codes (leave blank if none)", justify=tk.LEFT)
             secondobscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             secondobscode_entry.insert(tk.END, "")
@@ -1323,8 +1323,8 @@ def main():
                         # "Directory of Darks": darks_dir.folder_path,
                         # "Directory of Biases": biases_dir.folder_path,
 
-                        "AAVSO Observer Code (N/A if none)": input_data['obscode'],
-                        "Secondary Observer Codes (N/A if none)": input_data['secondobscode'],
+                        "AAVSO Observer Code (blank if none)": input_data['obscode'],
+                        "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
@@ -1380,8 +1380,8 @@ def main():
                     new_inits['user_info'] = {
                         "Directory to Save Plots": save_dir.folder_path,
 
-                        "AAVSO Observer Code (N/A if none)": input_data['obscode'],
-                        "Secondary Observer Codes (N/A if none)": input_data['secondobscode'],
+                        "AAVSO Observer Code (blank if none)": input_data['obscode'],
+                        "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],

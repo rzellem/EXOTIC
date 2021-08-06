@@ -894,10 +894,10 @@ def corruption_check(files):
     return valid_files
 
 
-def check_wcs(fits_file, save_directory, plate_opt):
+def check_wcs(fits_file, save_directory, plate_opt, rt=False):
     wcs_file = None
 
-    if plate_opt == 'y':
+    if plate_opt == 'y' and not rt:
         wcs_file = get_wcs(fits_file, save_directory)
     if not wcs_file:
         if search_wcs(fits_file).is_celestial:
@@ -1403,160 +1403,147 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.close()
 
 
-def psf_format(data, pos, init=[]):
-    target = fit_centroid(data, pos, init=init)
+def realTimeReduce(i, target_name, ax):
+    allImageData, timeList, airMassList, exptimes, tFlux, cFlux = [], [], [], [], [], []
 
-    return {
-        'x': target[0],
-        'y': target[1],
-        'amp': target[2],
-        'sig_x': target[3],
-        'sig_y': target[4],
-        'rot': target[5],
-        'off': target[6]
-    }
+    inputfiles = corruption_check(exotic_infoDict['images'])
 
-
-def realTimeReduce(i, target_name, ax, distFC, real_time_imgs, UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY):
-    targetFluxVals = []
-    referenceFluxVals = []
-    normalizedFluxVals = []
-    fileNameList = []
-    timeList = []
-
-    for file_name in real_time_imgs:
+    # time sort images
+    times = []
+    for ifile in inputfiles:
         extension = 0
-        header = fits.getheader(filename=file_name, ext=extension)
+        header = fits.getheader(filename=ifile, ext=extension)
         while header['NAXIS'] == 0:
             extension += 1
-            header = fits.getheader(filename=file_name, ext=extension)
-        timeVal = getJulianTime(header)
+            header = fits.getheader(filename=ifile, ext=extension)
+        times.append(getJulianTime(header))
+
+    si = np.argsort(times)
+    inputfiles = np.array(inputfiles)[si]
+    exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
+    exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
+
+    wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'], rt=True)
+    comp_star = exotic_infoDict['comp_stars']
+    tar_radec, comp_radec = None, []
+
+    if wcs_file:
+        wcs_header = fits.getheader(filename=wcs_file)
+
+        ra_file, dec_file = get_radec(wcs_header)
+        tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
+                     dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
+
+        ra = ra_file[int(comp_star[1])][int(comp_star[0])]
+        dec = dec_file[int(comp_star[1])][int(comp_star[0])]
+
+        comp_radec.append((ra, dec))
+
+    # aperture size in stdev (sigma) of PSF
+    aper = 3
+    annulus = 10
+
+    # alloc psf fitting param
+    psf_data = {
+        # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
+        'target': np.zeros((len(inputfiles), 7)),  # PSF fit
+        'comp1': np.zeros((len(inputfiles), 7))
+    }
+    tar_comp_dist = {
+        'comp1': np.zeros(2, dtype=int)
+    }
+
+    # open files, calibrate, align, photometry
+    for i, fileName in enumerate(inputfiles):
+        hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
+                         ignore_missing_end=True)
+
+        extension = 0
+        image_header = hdul[extension].header
+        while image_header["NAXIS"] == 0:
+            extension += 1
+            image_header = hdul[extension].header
+
+        # TIME
+        timeVal = getJulianTime(image_header)
         timeList.append(timeVal)
-        fileNameList.append(file_name)
 
-    # Time sorts the file names based on the fits file header
-    timeSortedNames = [x for _, x in sorted(zip(timeList, fileNameList))]
+        # IMAGES
+        imageData = hdul[extension].data
 
-    # Time sorts file
-    timeList = np.array(timeList)
-    timeList = timeList[np.argsort(np.array(timeList))]
-
-    # Extracts data from the image file and puts it in a 2D numpy array: firstImageData
-    firstImageData = fits.getdata(timeSortedNames[0], ext=0)
-    firstImageHeader = fits.getheader(timeSortedNames[0], ext=0)
-
-    # fit first image
-    targ = psf_format(firstImageData, [UIprevTPX, UIprevTPY])
-    ref = psf_format(firstImageData, [UIprevRPX, UIprevRPY])
-
-    # just use one aperture and annulus
-    apertureR = 3 * max(targ['sig_x'], targ['sig_y'])
-    annulusR = 10
-
-    for i, imageFile in enumerate(timeSortedNames):
-
-        hdul = fits.open(name=imageFile, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-
-        # Extracts data from the image file and puts it in a 2D numpy array: imageData
-        imageData = fits.getdata(imageFile, ext=0)
-
-        # Find the target star in the image and get its pixel coordinates if it is the first file
         if i == 0:
-            # Initializing the star location guess as the user inputted pixel coordinates
-            prevTPX, prevTPY, prevRPX, prevRPY = UIprevTPX, UIprevTPY, UIprevRPX, UIprevRPY
-            prevTSigX, prevTSigY, prevRSigX, prevRSigY = targ['sig_x'], targ['sig_y'], ref['sig_x'], ref['sig_y']
+            firstImage = np.copy(imageData)
 
-            prevImageData = imageData  # no shift should be registered
+        sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+        log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+        sys.stdout.flush()
 
-        # ---FLUX CALCULATION WITH BACKGROUND SUBTRACTION---------------------------------
-        tform = transformation(np.array([imageData, firstImageData]), imageFile)
+        try:
+            wcs_hdr = search_wcs(fileName)
+            if not wcs_hdr.is_celestial:
+                raise Exception
 
-        # apply transform
-        tx, ty = tform([UIprevTPX, UIprevTPY])[0]
-        rx, ry = tform([UIprevRPX, UIprevRPY])[0]
+            if i == 0:
+                tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
+            else:
+                pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
+                tx, ty = pix_coords[0].take(0), pix_coords[1].take(0)
 
-        print(f"Coordinates of target star: ({tx},{ty})")
-        print(f"Coordinates of comp star: ({rx},{ry})")
+            psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
 
-        # corrects for any image shifts that result from a tracking slip
-        shift, error, diffphase = phase_cross_correlation(prevImageData, imageData)
-        xShift = shift[1]
-        yShift = shift[0]
+            if i != 0 and np.abs((psf_data['target'][i][2] - psf_data['target'][i - 1][2])
+                                 / psf_data['target'][i - 1][2]) > 0.5:
+                raise Exception
 
-        prevTPX = prevTPX - xShift
-        prevTPY = prevTPY - yShift
-        prevRPX = prevRPX - xShift
-        prevRPY = prevRPY - yShift
+            pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[0][0], comp_radec[0][1])
+            cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
+            psf_data['comp1'][i] = fit_centroid(imageData, [cx, cy])
 
-        # --------GAUSSIAN FIT AND CENTROIDING----------------------------------------------
+            if i != 0:
+                if not (tar_comp_dist['comp1'][0] - 1 <= abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist['comp1'][0] + 1 and
+                        tar_comp_dist['comp1'][1] - 1 <= abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist['comp1'][1] + 1) or \
+                        np.abs((psf_data['comp1'][i][2] - psf_data['comp1'][i - 1][2]) / psf_data['comp1'][i - 1][2]) > 0.5:
+                    raise Exception
+            else:
+                tar_comp_dist['comp1'][0] = abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][0][0]))
+                tar_comp_dist['comp1'][1] = abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][0][1]))
+        except Exception:
+            if i == 0:
+                tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+            else:
+                tform = transformation(np.array([imageData, firstImage]), fileName)
 
-        txmin = int(prevTPX) - distFC  # left
-        txmax = int(prevTPX) + distFC  # right
-        tymin = int(prevTPY) - distFC  # top
-        tymax = int(prevTPY) + distFC  # bottom
+            tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
+            psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
 
-        targSearchA = imageData[tymin:tymax, txmin:txmax]
+            cx, cy = tform(comp_star)[0]
+            psf_data['comp1'][i] = fit_centroid(imageData, [cx, cy])
 
-        # Set reference search area
-        rxmin = int(prevRPX) - distFC  # left
-        rxmax = int(prevRPX) + distFC  # right
-        rymin = int(prevRPY) - distFC  # top
-        rymax = int(prevRPY) + distFC  # bottom
+            if i == 0:
+                tar_comp_dist['comp1'][0] = abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][0][0]))
+                tar_comp_dist['comp1'][1] = abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][0][1]))
 
-        refSearchA = imageData[rymin:rymax, rxmin:rxmax]
+        # aperture photometry
+        if i == 0:
+            sigma = float((psf_data['target'][0][3] + psf_data['target'][0][4]) * 0.5)
+            aper *= sigma
+            annulus *= sigma
 
-        # Guess at Gaussian Parameters and feed them in to help gaussian fitter
+        tFlux.append(aperPhot(imageData, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0])
+        cFlux.append(aperPhot(imageData, psf_data['comp1'][i, 0], psf_data['comp1'][i, 1], aper, annulus)[0])
 
-        tGuessAmp = targSearchA.max() - targSearchA.min()
-
-        # Fits Centroid for Target
-        myPriors = [tGuessAmp, prevTSigX, prevTSigY, 0, targSearchA.min()]
-        targ = psf_format(imageData, [prevTPX, prevTPY], init=myPriors)
-        tpsfFlux = 2 * PI * targ['amp'] * targ['sig_x'] * targ['sig_y']
-        currTPX = targ['x']
-        currTPY = targ['y']
-
-        # Fits Centroid for Reference
-        rGuessAmp = refSearchA.max() - refSearchA.min()
-        myRefPriors = [rGuessAmp, prevRSigX, prevRSigY, 0, refSearchA.min()]
-        ref = psf_format(imageData, [prevRPX, prevRPY], init=myRefPriors)
-        rpsfFlux = 2 * PI * ref['amp'] * ref['sig_x'] * ref['sig_y']
-        currRPX = ref['x']
-        currRPY = ref['y']
-
-        # gets the flux value of the target star and
-        tFluxVal, tTotCts = aperPhot(imageData, currTPX, currTPY, apertureR, annulusR)
-        targetFluxVals.append(tFluxVal)  # adds tFluxVal to the total list of flux values of target star
-
-        # gets the flux value of the reference star and subtracts the background light
-        rFluxVal, rTotCts = aperPhot(imageData, currRPX, currRPY, apertureR, annulusR)
-        referenceFluxVals.append(rFluxVal)  # adds rFluxVal to the total list of flux values of reference star
-
-        normalizedFluxVals.append((tFluxVal / rFluxVal))
-
-        # UPDATE PIXEL COORDINATES and SIGMAS
-        # target
-        prevTPX = currTPX
-        prevTPY = currTPY
-        prevTSigX = targ['sig_x']
-        prevTSigY = targ['sig_y']
-        # reference
-        prevRPX = currRPX
-        prevRPY = currRPY
-        prevRSigX = ref['sig_x']
-        prevRSigY = ref['sig_y']
-
-        # UPDATE FILE COUNT
-        prevImageData = imageData
-
+        # close file + delete from memory
         hdul.close()
         del hdul
+    del imageData
+
+    normalized_flux = [tFlux[i] / cFlux[i] for i in range(len(tFlux))]
 
     ax.clear()
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (JD)')
-    ax.plot(timeList, normalizedFluxVals, 'bo')
+    ax.plot(timeList, normalized_flux, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
@@ -1597,7 +1584,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         'ecc': pDict['ecc'],  # Eccentricity
         'omega': 0,  # Arg of periastron
         'tmid': pDict['midT'],  # time of mid transit [day]
-        'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
+        # 'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
         'a2': 0,  # Flux lower bound
     }
 
@@ -1618,8 +1605,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
+        # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
         'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
-        'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
+        # 'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
 
@@ -1693,8 +1681,7 @@ def main():
         [] for m in range(10))
 
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
-    minChi2 = 100000
-    distFC = 10  # gaussian search area
+    # minChi2 = 100000
 
     userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                  'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -1736,14 +1723,10 @@ def main():
             init_path, userpDict = inputs_obj.search_init(args.realtime, userpDict)
 
         exotic_infoDict = inputs_obj.real_time(userpDict['pName'])
-        exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
-        exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
-        exotic_UIprevRPX = exotic_infoDict['comp_stars'][0]
-        exotic_UIprevRPY = exotic_infoDict['comp_stars'][1]
 
         while True:
             carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
-            if carry_on != 'continue':
+            if carry_on.lower().strip() != 'continue':
                 continue
             break
 
@@ -1756,9 +1739,7 @@ def main():
         ax.set_ylabel('Normalized Flux')
         ax.set_xlabel('Time (JD)')
 
-        anim = FuncAnimation(fig, realTimeReduce,
-                             fargs=(userpDict['pName'], ax, distFC, exotic_infoDict['images'], exotic_UIprevTPX, exotic_UIprevTPY,
-                                    exotic_UIprevRPX, exotic_UIprevRPY), interval=15000)  # refresh every 15 seconds
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], ax), interval=15000)
         plt.show()
 
     # ----USER INPUTS----------------------------------------------------------

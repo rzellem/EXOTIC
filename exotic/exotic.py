@@ -97,8 +97,6 @@ from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
 # from scipy.ndimage import binary_dilation, label
-# cross correlation imports
-from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
@@ -1151,7 +1149,7 @@ def realTimeReduce(i, target_name, ax):
 
     # aperture size in stdev (sigma) of PSF
     aper = 3 * max(targ_sig_xy)
-    annulus = 10
+    annulus = 10 * max(targ_sig_xy)
 
     # alloc psf fitting param
     psf_data = {
@@ -1749,8 +1747,8 @@ def main():
                         psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
 
                         if i != 0:
-                            if not (tar_comp_dist[ckey][0] - 2 <= abs(int(psf_data[ckey][j][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 2 and
-                                    tar_comp_dist[ckey][1] - 2 <= abs(int(psf_data[ckey][j][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist[ckey][1] + 2) or \
+                            if not (tar_comp_dist[ckey][0] - 1 <= abs(int(psf_data[ckey][j][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 1 and
+                                    tar_comp_dist[ckey][1] - 1 <= abs(int(psf_data[ckey][j][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist[ckey][1] + 1) or \
                                     np.abs((psf_data[ckey][i][2] - psf_data[ckey][i - 1][2]) / psf_data[ckey][i - 1][2]) > 0.5:
                                 raise Exception
                         else:

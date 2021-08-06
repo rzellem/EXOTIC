@@ -1146,8 +1146,11 @@ def realTimeReduce(i, target_name, ax):
 
         comp_radec.append((ra, dec))
 
+    first_image = fits.getdata(inputfiles[0])
+    targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])[3:5]
+
     # aperture size in stdev (sigma) of PSF
-    aper = 3
+    aper = 3 * max(targ_sig_xy)
     annulus = 10
 
     # alloc psf fitting param

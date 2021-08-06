@@ -1433,9 +1433,8 @@ def main():
 
         while True:
             carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
-            if carry_on.lower().strip() != 'continue':
-                continue
-            break
+            if carry_on.lower().strip() == 'continue':
+                break
 
         log_info("Real Time Plotting ('Control + C' or close the plot to quit)")
         log_info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")

@@ -52,7 +52,6 @@ if __name__ == "__main__":
 
 # preload to limit import warnings
 import warnings
-import os
 from astropy.utils.exceptions import AstropyDeprecationWarning
 warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
@@ -63,7 +62,7 @@ import astroalign as aa
 aa.PIXEL_TOL = 1
 # aa.NUM_NEAREST_NEIGHBORS=10
 # astropy imports
-from astropy import units as u
+import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
@@ -79,9 +78,7 @@ import dateutil.parser as dup
 # Nested Sampling imports
 import dynesty
 from pathlib import Path
-from io import StringIO
 import pyvo as vo
-import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
@@ -90,30 +87,23 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as PathEffects
 from numba import njit
 import numpy as np
-# data processing
-import pandas
 # photometry
 from photutils import CircularAperture
-from photutils import aperture_photometry
-import requests
 # scipy imports
-from scipy.ndimage import median_filter, generic_filter
+from scipy.ndimage import median_filter
+# from scipy.ndimage import generic_filter
 from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
-from scipy.ndimage import binary_dilation, label, binary_erosion
+from scipy.ndimage import binary_erosion
+# from scipy.ndimage import binary_dilation, label
 # cross correlation imports
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
-    stop_after_delay, wait_exponential
+from tenacity import retry, stop_after_delay
 
 # ########## EXOTIC imports ##########
-try:  # science constants
-    from constants import *
-except ImportError:
-    from .constants import *
 try:  # light curve numerics
     from .api.elca import lc_fitter, binner, transit
 except ImportError:  # package import
@@ -134,6 +124,10 @@ try:  # filters
     from .api.filters import fwhm
 except ImportError:  # package import
     from api.filters import fwhm
+try:  # nea
+    from .api.nea import NASAExoplanetArchive
+except ImportError:  # package import
+    from api.nea import NASAExoplanetArchive
 try: # output files
     from output_files import OutputFiles
 except ImportError:  # package import
@@ -184,293 +178,6 @@ def sigma_clip(ogdata, sigma=3, dt=21, po=2):
         nanmask[~nanmask] = sigmask
 
     return nanmask
-
-
-def result_if_max_retry_count(retry_state):
-    pass
-
-
-# ################### START ARCHIVE SCRAPER (PRIORS) ##########################
-class NASAExoplanetArchive:
-
-    def __init__(self, planet=None, candidate=False):
-        self.planet = planet
-        # self.candidate = candidate
-        self.pl_dict = None
-
-        # CONFIGURATIONS
-        self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
-
-    def planet_info(self, fancy=False):
-        # fancy keys matching inits fil
-        if fancy:
-            coord = SkyCoord(ra=self.pl_dict['ra'] * u.degree, dec=self.pl_dict['dec'] * u.degree)
-            rastr = coord.to_string('hmsdms', sep=':').split(' ')[0]
-            decstr = coord.to_string('hmsdms', sep=':').split(' ')[1]
-
-            flabels = {
-                "Target Star RA": rastr,
-                "Target Star Dec": decstr,
-                "Planet Name": self.pl_dict['pName'],
-                "Host Star Name": self.pl_dict['sName'],
-                "Orbital Period (days)": self.pl_dict['pPer'],
-                "Orbital Period Uncertainty": self.pl_dict['pPerUnc'],
-                "Published Mid-Transit Time (BJD-UTC)": self.pl_dict['midT'],
-                "Mid-Transit Time Uncertainty": self.pl_dict['midTUnc'],
-                "Ratio of Planet to Stellar Radius (Rp/Rs)": self.pl_dict['rprs'],
-                "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": self.pl_dict['rprsUnc'],
-                "Ratio of Distance to Stellar Radius (a/Rs)": self.pl_dict['aRs'],
-                "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": self.pl_dict['aRsUnc'],
-                "Orbital Inclination (deg)": self.pl_dict['inc'],
-                "Orbital Inclination (deg) Uncertainty": self.pl_dict['incUnc'],
-                "Orbital Eccentricity (0 if null)": self.pl_dict['ecc'],
-                "Star Effective Temperature (K)": self.pl_dict['teff'],
-                "Star Effective Temperature (+) Uncertainty": self.pl_dict['teffUncPos'],
-                "Star Effective Temperature (-) Uncertainty": self.pl_dict['teffUncNeg'],
-                "Star Metallicity ([FE/H])": self.pl_dict['met'],
-                "Star Metallicity (+) Uncertainty": self.pl_dict['metUncPos'],
-                "Star Metallicity (-) Uncertainty": self.pl_dict['metUncNeg'],
-                "Star Surface Gravity (log(g))": self.pl_dict['logg'],
-                "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
-                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
-            }
-
-            return json.dumps(flabels, indent=4)
-        else:
-            self.planet, candidate = self._new_scrape(filename="eaConf.json")
-
-            if not candidate:
-                with open("eaConf.json", "r") as confirmed:
-                    data = json.load(confirmed)
-                    planets = [data[i]['pl_name'] for i in range(len(data))]
-                    idx = planets.index(self.planet)
-                    self._get_params(data[idx])
-                    log_info(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
-
-            return self.planet, candidate, self.pl_dict
-
-    @staticmethod
-    def dataframe_to_jsonfile(dataframe, filename):
-        jsondata = json.loads(dataframe.to_json(orient='table', index=False))
-        with open(filename, "w") as f:
-            f.write(json.dumps(jsondata['data'], indent=4))
-
-    def _tap_query(self, base_url, query, dataframe=True):
-        # table access protocol query
-
-        # build url
-        uri_full = base_url
-        for k in query:
-            if k != "format":
-                uri_full += f"{k} {query[k]} "
-
-        uri_full = f"{uri_full[:-1]} &format={query.get('format', 'csv')}"
-        uri_full = uri_full.replace(' ', '+')
-        # log_info(uri_full)
-        log.debug(uri_full)
-
-        response = requests.get(uri_full, timeout=self.requests_timeout)
-        # TODO check status_code?
-
-        if dataframe:
-            return pandas.read_csv(StringIO(response.text))
-        else:
-            return response.text
-
-    def resolve_name(self):
-        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
-        uri_ipac_query = {
-            # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html
-            "select": "pl_name,hostname",
-            "from": "ps",  # Table name
-            "where": "tran_flag = 1",
-            "order by": "pl_pubdate desc",
-            "format": "csv"
-        }
-
-        if self.planet:
-            uri_ipac_query["where"] += f" and pl_name = '{self.planet}'"
-
-        default = self._tap_query(uri_ipac_base, uri_ipac_query)
-
-        if len(default) == 0:
-            return False
-        else:
-            return True
-
-    @retry(stop=stop_after_attempt(3),
-           wait=wait_exponential(multiplier=1, min=10, max=20),
-           retry=(retry_if_exception_type(requests.exceptions.RequestException) |
-                  retry_if_exception_type(ConnectionError)),
-           retry_error_callback=result_if_max_retry_count)
-    def planet_names(self, filename="pl_names.json"):
-        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
-        uri_ipac_query = {
-            "select": "pl_name",
-            "from": "ps",
-            "where": "tran_flag = 1 and default_flag = 1",
-            "order by": "pl_pubdate desc",
-            "format": "csv"
-        }
-        default = self._tap_query(uri_ipac_base, uri_ipac_query)
-
-        new_index = [planet.lower().replace(' ', '').replace('-', '') for planet in default.pl_name.values]
-
-        planets = dict(zip(new_index, default.pl_name.values))
-        with open(filename, "w") as f:
-            f.write(json.dumps(planets, indent=4))
-
-    @retry(stop=stop_after_attempt(3),
-           wait=wait_exponential(multiplier=1, min=17, max=1024),
-           retry=(retry_if_exception_type(requests.exceptions.RequestException) |
-                  retry_if_exception_type(ConnectionError)))
-    def _new_scrape(self, filename="eaConf.json"):
-
-        # scrape_new()
-        uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
-        uri_ipac_query = {
-            "select": "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
-                      "pl_ratdor,pl_ratdorerr1,pl_ratdorerr2,pl_orbincl,pl_orbinclerr1,pl_orbinclerr2,"
-                      "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
-                      "pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
-                      "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
-                      "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
-                      "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
-                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
-            "from": "ps",
-            "where": "tran_flag = 1 and default_flag = 1",
-            "order by": "pl_pubdate desc",
-            "format": "csv"
-        }
-
-        if not os.path.exists('pl_names.json') or time.time() - os.path.getmtime('pl_names.json') > 2592000:
-            self.planet_names(filename="pl_names.json")
-        if os.path.exists('pl_names.json'):
-            with open("pl_names.json", "r") as f:
-                planets = json.load(f)
-                for key, value in planets.items():
-                    if self.planet.lower().replace(' ', '').replace('-', '') == key:
-                        self.planet = value
-                        break
-        log_info(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
-
-        if self.planet:
-            uri_ipac_query["where"] += f" and pl_name = '{self.planet}'"
-
-        default = self._tap_query(uri_ipac_base, uri_ipac_query)
-
-        # fill in missing columns
-        uri_ipac_query['where'] = 'tran_flag=1'
-
-        if self.planet:
-            uri_ipac_query["where"] += f" and pl_name = '{self.planet}'"
-
-        extra = self._tap_query(uri_ipac_base, uri_ipac_query)
-
-        if len(default) == 0:
-            self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive. "
-                                f"Check case sensitivity and spacing and "
-                                "\nre-enter the planet's name or type candidate if this is a planet candidate: ")
-            if self.planet.strip().lower() == 'candidate':
-                self.planet = user_input("\nPlease enter candidate planet's name: ", type_=str)
-                return self.planet, True
-            else:
-                return self._new_scrape(filename="eaConf.json")
-        else:
-            # replaces NEA default with most recent publication
-            default.iloc[0] = extra.iloc[0]
-
-            # for each planet
-            for i in default.pl_name:
-
-                # extract rows for each planet
-                ddata = default.loc[default.pl_name == i]
-                edata = extra.loc[extra.pl_name == i]
-
-                # for each nan column in default
-                nans = ddata.isna()
-                for k in ddata.keys():
-                    if nans[k].bool():  # if col value is nan
-                        if not edata[k].isna().all():  # if replacement data exists
-                            # replace with first index
-                            default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
-                            # TODO could use mean for some variables (not mid-transit)
-                            # log_info(i,k,edata[k][edata[k].notna()].values[0])
-                        else:
-                            # permanent nans - require manual entry
-                            if k == 'pl_orblper':  # omega
-                                default.loc[default.pl_name == i, k] = 0
-                            elif k == 'pl_ratdor':  # a/R*
-                                # Kepler's 3rd law
-                                semi = SA(ddata.st_mass.values[0], ddata.pl_orbper.values[0])
-                                default.loc[default.pl_name == i, k] = semi * AU / (
-                                        ddata.st_rad.values[0] * R_SUN)
-                            elif k == 'pl_orbincl':  # inclination
-                                default.loc[default.pl_name == i, k] = 90
-                            elif k == "pl_orbeccen":  # eccentricity
-                                default.loc[default.pl_name == i, k] = 0
-                            elif k == "st_met":  # [Fe/H]
-                                default.loc[default.pl_name == i, k] = 0
-                            else:
-                                default.loc[default.pl_name == i, k] = 0
-
-            NASAExoplanetArchive.dataframe_to_jsonfile(default, filename)
-            return self.planet, False
-
-    def _get_params(self, data):
-        # translate data from Archive keys to Ethan Keys
-        try:
-            rprs = np.sqrt(data['pl_trandep'] / 100.)
-            rprserr = np.sqrt(np.abs((data['pl_trandeperr1'] / 100.) * (data['pl_trandeperr2'] / 100.))) / (2. * rprs)
-        except (KeyError, TypeError):
-            try:
-                rprs = data['pl_ratror']
-                rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
-            except (KeyError, TypeError):
-                rp = data['pl_radj'] * R_JUP
-                rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP
-                rs = data['st_rad'] * R_SUN
-                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN
-                rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
-                rprs = rp / rs
-
-        self.pl_dict = {
-            'ra': data['ra'],
-            'dec': data['dec'],
-            'pName': data['pl_name'],
-            'sName': data['hostname'],
-            'pPer': data['pl_orbper'],
-            'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
-
-            'midT': data['pl_tranmid'],
-            'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),
-            'rprs': rprs,
-            'rprsUnc': rprserr,
-            'aRs': data['pl_ratdor'],
-            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
-            'inc': data['pl_orbincl'],
-            'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
-
-            'ecc': data.get('pl_orbeccen', 0),
-            'teff': data['st_teff'],
-            'teffUncPos': data['st_tefferr1'],
-            'teffUncNeg': data['st_tefferr2'],
-            'met': data['st_met'],
-            'metUncPos': max(0.01, data['st_meterr1']),
-            'metUncNeg': min(-0.01, data['st_meterr2']),
-            'logg': data['st_logg'],
-            'loggUncPos': data['st_loggerr1'],
-            'loggUncNeg': data['st_loggerr2']
-        }
-
-        if self.pl_dict['aRsUnc'] == 0:
-            self.pl_dict['aRsUnc'] = 0.1
-
-        if self.pl_dict['incUnc'] == 0:
-            self.pl_dict['incUnc'] = 0.1
-
-
-# ################### END ARCHIVE SCRAPER (PRIORS) ############################
 
 
 # Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE

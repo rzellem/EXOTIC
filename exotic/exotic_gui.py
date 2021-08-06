@@ -67,10 +67,10 @@ try:  # filters
 except ImportError:  # package import
     from api.filters import fwhm as photometric_filters
 
-try:  # nea
-    from exotic import NASAExoplanetArchive
-except ImportError:
-    from .exotic import NASAExoplanetArchive
+try:
+    from .api.nea import NASAExoplanetArchive
+except ImportError:  # package import
+    from api.nea import NASAExoplanetArchive
 
 try:  # simple version
     from .version import __version__
@@ -78,6 +78,7 @@ except ImportError:  # package import
     from version import __version__
 
 animate_toggle()
+
 
 class FolderSelect(tk.Frame):
     def __init__(self, parent=None, folderDescription="", default_text="", **kw):

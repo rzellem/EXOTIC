@@ -280,7 +280,8 @@ def obs_code(code):
     if code is None:
         code = user_input("Please enter your AAVSO Observer Account Number "
                           "(if none, leave blank and press enter): ", type_=str)
-    if code.lower().strip() == 'n/a':
+    code = code.strip()
+    if code.lower() == 'n/a':
         code = ""
     return code
 
@@ -289,7 +290,8 @@ def second_obs_code(code):
     if code is None:
         code = user_input("Please enter your comma-separated Secondary Observer Codes "
                           "(if none, leave blank and press enter): ", type_=str)
-    if code.lower().strip() == 'n/a':
+    code = code.strip()
+    if code.lower() == 'n/a':
         code = ""
     return code
 

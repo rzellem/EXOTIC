@@ -1291,7 +1291,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         'ecc': pDict['ecc'],  # Eccentricity
         'omega': 0,  # Arg of periastron
         'tmid': pDict['midT'],  # time of mid transit [day]
-        # 'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
+        'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
         'a2': 0,  # Flux lower bound
     }
 
@@ -1312,9 +1312,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
         'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
-        # 'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
+        'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
 

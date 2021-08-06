@@ -270,7 +270,7 @@ def main():
                                                 "good comparison stars: https://app.aavso.org/vsp/)",
                                      justify=tk.LEFT)
             comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comppos_entry.insert(tk.END, "[x1, y1]")
+            comppos_entry.insert(tk.END, "[x, y]")
             comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
 

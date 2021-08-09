@@ -798,10 +798,10 @@ def transformation(image_data, file_name, roi=1):
 
                 try:
                     results = aa.find_transform(mask1, mask0)
-                    return results[0] 
+                    return results[0]
                 except Exception as ee:
                     log_info(ee)
-    
+
     log_info(f"Warning: Alignment failed - {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
 
@@ -1673,7 +1673,7 @@ def main():
                 ckey = f"comp{i + 1}"
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
-                aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 tar_comp_dist[ckey] = np.zeros(2, dtype=int)
 
             # open files, calibrate, align, photometry
@@ -1787,7 +1787,7 @@ def main():
                         # loop through comp stars
                         for j in range(len(compStarList)):
                             ckey = f"comp{j + 1}"
-                            aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
+                            aper_data[ckey][i][a][an], aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData,
                                                                                                     psf_data[ckey][i, 0],
                                                                                                     psf_data[ckey][i, 1],
                                                                                                     aper, annulus)
@@ -2272,30 +2272,27 @@ def main():
 
         ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10),
                         binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10),
-                        yerr=
-                        binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[
-                            1],
+                        yerr=binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10,
+                                    myfit.detrendederr)[1],
                         fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
         ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
                        binner(myfit.detrended, len(myfit.detrended) // 10),
-                       yerr=
-                       binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[
-                           1],
+                       yerr=binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10,
+                                   myfit.detrendederr)[1],
                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
 
         # remove vertical whitespace
         f.subplots_adjust(hspace=0)
 
-        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
         try:
             f.savefig(Path(exotic_infoDict['save']) /
+                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+            f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-            f.savefig(Path(exotic_infoDict['save']) /
-                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except:
-            f.savefig(Path(exotic_infoDict['save']) /
-                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+        except Exception:
+            pass
+
         plt.close()
 
         phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
@@ -2306,30 +2303,30 @@ def main():
         if fitsortext == 1:
             fig, ax = plt.subplots(3, 2, figsize=(12, 10))
             fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
-            ax[0,0].plot(myfit.time, psf_data['target'][si, 0][gi], 'k.')
-            ax[0,0].set_ylabel("X-Centroid [px]")
-            ax[0,1].plot(myfit.time, psf_data['target'][si, 1][gi], 'k.')
-            ax[0,1].set_ylabel("Y-Centroid [px]")
-            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
-            ax[1,0].set_ylabel("Seeing [px]")
-            ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
-            ax[1,1].set_ylabel("Airmass")
-            ax[2,0].plot(myfit.time, psf_data['target'][si, 2][gi], 'k.')
-            ax[2,1].plot(myfit.time, psf_data['target'][si, 6][gi], 'k.')
-            ax[2,0].set_ylabel("Amplitude [ADU]")
-            ax[2,1].set_ylabel("Background [ADU]")
-            ax[0,0].set_xlabel("Time [BJD]")
-            ax[0,1].set_xlabel("Time [BJD]")
-            ax[1,0].set_xlabel("Time [BJD]")
-            ax[1,1].set_xlabel("Time [BJD]")
-            ax[2,0].set_xlabel("Time [BJD]")
-            ax[2,1].set_xlabel("Time [BJD]")
+            ax[0, 0].plot(myfit.time, psf_data['target'][si, 0][gi], 'k.')
+            ax[0, 0].set_ylabel("X-Centroid [px]")
+            ax[0, 1].plot(myfit.time, psf_data['target'][si, 1][gi], 'k.')
+            ax[0, 1].set_ylabel("Y-Centroid [px]")
+            ax[1, 0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
+            ax[1, 0].set_ylabel("Seeing [px]")
+            ax[1, 1].plot(myfit.time, myfit.airmass, 'k.')
+            ax[1, 1].set_ylabel("Airmass")
+            ax[2, 0].plot(myfit.time, psf_data['target'][si, 2][gi], 'k.')
+            ax[2, 1].plot(myfit.time, psf_data['target'][si, 6][gi], 'k.')
+            ax[2, 0].set_ylabel("Amplitude [ADU]")
+            ax[2, 1].set_ylabel("Background [ADU]")
+            ax[0, 0].set_xlabel("Time [BJD]")
+            ax[0, 1].set_xlabel("Time [BJD]")
+            ax[1, 0].set_xlabel("Time [BJD]")
+            ax[1, 1].set_xlabel("Time [BJD]")
+            ax[2, 0].set_xlabel("Time [BJD]")
+            ax[2, 1].set_xlabel("Time [BJD]")
             plt.tight_layout()
 
             try:
                 fig.savefig(Path(exotic_infoDict['save']) /
                             f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
-            except:
+            except Exception:
                 pass
             fig.savefig(Path(exotic_infoDict['save']) /
                         f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
@@ -2365,12 +2362,11 @@ def main():
                 try:
                     fig.savefig(Path(exotic_infoDict['save']) /
                                 f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-                except:
+                except Exception:
                     pass
                 fig.savefig(Path(exotic_infoDict['save']) /
                             f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
                 plt.close()
-
 
         #######################################################################
         # print final extracted planetary parameters

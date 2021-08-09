@@ -29,8 +29,8 @@
             "Directory of Darks": null,
             "Directory of Biases": null,
 
-            "AAVSO Observer Code (N/A if none)": "RTZ",
-            "Secondary Observer Codes (N/A if none)": "N/A",
+            "AAVSO Observer Code (blank if none)": "RTZ",
+            "Secondary Observer Codes (blank if none)": "",
 
             "Observation date": "17-December-2017",
             "Obs. Latitude": "+32.41638889",

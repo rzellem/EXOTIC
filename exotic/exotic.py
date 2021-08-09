@@ -97,8 +97,6 @@ from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
 # from scipy.ndimage import binary_dilation, label
-# cross correlation imports
-from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
@@ -1146,8 +1144,11 @@ def realTimeReduce(i, target_name, ax):
 
         comp_radec.append((ra, dec))
 
+    first_image = fits.getdata(inputfiles[0])
+    targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])[3:5]
+
     # aperture size in stdev (sigma) of PSF
-    aper = 3
+    aper = 3 * max(targ_sig_xy)
     annulus = 10
 
     # alloc psf fitting param
@@ -1433,9 +1434,8 @@ def main():
 
         while True:
             carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
-            if carry_on.lower().strip() != 'continue':
-                continue
-            break
+            if carry_on.lower().strip() == 'continue':
+                break
 
         log_info("Real Time Plotting ('Control + C' or close the plot to quit)")
         log_info("\nPlease be patient. It will take at least 15 seconds for the first image to get plotted.")

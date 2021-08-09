@@ -124,7 +124,8 @@ class Inputs:
 
                 init_file = None
             except ValueError as e:
-                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}", error=True)
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}",
+                         error=True)
                 init_file = None
 
     def comp_params(self, init_file, planet_dict):
@@ -179,7 +180,7 @@ def check_imaging_files(directory, img_type):
 
     while True:
         try:
-            if Path(directory).is_dir() or not directory.replace(' ', '') == '':
+            if Path(directory).is_dir() or not directory.strip() == '':
                 directory = Path(directory)
                 for ext in file_extensions:
                     for file in directory.iterdir():
@@ -537,7 +538,7 @@ def data_file_units(units):
             return units
 
 
-#temp
+# temp
 def log_info(string, warn=False, error=False):
     if error:
         print(f"\033[91m {string}\033[00m")

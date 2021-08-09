@@ -76,7 +76,6 @@ from barycorrpy import utc_tdb
 # julian conversion imports
 import dateutil.parser as dup
 # Nested Sampling imports
-import dynesty
 from pathlib import Path
 import pyvo as vo
 import logging
@@ -1109,7 +1108,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
 
 
 def realTimeReduce(i, target_name, ax):
-    allImageData, timeList, airMassList, exptimes, tFlux, cFlux = [], [], [], [], [], []
+    allImageData, timeList, airMassList, exptimes, norm_flux = [], [], [], [], []
 
     inputfiles = corruption_check(exotic_infoDict['images'])
 
@@ -1155,10 +1154,10 @@ def realTimeReduce(i, target_name, ax):
     psf_data = {
         # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
         'target': np.zeros((len(inputfiles), 7)),  # PSF fit
-        'comp1': np.zeros((len(inputfiles), 7))
+        'comp': np.zeros((len(inputfiles), 7))
     }
     tar_comp_dist = {
-        'comp1': np.zeros(2, dtype=int)
+        'comp': np.zeros(2, dtype=int)
     }
 
     # open files, calibrate, align, photometry
@@ -1205,16 +1204,16 @@ def realTimeReduce(i, target_name, ax):
 
             pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[0][0], comp_radec[0][1])
             cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-            psf_data['comp1'][i] = fit_centroid(imageData, [cx, cy])
+            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy])
 
             if i != 0:
-                if not (tar_comp_dist['comp1'][0] - 1 <= abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist['comp1'][0] + 1 and
-                        tar_comp_dist['comp1'][1] - 1 <= abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist['comp1'][1] + 1) or \
-                        np.abs((psf_data['comp1'][i][2] - psf_data['comp1'][i - 1][2]) / psf_data['comp1'][i - 1][2]) > 0.5:
+                if not (tar_comp_dist['comp'][0] - 1 <= abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist['comp'][0] + 1 and
+                        tar_comp_dist['comp'][1] - 1 <= abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist['comp'][1] + 1) or \
+                        np.abs((psf_data['comp'][i][2] - psf_data['comp'][i - 1][2]) / psf_data['comp'][i - 1][2]) > 0.5:
                     raise Exception
             else:
-                tar_comp_dist['comp1'][0] = abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][0][0]))
-                tar_comp_dist['comp1'][1] = abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][0][1]))
+                tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
+                tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
         except Exception:
             if i == 0:
                 tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
@@ -1225,11 +1224,11 @@ def realTimeReduce(i, target_name, ax):
             psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
 
             cx, cy = tform(comp_star)[0]
-            psf_data['comp1'][i] = fit_centroid(imageData, [cx, cy])
+            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy])
 
             if i == 0:
-                tar_comp_dist['comp1'][0] = abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][0][0]))
-                tar_comp_dist['comp1'][1] = abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][0][1]))
+                tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
+                tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
 
         # aperture photometry
         if i == 0:
@@ -1237,21 +1236,20 @@ def realTimeReduce(i, target_name, ax):
             aper *= sigma
             annulus *= sigma
 
-        tFlux.append(aperPhot(imageData, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0])
-        cFlux.append(aperPhot(imageData, psf_data['comp1'][i, 0], psf_data['comp1'][i, 1], aper, annulus)[0])
+        tFlux = aperPhot(imageData, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0]
+        cFlux = aperPhot(imageData, psf_data['comp'][i, 0], psf_data['comp'][i, 1], aper, annulus)[0]
+        norm_flux.append(tFlux / cFlux)
 
         # close file + delete from memory
         hdul.close()
         del hdul
     del imageData
 
-    normalized_flux = [tFlux[i] / cFlux[i] for i in range(len(tFlux))]
-
     ax.clear()
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (JD)')
-    ax.plot(timeList, normalized_flux, 'bo')
+    ax.plot(timeList, norm_flux, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
@@ -1993,7 +1991,7 @@ def main():
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
-            if len(OOT) == 0: # if user does not get any out-of-transit data, normalize by the max data instead
+            if len(OOT) == 0:  # if user does not get any out-of-transit data, normalize by the max data instead
                 OOT = (bestlmfit.transit == np.nanmax(bestlmfit.transit))
             OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
             goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
@@ -2095,7 +2093,7 @@ def main():
             plt.ylabel('Total Flux')
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
-            plt.title(pDict['pName'] + ' Raw Flux Values ' + exotic_infoDict['date'])
+            plt.title(f"{pDict['pName']} Raw Flux Values {exotic_infoDict['date']}")
             plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"TargetRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
@@ -2118,7 +2116,7 @@ def main():
             plt.ylabel('Normalized Flux')
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
-            plt.title(pDict['pName'] + ' Normalized Flux vs. Time ' + exotic_infoDict['date'])
+            plt.title(f"{pDict['pName']} Normalized Flux vs. Time {exotic_infoDict['date']}")
             plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"NormalizedFluxTime_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
@@ -2306,18 +2304,18 @@ def main():
         # PSF data
         ##########
         if fitsortext == 1:
-            fig, ax = plt.subplots(3,2, figsize=(12,10))
+            fig, ax = plt.subplots(3, 2, figsize=(12, 10))
             fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
-            ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
+            ax[0,0].plot(myfit.time, psf_data['target'][si, 0][gi], 'k.')
             ax[0,0].set_ylabel("X-Centroid [px]")
-            ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
+            ax[0,1].plot(myfit.time, psf_data['target'][si, 1][gi], 'k.')
             ax[0,1].set_ylabel("Y-Centroid [px]")
-            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
+            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
             ax[1,0].set_ylabel("Seeing [px]")
             ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
             ax[1,1].set_ylabel("Airmass")
-            ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
-            ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
+            ax[2,0].plot(myfit.time, psf_data['target'][si, 2][gi], 'k.')
+            ax[2,1].plot(myfit.time, psf_data['target'][si, 6][gi], 'k.')
             ax[2,0].set_ylabel("Amplitude [ADU]")
             ax[2,1].set_ylabel("Background [ADU]")
             ax[0,0].set_xlabel("Time [BJD]")

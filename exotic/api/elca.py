@@ -227,18 +227,6 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, n=1000):
     return np.mean(a1), np.std(a1)
 
 
-@njit(fastmath=True)
-def mc_a1_2(m_a2, sig_a2, transit, airmass, data, n=1000):
-    mc_a2 = np.random.normal(m_a2, sig_a2, n)
-    mc_transit = np.random.normal(np.mean(transit), np.std(transit), n)
-    mc_airmass = np.random.normal(np.mean(airmass), np.std(airmass), n)
-    mc_data = np.random.normal(np.mean(data), np.std(data), n)
-    mc_model = mc_transit*np.exp(mc_a2*mc_airmass)
-    mc_detrend = mc_data / mc_model
-    mc_a1 = np.random.normal(np.mean(mc_detrend), np.std(mc_detrend), n)
-    return np.mean(mc_a1), np.std(mc_a1)
-
-
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):
     bins = int(np.floor((max(time) - min(time))/dt))

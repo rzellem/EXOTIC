@@ -1045,7 +1045,7 @@ def save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords):
 
 
 # make plots of the centroid positions as a function of time
-def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
+def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, save, date):
     times = np.array(times)
     # X TARGET
     plt.figure()
@@ -1053,7 +1053,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('X Pixel Position')
     plt.title(targetname + ' X Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # Y TARGET
@@ -1062,7 +1062,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('Y Pixel Position')
     plt.title(targetname + ' Y Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # X COMP
@@ -1071,7 +1071,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('X Pixel Position')
     plt.title('Comp Star X Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # Y COMP
@@ -1080,7 +1080,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('Y Pixel Position')
     plt.title('Comp Star Y Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # X DISTANCE BETWEEN TARGET AND COMP
@@ -1090,7 +1090,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     for e in range(0, len(xTarg)):
         plt.plot(times[e] - np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
     plt.title('Distance between Target and Comparison X position')
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
     plt.close()
 
     # Y DISTANCE BETWEEN TARGET AND COMP
@@ -1101,14 +1101,14 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     for d in range(0, len(yTarg)):
         plt.plot(times[d] - np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
     plt.title('Difference between Target and Comparison Y position')
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
     plt.close()
 
 
-def realTimeReduce(i, target_name, ax):
+def realTimeReduce(i, target_name, info_dict, ax):
     allImageData, timeList, airMassList, exptimes, norm_flux = [], [], [], [], []
 
-    inputfiles = corruption_check(exotic_infoDict['images'])
+    inputfiles = corruption_check(info_dict['images'])
 
     # time sort images
     times = []
@@ -1122,11 +1122,11 @@ def realTimeReduce(i, target_name, ax):
 
     si = np.argsort(times)
     inputfiles = np.array(inputfiles)[si]
-    exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
-    exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
+    exotic_UIprevTPX = info_dict['tar_coords'][0]
+    exotic_UIprevTPY = info_dict['tar_coords'][1]
 
-    wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'], rt=True)
-    comp_star = exotic_infoDict['comp_stars']
+    wcs_file = check_wcs(inputfiles[0], info_dict['save'], info_dict['plate_opt'], rt=True)
+    comp_star = info_dict['comp_stars']
     tar_radec, comp_radec = None, []
 
     if wcs_file:
@@ -1379,7 +1379,6 @@ def main():
     log_info("*************************************************************\n")
 
     # ---INITIALIZATION-------------------------------------------------------
-    global exotic_infoDict
 
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
@@ -1442,7 +1441,7 @@ def main():
         ax.set_ylabel('Normalized Flux')
         ax.set_xlabel('Time (JD)')
 
-        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], ax), interval=15000)
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], exotic_infoDict, ax), interval=15000)
         plt.show()
 
     # ----USER INPUTS----------------------------------------------------------
@@ -2061,7 +2060,7 @@ def main():
 
             # Centroid position plots
             plotCentroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
-                          goodTimes, pDict['pName'], exotic_infoDict['date'])
+                          goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')

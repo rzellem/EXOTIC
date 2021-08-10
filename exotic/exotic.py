@@ -771,8 +771,6 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, file_name, roi=1):
-    pos = np.zeros((1, 2))
-
     # crop image to ROI
     height = image_data.shape[1]
     width = image_data.shape[2]
@@ -803,7 +801,7 @@ def transformation(image_data, file_name, roi=1):
                     log_info(ee)
 
     log_info(f"Warning: Alignment failed - {file_name}", warn=True)
-    return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
+    return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 
 def get_pixel_scale(wcs_header, header, pixel_init):
@@ -919,7 +917,7 @@ def mesh_box(pos, box):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
+def fit_centroid(data, pos, psf_function=gaussian_psf, box=10):
     # get sub field in image
     xv, yv = mesh_box(pos, box)
 
@@ -1524,8 +1522,6 @@ def main():
                 # NORMALIZE
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
-
-        # log_info("***************************************\n")
 
         if fileorcommandline == 2:
             if args.nasaexoarch:

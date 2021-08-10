@@ -219,8 +219,24 @@ def getPhase(curTime, pPeriod, tMid):
 
 
 @njit(fastmath=True)
-def a1_mc(a1):
-    print('hi')
+def mc_a1(m_a2, sig_a2, transit, airmass, data, n=1000):
+    a2 = np.random.normal(m_a2, sig_a2, n)
+    model = transit * np.exp(np.mean(a2) * airmass)
+    detrend = data / model
+    a1 = np.random.normal(np.mean(detrend), np.std(detrend), n)
+    return np.mean(a1), np.std(a1)
+
+
+@njit(fastmath=True)
+def mc_a1_2(m_a2, sig_a2, transit, airmass, data, n=1000):
+    mc_a2 = np.random.normal(m_a2, sig_a2, n)
+    mc_transit = np.random.normal(np.mean(transit), np.std(transit), n)
+    mc_airmass = np.random.normal(np.mean(airmass), np.std(airmass), n)
+    mc_data = np.random.normal(np.mean(data), np.std(data), n)
+    mc_model = mc_transit*np.exp(mc_a2*mc_airmass)
+    mc_detrend = mc_data / mc_model
+    mc_a1 = np.random.normal(np.mean(mc_detrend), np.std(mc_detrend), n)
+    return np.mean(mc_a1), np.std(mc_a1)
 
 
 # average data into bins of dt from start to finish
@@ -233,7 +249,7 @@ def time_bin(time, flux, dt):
         if mask.sum() > 0:
             bflux[i] = np.nanmean(flux[mask])
             btime[i] = np.nanmean(time[mask])
-    zmask = (bflux==0) | (btime==0) | np.isnan(bflux) | np.isnan(btime)
+    zmask = (bflux == 0) | (btime == 0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask]
 
 
@@ -307,11 +323,8 @@ class lc_fitter(object):
     def create_fit_variables(self):
         self.phase = (self.time - self.parameters['tmid']+0.25*self.parameters['per']) / self.parameters['per'] % 1 - 0.25
         self.transit = transit(self.time, self.parameters)
-        # TODO monte carlo the error prop for a1
-        model = self.transit*np.exp(self.parameters['a2']*self.airmass)
-        detrend = self.data/model
-        self.parameters['a1'] = np.median(detrend)
-        self.errors['a1'] = detrend.std()
+        self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],
+                                                         self.transit, self.airmass, self.data)
         self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model

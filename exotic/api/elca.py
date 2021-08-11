@@ -220,10 +220,10 @@ def getPhase(curTime, pPeriod, tMid):
 @njit(fastmath=True)
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
-    model = transit * np.exp(np.mean(a2) * airmass)
+    model = transit * np.exp(np.median(a2) * airmass)
     detrend = data / model
-    a1 = np.random.normal(np.mean(detrend), np.std(detrend), n)
-    return np.mean(a1), np.std(a1)
+    a1 = np.random.normal(np.median(detrend), np.std(detrend), n)
+    return np.median(a1), np.std(a1)
 
 
 # average data into bins of dt from start to finish

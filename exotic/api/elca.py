@@ -212,14 +212,13 @@ def transit(times, values):
     return model
 
 
-@njit(fastmath=True)
 def getPhase(curTime, pPeriod, tMid):
     phase = (curTime - tMid) / pPeriod
     return phase - int(np.nanmin(phase))
 
 
 @njit(fastmath=True)
-def mc_a1(m_a2, sig_a2, transit, airmass, data, n=1000):
+def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
     model = transit * np.exp(np.mean(a2) * airmass)
     detrend = data / model
@@ -283,6 +282,8 @@ class lc_fitter(object):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
             model *= np.exp(self.prior['a2']*self.airmass)
+            detrend = self.data / model
+            model *= np.median(detrend)
             return ((self.data-model)/self.dataerr)**2
 
         try:
@@ -309,17 +310,17 @@ class lc_fitter(object):
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.phase = (self.time - self.parameters['tmid']+0.25*self.parameters['per']) / self.parameters['per'] % 1 - 0.25
+        self.phase = (self.time - self.parameters['tmid'] + 0.25 * self.parameters['per']) / self.parameters['per'] % 1 - 0.25
         self.transit = transit(self.time, self.parameters)
         self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],
                                                          self.transit, self.airmass, self.data)
-        self.airmass_model = self.parameters['a1']*np.exp(self.parameters['a2']*self.airmass)
+        self.airmass_model = self.parameters['a1'] * np.exp(self.parameters['a2'] * self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
         self.detrendederr = self.dataerr / self.airmass_model
         self.residuals = self.data - self.model
-        self.chi2 = np.sum(self.residuals**2/self.dataerr**2)
-        self.bic = len(self.bounds) * np.log(len(self.time)) - 2*np.log(self.chi2)
+        self.chi2 = np.sum(self.residuals ** 2 / self.dataerr ** 2)
+        self.bic = len(self.bounds) * np.log(len(self.time)) - 2 * np.log(self.chi2)
 
         # compare fit chi2 to smoothed data chi2
         dt = np.diff(np.sort(self.time)).mean()
@@ -354,15 +355,15 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= np.exp(self.prior['a2']*self.airmass)
+            model *= np.exp(self.prior['a2'] * self.airmass)
             detrend = self.data / model  # used to estimate a1
             model *= np.median(detrend)
-            return -0.5 * np.sum(((self.data-model) / self.dataerr)**2)
+            return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
 
         @njit(fastmath=True)
         def prior_transform(upars):
             # transform unit cube to prior volume
-            return boundarray[:, 0] + bounddiff*upars
+            return boundarray[:, 0] + bounddiff * upars
 
         # TODO vectorize loglike
         test = ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir=self.log_dir)

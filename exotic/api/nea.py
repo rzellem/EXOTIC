@@ -48,10 +48,6 @@ import astropy.constants as const
 from astropy.coordinates import SkyCoord
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
-try:
-    from utils import user_input
-except ImportError:
-    from .utils import user_input
 
 # constants
 AU = const.au                                                       # m
@@ -344,3 +340,27 @@ class NASAExoplanetArchive:
 
         if self.pl_dict['incUnc'] == 0:
             self.pl_dict['incUnc'] = 0.1
+
+
+# temp, need to remove user_input from NEA
+def user_input(prompt, type_, values=None):
+    while True:
+        try:
+            result = type_(input(prompt))
+            # log.debug(f"{prompt}{result}")
+        except ValueError:
+            print("Sorry, not a valid datatype.")
+            continue
+        if type_ == str and values is not None:
+            result = result.lower().strip()
+            if result not in values:
+                print("Sorry, your response was not valid.")
+            else:
+                return result
+        elif type_ == int and values is not None:
+            if result not in values:
+                print("Sorry, your response was not valid.")
+            else:
+                return result
+        else:
+            return result

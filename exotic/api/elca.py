@@ -52,6 +52,7 @@ from scipy.signal import savgol_filter
 # from scipy.stats import gaussian_kde
 from ultranest import ReactiveNestedSampler
 
+from plotting import corner
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     """
@@ -217,14 +218,12 @@ def getPhase(curTime, pPeriod, tMid):
     return phase - int(np.nanmin(phase))
 
 
-@njit(fastmath=True)
+#@njit(fastmath=True)
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
-    model = transit * np.exp(np.median(a2) * airmass)
+    model = transit*np.exp(np.repeat(np.expand_dims(a2,0),airmass.shape[0],0).T*airmass)
     detrend = data / model
-    a1 = np.random.normal(np.median(detrend), np.std(detrend), n)
-    return np.median(a1), np.std(a1)
-
+    return np.mean(np.median(detrend,0)), np.std(np.median(detrend,0))
 
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):
@@ -370,7 +369,7 @@ class lc_fitter(object):
         self.results = test.run(max_ncalls=int(self.max_ncalls))
 
         # plots
-        test.plot()
+        #test.plot()
 
         # alloc data for best fit + error
         self.errors = {}
@@ -455,6 +454,78 @@ class lc_fitter(object):
 
         return f, (ax_lc, ax_res)
 
+    def plot_triangle(self):
+        ranges = []
+        mask1 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
+        mask2 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
+        mask3 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
+        titles = []
+        labels= []
+        flabels = {
+            'rprs':r'R$_{p}$/R$_{s}$',
+            'per':r'Period [day]',
+            'tmid':r'T$_{mid}$',
+            'ars':r'a/R$_{s}$',
+            'inc':r'Inc. [deg]',
+            'u1':r'u$_1$',
+            'fpfs':r'F$_{p}$/F$_{s}$', 
+            'omega':r'$\omega$',
+            'ecc':r'$e$',
+            'c0':r'$c_0$',
+            'c1':r'$c_1$',
+            'c2':r'$c_2$',
+            'c3':r'$c_3$',
+            'c4':r'$c_4$',
+            'a0':r'$a_0$',
+            'a1':r'$a_1$',
+            'a2':r'$a_2$'
+        }
+        for i, key in enumerate(self.quantiles):
+            labels.append(flabels.get(key, key))
+            titles.append(f"{self.parameters[key]:.5f} +- {self.errors[key]:.5f}")
+            ranges.append([
+                self.parameters[key] - 5*self.errors[key],
+                self.parameters[key] + 5*self.errors[key]
+            ])
+
+            if key == 'a2' or key == 'a1': 
+                continue
+
+            mask3 = mask3 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 3*self.errors[key]) ) & \
+                (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 3*self.errors[key]) )
+
+            mask1 = mask1 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - self.errors[key]) ) & \
+                (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + self.errors[key]) )
+
+            mask2 = mask2 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 2*self.errors[key]) ) & \
+                (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 2*self.errors[key]) )
+
+        chi2 = self.results['weighted_samples']['logl']*-2
+        fig = corner(self.results['weighted_samples']['points'], 
+            labels= labels,
+            bins=int(np.sqrt(self.results['samples'].shape[0])), 
+            range= ranges,
+            #quantiles=(0.1, 0.84),
+            plot_contours=True,
+            levels=[ np.percentile(chi2[mask1],99), np.percentile(chi2[mask2],99), np.percentile(chi2[mask3],99)],
+            plot_density=False,
+            titles=titles,
+            data_kwargs={
+                'c':chi2,
+                'vmin':np.percentile(chi2[mask3],1),
+                'vmax':np.percentile(chi2[mask3],99),
+                'cmap':'viridis'
+            },
+            label_kwargs={
+                'labelpad':15,
+            },
+            hist_kwargs={
+                'color':'black',
+            }
+        )
+        return fig
+
+
 
 if __name__ == "__main__":
 
@@ -467,9 +538,11 @@ if __name__ == "__main__":
         'ecc': 0,                                       # Eccentricity
         'omega': 0,                                     # Arg of periastron
         'tmid': 0.75,                                   # Time of mid transit [day],
-        # 'a1': 50,                                     # Airmass coefficients
+        'a1': 50,                                     # Airmass coefficients
         'a2': 0.25
     }
+
+    # TODO example generating LD coefficients
 
     time = np.linspace(0.65, 0.85, 150)  # [day]
 
@@ -488,7 +561,6 @@ if __name__ == "__main__":
         'rprs': [0, 0.1],
         'tmid': [min(time), max(time)],
         'ars': [13, 15],
-        # 'a1': [25, 75],
         'a2': [0, 0.3]
     }
 
@@ -498,5 +570,9 @@ if __name__ == "__main__":
         print(f"{myfit.parameters[k]:.6f} +- {myfit.errors[k]}")
 
     fig, axs = myfit.plot_bestfit()
+    plt.tight_layout()
+    plt.show()
+
+    fig = myfit.plot_triangle()
     plt.tight_layout()
     plt.show()

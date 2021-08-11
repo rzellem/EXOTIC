@@ -262,7 +262,7 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, log_dir=None, mode='ns', verbose=True):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns', verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -270,11 +270,11 @@ class lc_fitter(object):
         self.prior = prior
         self.bounds = bounds
         self.max_ncalls = 2e5
-        self.log_dir = log_dir
         self.verbose = verbose
-        if mode == "lm":
+        self.mode = mode
+        if self.mode == "lm":
             self.fit_LM()
-        elif mode == "ns":
+        elif self.mode == "ns":
             self.fit_nested()
 
     def fit_LM(self):
@@ -285,9 +285,7 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= np.exp(self.prior['a2']*self.airmass)
-            detrend = self.data / model
-            model *= np.median(detrend)
+            model *= self.prior['a1'] * np.exp(self.prior['a2'] * self.airmass)
             return ((self.data-model)/self.dataerr)**2
 
         try:
@@ -316,8 +314,9 @@ class lc_fitter(object):
     def create_fit_variables(self):
         self.phase = (self.time - self.parameters['tmid'] + 0.25 * self.parameters['per']) / self.parameters['per'] % 1 - 0.25
         self.transit = transit(self.time, self.parameters)
-        self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],
-                                                         self.transit, self.airmass, self.data)
+        if self.mode == "ns":
+            self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],
+                                                             self.transit, self.airmass, self.data)
         self.airmass_model = self.parameters['a1'] * np.exp(self.parameters['a2'] * self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
@@ -370,11 +369,8 @@ class lc_fitter(object):
             return boundarray[:, 0] + bounddiff * upars
 
         # TODO vectorize loglike
-        test = ReactiveNestedSampler(freekeys, loglike, prior_transform, log_dir=self.log_dir)
+        test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
         self.results = test.run(max_ncalls=int(self.max_ncalls))
-
-        # plots
-        #test.plot()
 
         # alloc data for best fit + error
         self.errors = {}

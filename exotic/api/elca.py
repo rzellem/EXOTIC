@@ -52,7 +52,11 @@ from scipy.signal import savgol_filter
 # from scipy.stats import gaussian_kde
 from ultranest import ReactiveNestedSampler
 
-from plotting import corner
+try:
+    from plotting import corner
+except:
+    from .plotting import corner
+
 
 def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
     """
@@ -218,12 +222,13 @@ def getPhase(curTime, pPeriod, tMid):
     return phase - int(np.nanmin(phase))
 
 
-#@njit(fastmath=True)
+# @njit(fastmath=True)
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
-    model = transit*np.exp(np.repeat(np.expand_dims(a2,0),airmass.shape[0],0).T*airmass)
+    model = transit*np.exp(np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass)
     detrend = data / model
-    return np.mean(np.median(detrend,0)), np.std(np.median(detrend,0))
+    return np.mean(np.median(detrend, 0)), np.std(np.median(detrend, 0))
+
 
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt):

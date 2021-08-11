@@ -2,7 +2,7 @@ import json
 import numpy as np
 from io import BytesIO
 from astropy.io import fits
-from astroscrappy import detect_cosmics
+# from astroscrappy import detect_cosmics
 from scipy.ndimage import label
 from skimage.transform import downscale_local_mean
 from bokeh.plotting import figure, output_file, show
@@ -48,12 +48,13 @@ def plot_image(filename, save=False, bg_min=60, bg_max=99):
         image_downscaled = downscale_local_mean(data, (1, 1)).astype(int)
 
     # quick hot pixel/ cosmic ray mask
-    mask, cdata = detect_cosmics(
-        data, psfmodel='gauss',
-        psffwhm=4, psfsize=2*round(4)+1, # just a guess
-        sepmed=False, sigclip = 4.25,
-        niter=3, objlim=10, cleantype='idw', verbose=False
-    )
+    # mask, cdata = detect_cosmics(
+    #     data, psfmodel='gauss',
+    #     psffwhm=4, psfsize=2*round(4)+1, # just a guess
+    #     sepmed=False, sigclip = 4.25,
+    #     niter=3, objlim=10, cleantype='idw', verbose=False
+    # )
+    mask, cdata = None, None  # temp til astroscrappy works again for python v3.9
 
     # show how many pixels are saturated
     SATURATION = 2**(hdu[extension].header['bitpix'])

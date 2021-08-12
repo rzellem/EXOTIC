@@ -327,11 +327,11 @@ def latitude(lat, hdr=None):
             except ValueError:
                 lat = float(process_lat_long(lat, 'latitude'))
 
-                if -90.00 <= lat <= 90.00:
-                    return lat
-                else:
-                    log_info("Error: Your latitude is out of range. "
-                             "Please enter a latitude between -90 and +90 (deg).", error=True)
+            if -90.00 <= lat <= 90.00:
+                return lat
+            else:
+                log_info("Error: Your latitude is out of range. "
+                         "Please enter a latitude between -90 and +90 (deg).", error=True)
         else:
             log_info("Error: You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.",
                      error=True)
@@ -357,11 +357,11 @@ def longitude(long, hdr=None):
             except ValueError:
                 long = float(process_lat_long(long, 'longitude'))
 
-                if -180.00 <= long <= 180.00:
-                    return long
-                else:
-                    log_info("Error: Your longitude is out of range. "
-                             "Please enter a longitude between -180 and +180 (deg).", error=True)
+            if -180.00 <= long <= 180.00:
+                return long
+            else:
+                log_info("Error: Your longitude is out of range. "
+                         "Please enter a longitude between -180 and +180 (deg).", error=True)
         else:
             log_info("Error: You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.",
                      error=True)

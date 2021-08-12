@@ -318,20 +318,20 @@ def latitude(lat, hdr=None):
             lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
-        lat = lat.replace(' ', '')
+        lat = lat.strip()
 
         if lat[0] == '+' or lat[0] == '-':
             # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                lat = float(lat)
+                lat = float(lat.replace(' ', ''))
             except ValueError:
-                lat = float(dms_to_dd(lat))
+                lat = float(process_lat_long(lat, 'latitude'))
 
-            if -90.00 <= lat <= 90.00:
-                return lat
-            else:
-                log_info("Error: Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).",
-                         error=True)
+                if -90.00 <= lat <= 90.00:
+                    return lat
+                else:
+                    log_info("Error: Your latitude is out of range. "
+                             "Please enter a latitude between -90 and +90 (deg).", error=True)
         else:
             log_info("Error: You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.",
                      error=True)
@@ -348,21 +348,20 @@ def longitude(long, hdr=None):
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
                               "(Example: +152.51): ", type_=str)
-
-        long = long.replace(' ', '')
+        long = long.strip()
 
         if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                long = float(long)
+                long = float(long.replace(' ', ''))
             except ValueError:
-                long = float(dms_to_dd(long))
+                long = float(process_lat_long(long, 'longitude'))
 
-            if -180.00 <= long <= 180.00:
-                return long
-            else:
-                log_info("Error: Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).",
-                         error=True)
+                if -180.00 <= long <= 180.00:
+                    return long
+                else:
+                    log_info("Error: Your longitude is out of range. "
+                             "Please enter a longitude between -180 and +180 (deg).", error=True)
         else:
             log_info("Error: You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.",
                      error=True)

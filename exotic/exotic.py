@@ -76,7 +76,6 @@ from barycorrpy import utc_tdb
 # julian conversion imports
 import dateutil.parser as dup
 # Nested Sampling imports
-import dynesty
 from pathlib import Path
 import pyvo as vo
 import logging
@@ -772,8 +771,6 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, file_name, roi=1):
-    pos = np.zeros((1, 2))
-
     # crop image to ROI
     height = image_data.shape[1]
     width = image_data.shape[2]
@@ -799,12 +796,12 @@ def transformation(image_data, file_name, roi=1):
 
                 try:
                     results = aa.find_transform(mask1, mask0)
-                    return results[0] 
+                    return results[0]
                 except Exception as ee:
                     log_info(ee)
-    
+
     log_info(f"Warning: Alignment failed - {file_name}", warn=True)
-    return SimilarityTransform(scale=1, rotation=0, translation=[0,0])
+    return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 
 def get_pixel_scale(wcs_header, header, pixel_init):
@@ -920,7 +917,7 @@ def mesh_box(pos, box):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, init=[], psf_function=gaussian_psf, box=10):
+def fit_centroid(data, pos, psf_function=gaussian_psf, box=10):
     # get sub field in image
     xv, yv = mesh_box(pos, box)
 
@@ -1048,7 +1045,7 @@ def save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords):
 
 
 # make plots of the centroid positions as a function of time
-def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
+def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, save, date):
     times = np.array(times)
     # X TARGET
     plt.figure()
@@ -1056,7 +1053,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('X Pixel Position')
     plt.title(targetname + ' X Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # Y TARGET
@@ -1065,7 +1062,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('Y Pixel Position')
     plt.title(targetname + ' Y Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # X COMP
@@ -1074,7 +1071,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('X Pixel Position')
     plt.title('Comp Star X Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # Y COMP
@@ -1083,7 +1080,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
     plt.ylabel('Y Pixel Position')
     plt.title('Comp Star Y Centroid Position ' + date)
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
     plt.close()
 
     # X DISTANCE BETWEEN TARGET AND COMP
@@ -1093,7 +1090,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     for e in range(0, len(xTarg)):
         plt.plot(times[e] - np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
     plt.title('Distance between Target and Comparison X position')
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
     plt.close()
 
     # Y DISTANCE BETWEEN TARGET AND COMP
@@ -1104,14 +1101,14 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, date):
     for d in range(0, len(yTarg)):
         plt.plot(times[d] - np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
     plt.title('Difference between Target and Comparison Y position')
-    plt.savefig(Path(exotic_infoDict['save']) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
+    plt.savefig(Path(save) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
     plt.close()
 
 
-def realTimeReduce(i, target_name, ax):
-    allImageData, timeList, airMassList, exptimes, tFlux, cFlux = [], [], [], [], [], []
+def realTimeReduce(i, target_name, info_dict, ax):
+    allImageData, timeList, airMassList, exptimes, norm_flux = [], [], [], [], []
 
-    inputfiles = corruption_check(exotic_infoDict['images'])
+    inputfiles = corruption_check(info_dict['images'])
 
     # time sort images
     times = []
@@ -1125,11 +1122,11 @@ def realTimeReduce(i, target_name, ax):
 
     si = np.argsort(times)
     inputfiles = np.array(inputfiles)[si]
-    exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
-    exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
+    exotic_UIprevTPX = info_dict['tar_coords'][0]
+    exotic_UIprevTPY = info_dict['tar_coords'][1]
 
-    wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'], rt=True)
-    comp_star = exotic_infoDict['comp_stars']
+    wcs_file = check_wcs(inputfiles[0], info_dict['save'], info_dict['plate_opt'], rt=True)
+    comp_star = info_dict['comp_stars']
     tar_radec, comp_radec = None, []
 
     if wcs_file:
@@ -1149,16 +1146,16 @@ def realTimeReduce(i, target_name, ax):
 
     # aperture size in stdev (sigma) of PSF
     aper = 3 * max(targ_sig_xy)
-    annulus = 10 
+    annulus = 10
 
     # alloc psf fitting param
     psf_data = {
         # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
         'target': np.zeros((len(inputfiles), 7)),  # PSF fit
-        'comp1': np.zeros((len(inputfiles), 7))
+        'comp': np.zeros((len(inputfiles), 7))
     }
     tar_comp_dist = {
-        'comp1': np.zeros(2, dtype=int)
+        'comp': np.zeros(2, dtype=int)
     }
 
     # open files, calibrate, align, photometry
@@ -1205,16 +1202,16 @@ def realTimeReduce(i, target_name, ax):
 
             pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[0][0], comp_radec[0][1])
             cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-            psf_data['comp1'][i] = fit_centroid(imageData, [cx, cy])
+            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy])
 
             if i != 0:
-                if not (tar_comp_dist['comp1'][0] - 1 <= abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist['comp1'][0] + 1 and
-                        tar_comp_dist['comp1'][1] - 1 <= abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist['comp1'][1] + 1) or \
-                        np.abs((psf_data['comp1'][i][2] - psf_data['comp1'][i - 1][2]) / psf_data['comp1'][i - 1][2]) > 0.5:
+                if not (tar_comp_dist['comp'][0] - 1 <= abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist['comp'][0] + 1 and
+                        tar_comp_dist['comp'][1] - 1 <= abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist['comp'][1] + 1) or \
+                        np.abs((psf_data['comp'][i][2] - psf_data['comp'][i - 1][2]) / psf_data['comp'][i - 1][2]) > 0.5:
                     raise Exception
             else:
-                tar_comp_dist['comp1'][0] = abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][0][0]))
-                tar_comp_dist['comp1'][1] = abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][0][1]))
+                tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
+                tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
         except Exception:
             if i == 0:
                 tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
@@ -1225,11 +1222,11 @@ def realTimeReduce(i, target_name, ax):
             psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
 
             cx, cy = tform(comp_star)[0]
-            psf_data['comp1'][i] = fit_centroid(imageData, [cx, cy])
+            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy])
 
             if i == 0:
-                tar_comp_dist['comp1'][0] = abs(int(psf_data['comp1'][0][0]) - int(psf_data['target'][0][0]))
-                tar_comp_dist['comp1'][1] = abs(int(psf_data['comp1'][0][1]) - int(psf_data['target'][0][1]))
+                tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
+                tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
 
         # aperture photometry
         if i == 0:
@@ -1237,21 +1234,20 @@ def realTimeReduce(i, target_name, ax):
             aper *= sigma
             annulus *= sigma
 
-        tFlux.append(aperPhot(imageData, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0])
-        cFlux.append(aperPhot(imageData, psf_data['comp1'][i, 0], psf_data['comp1'][i, 1], aper, annulus)[0])
+        tFlux = aperPhot(imageData, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0]
+        cFlux = aperPhot(imageData, psf_data['comp'][i, 0], psf_data['comp'][i, 1], aper, annulus)[0]
+        norm_flux.append(tFlux / cFlux)
 
         # close file + delete from memory
         hdul.close()
         del hdul
     del imageData
 
-    normalized_flux = [tFlux[i] / cFlux[i] for i in range(len(tFlux))]
-
     ax.clear()
     ax.set_title(target_name)
     ax.set_ylabel('Normalized Flux')
     ax.set_xlabel('Time (JD)')
-    ax.plot(timeList, normalized_flux, 'bo')
+    ax.plot(timeList, norm_flux, 'bo')
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
@@ -1313,6 +1309,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
+        # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
         'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
@@ -1382,7 +1379,6 @@ def main():
     log_info("*************************************************************\n")
 
     # ---INITIALIZATION-------------------------------------------------------
-    global exotic_infoDict
 
     fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
         [] for m in range(10))
@@ -1445,7 +1441,7 @@ def main():
         ax.set_ylabel('Normalized Flux')
         ax.set_xlabel('Time (JD)')
 
-        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], ax), interval=15000)
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], exotic_infoDict, ax), interval=15000)
         plt.show()
 
     # ----USER INPUTS----------------------------------------------------------
@@ -1525,8 +1521,6 @@ def main():
                 # NORMALIZE
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
-
-        # log_info("***************************************\n")
 
         if fileorcommandline == 2:
             if args.nasaexoarch:
@@ -1674,7 +1668,7 @@ def main():
                 ckey = f"comp{i + 1}"
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
-                aper_data[ckey + "_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 tar_comp_dist[ckey] = np.zeros(2, dtype=int)
 
             # open files, calibrate, align, photometry
@@ -1788,7 +1782,7 @@ def main():
                         # loop through comp stars
                         for j in range(len(compStarList)):
                             ckey = f"comp{j + 1}"
-                            aper_data[ckey][i][a][an], aper_data[ckey + "_bg"][i][a][an] = aperPhot(imageData,
+                            aper_data[ckey][i][a][an], aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData,
                                                                                                     psf_data[ckey][i, 0],
                                                                                                     psf_data[ckey][i, 1],
                                                                                                     aper, annulus)
@@ -1992,7 +1986,7 @@ def main():
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
-            if len(OOT) == 0: # if user does not get any out-of-transit data, normalize by the max data instead
+            if len(OOT) == 0:  # if user does not get any out-of-transit data, normalize by the max data instead
                 OOT = (bestlmfit.transit == np.nanmax(bestlmfit.transit))
             OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
             goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
@@ -2066,7 +2060,7 @@ def main():
 
             # Centroid position plots
             plotCentroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
-                          goodTimes, pDict['pName'], exotic_infoDict['date'])
+                          goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
@@ -2094,7 +2088,7 @@ def main():
             plt.ylabel('Total Flux')
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
-            plt.title(pDict['pName'] + ' Raw Flux Values ' + exotic_infoDict['date'])
+            plt.title(f"{pDict['pName']} Raw Flux Values {exotic_infoDict['date']}")
             plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"TargetRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
@@ -2117,7 +2111,7 @@ def main():
             plt.ylabel('Normalized Flux')
             # plt.rc('grid', linestyle="-", color='black')
             # plt.grid(True)
-            plt.title(pDict['pName'] + ' Normalized Flux vs. Time ' + exotic_infoDict['date'])
+            plt.title(f"{pDict['pName']} Normalized Flux vs. Time {exotic_infoDict['date']}")
             plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                         f"NormalizedFluxTime_{pDict['pName']}_{exotic_infoDict['date']}.png")
             plt.close()
@@ -2183,7 +2177,6 @@ def main():
             'ecc': pDict['ecc'],  # Eccentricity
             'omega': 0,  # Arg of periastron
             'tmid': pDict['midT'],  # time of mid transit [day]
-            'a1': goodFluxes.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
             'a2': 0,  # Flux lower bound
         }
 
@@ -2201,8 +2194,8 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
+            # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
             'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
-            'a1': [min(0, np.nanmin(goodFluxes)), 3 * np.nanmax(goodFluxes)],
             'a2': [-3, 3],
         }
 
@@ -2271,43 +2264,27 @@ def main():
 
         ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10),
                         binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10),
-                        yerr=
-                        binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[
-                            1],
+                        yerr=binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10,
+                                    myfit.detrendederr)[1],
                         fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
         ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
                        binner(myfit.detrended, len(myfit.detrended) // 10),
-                       yerr=
-                       binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10, myfit.detrendederr)[
-                           1],
+                       yerr=binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10,
+                                   myfit.detrendederr)[1],
                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
 
         # remove vertical whitespace
         f.subplots_adjust(hspace=0)
 
-        # For some reason, saving as a pdf crashed on Rob's laptop...so adding in a try statement to save it as a pdf if it can, otherwise, png
         Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
         try:
             f.savefig(Path(exotic_infoDict['save']) /
+                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
+            f.savefig(Path(exotic_infoDict['save']) /
                       f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-            f.savefig(Path(exotic_infoDict['save']) /
-                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        except:
-            f.savefig(Path(exotic_infoDict['save']) /
-                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-        plt.close()
+        except Exception:
+            pass
 
-
-        ###################################################################################
-
-        # triangle plot
-        fig, axs = dynesty.plotting.cornerplot(myfit.results, labels=list(mybounds.keys()), quantiles_2d=[0.4, 0.85],
-                                               smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
-                                               hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
-        dynesty.plotting.cornerpoints(myfit.results, labels=list(mybounds.keys()),
-                                      fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
-        fig.savefig(Path(exotic_infoDict['save']) / "temp" /
-                    f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
         plt.close()
 
         phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
@@ -2316,32 +2293,32 @@ def main():
         # PSF data
         ##########
         if fitsortext == 1:
-            fig, ax = plt.subplots(3,2, figsize=(12,10))
+            fig, ax = plt.subplots(3, 2, figsize=(12, 10))
             fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
-            ax[0,0].plot(myfit.time, psf_data['target'][si,0][gi], 'k.')
-            ax[0,0].set_ylabel("X-Centroid [px]")
-            ax[0,1].plot(myfit.time, psf_data['target'][si,1][gi], 'k.')
-            ax[0,1].set_ylabel("Y-Centroid [px]")
-            ax[1,0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si,3][gi] + psf_data['target'][si,4][gi]), 'k.')
-            ax[1,0].set_ylabel("Seeing [px]")
-            ax[1,1].plot(myfit.time, myfit.airmass, 'k.')
-            ax[1,1].set_ylabel("Airmass")
-            ax[2,0].plot(myfit.time, psf_data['target'][si,2][gi], 'k.')
-            ax[2,1].plot(myfit.time, psf_data['target'][si,6][gi], 'k.')
-            ax[2,0].set_ylabel("Amplitude [ADU]")
-            ax[2,1].set_ylabel("Background [ADU]")
-            ax[0,0].set_xlabel("Time [BJD]")
-            ax[0,1].set_xlabel("Time [BJD]")
-            ax[1,0].set_xlabel("Time [BJD]")
-            ax[1,1].set_xlabel("Time [BJD]")
-            ax[2,0].set_xlabel("Time [BJD]")
-            ax[2,1].set_xlabel("Time [BJD]")
+            ax[0, 0].plot(myfit.time, psf_data['target'][si, 0][gi], 'k.')
+            ax[0, 0].set_ylabel("X-Centroid [px]")
+            ax[0, 1].plot(myfit.time, psf_data['target'][si, 1][gi], 'k.')
+            ax[0, 1].set_ylabel("Y-Centroid [px]")
+            ax[1, 0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
+            ax[1, 0].set_ylabel("Seeing [px]")
+            ax[1, 1].plot(myfit.time, myfit.airmass, 'k.')
+            ax[1, 1].set_ylabel("Airmass")
+            ax[2, 0].plot(myfit.time, psf_data['target'][si, 2][gi], 'k.')
+            ax[2, 1].plot(myfit.time, psf_data['target'][si, 6][gi], 'k.')
+            ax[2, 0].set_ylabel("Amplitude [ADU]")
+            ax[2, 1].set_ylabel("Background [ADU]")
+            ax[0, 0].set_xlabel("Time [BJD]")
+            ax[0, 1].set_xlabel("Time [BJD]")
+            ax[1, 0].set_xlabel("Time [BJD]")
+            ax[1, 1].set_xlabel("Time [BJD]")
+            ax[2, 0].set_xlabel("Time [BJD]")
+            ax[2, 1].set_xlabel("Time [BJD]")
             plt.tight_layout()
 
             try:
                 fig.savefig(Path(exotic_infoDict['save']) /
                             f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
-            except:
+            except Exception:
                 pass
             fig.savefig(Path(exotic_infoDict['save']) /
                         f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
@@ -2377,12 +2354,11 @@ def main():
                 try:
                     fig.savefig(Path(exotic_infoDict['save']) /
                                 f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-                except:
+                except Exception:
                     pass
                 fig.savefig(Path(exotic_infoDict['save']) /
                             f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
                 plt.close()
-
 
         #######################################################################
         # print final extracted planetary parameters
@@ -2393,6 +2369,7 @@ def main():
         log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log_info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log_info(f"           Transit depth [(Rp/Rs)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
+        # log_info(f"                   Inclination [deg]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
         log_info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")

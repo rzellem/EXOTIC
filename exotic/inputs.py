@@ -64,15 +64,20 @@ class Inputs:
                 self.info_dict['flats'], self.info_dict['darks'], self.info_dict['biases'] = \
                     image_calibrations(self.info_dict['flats'], self.info_dict['darks'],
                                        self.info_dict['biases'], self.init_opt)
+                if not planet:
+                    planet = planet_name(planet)
 
-        return self.info_dict
+        return self.info_dict, planet
 
-    def prereduced(self):
+    def prereduced(self, planet):
         rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
 
         self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
         self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
+
+        if not planet:
+            planet = planet_name(planet)
 
         for key, value in list(self.params.items()):
             if key == 'elev':
@@ -81,7 +86,7 @@ class Inputs:
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
-        return self.info_dict
+        return self.info_dict, planet
 
     def real_time(self, planet):
         rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
@@ -96,7 +101,10 @@ class Inputs:
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
-        return self.info_dict
+                if not planet:
+                    planet = planet_name(planet)
+
+        return self.info_dict, planet
 
     def search_init(self, init_file, planet_dict):
         cwd = Path.cwd()
@@ -277,6 +285,12 @@ def check_calibration(directory, image_type):
     return None
 
 
+def planet_name(planet):
+    if not planet:
+        planet = user_input("\nPlease enter Planet's name: ", type_=str)
+    return planet
+
+
 def obs_code(code):
     if code is None:
         code = user_input("Please enter your AAVSO Observer Account Number "
@@ -393,15 +407,15 @@ def elevation(elev, lat, long, hdr=None):
 
 def camera(c_type):
     while True:
-        c_type = c_type.strip().upper()
-        if c_type not in ["CCD", "DSLR"]:
+        if not c_type:
             c_type = user_input("\nPlease enter the camera type (e.g., CCD or DSLR;\n"
                                 "Note: if you are using a CMOS, please enter CCD here and\n"
                                 "then note your actual camera type in \"Observing Notes\"): ", type_=str)
+        c_type = c_type.strip().upper()
+        if c_type not in ["CCD", "DSLR"]:
+            c_type = None
         else:
-            break
-
-    return c_type
+            return c_type
 
 
 def pixel_bin(pix_bin):
@@ -514,7 +528,7 @@ def data_file_time(time_format):
         time_format = time_format.upper().strip()
 
         if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
-            log_info("Error: Invalid entry; please try again.", error=True)
+            log_info("Warning: Invalid entry; please try again.", warn=True)
             time_format = None
         else:
             return time_format
@@ -531,7 +545,7 @@ def data_file_units(units):
         units = units.lower().strip()
 
         if units not in ['flux', 'magnitude', 'millimagnitude']:
-            log_info("Error: Invalid entry; please try again.", error=True)
+            log_info("Warning: Invalid entry; please try again.", warn=True)
             units = None
         else:
             return units

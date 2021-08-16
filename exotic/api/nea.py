@@ -306,6 +306,9 @@ class NASAExoplanetArchive:
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
 
+        if data['pl_ratdor'] < 1 or np.isnan(data['pl_ratdor']):
+            data['pl_ratdor'] = pow(data['pl_orbper'] ** 2, 1 / 3) / (data['st_rad'] * R_SUN)
+
         self.pl_dict = {
             'ra': data['ra'],
             'dec': data['dec'],

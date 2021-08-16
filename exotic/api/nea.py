@@ -201,14 +201,14 @@ class NASAExoplanetArchive:
         # scrape_new()
         uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
         uri_ipac_query = {
-            "select": "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,"
+            "select": "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,pl_radjerr2,"
                       "pl_ratdor,pl_ratdorerr1,pl_ratdorerr2,pl_orbincl,pl_orbinclerr1,pl_orbinclerr2,"
                       "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
                       "pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
                       "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                       "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                       "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
-                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,ra,dec,pl_pubdate",
+                      "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,st_raderr2,ra,dec,pl_pubdate",
             "from": "ps",
             "where": "tran_flag = 1 and default_flag = 1",
             "order by": "pl_pubdate desc",
@@ -299,15 +299,15 @@ class NASAExoplanetArchive:
                 rprs = data['pl_ratror']
                 rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
             except (KeyError, TypeError):
-                rp = data['pl_radj'] * R_JUP
-                rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP
-                rs = data['st_rad'] * R_SUN
-                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN
+                rp = data['pl_radj'] * R_JUP.value
+                rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP.value
+                rs = data['st_rad'] * R_SUN.value
+                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN.value
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
 
         if data['pl_ratdor'] < 1 or np.isnan(data['pl_ratdor']):
-            data['pl_ratdor'] = pow(data['pl_orbper'] ** 2, 1 / 3) / (data['st_rad'] * R_SUN)
+            data['pl_ratdor'] = pow((data['pl_orbper'] / 365) ** 2, 1 / 3) / (data['st_rad'] * R_SUN.to('au')).value
 
         self.pl_dict = {
             'ra': data['ra'],

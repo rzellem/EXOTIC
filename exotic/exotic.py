@@ -321,10 +321,10 @@ def check_parameters(init_parameters, parameters):
     if different:
         log_info("\nDifference(s) found between initialization file parameters and "
                  "those scraped by EXOTIC from the NASA Exoplanet Archive."
-                 "\n Would you like:"
+                 "\nWould you like:"
                  "\n  (1) EXOTIC to adopt of all of your defined parameters or"
                  "\n  (2) to review the ones scraped from the Archive that differ?")
-        opt = user_input("\nPlease enter 1 or 2: ", type_=int, values=[1, 2])
+        opt = user_input("Enter 1 or 2: ", type_=int, values=[1, 2])
 
         if opt == 2:
             return True
@@ -825,8 +825,8 @@ def get_pixel_scale(wcs_header, header, pixel_init):
     elif pixel_init:
         image_scale = f"Image scale in arc-secs/pixel: {pixel_init}"
     else:
-        log_info("Not able to find Pixel Scale in the Image Header.")
-        image_scale_num = user_input("Please enter the size of your pixel (e.g., 5 arc-sec/pixel): ", type_=float)
+        log_info("Not able to find Image Scale in the Image Header.")
+        image_scale_num = user_input("Please enter Image Scale (e.g., 5 arc-sec/pixel): ", type_=float)
         image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
     return image_scale
 
@@ -1106,7 +1106,7 @@ def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, save, date):
 
 
 def realTimeReduce(i, target_name, info_dict, ax):
-    allImageData, timeList, airMassList, exptimes, norm_flux = [], [], [], [], []
+    timeList, airMassList, exptimes, norm_flux = [], [], [], []
 
     inputfiles = corruption_check(info_dict['images'])
 
@@ -1398,24 +1398,25 @@ def main():
     elif isinstance(args.reduce, str) or isinstance(args.prereduced, str) or isinstance(args.photometry, str):
         reduction_opt = 2
     else:
-        reduction_opt = user_input("\nPlease select: \n\t1: for Real Time Reduction (for analyzing your data while "
-                                   "observing) \n\t2: for for Complete Reduction (for analyzing your data after "
-                                   "an observing run). \nPlease enter 1 or 2: ",
-                                   type_=int, values=[1, 2])
+        reduction_opt = user_input("\nPlease select Reduction method:"
+                                   "\n\t1: Real Time Reduction (for analyzing your data while observing)"
+                                   "\n\t2: Complete Reduction (for analyzing your data after an observing run)"
+                                   "\nEnter 1 or 2: ", type_=int, values=[1, 2])
 
     if not (args.reduce or args.prereduced or args.realtime or args.photometry):
-        fileorcommandline = user_input("\nHow would you like to input your initial parameters? "
-                                       "Enter '1' to use the Command Line or '2' to use an input file: ",
-                                       type_=int, values=[1, 2])
+        file_cmd_opt = user_input("\nPlease select how to input your initial parameters:"
+                                  "\n\t1: Command Line"
+                                  "\n\t2: Input File (inits.json)"
+                                  "\nEnter 1 or 2: ", type_=int, values=[1, 2])
     else:
-        fileorcommandline = 2
+        file_cmd_opt = 2
 
     if reduction_opt == 1:
         log_info("\n**************************************************************")
         log_info("Real Time Reduction ('Control + C'  or close the plot to quit)")
         log_info("**************************************************************\n")
 
-        if fileorcommandline == 2:
+        if file_cmd_opt == 2:
             init_opt = 'y'
         else:
             init_opt = 'n'
@@ -1425,7 +1426,7 @@ def main():
         if init_opt == 'y':
             init_path, userpDict = inputs_obj.search_init(args.realtime, userpDict)
 
-        exotic_infoDict = inputs_obj.real_time(userpDict['pName'])
+        exotic_infoDict, userpDict['pName'] = inputs_obj.real_time(userpDict['pName'])
 
         while True:
             carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
@@ -1463,10 +1464,12 @@ def main():
             fitsortext = 1
             init_path = args.photometry
         else:
-            fitsortext = user_input("Enter '1' to perform aperture photometry on fits files or '2' to start with "
-                                    "pre-reduced data in a .txt format: ", type_=int, values=[1, 2])
+            fitsortext = user_input("\nPlease select method:"
+                                    "\n\t1: Perform Aperture Photometry on FITS files"
+                                    "\n\t2: Fit lightcurve for Pre-reduced Data in a .txt format"
+                                    "\nEnter 1 or 2: ", type_=int, values=[1, 2])
 
-        if fileorcommandline == 2:
+        if file_cmd_opt == 2:
             init_opt = 'y'
         else:
             init_opt = 'n'
@@ -1477,9 +1480,9 @@ def main():
             init_path, userpDict = inputs_obj.search_init(init_path, userpDict)
 
         if fitsortext == 1:
-            exotic_infoDict = inputs_obj.complete_red(userpDict['pName'])
+            exotic_infoDict, userpDict['pName'] = inputs_obj.complete_red(userpDict['pName'])
         else:
-            exotic_infoDict = inputs_obj.prereduced()
+            exotic_infoDict, userpDict['pName'] = inputs_obj.prereduced(userpDict['pName'])
 
         # Make a temp directory of helpful files
         Path(Path(exotic_infoDict['save']) / "temp").mkdir(exist_ok=True)
@@ -1522,7 +1525,7 @@ def main():
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
 
-        if fileorcommandline == 2:
+        if file_cmd_opt == 2:
             if args.nasaexoarch:
                 pass
             elif args.override:
@@ -1558,9 +1561,6 @@ def main():
                 log_info(f"Error: {k} value is 0 or NaN. Please use a non-zero value in inits.json", error=True)
                 pDict[k] = 0.8 # instead of 1 since priors on RpRs are 0 to RpRs*1.25
                 log_info("EXOTIC will override the Rp/Rs value.")
-            if k == 'aRs' and (pDict[k] < 1 or np.isnan(pDict[k])):
-                log_info(f"Warning: {k} value is <1 or NaN. Please use a non-zero value in inits.json", warn=True)
-                pDict[k] = user_input("\nPlease enter candidate planet's name: ", type_=float)
             if "Unc" in k:
                 if not pDict[k]:
                     log_info(f"Warning: {k} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
@@ -1581,7 +1581,7 @@ def main():
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            allImageData, timeList, airMassList, exptimes = [], [], [], []
+            timeList, airMassList, exptimes = [], [], []
 
             inputfiles = corruption_check(exotic_infoDict['images'])
 

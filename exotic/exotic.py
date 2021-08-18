@@ -1380,8 +1380,7 @@ def main():
 
     # ---INITIALIZATION-------------------------------------------------------
 
-    fileNameList, timeSortedNames, xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = (
-        [] for m in range(10))
+    xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = ([] for m in range(8))
 
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     # minChi2 = 100000
@@ -1645,8 +1644,8 @@ def main():
                     log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
                              f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
-                            log_info("\nCurrent comparison star is variable, proceeding to next star.")
-                            exotic_infoDict['comp_stars'].remove(comp)
+                        log_info("\nCurrent comparison star is variable, proceeding to next star.")
+                        exotic_infoDict['comp_stars'].remove(comp)
                 compStarList = exotic_infoDict['comp_stars']
 
             # aperture sizes in stdev (sigma) of PSF
@@ -1831,7 +1830,7 @@ def main():
                     minSTD = resstd
                     minAperture = 0
                     minAnnulus = 15 * sigma
-                    arrayNormUnc = myfit.dataerr
+                    # arrayNormUnc = myfit.dataerr
 
                     # sets the lists we want to print to correspond to the optimal aperature
                     goodFluxes = np.copy(myfit.data)
@@ -1871,7 +1870,7 @@ def main():
                         minSTD = resstd
                         minAperture = -aper
                         minAnnulus = annulus
-                        arrayNormUnc = tFlux**0.5
+                        # arrayNormUnc = tFlux ** 0.5
 
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
@@ -1912,7 +1911,7 @@ def main():
                             minSTD = resstd
                             minAperture = aper
                             minAnnulus = annulus
-                            arrayNormUnc = arrayNormUnc
+                            # arrayNormUnc = arrayNormUnc
 
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = np.copy(myfit.data)
@@ -2066,17 +2065,17 @@ def main():
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
             # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
-            bjdMidTOld = pDict['midT']
+            # bjdMidTOld = pDict['midT']
 
-            goodPhasesList = []
+            # goodPhasesList = []
             # convert all the phases based on the updated bjd times
-            for convertedTime in goodTimes:
-                bjdPhase = getPhase(float(convertedTime), pDict['pPer'], bjdMidTOld)
-                goodPhasesList.append(bjdPhase)
-            goodPhases = np.array(goodPhasesList)
+            # for convertedTime in goodTimes:
+            #     bjdPhase = getPhase(float(convertedTime), pDict['pPer'], bjdMidTOld)
+            #     goodPhasesList.append(bjdPhase)
+            # goodPhases = np.array(goodPhasesList)
 
             # Calculate the standard deviation of the normalized flux values
-            standardDev1 = np.std(goodFluxes)
+            # standardDev1 = np.std(goodFluxes)
 
             ######################################
             # PLOTS ROUND 1
@@ -2187,8 +2186,8 @@ def main():
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)
-            log_info(f"start:{goodTimes.min()}", error=True)
-            log_info(f"  end:{goodTimes.max()}", error=True)
+            log_info(f"start:{np.min(goodTimes)}", error=True)
+            log_info(f"  end:{np.max(goodTimes)}", error=True)
             log_info(f"prior:{prior['tmid']}", error=True)
 
         mybounds = {
@@ -2217,7 +2216,7 @@ def main():
 
             data = transit(times, pars)
             tmask = data < 1
-            durs.append(tmask.sum()*dt)
+            durs.append(tmask.sum() * dt)
 
         ########################
         # PLOT FINAL LIGHT CURVE
@@ -2257,7 +2256,8 @@ def main():
         correctedSTD = np.std(myfit.residuals / np.median(myfit.data))
         ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
                        marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
-        ax_lc.plot(np.linspace(np.nanmin(myfit.phase), np.nanmax(myfit.phase), 1000), data_highres, 'r', zorder=1000, lw=2)
+        ax_lc.plot(np.linspace(np.nanmin(myfit.phase), np.nanmax(myfit.phase), 1000), data_highres, 'r',
+                   zorder=1000, lw=2)
 
         ax_lc.set_ylabel('Relative Flux')
         ax_lc.get_xaxis().set_visible(False)
@@ -2299,7 +2299,7 @@ def main():
             ax[0, 0].set_ylabel("X-Centroid [px]")
             ax[0, 1].plot(myfit.time, psf_data['target'][si, 1][gi], 'k.')
             ax[0, 1].set_ylabel("Y-Centroid [px]")
-            ax[1, 0].plot(myfit.time, 2.355*0.5*(psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
+            ax[1, 0].plot(myfit.time, 2.355 * 0.5 * (psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
             ax[1, 0].set_ylabel("Seeing [px]")
             ax[1, 1].plot(myfit.time, myfit.airmass, 'k.')
             ax[1, 1].set_ylabel("Airmass")

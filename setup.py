@@ -5,12 +5,12 @@
 # git add exotic/version.py && git commit -m "#<ticket>:Updated version for release" && git push
 # (2) tag using web ui on github master branch 
 # (3) build and package
-# git checkout exotic/version.py && python3 setup.py sdist bdist_wheel --universal  # build
+# git checkout exotic/version.py && python3 setup.py sdist --format=gztar,zip bdist_wheel --universal  # build
 # (3) release
 # pip3 install twine  # https://twine.readthedocs.io/en/latest/
 # twine check dist/* && twine upload dist/*  # upload
 # FOR LOCAL TESTING:
-# python3 setup.py sdist bdist_wheel --universal  # build
+# python3 setup.py sdist --format=gztar,zip bdist_wheel --universal  # build
 # pip3 install --exists-action w --progress-bar ascii -r requirements.txt  # install req's
 # pip3 install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/  # install locally
 # CLEAN PREVIOUS BUILDS: 

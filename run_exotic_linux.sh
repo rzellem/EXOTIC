@@ -6,10 +6,14 @@ ver_py_min="3.6"
 ver_py_max="4.0"
 py_download="https://www.python.org/downloads/"
 pip_download="https://bootstrap.pypa.io/get-pip.py"
+test_url="https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+#test_url="https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select%201%20from%20DUAL"
+cert_instructions="https://stackoverflow.com/a/57795811/325452 or https://superuser.com/a/719047"
 pip_instructions="https://pip.pypa.io/en/stable/installing/"
 py_instructions_linux="https://www.cyberciti.biz/faq/install-python-linux/"
 py_runner=""
 pip_runner=""
+test_result=""
 
 if echo "${0##*/}" | grep -q '_linux';
 then
@@ -48,10 +52,11 @@ done
 # exit if valid python not found
 if [[ -z "${py_runner}" ]];
 then
-    echo -e "ERROR: Incompatible or missing Python runtime. Please install\n" \
-            "       Python 3.6 or above. EXITING!"
-    echo -e "For more information, see ${py_download}. ...\n"
-    exit 127
+    echo "ERROR: Incompatible or missing Python runtime. Please install"
+    echo "       Python 3.6 or above. EXITING!"
+    echo "For more information, see ${py_download}. ..."
+    echo
+    exit 65
 fi
 # test for pip
 for app in ${pip_commands} ; do
@@ -84,21 +89,34 @@ then
     then
         wget "${pip_download}"
     else
-        echo -e "ERROR: Unable to download package manager. Please install\n" \
-                "       Pip for Python 3. EXITING!"
-        echo -e "For more information, see ${pip_instructions}. ...\n"
-        exit 127
+        echo "ERROR: Unable to download package manager. Please install"
+        echo "       Pip for Python 3. EXITING!"
+        echo "For more information, see ${pip_instructions}. ..."
+        echo
+        exit 65
     fi
     ${py_runner} get-pip.py
     pip_runner="pip3"
     # validate installation
     if ! ${pip_runner} --version ;
     then
-        echo -e "ERROR: Incompatible or missing package manager. Please install\n" \
-                "       Pip for Python 3. EXITING!"
-        echo -e "For more information, see ${pip_instructions}. ...\n"
-        exit 127
+        echo "ERROR: Incompatible or missing package manager. Please install"
+        echo "       Pip for Python 3. EXITING!"
+        echo "For more information, see ${pip_instructions}. ..."
+        echo
+        exit 65
     fi
+fi
+echo "INFO: Validating certificate store. ..."
+test_result=$(${py_runner} -u -c "import urllib.request; urllib.request.urlopen('${test_url}')" 2>&1)
+if grep -q 'CERTIFICATE_VERIFY_FAILED' <<< "${test_result}" ; 
+then 
+    echo "ERROR: Incompatible or missing network security certificates. Please install"
+    echo "       and configure the 'certifi' module from PyPi. EXITING!"
+    echo "       Example: 'pip install --upgrade certifi' ... Then symlink, if needed."
+    echo "For more information, see ${cert_instructions}. ..."
+    echo
+    exit 65
 fi
 # exec commands using determinate pip
 echo "INFO: Installing EXOTIC build dependencies. ..."
@@ -107,4 +125,4 @@ ${pip_runner} install setuptools
 echo "INFO: Installing EXOTIC core. ..."
 ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
-bash -c "exotic-gui"
+bash -l -c "exotic-gui"

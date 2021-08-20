@@ -1125,61 +1125,10 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, save, date):
 
 # Plotting Final Lightcurve
 def plot_final_lightcurve(fit, target, high_res, save, date):
-    f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
+    f, (ax_lc, ax_res) = fit.plot_bestfit()
 
-    ax_lc.set_title(target)
-    ax_res.set_xlabel('Phase')
-
-    # clip plot to get rid of white space
-    ax_res.set_xlim([min(fit.phase), max(fit.phase)])
-    ax_lc.set_xlim([min(fit.phase), max(fit.phase)])
-
-    # making borders and tick labels black
-    ax_lc.spines['bottom'].set_color('black')
-    ax_lc.spines['top'].set_color('black')
-    ax_lc.spines['right'].set_color('black')
-    ax_lc.spines['left'].set_color('black')
-    ax_lc.tick_params(axis='x', colors='black')
-    ax_lc.tick_params(axis='y', colors='black')
-
-    ax_res.spines['bottom'].set_color('black')
-    ax_res.spines['top'].set_color('black')
-    ax_res.spines['right'].set_color('black')
-    ax_res.spines['left'].set_color('black')
-    ax_res.tick_params(axis='x', colors='black')
-    ax_res.tick_params(axis='y', colors='black')
-
-    # residual plot
-    ax_res.errorbar(fit.phase, fit.residuals / np.median(fit.data), yerr=fit.detrendederr, color='gray',
-                    marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
-    ax_res.plot(fit.phase, np.zeros(len(fit.phase)), 'r-', lw=2, alpha=1, zorder=100)
-    ax_res.set_ylabel('Residuals')
-    ax_res.set_ylim([-3 * np.nanstd(fit.residuals / np.median(fit.data)),
-                     3 * np.nanstd(fit.residuals / np.median(fit.data))])
-
-    # correctedSTD = np.std(fit.residuals / np.median(fit.data))
-    ax_lc.errorbar(fit.phase, fit.detrended, yerr=fit.detrendederr, ls='none',
-                   marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
-    ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r',
-               zorder=1000, lw=2)
-
-    ax_lc.set_ylabel('Relative Flux')
-    ax_lc.get_xaxis().set_visible(False)
-
-    ax_res.errorbar(binner(fit.phase, len(fit.residuals) // 10),
-                    binner(fit.residuals / np.median(fit.data), len(fit.residuals) // 10),
-                    yerr=binner(fit.residuals / np.median(fit.data), len(fit.residuals) // 10,
-                                fit.detrendederr)[1],
-                    fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-    ax_lc.errorbar(binner(fit.phase, len(fit.phase) // 10),
-                   binner(fit.detrended, len(fit.detrended) // 10),
-                   yerr=binner(fit.residuals / np.median(fit.data), len(fit.residuals) // 10,
-                               fit.detrendederr)[1],
-                   fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-
-    # remove vertical whitespace
-    f.subplots_adjust(hspace=0)
-
+    ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r', zorder=1000, lw=2)
+    
     Path(save).mkdir(parents=True, exist_ok=True)
     try:
         f.savefig(Path(save) / f"FinalLightCurve_{target}_{date}.png", bbox_inches="tight")

@@ -893,8 +893,7 @@ def find_target(target, hdufile, verbose=False):
         print("Simbad:", result)
         print("\nObs Date:", t)
         print("NEW:", coordpm.ra, coordpm.dec)
-        print("")
-        print("Target Location:", np.round(pixcoord[0], 2))
+        print("\nTarget Location:", np.round(pixcoord[0], 2))
 
     return pixcoord[0]
 
@@ -1086,15 +1085,15 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target, save, date):
 
 
 # Observation statistics from PSF data
-def obs_stats(fit, comp_stars, info, psf, si, gi):
-    for j, coord in enumerate(comp_stars):
-        if j == 0:
+def plot_obs_stats(fit, comp_stars, psf, si, gi, save, date):
+    for i in range(len(comp_stars) + 1):
+        if i == 0:
             title, key = "Target", "target"
         else:
-            title, key = f"Comp Star {j}", f"comp{j}"
+            title, key = f"Comp Star {i}", f"comp{i}"
 
         fig, axs = plt.subplots(3, 2, figsize=(12, 10))
-        fig.suptitle(f"Observing Statistics - {title} - {info['date']}")
+        fig.suptitle(f"Observing Statistics - {title} - {date}")
 
         axs[0, 0].set(xlabel="Time [BJD_TBD]", ylabel="X-Centroid [px]")
         axs[0, 0].plot(fit.time, psf[key][si, 0][gi], 'k.')
@@ -1117,13 +1116,77 @@ def obs_stats(fit, comp_stars, info, psf, si, gi):
         plt.tight_layout()
 
         try:
-            fig.savefig(Path(info['save']) / "temp" /
-                        f"Observing_Statistics_{key}_{info['date']}.png", bbox_inches="tight")
-            fig.savefig(Path(info['save']) / "temp" /
-                        f"Observing_Statistics_{key}_{info['date']}.pdf", bbox_inches="tight")
+            fig.savefig(Path(save) / "temp" / f"Observing_Statistics_{key}_{date}.png", bbox_inches="tight")
+            fig.savefig(Path(save) / "temp" / f"Observing_Statistics_{key}_{date}.pdf", bbox_inches="tight")
         except Exception:
             pass
         plt.close()
+
+
+# Plotting Final Lightcurve
+def plot_final_lightcurve(fit, target, high_res, save, date):
+    f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
+
+    ax_lc.set_title(target)
+    ax_res.set_xlabel('Phase')
+
+    # clip plot to get rid of white space
+    ax_res.set_xlim([min(fit.phase), max(fit.phase)])
+    ax_lc.set_xlim([min(fit.phase), max(fit.phase)])
+
+    # making borders and tick labels black
+    ax_lc.spines['bottom'].set_color('black')
+    ax_lc.spines['top'].set_color('black')
+    ax_lc.spines['right'].set_color('black')
+    ax_lc.spines['left'].set_color('black')
+    ax_lc.tick_params(axis='x', colors='black')
+    ax_lc.tick_params(axis='y', colors='black')
+
+    ax_res.spines['bottom'].set_color('black')
+    ax_res.spines['top'].set_color('black')
+    ax_res.spines['right'].set_color('black')
+    ax_res.spines['left'].set_color('black')
+    ax_res.tick_params(axis='x', colors='black')
+    ax_res.tick_params(axis='y', colors='black')
+
+    # residual plot
+    ax_res.errorbar(fit.phase, fit.residuals / np.median(fit.data), yerr=fit.detrendederr, color='gray',
+                    marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
+    ax_res.plot(fit.phase, np.zeros(len(fit.phase)), 'r-', lw=2, alpha=1, zorder=100)
+    ax_res.set_ylabel('Residuals')
+    ax_res.set_ylim([-3 * np.nanstd(fit.residuals / np.median(fit.data)),
+                     3 * np.nanstd(fit.residuals / np.median(fit.data))])
+
+    # correctedSTD = np.std(fit.residuals / np.median(fit.data))
+    ax_lc.errorbar(fit.phase, fit.detrended, yerr=fit.detrendederr, ls='none',
+                   marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
+    ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r',
+               zorder=1000, lw=2)
+
+    ax_lc.set_ylabel('Relative Flux')
+    ax_lc.get_xaxis().set_visible(False)
+
+    ax_res.errorbar(binner(fit.phase, len(fit.residuals) // 10),
+                    binner(fit.residuals / np.median(fit.data), len(fit.residuals) // 10),
+                    yerr=binner(fit.residuals / np.median(fit.data), len(fit.residuals) // 10,
+                                fit.detrendederr)[1],
+                    fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+    ax_lc.errorbar(binner(fit.phase, len(fit.phase) // 10),
+                   binner(fit.detrended, len(fit.detrended) // 10),
+                   yerr=binner(fit.residuals / np.median(fit.data), len(fit.residuals) // 10,
+                               fit.detrendederr)[1],
+                   fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
+
+    # remove vertical whitespace
+    f.subplots_adjust(hspace=0)
+
+    Path(save).mkdir(parents=True, exist_ok=True)
+    try:
+        f.savefig(Path(save) / f"FinalLightCurve_{target}_{date}.png", bbox_inches="tight")
+        f.savefig(Path(save) / f"FinalLightCurve_{target}_{date}.pdf", bbox_inches="tight")
+    except Exception:
+        pass
+    plt.close()
 
 
 def realTimeReduce(i, target_name, info_dict, ax):
@@ -2239,79 +2302,10 @@ def main():
             tmask = data < 1
             durs.append(tmask.sum() * dt)
 
-        ########################
-        # PLOT FINAL LIGHT CURVE
-        ########################
-        f, (ax_lc, ax_res) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]})
-
-        ax_lc.set_title(pDict['pName'])
-        ax_res.set_xlabel('Phase')
-
-        # clip plot to get rid of white space
-        ax_res.set_xlim([min(myfit.phase), max(myfit.phase)])
-        ax_lc.set_xlim([min(myfit.phase), max(myfit.phase)])
-
-        # making borders and tick labels black
-        ax_lc.spines['bottom'].set_color('black')
-        ax_lc.spines['top'].set_color('black')
-        ax_lc.spines['right'].set_color('black')
-        ax_lc.spines['left'].set_color('black')
-        ax_lc.tick_params(axis='x', colors='black')
-        ax_lc.tick_params(axis='y', colors='black')
-
-        ax_res.spines['bottom'].set_color('black')
-        ax_res.spines['top'].set_color('black')
-        ax_res.spines['right'].set_color('black')
-        ax_res.spines['left'].set_color('black')
-        ax_res.tick_params(axis='x', colors='black')
-        ax_res.tick_params(axis='y', colors='black')
-
-        # residual plot
-        ax_res.errorbar(myfit.phase, myfit.residuals / np.median(myfit.data), yerr=myfit.detrendederr, color='gray',
-                        marker='o', markersize=5, linestyle='None', mec='None', alpha=0.75)
-        ax_res.plot(myfit.phase, np.zeros(len(myfit.phase)), 'r-', lw=2, alpha=1, zorder=100)
-        ax_res.set_ylabel('Residuals')
-        ax_res.set_ylim([-3 * np.nanstd(myfit.residuals / np.median(myfit.data)),
-                         3 * np.nanstd(myfit.residuals / np.median(myfit.data))])
-
-        correctedSTD = np.std(myfit.residuals / np.median(myfit.data))
-        ax_lc.errorbar(myfit.phase, myfit.detrended, yerr=myfit.detrendederr, ls='none',
-                       marker='o', color='gray', markersize=5, mec='None', alpha=0.75)
-        ax_lc.plot(np.linspace(np.nanmin(myfit.phase), np.nanmax(myfit.phase), 1000), data_highres, 'r',
-                   zorder=1000, lw=2)
-
-        ax_lc.set_ylabel('Relative Flux')
-        ax_lc.get_xaxis().set_visible(False)
-
-        ax_res.errorbar(binner(myfit.phase, len(myfit.residuals) // 10),
-                        binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10),
-                        yerr=binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10,
-                                    myfit.detrendederr)[1],
-                        fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-        ax_lc.errorbar(binner(myfit.phase, len(myfit.phase) // 10),
-                       binner(myfit.detrended, len(myfit.detrended) // 10),
-                       yerr=binner(myfit.residuals / np.median(myfit.data), len(myfit.residuals) // 10,
-                                   myfit.detrendederr)[1],
-                       fmt='s', ms=5, mfc='b', mec='None', ecolor='b', zorder=10)
-
-        # remove vertical whitespace
-        f.subplots_adjust(hspace=0)
-
-        Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
-        try:
-            f.savefig(Path(exotic_infoDict['save']) /
-                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-            f.savefig(Path(exotic_infoDict['save']) /
-                      f"FinalLightCurve_{pDict['pName']}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-        except Exception:
-            pass
-
-        plt.close()
-
-        phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
+        plot_final_lightcurve(myfit, pDict['pName'], data_highres, exotic_infoDict['save'], exotic_infoDict['date'])
 
         if fitsortext == 1:
-            obs_stats(myfit, compStarList, exotic_infoDict, psf_data, si, gi)
+            plot_obs_stats(myfit, compStarList, psf_data, si, gi, exotic_infoDict['save'], exotic_infoDict['date'])
 
         #######################################################################
         # print final extracted planetary parameters
@@ -2352,6 +2346,7 @@ def main():
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
+            phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)

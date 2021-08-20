@@ -42,11 +42,11 @@ Right click to download and save the EXE file to your computer and double click 
 
 2. #### Downloading EXOTIC and supporting files
 
-Go to the home page of the [EXOTIC project](https://pypi.org/project/exotic/) at the Python Package Index (PyPI). This site hosts many major Python projects for a variety of computer platforms, including both Linux and Windows machines. Here you will find links to all aspects of the EXOTIC project including the documentation and the software itself. Follow the "Homepage" link in the left hand margin that will take you to the [EXOTIC home page on GitHub](https://github.com/rzellem/EXOTIC), where the software for the project is developed. 
+2.1 Go to the home page of the [EXOTIC project](https://pypi.org/project/exotic/) at the Python Package Index (PyPI). This site hosts many major Python projects for a variety of computer platforms, including both Linux and Windows machines. Here you will find links to many components of the EXOTIC project, including copies of the documentation and the EXOTIC software itself. 
 
-Click the "Releases" link in the right hand margin of the EXOTIC home page on GitHub. On the next page you will find a series of releases of EXOTIC, each with a header outlining the key change for that version. The most recent version of EXOTIC (labelled "Latest release" in the left hand margin) is shown at the top. Go to the "Assets" section to get a copy of the latest release and right click the "Source code (zip)" link to download the compressed file. This file will be named "EXOTIC" followed by the release number e.g. "EXOTIC-0.45.3.zip". Save the file to the usual folder on your computer where your browser stores downloaded  files. 
+2.2 Click the "Download files" link in the left hand margin of the EXOTIC home page on PyPi. On the next page you will find files in various formats for the latest release of EXOTIC, each with a different file extension. The archive file you need will have a name beginning "exotic-" followed by the release number and finally the extension ".zip" (for example "exotic-1.3.3.zip)". Right click the file name link to download the compressed archive containing the full set of files. 
 
-Go to that downloads folder and right click the zip file that you have just saved and choose the "Extract All..." option. In the window that pops up, choose where to install the EXOTIC files, make sure the "Show extracted files when complete" box is ticked and click "Extract". After extraction, a new window will open up showing the folder where the files are located, named after the version of the EXOTIC program (e.g. EXOTIC-0.45.3). 
+2.3 Go to the folder where you downloaded the file and right click the zip file that you have just saved and choose the "Extract All..." option. In the window that pops up, choose where to install the EXOTIC files, make sure the "Show extracted files when complete" box is ticked and click "Extract". After extraction, a new window will open up showing the folder where the files are located, named after the version of the EXOTIC program (e.g. EXOTIC1.3.3). 
 
 3. #### Installing EXOTIC
 
@@ -90,4 +90,6 @@ After installing EXOTIC itself, you may wish to install the SAOImageDS9 (Astrono
 ## Further Help and Support
 
 If you have any questions or comments, please feel free to reach out to us on Slack or email at [exoplanetwatch@jpl.nasa.gov](exoplanetwatch@jpl.nasa.gov)
+
+
 

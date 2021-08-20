@@ -1044,65 +1044,86 @@ def save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords):
     return comp_star
 
 
-# make plots of the centroid positions as a function of time
-def plotCentroids(xTarg, yTarg, xRef, yRef, times, targetname, save, date):
-    times = np.array(times)
-    # X TARGET
-    plt.figure()
-    plt.plot(times - np.nanmin(times), xTarg, '-bo')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('X Pixel Position')
-    plt.title(targetname + ' X Centroid Position ' + date)
-    plt.savefig(Path(save) / "temp" / f"XCentroidPos_{targetname}_{date}.png")
+# Plots of the centroid positions as a function of time
+def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target, save, date):
+    fig, axs = plt.subplots(3, 2, figsize=(12, 10))
+
+    axs[0, 0].set_title(f"{target} X Centroid Position {date}", fontsize=14)
+    axs[0, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[0, 0].set_ylabel("X Pixel Position", fontsize=12)
+    axs[0, 0].plot(times - np.nanmin(times), x_targ, '-bo')
+
+    axs[0, 1].set_title(f"{target} Y Centroid Position {date}", fontsize=14)
+    axs[0, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[0, 1].set_ylabel("Y Pixel Position", fontsize=12)
+    axs[0, 1].plot(times - np.nanmin(times), y_targ, '-bo')
+
+    axs[1, 0].set_title(f"Comp Star X Centroid Position {date}", fontsize=14)
+    axs[1, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[1, 0].set_ylabel("X Pixel Position", fontsize=12)
+    axs[1, 0].plot(times - np.nanmin(times), x_ref, '-ro')
+
+    axs[1, 1].set_title(f"Comp Star Y Centroid Position {date}", fontsize=14)
+    axs[1, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[1, 1].set_ylabel("X Pixel Position", fontsize=12)
+    axs[1, 1].plot(times - np.nanmin(times), y_ref, '-ro')
+
+    axs[2, 0].set_title("Distance between Target and Comparison X position", fontsize=14)
+    axs[2, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[2, 0].set_ylabel("X Pixel Distance", fontsize=12)
+    for e in range(len(x_targ)):
+        axs[2, 0].plot(times[e] - np.nanmin(times), abs(int(x_targ[e]) - int(x_ref[e])), 'bo')
+
+    axs[2, 1].set_title("Distance between Target and Comparison Y position", fontsize=14)
+    axs[2, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[2, 1].set_ylabel("Y Pixel Distance", fontsize=12)
+    for e in range(len(y_targ)):
+        axs[2, 1].plot(times[e] - np.nanmin(times), abs(int(y_targ[e]) - int(y_ref[e])), 'bo')
+
+    plt.tight_layout()
+    plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target}_{date}.png")
     plt.close()
 
-    # Y TARGET
-    plt.figure()
-    plt.plot(times - np.nanmin(times), yTarg, '-bo')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('Y Pixel Position')
-    plt.title(targetname + ' Y Centroid Position ' + date)
-    plt.savefig(Path(save) / "temp" / f"YCentroidPos_{targetname}_{date}.png")
-    plt.close()
 
-    # X COMP
-    plt.figure()
-    plt.plot(times - np.nanmin(times), xRef, '-ro')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('X Pixel Position')
-    plt.title('Comp Star X Centroid Position ' + date)
-    plt.savefig(Path(save) / "temp" / f"CompStarXCentroidPos_{targetname}_{date}.png")
-    plt.close()
+# Observation statistics from PSF data
+def obs_stats(fit, comp_stars, info, psf, si, gi):
+    for j, coord in enumerate(comp_stars):
+        if j == 0:
+            title, key = "Target", "target"
+        else:
+            title, key = f"Comp Star {j}", f"comp{j}"
 
-    # Y COMP
-    plt.figure()
-    plt.plot(times - np.nanmin(times), yRef, '-ro')
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('Y Pixel Position')
-    plt.title('Comp Star Y Centroid Position ' + date)
-    plt.savefig(Path(save) / "temp" / f"CompStarYCentroidPos_{targetname}_{date}.png")
-    plt.close()
+        fig, axs = plt.subplots(3, 2, figsize=(12, 10))
+        fig.suptitle(f"Observing Statistics - {title} - {info['date']}")
 
-    # X DISTANCE BETWEEN TARGET AND COMP
-    plt.figure()
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('X Pixel Distance')
-    for e in range(0, len(xTarg)):
-        plt.plot(times[e] - np.nanmin(times), abs(int(xTarg[e]) - int(xRef[e])), 'bo')
-    plt.title('Distance between Target and Comparison X position')
-    plt.savefig(Path(save) / "temp" / f"XCentroidDistance_{targetname}_{date}.png")
-    plt.close()
+        axs[0, 0].set(xlabel="Time [BJD_TBD]", ylabel="X-Centroid [px]")
+        axs[0, 0].plot(fit.time, psf[key][si, 0][gi], 'k.')
 
-    # Y DISTANCE BETWEEN TARGET AND COMP
-    plt.figure()
-    plt.xlabel('Time (JD-' + str(np.nanmin(times)) + ')')
-    plt.ylabel('Y Pixel Difference')
+        axs[0, 1].set(xlabel="Time [BJD_TBD]", ylabel="Y-Centroid [px]")
+        axs[0, 1].plot(fit.time, psf[key][si, 1][gi], 'k.')
 
-    for d in range(0, len(yTarg)):
-        plt.plot(times[d] - np.nanmin(times), abs(int(yTarg[d]) - int(yRef[d])), 'bo')
-    plt.title('Difference between Target and Comparison Y position')
-    plt.savefig(Path(save) / "temp" / f"YCentroidDistance_{targetname}_{date}.png")
-    plt.close()
+        axs[1, 0].set(xlabel="Time [BJD_TBD]", ylabel="Seeing [px]")
+        axs[1, 0].plot(fit.time, 2.355 * 0.5 * (psf[key][si, 3][gi] + psf[key][si, 4][gi]), 'k.')
+
+        axs[1, 1].set(xlabel="Time [BJD_TBD]", ylabel="Airmass")
+        axs[1, 1].plot(fit.time, fit.airmass, 'k.')
+
+        axs[2, 0].set(xlabel="Time [BJD_TBD]", ylabel="Amplitude [ADU]")
+        axs[2, 0].plot(fit.time, psf[key][si, 2][gi], 'k.')
+
+        axs[2, 1].set(xlabel="Time [BJD_TBD]", ylabel="Background [ADU]")
+        axs[2, 1].plot(fit.time, psf[key][si, 6][gi], 'k.')
+
+        plt.tight_layout()
+
+        try:
+            fig.savefig(Path(info['save']) / "temp" /
+                        f"Observing_Statistics_{key}_{info['date']}.png", bbox_inches="tight")
+            fig.savefig(Path(info['save']) / "temp" /
+                        f"Observing_Statistics_{key}_{info['date']}.pdf", bbox_inches="tight")
+        except Exception:
+            pass
+        plt.close()
 
 
 def realTimeReduce(i, target_name, info_dict, ax):
@@ -1309,8 +1330,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
-        'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
+        # 'inc': [np.arctan(pDict['aRs'] ** -1), 90],
+        'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
@@ -1848,7 +1869,7 @@ def main():
                     finXRefCent = psf_data[ckey][:, 0]
                     finYRefCent = psf_data[ckey][:, 1]
 
-            log_info("Computing best comparison star, aperture, and sky annulus. Please wait.")
+            log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
@@ -2046,10 +2067,10 @@ def main():
                     text.set_path_effects([PathEffects.withStroke(linewidth=1, foreground='white')])
                 apos = '\''
                 Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
-                plt.savefig(Path(exotic_infoDict['save']) /
+                plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                             f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                             f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
-                plt.savefig(Path(exotic_infoDict['save']) /
+                plt.savefig(Path(exotic_infoDict['save']) / "temp" /
                             f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
                             f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
                 plt.close()
@@ -2058,8 +2079,8 @@ def main():
                      f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
 
             # Centroid position plots
-            plotCentroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
-                          goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+            plot_centroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
+                           goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
@@ -2193,8 +2214,8 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
-            # 'inc': [pDict['inc'] - 5 * pDict['incUnc'], pDict['inc'] + 5 * pDict['incUnc']],
-            'ars': [pDict['aRs'] - 5 * pDict['aRsUnc'], pDict['aRs'] + 5 * pDict['aRsUnc']],
+            # 'inc': [np.arctan(pDict['aRs'] ** -1), 90],
+            'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
             'a2': [-3, 3],
         }
 
@@ -2289,76 +2310,8 @@ def main():
 
         phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
 
-        ##########
-        # PSF data
-        ##########
         if fitsortext == 1:
-            fig, ax = plt.subplots(3, 2, figsize=(12, 10))
-            fig.suptitle(f"Observing Statistics - Target - {exotic_infoDict['date']}")
-            ax[0, 0].plot(myfit.time, psf_data['target'][si, 0][gi], 'k.')
-            ax[0, 0].set_ylabel("X-Centroid [px]")
-            ax[0, 1].plot(myfit.time, psf_data['target'][si, 1][gi], 'k.')
-            ax[0, 1].set_ylabel("Y-Centroid [px]")
-            ax[1, 0].plot(myfit.time, 2.355 * 0.5 * (psf_data['target'][si, 3][gi] + psf_data['target'][si, 4][gi]), 'k.')
-            ax[1, 0].set_ylabel("Seeing [px]")
-            ax[1, 1].plot(myfit.time, myfit.airmass, 'k.')
-            ax[1, 1].set_ylabel("Airmass")
-            ax[2, 0].plot(myfit.time, psf_data['target'][si, 2][gi], 'k.')
-            ax[2, 1].plot(myfit.time, psf_data['target'][si, 6][gi], 'k.')
-            ax[2, 0].set_ylabel("Amplitude [ADU]")
-            ax[2, 1].set_ylabel("Background [ADU]")
-            ax[0, 0].set_xlabel("Time [BJD]")
-            ax[0, 1].set_xlabel("Time [BJD]")
-            ax[1, 0].set_xlabel("Time [BJD]")
-            ax[1, 1].set_xlabel("Time [BJD]")
-            ax[2, 0].set_xlabel("Time [BJD]")
-            ax[2, 1].set_xlabel("Time [BJD]")
-            plt.tight_layout()
-
-            try:
-                fig.savefig(Path(exotic_infoDict['save']) /
-                            f"Observing_Statistics_target_{exotic_infoDict['date']}.png", bbox_inches="tight")
-            except Exception:
-                pass
-            fig.savefig(Path(exotic_infoDict['save']) /
-                        f"Observing_Statistics_target_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-            plt.close()
-
-            # PSF DATA for COMP STARS
-            for j, coord in enumerate(compStarList):
-                ctitle = f"Comp Star {j + 1}"
-                ckey = f"comp{j + 1}"
-
-                fig, ax = plt.subplots(3, 2, figsize=(12, 10))
-                fig.suptitle(f"Observing Statistics - {ctitle} - {exotic_infoDict['date']}")
-                ax[0, 0].plot(myfit.time, psf_data[ckey][si, 0][gi], 'k.')
-                ax[0, 0].set_ylabel("X-Centroid [px]")
-                ax[0, 1].plot(myfit.time, psf_data[ckey][si, 1][gi], 'k.')
-                ax[0, 1].set_ylabel("Y-Centroid [px]")
-                ax[1, 0].plot(myfit.time, 2.355 * 0.5 * (psf_data[ckey][si, 3][gi] + psf_data[ckey][si, 4][gi]), 'k.')
-                ax[1, 0].set_ylabel("Seeing [px]")
-                ax[1, 1].plot(myfit.time, myfit.airmass, 'k.')
-                ax[1, 1].set_ylabel("Airmass")
-                ax[2, 0].plot(myfit.time, psf_data[ckey][si, 2][gi], 'k.')
-                ax[2, 1].plot(myfit.time, psf_data[ckey][si, 6][gi], 'k.')
-                ax[2, 0].set_ylabel("Amplitude [ADU]")
-                ax[2, 1].set_ylabel("Background [ADU]")
-                ax[0, 0].set_xlabel("Time [BJD_TBD]")
-                ax[0, 1].set_xlabel("Time [BJD_TBD]")
-                ax[1, 0].set_xlabel("Time [BJD_TBD]")
-                ax[1, 1].set_xlabel("Time [BJD_TBD]")
-                ax[2, 0].set_xlabel("Time [BJD_TBD]")
-                ax[2, 1].set_xlabel("Time [BJD_TBD]")
-                plt.tight_layout()
-
-                try:
-                    fig.savefig(Path(exotic_infoDict['save']) /
-                                f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.pdf", bbox_inches="tight")
-                except Exception:
-                    pass
-                fig.savefig(Path(exotic_infoDict['save']) /
-                            f"Observing_Statistics_{ckey}_{exotic_infoDict['date']}.png", bbox_inches="tight")
-                plt.close()
+            obs_stats(myfit, compStarList, exotic_infoDict, psf_data, si, gi)
 
         #######################################################################
         # print final extracted planetary parameters
@@ -2384,13 +2337,16 @@ def main():
             else:
                 log_info(f"                    Optimal Aperture: {abs(np.round(minAperture, 2))}")
                 log_info(f"                     Optimal Annulus: {np.round(minAnnulus, 2)}")
-
         log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
         ##########
         # SAVE DATA
         ##########
+
+        fig = myfit.plot_triangle()
+        fig.savefig(Path(exotic_infoDict['save']) / "temp" /
+                    f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."

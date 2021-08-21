@@ -66,8 +66,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 import astropy.time
-from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormalize
-from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
+from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
@@ -75,7 +74,6 @@ from astroquery.gaia import Gaia
 from barycorrpy import utc_tdb
 # julian conversion imports
 import dateutil.parser as dup
-# Nested Sampling imports
 from pathlib import Path
 import pyvo as vo
 import logging
@@ -83,19 +81,16 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as PathEffects
 from numba import njit
 import numpy as np
 # photometry
 from photutils import CircularAperture
 # scipy imports
-from scipy.ndimage import median_filter
-# from scipy.ndimage import generic_filter
 from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
-# from scipy.ndimage import binary_dilation, label
+# from scipy.ndimage import binary_dilation, label, generic_filter
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
@@ -125,11 +120,15 @@ try:  # nea
     from .api.nea import NASAExoplanetArchive
 except ImportError:  # package import
     from api.nea import NASAExoplanetArchive
-try: # output files
+try:  # output files
     from output_files import OutputFiles
 except ImportError:  # package import
     from .output_files import OutputFiles
-try: # tools
+try:  # plots
+    from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
+except ImportError:  # package import
+    from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
+try:  # tools
     from utils import round_to_2, user_input
 except ImportError: # package import
     from .utils import round_to_2, user_input
@@ -1043,101 +1042,6 @@ def save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords):
     return comp_star
 
 
-# Plots of the centroid positions as a function of time
-def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target, save, date):
-    fig, axs = plt.subplots(3, 2, figsize=(12, 10))
-
-    axs[0, 0].set_title(f"{target} X Centroid Position {date}", fontsize=14)
-    axs[0, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[0, 0].set_ylabel("X Pixel Position", fontsize=12)
-    axs[0, 0].plot(times - np.nanmin(times), x_targ, '-bo')
-
-    axs[0, 1].set_title(f"{target} Y Centroid Position {date}", fontsize=14)
-    axs[0, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[0, 1].set_ylabel("Y Pixel Position", fontsize=12)
-    axs[0, 1].plot(times - np.nanmin(times), y_targ, '-bo')
-
-    axs[1, 0].set_title(f"Comp Star X Centroid Position {date}", fontsize=14)
-    axs[1, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[1, 0].set_ylabel("X Pixel Position", fontsize=12)
-    axs[1, 0].plot(times - np.nanmin(times), x_ref, '-ro')
-
-    axs[1, 1].set_title(f"Comp Star Y Centroid Position {date}", fontsize=14)
-    axs[1, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[1, 1].set_ylabel("X Pixel Position", fontsize=12)
-    axs[1, 1].plot(times - np.nanmin(times), y_ref, '-ro')
-
-    axs[2, 0].set_title("Distance between Target and Comparison X position", fontsize=14)
-    axs[2, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[2, 0].set_ylabel("X Pixel Distance", fontsize=12)
-    for e in range(len(x_targ)):
-        axs[2, 0].plot(times[e] - np.nanmin(times), abs(int(x_targ[e]) - int(x_ref[e])), 'bo')
-
-    axs[2, 1].set_title("Distance between Target and Comparison Y position", fontsize=14)
-    axs[2, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[2, 1].set_ylabel("Y Pixel Distance", fontsize=12)
-    for e in range(len(y_targ)):
-        axs[2, 1].plot(times[e] - np.nanmin(times), abs(int(y_targ[e]) - int(y_ref[e])), 'bo')
-
-    plt.tight_layout()
-    plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target}_{date}.png")
-    plt.close()
-
-
-# Observation statistics from PSF data
-def plot_obs_stats(fit, comp_stars, psf, si, gi, save, date):
-    for i in range(len(comp_stars) + 1):
-        if i == 0:
-            title, key = "Target", "target"
-        else:
-            title, key = f"Comp Star {i}", f"comp{i}"
-
-        fig, axs = plt.subplots(3, 2, figsize=(12, 10))
-        fig.suptitle(f"Observing Statistics - {title} - {date}")
-
-        axs[0, 0].set(xlabel="Time [BJD_TBD]", ylabel="X-Centroid [px]")
-        axs[0, 0].plot(fit.time, psf[key][si, 0][gi], 'k.')
-
-        axs[0, 1].set(xlabel="Time [BJD_TBD]", ylabel="Y-Centroid [px]")
-        axs[0, 1].plot(fit.time, psf[key][si, 1][gi], 'k.')
-
-        axs[1, 0].set(xlabel="Time [BJD_TBD]", ylabel="Seeing [px]")
-        axs[1, 0].plot(fit.time, 2.355 * 0.5 * (psf[key][si, 3][gi] + psf[key][si, 4][gi]), 'k.')
-
-        axs[1, 1].set(xlabel="Time [BJD_TBD]", ylabel="Airmass")
-        axs[1, 1].plot(fit.time, fit.airmass, 'k.')
-
-        axs[2, 0].set(xlabel="Time [BJD_TBD]", ylabel="Amplitude [ADU]")
-        axs[2, 0].plot(fit.time, psf[key][si, 2][gi], 'k.')
-
-        axs[2, 1].set(xlabel="Time [BJD_TBD]", ylabel="Background [ADU]")
-        axs[2, 1].plot(fit.time, psf[key][si, 6][gi], 'k.')
-
-        plt.tight_layout()
-
-        try:
-            fig.savefig(Path(save) / "temp" / f"Observing_Statistics_{key}_{date}.png", bbox_inches="tight")
-            fig.savefig(Path(save) / "temp" / f"Observing_Statistics_{key}_{date}.pdf", bbox_inches="tight")
-        except Exception:
-            pass
-        plt.close()
-
-
-# Plotting Final Lightcurve
-def plot_final_lightcurve(fit, target, high_res, save, date):
-    f, (ax_lc, ax_res) = fit.plot_bestfit()
-
-    ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r', zorder=1000, lw=2)
-    
-    Path(save).mkdir(parents=True, exist_ok=True)
-    try:
-        f.savefig(Path(save) / f"FinalLightCurve_{target}_{date}.png", bbox_inches="tight")
-        f.savefig(Path(save) / f"FinalLightCurve_{target}_{date}.pdf", bbox_inches="tight")
-    except Exception:
-        pass
-    plt.close()
-
-
 def realTimeReduce(i, target_name, info_dict, ax):
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
 
@@ -2032,63 +1936,8 @@ def main():
             goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = goodAirmasses[si][gi]
 
-            picframe = 10 * (minAperture + 15 * sigma)
-            pltx = [max([0, min([finXTargCent[0], finXRefCent[0]]) - picframe]),
-                    min([np.shape(firstImage)[1], max([finXTargCent[0], finXRefCent[0]]) + picframe])]
-            plty = [max([0, min([finYTargCent[0], finYRefCent[0]]) - picframe]),
-                    min([np.shape(firstImage)[0], max([finYTargCent[0], finYRefCent[0]]) + picframe])]
-            plt.close()
-
-            for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
-                fig, ax = plt.subplots()
-                # Draw apertures and sky annuli
-                target_circle = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture, color='lime', fill=False,
-                                           ls='-', label='Target')
-                target_circle_sky = plt.Circle((finXTargCent[0], finYTargCent[0]), minAperture + minAnnulus,
-                                               color='lime', fill=False, ls='--', lw=.5)
-                if minAperture >= 0:
-                    ref_circle = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture, color='r', fill=False,
-                                            ls='-.', label='Comp')
-                    ref_circle_sky = plt.Circle((finXRefCent[0], finYRefCent[0]), minAperture + minAnnulus, color='r',
-                                                fill=False, ls='--', lw=.5)
-
-                med_img = median_filter(firstImage, (4, 4))[int(pltx[0]):round(int(pltx[1])),
-                          int(plty[0]):round(int(plty[1]))]
-                norm = ImageNormalize(firstImage, interval=ZScaleInterval(), stretch=stretch)
-                plt.imshow(firstImage, norm=norm, origin='lower', cmap='Greys_r', interpolation=None,
-                           vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
-                plt.plot(finXTargCent[0], finYTargCent[0], marker='+', color='lime')
-                ax.add_artist(target_circle)
-                ax.add_artist(target_circle_sky)
-                if minAperture >= 0:
-                    ax.add_artist(ref_circle)
-                    ax.add_artist(ref_circle_sky)
-                    plt.plot(finXRefCent[0], finYRefCent[0], '+r')
-                plt.xlabel("x-axis [pixel]")
-                plt.ylabel("y-axis [pixel]")
-                plt.title(f"FOV for {pDict['pName']}\n({image_scale} arcsec/pix)")
-                plt.xlim(pltx[0], pltx[1])
-                plt.ylim(plty[0], plty[1])
-                ax.grid(False)
-                plt.plot(0, 0, color='lime', ls='-', label='Target')
-                if minAperture >= 0:
-                    plt.plot(0, 0, color='r', ls='-.', label='Comp')
-                l = plt.legend(framealpha=0.75)
-                for text in l.get_texts():
-                    text.set_color("k")
-                    text.set_path_effects([PathEffects.withStroke(linewidth=1, foreground='white')])
-                apos = '\''
-                Path(exotic_infoDict['save']).mkdir(parents=True, exist_ok=True)
-                plt.savefig(Path(exotic_infoDict['save']) / "temp" /
-                            f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
-                            f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
-                plt.savefig(Path(exotic_infoDict['save']) / "temp" /
-                            f"FOV_{pDict['pName']}_{exotic_infoDict['date']}_"
-                            f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
-                plt.close()
-
-            log_info(f"\nFOV file saved as: {exotic_infoDict['save']}FOV_{pDict['pName']}_"
-                     f"{exotic_infoDict['date']}_{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf")
+            plot_fov(minAperture, minAnnulus, sigma, finXTargCent[0], finYTargCent[0], finXRefCent[0], finYRefCent[0],
+                     firstImage, image_scale, pDict['pName'], exotic_infoDict['save'],  exotic_infoDict['date'])
 
             # Centroid position plots
             plot_centroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
@@ -2110,52 +1959,9 @@ def main():
             # Calculate the standard deviation of the normalized flux values
             # standardDev1 = np.std(goodFluxes)
 
-            ######################################
-            # PLOTS ROUND 1
-            ####################################
-            # Make plots of raw target and reference values
-            plt.figure()
-            plt.errorbar(goodTimes, goodTargets[si][gi], yerr=goodTUnc[si][gi], linestyle='None', fmt='-o')
-            plt.xlabel('Time (BJD)')
-            plt.ylabel('Total Flux')
-            # plt.rc('grid', linestyle="-", color='black')
-            # plt.grid(True)
-            plt.title(f"{pDict['pName']} Raw Flux Values {exotic_infoDict['date']}")
-            plt.savefig(Path(exotic_infoDict['save']) / "temp" /
-                        f"TargetRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
-            plt.close()
-
-            plt.figure()
-            plt.errorbar(goodTimes, goodReferences[si][gi], yerr=goodRUnc[si][gi], linestyle='None', fmt='-o')
-            plt.xlabel('Time (BJD)')
-            plt.ylabel('Total Flux')
-            # plt.rc('grid', linestyle="-", color='black')
-            # plt.grid(True)
-            plt.title('Comparison Star Raw Flux Values ' + exotic_infoDict['date'])
-            plt.savefig(Path(exotic_infoDict['save']) / "temp" /
-                        f"CompRawFlux_{pDict['pName']}_{exotic_infoDict['date']}.png")
-            plt.close()
-
-            # Plots final reduced light curve (after the 3 sigma clip)
-            plt.figure()
-            plt.errorbar(goodTimes, goodFluxes, yerr=goodNormUnc, linestyle='None', fmt='-bo')
-            plt.xlabel('Time (BJD)')
-            plt.ylabel('Normalized Flux')
-            # plt.rc('grid', linestyle="-", color='black')
-            # plt.grid(True)
-            plt.title(f"{pDict['pName']} Normalized Flux vs. Time {exotic_infoDict['date']}")
-            plt.savefig(Path(exotic_infoDict['save']) / "temp" /
-                        f"NormalizedFluxTime_{pDict['pName']}_{exotic_infoDict['date']}.png")
-            plt.close()
-
-            # Save normalized flux to text file prior to MCMC
-            params_file = Path(
-                exotic_infoDict['save']) / f"NormalizedFlux_{pDict['pName']}_{exotic_infoDict['date']}.txt"
-            with params_file.open('w') as f:
-                f.write("BJD,Norm Flux,Norm Err,AM\n")
-
-                for ti, fi, erri, ami in zip(goodTimes, goodFluxes, goodNormUnc, goodAirmasses):
-                    f.write(f"{round(ti, 8)},{round(fi, 7)},{round(erri, 6)},{round(ami, 2)}\n")
+            plot_flux(goodTimes, goodTargets[si][gi], goodTUnc[si][gi], goodReferences[si][gi], goodRUnc[si][gi],
+                      goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
+                      exotic_infoDict['date'])
 
             log_info("\n\nOutput File Saved")
         else:
@@ -2251,10 +2057,11 @@ def main():
             tmask = data < 1
             durs.append(tmask.sum() * dt)
 
-        plot_final_lightcurve(myfit, pDict['pName'], data_highres, exotic_infoDict['save'], exotic_infoDict['date'])
+        plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
         if fitsortext == 1:
-            plot_obs_stats(myfit, compStarList, psf_data, si, gi, exotic_infoDict['save'], exotic_infoDict['date'])
+            plot_obs_stats(myfit, compStarList, psf_data, si, gi, pDict['pName'],
+                           exotic_infoDict['save'], exotic_infoDict['date'])
 
         #######################################################################
         # print final extracted planetary parameters

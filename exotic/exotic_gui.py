@@ -67,10 +67,10 @@ try:  # filters
 except ImportError:  # package import
     from api.filters import fwhm as photometric_filters
 
-try:  # nea
-    from exotic import NASAExoplanetArchive
-except ImportError:
-    from .exotic import NASAExoplanetArchive
+try:
+    from .api.nea import NASAExoplanetArchive
+except ImportError:  # package import
+    from api.nea import NASAExoplanetArchive
 
 try:  # simple version
     from .version import __version__
@@ -78,6 +78,7 @@ except ImportError:  # package import
     from version import __version__
 
 animate_toggle()
+
 
 class FolderSelect(tk.Frame):
     def __init__(self, parent=None, folderDescription="", default_text="", **kw):
@@ -175,11 +176,10 @@ def main():
              padx=20).pack(anchor=tk.W)
 
     tk.Radiobutton(root,
-                   text="Real Time Reduction - COMING SOON\n(for quickly analyzing your data while simultaneously observing)",
+                   text="Real Time Reduction\n(for quickly analyzing your data while simultaneously observing)",
                    justify=tk.LEFT,
                    padx=20,
                    variable=reduction_opt,
-                   state=tk.DISABLED,
                    value=1).pack(anchor=tk.W)
 
     tk.Radiobutton(root,
@@ -196,7 +196,229 @@ def main():
 
     root.mainloop()
 
-    if reduction_opt.get() == 2:
+    if reduction_opt.get() == 1:
+        # First ask user how they want to enter the observing information
+        root = tk.Tk()
+        obsinfo = tk.StringVar()
+
+        input_data = {}
+
+        root.title(f"EXOTIC v{__version__}")
+
+        tk.Label(root,
+                 text="""How would you like to input your observing information?""",
+                 justify=tk.LEFT,
+                 font="Helvetica 14 bold",
+                 padx=20).pack()
+
+        tk.Radiobutton(root,
+                       text="Manually (Recommended for first-time users)",
+                       padx=20,
+                       variable=obsinfo,
+                       value="manual").pack(anchor=tk.W)
+        obsinfo.set("manual")
+
+        tk.Radiobutton(root,
+                       text="From a pre-existing input file (e.g. inits.json) - for advanced users",
+                       padx=20,
+                       variable=obsinfo,
+                       value='inits').pack(anchor=tk.W)
+
+        # Button for closing
+        exit_button = tk.Button(root, text="Next", command=root.destroy)
+        exit_button.pack(pady=20, anchor=tk.E)
+
+        root.mainloop()
+
+        if obsinfo.get() == "manual":
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+
+            window_label = tk.Label(root,
+                                    text="""Please enter the following information about your observation:""",
+                                    font="Helvetica 14 bold",
+                                    justify=tk.CENTER,
+                                    padx=20)  # .pack()
+            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
+
+            # Set up rows + columns
+            i = 1
+            j = 0
+
+            # "Directory with FITS files": "sample-data/HatP32Dec202017",
+            FITS_dir = FolderSelect(root, "Folder with your FITS files")
+            FITS_dir.grid(row=i)
+            i += 1
+
+            #         "Planet Name": "HAT-P-32 b",
+            planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
+            planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
+            targetpos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            targetpos_entry.insert(tk.END, "[x, y]")
+            targetpos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            targetpos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    "
+                                                "(Note: You can use the AAVSO's VSP to help you find\n    "
+                                                "good comparison stars: https://app.aavso.org/vsp/)",
+                                     justify=tk.LEFT)
+            comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            comppos_entry.insert(tk.END, "[x, y]")
+            comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+
+            def save_input():
+                input_data['comppos'] = ast.literal_eval(comppos_entry.get())
+                input_data['targetpos'] = ast.literal_eval(targetpos_entry.get())
+                input_data['pName'] = planet_entry.get()
+                root.destroy()
+
+            # Button for closing
+            exit_button = tk.Button(root, text="Next", command=save_input)
+            # exit_button.pack(pady=20)
+            exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
+
+            tk.mainloop()
+        else:
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+
+            # # "Directory with FITS files": "sample-data/HatP32Dec202017",
+            inits_dir = FileSelect(root, "Please select your initialization file")
+            inits_dir.grid(row=0)
+
+            def save_input():
+                input_data['inits_dir'] = inits_dir.file_path
+                root.destroy()
+
+            # Button for closing
+            exit_button = tk.Button(root, text="Run EXOTIC", command=save_input)
+            # exit_button.pack(pady=20)
+            exit_button.grid(row=1, column=3, sticky=tk.W, pady=10)
+
+            tk.mainloop()
+
+        if obsinfo.get() == "manual":
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+
+            window_label = tk.Label(root,
+                                    text="To make analyzing these data in the future more easy, EXOTIC will create an initialization file for you.",
+                                    font="Helvetica 14 bold",
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
+
+            # Set up rows + columns
+            i = 1
+
+            # # "Directory with FITS files": "sample-data/HatP32Dec202017",
+            initssave_dir = FolderSelect(root, "Folder to save your initialization file:")
+            initssave_dir.grid(row=i)
+            i += 1
+
+            def save_input():
+                input_data['initssave_dir'] = initssave_dir.folderPath.get()
+                root.destroy()
+
+            # Button for closing
+            exit_button = tk.Button(root, text="Next", command=save_input)
+            # exit_button.pack(pady=20)
+            exit_button.grid(row=1, column=3, sticky=tk.W, pady=10)
+
+            tk.mainloop()
+
+            new_inits = {'inits_guide': {}, 'user_info': {}, 'planetary_parameters': {}, 'optional_info': {}}
+            new_inits['inits_guide'] = {
+                "Title": "EXOTIC's Initialization File",
+                "Comment": "Please answer all the following requirements below by following the format of the given",
+                "Comment1": "sample dataset HAT-P-32 b. Edit this file as needed to match the data wanting to be reduced.",
+                "Comment2": "Do not delete areas where there are quotation marks, commas, and brackets.",
+                "Comment3": "The inits_guide dictionary (these lines of text) does not have to be edited",
+                "Comment4": "and is only here to serve as a guide. Will be updated per user's advice.",
+                "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
+                "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
+                "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
+                "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees. Needs to be in decimal or HH:MM:SS format.",
+                "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees. Needs to be in decimal or HH:MM:SS format.",
+                "Plate Solution": "For your image to be given a plate solution, type y.",
+                "Plate Solution Disclaimer": "One of your imaging files will be publicly viewable on nova.astrometry.net.",
+                "Standard Filter": "To use EXOTIC standard filters, type only the filter name.",
+                "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info.",
+                "Target Star RA": "Must be in HH:MM:SS sexagesimal format.",
+                "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
+                "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
+                "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
+            }
+            new_inits['user_info'] = {
+                "Directory with FITS files": FITS_dir.folder_path,
+
+                "Target Star X & Y Pixel": input_data['targetpos'],
+                "Comparison Star(s) X & Y Pixel": [input_data['comppos']]
+            }
+            new_inits['planetary_parameters'] = {
+                "Planet Name": input_data['pName'],
+            }
+
+            now = datetime.now()
+            dt_string = now.strftime("%d_%m_%Y__%H_%M_%S")
+            fname = os.path.join(input_data['initssave_dir'], "inits_" + dt_string + ".json")
+            with open(fname, "w") as initsf:
+                json.dump(new_inits, initsf, indent=4)
+            print(f"{fname} saved!")
+
+            root = tk.Tk()
+            root.title(f"EXOTIC v{__version__}")
+
+            window_label = tk.Label(root,
+                                    text="Your initialization file has been created!",
+                                    font="Helvetica 14 bold",
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=0, column=0, sticky=tk.N, pady=6)
+
+            window_label = tk.Label(root,
+                                    text=f"{fname}",
+                                    font="Helvetica 14 bold",
+                                    justify=tk.LEFT,
+                                    padx=20)  # .pack()
+            window_label.grid(row=1, column=0, sticky=tk.N, pady=6)
+
+            # Button for closing
+            exit_button = tk.Button(root, text="Run EXOTIC", command=root.destroy)
+            # exit_button.pack(pady=20)
+            exit_button.grid(row=2, column=3, sticky=tk.W, pady=10)
+
+            tk.mainloop()
+
+        run_mthd = '--realtime'
+
+        fname = fname if obsinfo.get() == "manual" else inits_dir.file_path
+
+        try:
+            try:
+                subprocess.run(['exotic', run_mthd, fname], check=True)
+            except:
+                try:
+                    subprocess.run(['python3', 'exotic.py', run_mthd, fname], check=True)
+                except:
+                    subprocess.run(['python3', 'exotic/exotic.py', run_mthd, fname], check=True)
+        except:
+            print("\n\n################################################")
+            print("ERROR: Please contact the Exoplanet Watch Team for help "
+                  "on our Slack Workspace in the #data-reduction channel!")
+            print("You can sign up for our free Slack Workspace here: "
+                  "https://join.slack.com/t/uol-ets/shared_invite/zt-mvb4ljbo-LRBgpk3uMmUokbs4ge2JlA")
+            print("################################################\n\n")
+            pass
+    else:
         root = tk.Tk()
         root.title(f"EXOTIC v{__version__}")
 
@@ -392,7 +614,7 @@ def main():
             #     preunit_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             #     i += 1
 
-            #             # "AAVSO Observer Code (N/A if none)": "RTZ",
+            #             # "AAVSO Observer Code (blank if none)": "RTZ",
             obscode_label = tk.Label(root, text="AAVSO Observer Code (leave blank if none)", justify=tk.LEFT)
             obscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             obscode_entry.insert(tk.END, "")
@@ -401,7 +623,7 @@ def main():
             i += 1
             #
             #
-            #             # "Secondary Observer Codes (N/A if none)": "N/A",
+            #             # "Secondary Observer Codes (blank if none)": "",
             secondobscode_label = tk.Label(root, text="Secondary Observer Codes (leave blank if none)", justify=tk.LEFT)
             secondobscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             secondobscode_entry.insert(tk.END, "")
@@ -1101,8 +1323,8 @@ def main():
                         # "Directory of Darks": darks_dir.folder_path,
                         # "Directory of Biases": biases_dir.folder_path,
 
-                        "AAVSO Observer Code (N/A if none)": input_data['obscode'],
-                        "Secondary Observer Codes (N/A if none)": input_data['secondobscode'],
+                        "AAVSO Observer Code (blank if none)": input_data['obscode'],
+                        "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
@@ -1158,8 +1380,8 @@ def main():
                     new_inits['user_info'] = {
                         "Directory to Save Plots": save_dir.folder_path,
 
-                        "AAVSO Observer Code (N/A if none)": input_data['obscode'],
-                        "Secondary Observer Codes (N/A if none)": input_data['secondobscode'],
+                        "AAVSO Observer Code (blank if none)": input_data['obscode'],
+                        "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],

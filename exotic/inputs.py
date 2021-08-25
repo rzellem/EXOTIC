@@ -73,7 +73,8 @@ class Inputs:
         rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
 
-        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
+        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time,
+                            'pre_comp_star': pre_comp_star})
         self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
 
         if not planet:
@@ -173,8 +174,10 @@ class Inputs:
         opt_info = {
             'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
             'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
-            'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
-            'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)', 'exposure': 'Exposure Time (s)',
+            'pre_comp_star': "Comparison Star", 'wl_min': 'Filter Minimum Wavelength (nm)',
+            'wl_max': 'Filter Maximum Wavelength (nm)',
+            'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'),
+            'exposure': 'Exposure Time (s)',
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
@@ -515,6 +518,18 @@ def prereduced_file(file):
         except FileNotFoundError:
             log_info("Error: Data file not found. Please try again.", error=True)
             file = None
+
+
+def pre_comp_star(comp_star):
+    if not isinstance(comp_star, dict):
+        comp_star_opt = user_input("Was a Comparison Star used during the reduction? (y/n): ",
+                                   type_=str, values=['y', 'n'])
+        if comp_star_opt == 'y':
+            comp_star = {'ra': user_input("\nEnter Comparison Star RA: ", type_=str),
+                         'dec': user_input("Enter Comparison Star DEC: ", type_=str),
+                         'x': user_input("\nEnter Comparison Star X Pixel Coordinate: ", type_=float),
+                         'y': user_input("Enter Comparison Star Y Pixel Coordinate: ", type_=float)}
+    return comp_star
 
 
 def data_file_time(time_format):

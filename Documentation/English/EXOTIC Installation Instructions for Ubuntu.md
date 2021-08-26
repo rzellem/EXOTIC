@@ -29,31 +29,29 @@ Early versions of EXOTIC had to be run wholly on the "command line" whereby resp
 
 1. #### Installing/updating Python and supporting files
 
-   Execute the commands shown in the boxes below by typing them on the Ubuntu command line after the prompt symbol "$". After entering each command you will need to press the Enter (or Return) key and wait for it to complete, which is when the prompt reappears.
+   1.1 Execute the commands shown in the boxes below by typing them on the Ubuntu command line after the prompt symbol "$". After entering each command you will need to press the Enter (or Return) key and wait for it to complete, which is when the prompt reappears.
 
-   EXOTIC is known to run successfully on both Ubuntu 18.04 LTS and Ubuntu 20.04 LTS but it may also be supported on other releases of Ubuntu. Start by updating your Ubuntu system with the latest version of all installed packages and then proceed to install the additional software necessary to run the EXOTIC program.
+   1.2 EXOTIC is known to run successfully on both Ubuntu 18.04 LTS and Ubuntu 20.04 LTS but it may also be supported on other releases of Ubuntu. Start by updating your Ubuntu system with the latest version of all installed packages and then proceed to install the additional software necessary to run the EXOTIC program.
 
-   1.1 Update the list of software packages available in the repository of Ubuntu software. The "sudo" command enables you to run packages normally requiring root privileges, so you will need to enter the root password when prompted. This command will show you all the packages that can be upgraded, as well as any available essential new packages and then download them for you.
-
+   1.3 Update the list of software packages available in the repository of Ubuntu software. The "sudo" command enables you to run packages normally requiring root privileges, so you will need to enter the root password when prompted. This command will show you all the packages that can be upgraded, as well as any available essential new packages and then download them for you.
 
    ```python
      $ sudo apt update
    ```
-
-   1.2 Update each package to its latest version. You will see a list of the packages being upgraded or installed, as well as a progress bar showing the progress of the overall upgrade to your Ubuntu system.
-
+   
+   1.4 Update each package to its latest version. You will see a list of the packages being upgraded or installed, as well as a progress bar showing the progress of the overall upgrade to your Ubuntu system.
 
    ```python
       $ sudo apt upgrade -y
    ```
 
-   1.3  Next install pip, which is a tool needed to install the rest of the EXOTIC software.
+   1.5  Next install pip, which is a tool needed to install the rest of the EXOTIC software.
 
    ```python
    $ sudo apt install python3-pip
    ```
 
-   1.4 When the installation is complete, verify the installation by checking the python and pip versions - enter:
+   1.6 When the installation is complete, verify the installation by checking the python and pip versions - enter:
 
    ```python
    $ pip3 --version
@@ -79,7 +77,6 @@ Early versions of EXOTIC had to be run wholly on the "command line" whereby resp
 
    3.1 Create the folder you want to locate the EXOTIC files in, replacing **<exotic>** with the directory of your choice. *Note the tilde symbol "~" is just a shortcut reference to the location of your home directory.
 
-
    ```python
    $ mkdir ~/<exotic>
    ```
@@ -94,8 +91,6 @@ Early versions of EXOTIC had to be run wholly on the "command line" whereby resp
 
       ```python
    $ cp EXOTIC-n.nn.n.tar.gz ~/<exotic>
-
-      ```
       ```
 
    3.4 Now you need to step into the directory where the EXOTIC files have just been copied and get ready to extract and decompress the software. Replace **<exotic>** with the directory that you created above.
@@ -114,16 +109,12 @@ Early versions of EXOTIC had to be run wholly on the "command line" whereby resp
 
       ```python
    $ cd ~/<exotic>/exotic-n.nn.n
-
-      ```
       ```
 
    3.7 Run this script to verify that you have suitable versions of Python and pip and then install all the necessary packages to run EXOTIC. Enter the password you created above if prompted.
 
       ```python
    $ ./run_exotic_linux.sh
-
-      ```
       ```
 
    3.8 Wait a while. This process will take up to around 15 minutes to download and install the complete EXOTIC system.

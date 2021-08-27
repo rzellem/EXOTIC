@@ -42,8 +42,6 @@ class OutputFiles:
                                                          f"{round_to_2(self.fit.errors['rprs'])}",
             "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
                                        f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
-            # "Inclination (deg)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
-            #                      f"{round_to_2(self.fit.errors['inc'])}",
             "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- "
                                                   f"{round_to_2(self.fit.errors['ars'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
@@ -104,7 +102,6 @@ class OutputFiles:
                     f",u3={round_to_2(ld3[0], ld3[1])} +/- {round_to_2(ld3[1])}\n"
                     f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
                     f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
-                    # f",Inc={round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- {round_to_2(self.fit.errors['inc'])}"
                     f",a/R*={round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- {round_to_2(self.fit.errors['ars'])}"
                     f",Am1={round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- {round_to_2(self.fit.errors['a1'])}"
                     f",Am2={round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- {round_to_2(self.fit.errors['a2'])}\n")
@@ -177,10 +174,6 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'value': str(round_to_2(fit.parameters['rprs'], fit.errors['rprs'])),
             'uncertainty': str(round_to_2(fit.errors['rprs']))
         },
-        # 'Inc': {
-        #     'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
-        #     'uncertainty': str(round_to_2(fit.errors['inc']))
-        # },
         'a/R*': {
             'value': str(round_to_2(fit.parameters['ars'], fit.errors['ars'])),
             'uncertainty': str(round_to_2(fit.errors['ars']))

@@ -97,9 +97,9 @@ from tenacity import retry, stop_after_delay
 
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
-    from .api.elca import lc_fitter, binner, transit
+    from .api.elca import lc_fitter, binner, transit, phase
 except ImportError:  # package import
-    from api.elca import lc_fitter, binner, transit
+    from api.elca import lc_fitter, binner, transit, phase
 try:  # output files
     from inputs import Inputs
 except ImportError:  # package import
@@ -240,12 +240,6 @@ def getJulianTime(header):
 
     # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
     return julianTime + exptime_offset
-
-
-# Method that gets and returns the current phase of the target
-def getPhase(curTime, pPeriod, tMid):
-    phase = (curTime - tMid - 0.5 * pPeriod) / pPeriod % 1
-    return phase - 0.5
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)
@@ -1246,7 +1240,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        # 'inc': [np.arctan(pDict['aRs'] ** -1), 90],
         'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
@@ -2032,7 +2025,6 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
-            # 'inc': [np.arctan(pDict['aRs'] ** -1), 90],
             'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
             'a2': [-3, 3],
         }
@@ -2072,7 +2064,6 @@ def main():
         log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log_info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log_info(f"           Transit depth [(Rp/Rs)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
-        # log_info(f"                   Inclination [deg]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
         log_info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
@@ -2102,7 +2093,7 @@ def main():
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
-            phase = getPhase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
+            phase = phase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)

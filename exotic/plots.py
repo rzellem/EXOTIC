@@ -30,20 +30,20 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
 
     axs[1, 1].set_title(f"Comp Star Y Centroid Position {date}", fontsize=14)
     axs[1, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
-    axs[1, 1].set_ylabel("X Pixel Position", fontsize=12)
+    axs[1, 1].set_ylabel("Y Pixel Position", fontsize=12)
     axs[1, 1].plot(times - np.nanmin(times), y_ref, '-ro')
 
     axs[2, 0].set_title("Distance between Target and Comparison X position", fontsize=14)
     axs[2, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
     axs[2, 0].set_ylabel("X Pixel Distance", fontsize=12)
     for e in range(len(x_targ)):
-        axs[2, 0].plot(times[e] - np.nanmin(times), abs(int(x_targ[e]) - int(x_ref[e])), 'bo')
+        axs[2, 0].plot(times[e] - np.nanmin(times), abs(x_targ[e] - x_ref[e]), 'bo')
 
     axs[2, 1].set_title("Distance between Target and Comparison Y position", fontsize=14)
     axs[2, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
     axs[2, 1].set_ylabel("Y Pixel Distance", fontsize=12)
     for e in range(len(y_targ)):
-        axs[2, 1].plot(times[e] - np.nanmin(times), abs(int(y_targ[e]) - int(y_ref[e])), 'bo')
+        axs[2, 1].plot(times[e] - np.nanmin(times), abs(y_targ[e] - y_ref[e]), 'bo')
 
     plt.tight_layout()
     plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target_name}_{date}.png")

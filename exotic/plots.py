@@ -93,6 +93,8 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)
+        Path(save,"temp").mkdir(parents=True, exist_ok=True)
+
         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"

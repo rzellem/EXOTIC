@@ -77,7 +77,7 @@
             "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
             "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
 
-            "Comparison Star": {"ra": null, "dec": null, "x": null, "y": null},
+            "Comparison Star used in Photometry (leave blank if none)": {"ra": "", "dec": "", "x": "", "y": ""},
 
             "Filter Minimum Wavelength (nm)": null,
             "Filter Maximum Wavelength (nm)": null,

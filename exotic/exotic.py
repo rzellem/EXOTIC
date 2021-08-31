@@ -97,9 +97,9 @@ from tenacity import retry, stop_after_delay
 
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
-    from .api.elca import lc_fitter, binner, transit, phase
+    from .api.elca import lc_fitter, binner, transit, get_phase
 except ImportError:  # package import
-    from api.elca import lc_fitter, binner, transit, phase
+    from api.elca import lc_fitter, binner, transit, get_phase
 try:  # output files
     from inputs import Inputs
 except ImportError:  # package import
@@ -1015,23 +1015,19 @@ def nearestTransitTime(timeData, period, originalT):
     return nearT
 
 
-def save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords):
-    comp_star = []
+def save_comp_radec(wcs_file, ra_file, dec_file, comp_coords):
+    comp_ra, comp_dec = None, None
 
-    if bestCompStar:
-        comp_ra = None
-        comp_dec = None
+    if wcs_file:
+        comp_ra = ra_file[int(comp_coords[1])][int(comp_coords[0])]
+        comp_dec = dec_file[int(comp_coords[1])][int(comp_coords[0])]
 
-        if wcs_file:
-            comp_ra = ra_file[int(comp_coords[1])][int(comp_coords[0])]
-            comp_dec = dec_file[int(comp_coords[1])][int(comp_coords[0])]
-
-        comp_star.append({
-            'ra': str(comp_ra) if comp_ra else comp_ra,
-            'dec': str(comp_dec) if comp_dec else comp_dec,
-            'x': str(comp_coords[0]) if comp_coords[0] else comp_coords[0],
-            'y': str(comp_coords[1]) if comp_coords[1] else comp_coords[1]
-        })
+    comp_star = {
+        'ra': str(comp_ra) if comp_ra else comp_ra,
+        'dec': str(comp_dec) if comp_dec else comp_dec,
+        'x': str(comp_coords[0]) if comp_coords[0] else comp_coords[0],
+        'y': str(comp_coords[1]) if comp_coords[1] else comp_coords[1]
+    }
 
     return comp_star
 
@@ -1930,7 +1926,7 @@ def main():
             goodAirmasses = goodAirmasses[si][gi]
 
             plot_fov(minAperture, minAnnulus, sigma, finXTargCent[0], finYTargCent[0], finXRefCent[0], finYRefCent[0],
-                     firstImage, image_scale, pDict['pName'], exotic_infoDict['save'],  exotic_infoDict['date'])
+                     firstImage, image_scale, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
             # Centroid position plots
             plot_centroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
@@ -2093,7 +2089,7 @@ def main():
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
         try:
-            phase = phase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
+            phase = get_phase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
@@ -2107,8 +2103,9 @@ def main():
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
-            output_files.aavso(save_comp_radec(bestCompStar, wcs_file, ra_file, dec_file, comp_coords),
-                               goodAirmasses, ld0, ld1, ld2, ld3)
+            if bestCompStar:
+                exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
+            output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 

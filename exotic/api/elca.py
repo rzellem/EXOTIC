@@ -221,7 +221,7 @@ def transit(times, values):
     return model
 
 
-def phase(times, per, tmid):
+def get_phase(times, per, tmid):
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
 
@@ -315,7 +315,7 @@ class lc_fitter(object):
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.phase = phase(self.time, self.parameters['per'], self.parameters['tmid'])
+        self.phase = get_phase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
         if self.mode == "ns":
             self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],

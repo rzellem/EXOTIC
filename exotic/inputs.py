@@ -5,13 +5,15 @@ from pathlib import Path
 from astropy.io import fits
 
 try:
-    from utils import *
+    from utils import user_input, init_params, typecast_check, \
+        process_lat_long, find, open_elevation
 except ImportError:
-    from .utils import *
+    from .utils import user_input, init_params, typecast_check, \
+        process_lat_long, find, open_elevation
 try:
-    from animate import *
+    from animate import animate_toggle
 except ImportError:
-    from .animate import *
+    from .animate import animate_toggle
 
 
 log = logging.getLogger(__name__)
@@ -32,7 +34,7 @@ class Inputs:
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
             'plate_opt': None, 'tar_coords': None, 'comp_stars': None,
-            'prered_file': None, 'file_units': None, 'file_time': None,
+            'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
         self.params = {
@@ -73,7 +75,8 @@ class Inputs:
         rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
 
-        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
+        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time,
+                            'phot_comp_star': phot_comp_star})
         self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
 
         if not planet:
@@ -173,8 +176,10 @@ class Inputs:
         opt_info = {
             'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
             'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
+            'phot_comp_star': "Comparison Star used in Photometry (leave blank if none)",
             'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
-            'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)', 'exposure': 'Exposure Time (s)',
+            'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'),
+            'exposure': 'Exposure Time (s)',
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
@@ -188,8 +193,8 @@ def check_imaging_files(directory, img_type):
 
     while True:
         try:
-            if Path(directory).is_dir() or not directory.strip() == '':
-                directory = Path(directory)
+            directory = Path(directory)
+            if directory.is_dir() and str(directory).strip():
                 for ext in file_extensions:
                     for file in directory.iterdir():
                         if file.is_file() and file.name.lower().endswith(ext.lower()) \
@@ -515,6 +520,21 @@ def prereduced_file(file):
         except FileNotFoundError:
             log_info("Error: Data file not found. Please try again.", error=True)
             file = None
+
+
+def phot_comp_star(comp_star):
+    if not isinstance(comp_star, dict):
+        comp_star_opt = user_input("Was a Comparison Star used during Photometry? (y/n): ",
+                                   type_=str, values=['y', 'n'])
+
+        comp_star = {
+            'ra': user_input("\nEnter Comparison Star RA: ", type_=str) if comp_star_opt == 'y' else '',
+            'dec': user_input("Enter Comparison Star DEC: ", type_=str) if comp_star_opt == 'y' else '',
+            'x': user_input("\nEnter Comparison Star X Pixel Coordinate: ", type_=str) if comp_star_opt == 'y' else '',
+            'y': user_input("Enter Comparison Star Y Pixel Coordinate: ", type_=str) if comp_star_opt == 'y' else ''
+        }
+
+    return comp_star
 
 
 def data_file_time(time_format):

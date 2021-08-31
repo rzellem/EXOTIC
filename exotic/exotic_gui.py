@@ -435,7 +435,6 @@ def main():
                        padx=20,
                        variable=fitsortext,
                        value=1).pack(anchor=tk.W)
-        fitsortext.set(1)
 
         tk.Radiobutton(root,
                        text="Start with pre-reduced data in a .txt format",
@@ -484,10 +483,41 @@ def main():
             exp_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
+            comp_star_label = tk.Label(root, text="Comparison Star used in Photometry (leave blank if none):",
+                                       justify=tk.LEFT)
+            comp_star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            i += 1
+
+            comp_star_ra_label = tk.Label(root, text="Comparison Star RA", justify=tk.LEFT)
+            comp_star_ra_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            comp_star_ra_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            comp_star_ra_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            comp_star_dec_label = tk.Label(root, text="Comparison Star DEC", justify=tk.LEFT)
+            comp_star_dec_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            comp_star_dec_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            comp_star_dec_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            comp_star_x_label = tk.Label(root, text="Comparison Star X Pixel Coordinate", justify=tk.LEFT)
+            comp_star_x_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            comp_star_x_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            comp_star_x_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            comp_star_y_label = tk.Label(root, text="Comparison Star Y Pixel Coordinate", justify=tk.LEFT)
+            comp_star_y_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            comp_star_y_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            comp_star_y_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
             def save_input():
                 input_data['file_time'] = pretime_entry.get()
                 input_data['file_units'] = preunit_entry.get()
                 input_data['exp'] = float(exp_entry.get())
+                input_data['phot_comp_star'] = {'ra': comp_star_ra_entry.get(), 'dec': comp_star_dec_entry.get(),
+                                                'x': comp_star_x_entry.get(), 'y': comp_star_y_entry.get()}
                 root.destroy()
 
             # Button for closing
@@ -569,19 +599,22 @@ def main():
             i += 1
 
             # "Directory of Flats": null,
-            flats_dir = FolderSelect(root, "Folder with your flats (null if none)", "null")
-            flats_dir.grid(row=i)
-            i += 1
+            if fitsortext.get() == 1:
+                flats_dir = FolderSelect(root, "Folder with your flats (null if none)", "null")
+                flats_dir.grid(row=i)
+                i += 1
 
             # "Directory of Darks": null,
-            darks_dir = FolderSelect(root, "Folder with your darks (null if none)", "null")
-            darks_dir.grid(row=i)
-            i += 1
+            if fitsortext.get() == 1:
+                darks_dir = FolderSelect(root, "Folder with your darks (null if none)", "null")
+                darks_dir.grid(row=i)
+                i += 1
 
             # "Directory of Biases": null,
-            biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
-            biases_dir.grid(row=i)
-            i += 1
+            if fitsortext.get() == 1:
+                biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
+                biases_dir.grid(row=i)
+                i += 1
 
             # "Directory of Biases": null,
             # biases_dir = FolderSelect(root, "Folder with your biases (null if none)", "null")
@@ -786,12 +819,6 @@ def main():
                         input_data['platesolve'] = 'y'
                     else:
                         input_data['platesolve'] = 'n'
-
-                elif fitsortext.get() == 2:
-                    input_data['file_time'] = pretime_entry.get()
-                    input_data['file_units'] = preunit_entry.get()
-                    input_data['exp'] = float(exp_entry.get())
-
                 root.destroy()
 
             # Button for closing
@@ -1403,7 +1430,7 @@ def main():
                     "Pre-reduced File:": prered_file.file_path,
                     "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
                     "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
-
+                    "Comparison Star used in Photometry (blank if none)": input_data['phot_comp_star'],
                     "Exposure Time (s)": input_data['exp']
                 }
 

@@ -28,6 +28,7 @@ fwhm = {('J NIR 1.2micron', 'J'): (1040.00, 1360.00), ('H NIR 1.6micron', 'H'): 
 
         # LCO, Source: Kalee Tock & Michael Fitzgerald, https://lco.global/observatory/instruments/filters/
         ('LCO Bessell B', 'N/A'): (391.60, 480.60), ('LCO Bessell V', 'N/A'): (502.80, 586.80),
+        ('LCO Bessell U', 'N/A'): (325.0, 375.00), ('Harris B', 'N/A'): (377.75, 484.65),
         ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80), ('LCO Pan-STARRS w', 'N/A'): (404.20, 845.80),
         ('LCO Pan-STARRS zs', 'N/A'): (818.00, 922.00), ('LCO SDSS g\'', 'N/A'): (402.00, 552.00),
         ('LCO SDSS r\'', 'N/A'): (552.00, 691.00), ('LCO SDSS i\'', 'N/A'): (690.00, 819.00)}

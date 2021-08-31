@@ -49,9 +49,13 @@ import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 # from scipy.ndimage import gaussian_filter as norm_kde
 from scipy.signal import savgol_filter
-# from scipy.stats import gaussian_kde
-from ultranest import ReactiveNestedSampler
-
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    import dynesty
+    from dynesty import plotting
+    from dynesty.utils import resample_equal
+    from scipy.stats import gaussian_kde
 try:
     from plotting import corner
 except:
@@ -217,9 +221,8 @@ def transit(times, values):
     return model
 
 
-def getPhase(curTime, pPeriod, tMid):
-    phase = (curTime - tMid) / pPeriod
-    return phase - int(np.nanmin(phase))
+def get_phase(times, per, tmid):
+    return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
 
 # @njit(fastmath=True)
@@ -312,7 +315,7 @@ class lc_fitter(object):
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.phase = (self.time - self.parameters['tmid'] + 0.25 * self.parameters['per']) / self.parameters['per'] % 1 - 0.25
+        self.phase = get_phase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
         if self.mode == "ns":
             self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],
@@ -353,6 +356,11 @@ class lc_fitter(object):
         boundarray = np.array([self.bounds[k] for k in freekeys])
         bounddiff = np.diff(boundarray, 1).reshape(-1)
 
+        # alloc data for best fit + error
+        self.errors = {}
+        self.quantiles = {}
+        self.parameters = copy.deepcopy(self.prior)
+
         def loglike(pars):
             # chi-squared
             for i in range(len(pars)):
@@ -368,21 +376,77 @@ class lc_fitter(object):
             # transform unit cube to prior volume
             return boundarray[:, 0] + bounddiff * upars
 
-        # TODO vectorize loglike
-        test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
-        self.results = test.run(max_ncalls=int(self.max_ncalls))
+        try:
+            self.ns_type = 'ultranest'
+            # TODO vectorize loglike
+            test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+            self.results = test.run(max_ncalls=int(self.max_ncalls))
 
-        # alloc data for best fit + error
-        self.errors = {}
-        self.quantiles = {}
-        self.parameters = copy.deepcopy(self.prior)
+            for i, key in enumerate(freekeys):
+                self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+                self.errors[key] = self.results['posterior']['stdev'][i]
+                self.quantiles[key] = [
+                    self.results['posterior']['errlo'][i],
+                    self.results['posterior']['errup'][i]]
+        except NameError:
+            self.ns_type = 'dynesty'
+            dsampler = dynesty.DynamicNestedSampler(
+                loglike, prior_transform,
+                ndim=len(freekeys), bound='multi', sample='unif',
+                maxiter_init=5000, dlogz_init=1, dlogz=0.05,
+                maxiter_batch=100, maxbatch=10, nlive_batch=100
+            )
+            dsampler.run_nested(maxcall=1e6)
+            self.results = dsampler.results
 
-        for i, key in enumerate(freekeys):
-            self.parameters[key] = self.results['maximum_likelihood']['point'][i]
-            self.errors[key] = self.results['posterior']['stdev'][i]
-            self.quantiles[key] = [
-                self.results['posterior']['errlo'][i],
-                self.results['posterior']['errup'][i]]
+            tests = [copy.deepcopy(self.prior) for i in range(6)]
+
+            # Derive kernel density estimate for best fit
+            weights = np.exp(self.results.logwt - self.results.logz[-1])
+            samples = self.results['samples']
+            logvol = self.results['logvol']
+            wt_kde = gaussian_kde(resample_equal(-logvol, weights))  # KDE
+            logvol_grid = np.linspace(logvol[0], logvol[-1], 1000)  # resample
+            wt_grid = wt_kde.pdf(-logvol_grid)  # evaluate KDE PDF
+            self.weights = np.interp(-logvol, -logvol_grid, wt_grid)  # interpolate
+
+            # errors + final values
+            mean, cov = dynesty.utils.mean_and_cov(self.results.samples, weights)
+            mean2, cov2 = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
+            for i in range(len(freekeys)):
+                self.errors[freekeys[i]] = cov[i, i] ** 0.5
+                tests[0][freekeys[i]] = mean[i]
+                tests[1][freekeys[i]] = mean2[i]
+
+                counts, bins = np.histogram(samples[:, i], bins=100, weights=weights)
+                mi = np.argmax(counts)
+                tests[5][freekeys[i]] = bins[mi] + 0.5 * np.mean(np.diff(bins))
+
+                # finds median and +- 2sigma, will vary from mode if non-gaussian
+                self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:, i], [0.025, 0.5, 0.975],
+                                                                     weights=weights)
+                tests[2][freekeys[i]] = self.quantiles[freekeys[i]][1]
+
+            # find minimum near weighted mean
+            mask = (samples[:, 0] < self.parameters[freekeys[0]] + 2 * self.errors[freekeys[0]]) & (
+                        samples[:, 0] > self.parameters[freekeys[0]] - 2 * self.errors[freekeys[0]])
+            bi = np.argmin(self.weights[mask])
+
+            for i in range(len(freekeys)):
+                tests[3][freekeys[i]] = samples[mask][bi, i]
+                tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
+
+            # find best fit
+            chis = []
+            for i in range(len(tests)):
+                lightcurve = transit(self.time, tests[i])
+                tests[i]['a1'] = mc_a1(tests[i]['a2'], 0, lightcurve, self.airmass, self.data)[0]
+                airmass = tests[i]['a1'] * np.exp(tests[i]['a2'] * self.airmass)
+                residuals = self.data - (lightcurve * airmass)
+                chis.append(np.sum(residuals ** 2))
+
+            mi = np.argmin(chis)
+            self.parameters = copy.deepcopy(tests[mi])
 
         # final model
         self.create_fit_variables()
@@ -456,76 +520,83 @@ class lc_fitter(object):
         return f, (ax_lc, ax_res)
 
     def plot_triangle(self):
-        ranges = []
-        mask1 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
-        mask2 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
-        mask3 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
-        titles = []
-        labels= []
-        flabels = {
-            'rprs':r'R$_{p}$/R$_{s}$',
-            'per':r'Period [day]',
-            'tmid':r'T$_{mid}$',
-            'ars':r'a/R$_{s}$',
-            'inc':r'Inc. [deg]',
-            'u1':r'u$_1$',
-            'fpfs':r'F$_{p}$/F$_{s}$', 
-            'omega':r'$\omega$',
-            'ecc':r'$e$',
-            'c0':r'$c_0$',
-            'c1':r'$c_1$',
-            'c2':r'$c_2$',
-            'c3':r'$c_3$',
-            'c4':r'$c_4$',
-            'a0':r'$a_0$',
-            'a1':r'$a_1$',
-            'a2':r'$a_2$'
-        }
-        for i, key in enumerate(self.quantiles):
-            labels.append(flabels.get(key, key))
-            titles.append(f"{self.parameters[key]:.5f} +- {self.errors[key]:.5f}")
-            ranges.append([
-                self.parameters[key] - 5*self.errors[key],
-                self.parameters[key] + 5*self.errors[key]
-            ])
-
-            if key == 'a2' or key == 'a1': 
-                continue
-
-            mask3 = mask3 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 3*self.errors[key]) ) & \
-                (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 3*self.errors[key]) )
-
-            mask1 = mask1 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - self.errors[key]) ) & \
-                (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + self.errors[key]) )
-
-            mask2 = mask2 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 2*self.errors[key]) ) & \
-                (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 2*self.errors[key]) )
-
-        chi2 = self.results['weighted_samples']['logl']*-2
-        fig = corner(self.results['weighted_samples']['points'], 
-            labels= labels,
-            bins=int(np.sqrt(self.results['samples'].shape[0])), 
-            range= ranges,
-            #quantiles=(0.1, 0.84),
-            plot_contours=True,
-            levels=[ np.percentile(chi2[mask1],99), np.percentile(chi2[mask2],99), np.percentile(chi2[mask3],99)],
-            plot_density=False,
-            titles=titles,
-            data_kwargs={
-                'c':chi2,
-                'vmin':np.percentile(chi2[mask3],1),
-                'vmax':np.percentile(chi2[mask3],99),
-                'cmap':'viridis'
-            },
-            label_kwargs={
-                'labelpad':15,
-            },
-            hist_kwargs={
-                'color':'black',
+        if self.ns_type == 'ultranest':
+            ranges = []
+            mask1 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
+            mask2 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
+            mask3 = np.ones(len(self.results['weighted_samples']['logl']),dtype=bool)
+            titles = []
+            labels= []
+            flabels = {
+                'rprs':r'R$_{p}$/R$_{s}$',
+                'per':r'Period [day]',
+                'tmid':r'T$_{mid}$',
+                'ars':r'a/R$_{s}$',
+                'inc':r'Inc. [deg]',
+                'u1':r'u$_1$',
+                'fpfs':r'F$_{p}$/F$_{s}$',
+                'omega':r'$\omega$',
+                'ecc':r'$e$',
+                'c0':r'$c_0$',
+                'c1':r'$c_1$',
+                'c2':r'$c_2$',
+                'c3':r'$c_3$',
+                'c4':r'$c_4$',
+                'a0':r'$a_0$',
+                'a1':r'$a_1$',
+                'a2':r'$a_2$'
             }
-        )
-        return fig
+            for i, key in enumerate(self.quantiles):
+                labels.append(flabels.get(key, key))
+                titles.append(f"{self.parameters[key]:.5f} +- {self.errors[key]:.5f}")
+                ranges.append([
+                    self.parameters[key] - 5*self.errors[key],
+                    self.parameters[key] + 5*self.errors[key]
+                ])
 
+                if key == 'a2' or key == 'a1':
+                    continue
+
+                mask3 = mask3 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 3*self.errors[key]) ) & \
+                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 3*self.errors[key]) )
+
+                mask1 = mask1 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - self.errors[key]) ) & \
+                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + self.errors[key]) )
+
+                mask2 = mask2 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 2*self.errors[key]) ) & \
+                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 2*self.errors[key]) )
+
+            chi2 = self.results['weighted_samples']['logl']*-2
+            fig = corner(self.results['weighted_samples']['points'],
+                labels= labels,
+                bins=int(np.sqrt(self.results['samples'].shape[0])),
+                range= ranges,
+                #quantiles=(0.1, 0.84),
+                plot_contours=True,
+                levels=[ np.percentile(chi2[mask1],99), np.percentile(chi2[mask2],99), np.percentile(chi2[mask3],99)],
+                plot_density=False,
+                titles=titles,
+                data_kwargs={
+                    'c':chi2,
+                    'vmin':np.percentile(chi2[mask3],1),
+                    'vmax':np.percentile(chi2[mask3],99),
+                    'cmap':'viridis'
+                },
+                label_kwargs={
+                    'labelpad':15,
+                },
+                hist_kwargs={
+                    'color':'black',
+                }
+            )
+        else:
+            fig, axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()),
+                                                   quantiles_2d=[0.4, 0.85],
+                                                   smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
+                                                   hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
+            dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()),
+                                          fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
+        return fig
 
 
 if __name__ == "__main__":

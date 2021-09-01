@@ -72,24 +72,6 @@ def round_to_2(*args):
     return round(x, roundval)
 
 
-def dms_to_dd(dms_in):
-    """
-    Quick helper method to convert long/lat values in degree-minute-second (dms) form
-    (using ':' separators) to decimal (dd) form
-    :param dms_in: DMS long/lat value, colon separated
-    :return float: Properly signed long/lat value in decimal float form
-    """
-    if dms_in is None or isinstance(dms_in, str) is False or str(dms_in).count(":") != 2:
-        raise ValueError("Invalid DMS input provided for calculations. ...")
-    # clean string of errant leading/trailing/internal spaces
-    dms = str(dms_in).strip().replace(" ", "")
-    degrees, minutes, seconds = dms.split(":")
-    dec = abs(float(degrees)) + float(minutes) / 60. + float(seconds) / 3600.
-    if float(degrees) < 0.:
-        dec = dec * -1.
-    return dec
-
-
 # Credit: Kalee Tock
 def get_val(hdr, ks):
     for key in ks:
@@ -111,16 +93,20 @@ def add_sign(var):
     if m:
         return str_var
     if float(var) >= 0:
-        return f"+{float(var)}.6f"
+        return f"+{float(var):.6f}"
     else:
-        return f"-{float(var)}.6f"
+        return f"-{float(var):.6f}"
 
 
 # Credit: Kalee Tock
 def process_lat_long(val, key):
-    m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val)
+    m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val) or \
+        re.search(r"\'?([+-]?\d+)[\s:](\d+\.\d*)", val)
     if m:
-        deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
+        try:
+            deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
+        except IndexError:
+            deg, min, sec = float(m.group(1)), float(m.group(2)), 0
         if deg < 0:
             v = deg - (((60 * min) + sec) / 3600)
         else:

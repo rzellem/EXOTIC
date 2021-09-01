@@ -1,6 +1,7 @@
 # Authors
 
 ## Coding Contributors
+- [Richard Andrews](https://github.com/Zorba256)
 - [Ethan Blaser](https://github.com/blaserethan)
 - [John Engelke](https://github.com/jpl-jengelke)
 - [Tamim Fatahi](https://github.com/tamimfatahi)

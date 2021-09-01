@@ -5,13 +5,15 @@ from pathlib import Path
 from astropy.io import fits
 
 try:
-    from utils import *
+    from utils import user_input, init_params, typecast_check, \
+        process_lat_long, find, open_elevation
 except ImportError:
-    from .utils import *
+    from .utils import user_input, init_params, typecast_check, \
+        process_lat_long, find, open_elevation
 try:
-    from animate import *
+    from animate import animate_toggle
 except ImportError:
-    from .animate import *
+    from .animate import animate_toggle
 
 
 log = logging.getLogger(__name__)
@@ -32,7 +34,7 @@ class Inputs:
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
             'plate_opt': None, 'tar_coords': None, 'comp_stars': None,
-            'prered_file': None, 'file_units': None, 'file_time': None,
+            'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
         self.params = {
@@ -64,15 +66,21 @@ class Inputs:
                 self.info_dict['flats'], self.info_dict['darks'], self.info_dict['biases'] = \
                     image_calibrations(self.info_dict['flats'], self.info_dict['darks'],
                                        self.info_dict['biases'], self.init_opt)
+                if not planet:
+                    planet = planet_name(planet)
 
-        return self.info_dict
+        return self.info_dict, planet
 
-    def prereduced(self):
+    def prereduced(self, planet):
         rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
 
-        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time})
+        self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time,
+                            'phot_comp_star': phot_comp_star})
         self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
+
+        if not planet:
+            planet = planet_name(planet)
 
         for key, value in list(self.params.items()):
             if key == 'elev':
@@ -81,7 +89,7 @@ class Inputs:
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
-        return self.info_dict
+        return self.info_dict, planet
 
     def real_time(self, planet):
         rem_list = ['save', 'aavso_num', 'second_obs', 'date', 'lat', 'long', 'elev',
@@ -96,7 +104,10 @@ class Inputs:
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
 
-        return self.info_dict
+                if not planet:
+                    planet = planet_name(planet)
+
+        return self.info_dict, planet
 
     def search_init(self, init_file, planet_dict):
         cwd = Path.cwd()
@@ -124,7 +135,8 @@ class Inputs:
 
                 init_file = None
             except ValueError as e:
-                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}", error=True)
+                log_info(f"\nError: Invalid JSON. Please reformat JSON based on given suggestion:\n\t - {e}",
+                         error=True)
                 init_file = None
 
     def comp_params(self, init_file, planet_dict):
@@ -164,8 +176,10 @@ class Inputs:
         opt_info = {
             'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
             'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
+            'phot_comp_star': "Comparison Star used in Photometry (leave blank if none)",
             'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
-            'pixel_scale': 'Pixel Scale (Ex: 5.21 arcsecs/pixel)', 'exposure': 'Exposure Time (s)',
+            'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'),
+            'exposure': 'Exposure Time (s)',
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
@@ -179,8 +193,8 @@ def check_imaging_files(directory, img_type):
 
     while True:
         try:
-            if Path(directory).is_dir() or not directory.replace(' ', '') == '':
-                directory = Path(directory)
+            directory = Path(directory)
+            if directory.is_dir() and str(directory).strip():
                 for ext in file_extensions:
                     for file in directory.iterdir():
                         if file.is_file() and file.name.lower().endswith(ext.lower()) \
@@ -276,12 +290,19 @@ def check_calibration(directory, image_type):
     return None
 
 
+def planet_name(planet):
+    if not planet:
+        planet = user_input("\nPlease enter Planet's name: ", type_=str)
+    return planet
+
+
 def obs_code(code):
     if code is None:
         code = user_input("Please enter your AAVSO Observer Account Number "
                           "(if none, leave blank and press enter): ", type_=str)
-    if not code.replace(' ', ''):
-        code = "N/A"
+    code = code.replace(' ', '')
+    if code.lower() == 'n/a':
+        code = ""
     return code
 
 
@@ -289,8 +310,9 @@ def second_obs_code(code):
     if code is None:
         code = user_input("Please enter your comma-separated Secondary Observer Codes "
                           "(if none, leave blank and press enter): ", type_=str)
-    if not code.replace(' ', ''):
-        code = "N/A"
+    code = code.replace(' ', '')
+    if code.lower() == 'n/a':
+        code = ""
     return code
 
 
@@ -315,20 +337,20 @@ def latitude(lat, hdr=None):
             lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
-        lat = lat.replace(' ', '')
+        lat = lat.strip()
 
         if lat[0] == '+' or lat[0] == '-':
             # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                lat = float(lat)
+                lat = float(lat.replace(' ', ''))
             except ValueError:
-                lat = float(dms_to_dd(lat))
+                lat = float(process_lat_long(lat, 'latitude'))
 
             if -90.00 <= lat <= 90.00:
                 return lat
             else:
-                log_info("Error: Your latitude is out of range. Please enter a latitude between -90 and +90 (deg).",
-                         error=True)
+                log_info("Error: Your latitude is out of range. "
+                         "Please enter a latitude between -90 and +90 (deg).", error=True)
         else:
             log_info("Error: You forgot the sign for the latitude! North is '+' and South is '-'. Please try again.",
                      error=True)
@@ -345,21 +367,20 @@ def longitude(long, hdr=None):
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
                               "(Example: +152.51): ", type_=str)
-
-        long = long.replace(' ', '')
+        long = long.strip()
 
         if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                long = float(long)
+                long = float(long.replace(' ', ''))
             except ValueError:
-                long = float(dms_to_dd(long))
+                long = float(process_lat_long(long, 'longitude'))
 
             if -180.00 <= long <= 180.00:
                 return long
             else:
-                log_info("Error: Your longitude is out of range. Please enter a longitude between -180 and +180 (deg).",
-                         error=True)
+                log_info("Error: Your longitude is out of range. "
+                         "Please enter a longitude between -180 and +180 (deg).", error=True)
         else:
             log_info("Error: You forgot the sign for the longitude! East is '+' and West is '-'. Please try again.",
                      error=True)
@@ -391,15 +412,15 @@ def elevation(elev, lat, long, hdr=None):
 
 def camera(c_type):
     while True:
-        c_type = c_type.strip().upper()
-        if c_type not in ["CCD", "DSLR"]:
+        if not c_type:
             c_type = user_input("\nPlease enter the camera type (e.g., CCD or DSLR;\n"
                                 "Note: if you are using a CMOS, please enter CCD here and\n"
                                 "then note your actual camera type in \"Observing Notes\"): ", type_=str)
+        c_type = c_type.strip().upper()
+        if c_type not in ["CCD", "DSLR"]:
+            c_type = None
         else:
-            break
-
-    return c_type
+            return c_type
 
 
 def pixel_bin(pix_bin):
@@ -501,6 +522,21 @@ def prereduced_file(file):
             file = None
 
 
+def phot_comp_star(comp_star):
+    if not isinstance(comp_star, dict):
+        comp_star_opt = user_input("Was a Comparison Star used during Photometry? (y/n): ",
+                                   type_=str, values=['y', 'n'])
+
+        comp_star = {
+            'ra': user_input("\nEnter Comparison Star RA: ", type_=str) if comp_star_opt == 'y' else '',
+            'dec': user_input("Enter Comparison Star DEC: ", type_=str) if comp_star_opt == 'y' else '',
+            'x': user_input("\nEnter Comparison Star X Pixel Coordinate: ", type_=str) if comp_star_opt == 'y' else '',
+            'y': user_input("Enter Comparison Star Y Pixel Coordinate: ", type_=str) if comp_star_opt == 'y' else ''
+        }
+
+    return comp_star
+
+
 def data_file_time(time_format):
     while True:
         if not time_format:
@@ -512,7 +548,7 @@ def data_file_time(time_format):
         time_format = time_format.upper().strip()
 
         if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
-            log_info("Error: Invalid entry; please try again.", error=True)
+            log_info("Warning: Invalid entry; please try again.", warn=True)
             time_format = None
         else:
             return time_format
@@ -529,13 +565,13 @@ def data_file_units(units):
         units = units.lower().strip()
 
         if units not in ['flux', 'magnitude', 'millimagnitude']:
-            log_info("Error: Invalid entry; please try again.", error=True)
+            log_info("Warning: Invalid entry; please try again.", warn=True)
             units = None
         else:
             return units
 
 
-#temp
+# temp
 def log_info(string, warn=False, error=False):
     if error:
         print(f"\033[91m {string}\033[00m")

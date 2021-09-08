@@ -2074,7 +2074,7 @@ def main():
             else:
                 log_info(f"                    Optimal Aperture: {abs(np.round(minAperture, 2))}")
                 log_info(f"                     Optimal Annulus: {np.round(minAnnulus, 2)}")
-        log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs))} +/- {round_to_2(np.std(durs))}")
+        log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs), np.std(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
         ##########

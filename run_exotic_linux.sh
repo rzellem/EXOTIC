@@ -125,4 +125,4 @@ ${pip_runner} install setuptools
 echo "INFO: Installing EXOTIC core. ..."
 ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
-bash -l -c "exotic-gui"
+bash -c "exotic-gui"

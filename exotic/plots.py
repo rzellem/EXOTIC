@@ -180,6 +180,7 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date):
 def plot_final_lightcurve(fit, high_res, targ_name, save, date):
     f, (ax_lc, ax_res) = fit.plot_bestfit()
 
+    ax_lc.set_title(targ_name)
     ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r', zorder=1000, lw=2)
 
     Path(save).mkdir(parents=True, exist_ok=True)

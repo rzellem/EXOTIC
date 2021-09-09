@@ -154,7 +154,7 @@ def log_info(string, warn=False, error=False):
     if error:
         print(f"\033[91m {string}\033[00m")
     elif warn:
-        print(f"\033[93m {string}\033[00m")
+        print(f"\033[33m {string}\033[00m")
     else:
         print(string)
     log.debug(string)
@@ -1424,21 +1424,21 @@ def main():
             if exotic_infoDict['darks']:
                 darksImgList = []
                 for darkFile in exotic_infoDict['darks']:
-                    darkData = fits.getdata(darkFile, ext=0)
+                    darkData = fits.getdata(darkFile)
                     darksImgList.append(darkData)
                 generalDark = np.median(darksImgList, axis=0)
 
             if exotic_infoDict['biases']:
                 biasesImgList = []
                 for biasFile in exotic_infoDict['biases']:
-                    biasData = fits.getdata(biasFile, ext=0)
+                    biasData = fits.getdata(biasFile)
                     biasesImgList.append(biasData)
                 generalBias = np.median(biasesImgList, axis=0)
 
             if exotic_infoDict['flats']:
                 flatsImgList = []
                 for flatFile in exotic_infoDict['flats']:
-                    flatData = fits.getdata(flatFile, ext=0)
+                    flatData = fits.getdata(flatFile)
                     flatsImgList.append(flatData)
                 notNormFlat = np.median(flatsImgList, axis=0)
 
@@ -1523,7 +1523,7 @@ def main():
             # checks for MOBS data
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
             if 'CREATOR' in mobs_header:
-                if "MicroObservatory" in mobs_header['CREATOR']:
+                if 'MicroObservatory' in mobs_header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
                     if exotic_infoDict['second_obs'].upper() != "N/A":
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
@@ -1537,7 +1537,7 @@ def main():
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
             for ifile in inputfiles:
-                first_image = fits.getdata(ifile, ext=0)
+                first_image = fits.getdata(ifile)
                 try:
                     get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
                     break
@@ -1594,7 +1594,7 @@ def main():
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
-                tar_comp_dist[ckey] = np.zeros(2, dtype=int)
+                tar_comp_dist[ckey] = np.zeros(2)
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
@@ -1665,8 +1665,8 @@ def main():
                         psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
 
                         if i != 0:
-                            if not (tar_comp_dist[ckey][0] - 1 <= abs(int(psf_data[ckey][j][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 1 and
-                                    tar_comp_dist[ckey][1] - 1 <= abs(int(psf_data[ckey][j][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist[ckey][1] + 1) or \
+                            if not (tar_comp_dist[ckey][0] - 1 <= abs(int(psf_data[ckey][i][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 1 and
+                                    tar_comp_dist[ckey][1] - 1 <= abs(int(psf_data[ckey][i][1]) - int(psf_data['target'][i][1])) <= tar_comp_dist[ckey][1] + 1) or \
                                     np.abs((psf_data[ckey][i][2] - psf_data[ckey][i - 1][2]) / psf_data[ckey][i - 1][2]) > 0.5:
                                 raise Exception
                         else:

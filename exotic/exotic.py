@@ -1868,7 +1868,7 @@ def main():
                 log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
                 log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
                 log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
-                bestCompStar = None
+                bestCompStar, comp_coords = None, None
             else:
                 log_info(f"Best Comparison Star: #{bestCompStar}")
                 log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")

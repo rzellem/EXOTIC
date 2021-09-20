@@ -125,6 +125,23 @@ def add_sign(var):
 
 # Credit: Kalee Tock
 def process_lat_long(val, key):
+    """
+    Converts a longitude or latitude into standardized a value
+
+    Parameters
+    ----------
+    val : str
+        either a longitude or latitude coordinate, with a preceding + or -,
+        expressed in _either_ HH:MM:SS or degree values. ex: +152.51 or +37:2:24.
+    key : str
+        expects "longitude" or "latitude"
+
+    Returns
+    -------
+    str
+        longitude or latitude expressed in degree coordinates with a preceding
+        + or -. Six digits of precision after the decimal. ex: +152.510000
+    """
     m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val) or \
         re.search(r"\'?([+-]?\d+)[\s:](\d+\.\d*)", val)
     if m:

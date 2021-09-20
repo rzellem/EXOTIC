@@ -53,6 +53,21 @@ def init_params(comp, dict1, dict2):
 
 
 def typecast_check(type_, val):
+    """
+    Casts `val` into `type_`
+
+    Parameters
+    ----------
+    type_ : type
+        type to cast val. ex: float
+    val : any
+
+    Returns
+    -------
+    any
+        value casted to type_. ex 4.0. Returns False if val cannot be casted.
+    """
+
     try:
         return type_(val)
     except (ValueError, TypeError):

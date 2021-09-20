@@ -84,7 +84,6 @@ def round_to_2(*args):
         the original number rounded to two non-zero numbers after the decimal place
     """
 
-
     x = args[0]
     if len(args) == 1:
         y = args[0]
@@ -99,6 +98,22 @@ def round_to_2(*args):
 
 # Credit: Kalee Tock
 def get_val(hdr, ks):
+    """
+    Pluck the value for a certain key from a myriad possible known keys
+
+    Parameters
+    ----------
+    hdr : dict
+        a dictionary of observatory data
+    ks : list[str]
+        a list of possible keys? PR FIXME: not sure really
+
+    Returns
+    -------
+    str
+        _first_ value of key found in dictionary
+    """
+
     for key in ks:
         if key in hdr.keys():
             return hdr[key]
@@ -112,6 +127,21 @@ def get_val(hdr, ks):
 
 # Credit: Kalee Tock
 def add_sign(var):
+    """
+    Adds a + or - to the coordinate if one isn't there already
+
+    Parameters
+    ----------
+    var : str
+        Coordinate, in degrees, of a latitude or longitude
+
+    Returns
+    -------
+    str
+        var as a string if +/- already present. Otherwise it adds a +/- depending
+        on the value of var. Returns precision of six digits after the decimal point
+        if +/- not already present in `var`
+    """
     str_var = str(var)
     m = re.search(r"^[+\-]", str_var)
 

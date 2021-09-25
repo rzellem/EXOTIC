@@ -86,6 +86,178 @@ class TestTypecastCheck:
         assert typecast_check(float, "foo") is False
 
 
+class TestUserInput:
+    """tests the `user_input()` function"""
+
+    def test_max_retries_exceeded(self):
+        """I had to add this in order to get the `while True` to expire"""
+
+        # NOTE: foo is not in the accepted `values` arg
+        user_provided_input = "foo"
+        result = user_input("Enter a y or n",
+                            type_=str,
+                            values=["y", "n"],
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+        assert result is None
+
+    # Test the yes no responses:
+    def test_yes_no_responses(self):
+        "NOTE: used in various places in the code. Not arbitrary"
+
+        user_provided_input = "y"
+        assert user_provided_input == user_input("Enter a y or n",
+                                                 type_=str,
+                                                 values=["y", "n"],
+                                                 input_capture_fx=_capture_input_for_tests,
+                                                 max_tries=1,
+                                                 user_provided_response=user_provided_input)
+
+        # NOTE: foo is not in the accepted `values` arg
+        user_provided_input = "foo"
+        result = user_input("Enter a y or n",
+                            type_=str,
+                            values=["y", "n"],
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+        assert result is None
+
+        acceptable_values = ["foo", "bar"]
+        user_provided_input = acceptable_values[0]
+        result = user_input("More abstractly, provide an acceptable value",
+                            type_=str,
+                            values=acceptable_values,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+        assert result == user_provided_input
+
+    # Test _not_ ints and _not_ strs (special cases in the function under test)
+    # Commonly used to ask for floats
+    def test_when_floats_are_expected(self):
+        # golden path case:
+        user_provided_input = 3.14
+        result = user_input("More abstractly, provide an acceptable value",
+                            type_=float,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result == user_provided_input
+
+        user_provided_input = 3  # int
+        expected_result = 3.0  # float
+        result = user_input("More abstractly, provide an acceptable value",
+                            type_=float,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert 3 == 3.0  # this passes. That's kind of annoying b/c one is an int
+        assert type(result) == float
+        assert result == expected_result
+
+        # NOTE: raises a value error
+        user_provided_input = "foo"
+        result = user_input("More abstractly, provide an acceptable value",
+                            type_=float,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result is None
+
+    # Test ints
+    def test_when_int_is_expected(self):
+        user_provided_input = 123
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result == user_provided_input
+
+        allowed_values = [123, 234]
+        user_provided_input = allowed_values[0]
+
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            values=allowed_values,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result == user_provided_input
+
+        user_provided_input = 456  # not allowed
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            values=allowed_values,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result is None
+
+        user_provided_input = "foo"  # can't be cast to an int
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result is None
+
+    # Test strs
+    def test_when_str_is_expected(self):
+
+        allowed_values = ["foo", "bar"]
+
+        user_provided_input = allowed_values[0]
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            values=allowed_values,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result == user_provided_input
+
+        user_provided_input = "not allowed!"
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            values=allowed_values,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result is None
+
+        # with spaces and weird capitalization
+        user_provided_input = " FoO     "
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            values=allowed_values,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        # this is used in the function. Pretty brittle test
+        assert result == user_provided_input.lower().strip()
+
+        user_provided_input = "allowed!"
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            input_capture_fx=_capture_input_for_tests,
+                            max_tries=1,
+                            user_provided_response=user_provided_input)
+
+        assert result == user_provided_input
+
+
 class TestRoundToTwo:
     """tests the round_to_2() function"""
 

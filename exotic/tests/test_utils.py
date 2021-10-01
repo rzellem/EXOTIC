@@ -48,7 +48,6 @@ class TestRoundToTwo:
         result = round_to_2(-0.000123456789)
         assert -0.00012 == result
 
-        # not sure if this is a bug?
         result = round_to_2(2.123, 0.000123456789)
         assert 2.123 == result
 

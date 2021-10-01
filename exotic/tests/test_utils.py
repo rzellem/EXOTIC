@@ -2,6 +2,58 @@ from exotic.utils import *
 from unittest.mock import patch
 
 
+class TestInitParams:
+    """tests the init_params() function"""
+
+    def test_populate_key(self):
+        comp = {"foo": "This is used to make the init file make sense"}
+        dict1 = {"foo": None}
+        dict2 = {"This is used to make the init file make sense": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert type(result) == dict
+        assert result.get("foo") == 123
+
+    def test_key_error(self):
+        comp = {"foo": "bar"}
+        dict1 = {"herp": None}
+        dict2 = {"derp": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") is None
+        assert result == dict1
+
+    def test_when_val_in_comp_is_tuple(self):
+        # NOTE: Accepts bar or baz as keys in dict2
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"bar": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") == 123
+
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"baz": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") == 123
+
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"bar": 234, "baz": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") == 123
+
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"herp": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") is None
+
+
 class TestRoundToTwo:
     """tests the round_to_2() function"""
 

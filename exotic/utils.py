@@ -37,6 +37,48 @@ def user_input(prompt, type_, values=None):
 
 
 def init_params(comp, dict1, dict2):
+    """
+    Populates dict1 to be used by the reduction program code
+
+
+    Uses comp as a source of acceptable keys to populate. Iterates over the keys
+    in comp and populates dict1 with values from dict2. The values for each of
+    comp's keys can be a string or a tuple. If a comp key has a value that is a
+    string, then dict1 is populated by looking up the value of the key for dict2
+    directly using comps key's value. If a comp key is a tuple then the tuple
+    values are iterated over and dict1 is populated by looking for values in dict2.
+    If both values in comp's tuple are found in dict2 then the last value in the
+    tuple is populated.
+
+    Examples:
+
+    dict1["foo"] is set to 123 when comp = {"foo": "bar"} and dict2 = {"bar": 123}
+
+    dict1["foo"] is set to 123 when comp = {"foo": ("bar", "baz")} and dict2 has
+    a value of 123 where the key is _either_ "bar" or "baz"
+
+    dict1["foo"] is set to 123 when comp = {"foo": ("bar", "baz")} and dict2 has
+    this structure: {"bar": 345, "baz": 123}
+
+    Parameters
+    ----------
+    comp : dict
+        Used to map dictionaries used in the reduction program code to human
+        readable and sensical input provided by humans.
+    dict1 : dict
+        Dictionary to be populated and used by the reduction program
+    dict2 : dict
+        Dictionary provided by other sources like an init file. The keys are more
+        sensical for planetary scientists to provide expected values. In
+        practice, these values are provided predominantly by an init file ?? or
+        an API call for planet_dict ?? FIXME: needs fact checking
+
+    Returns
+    -------
+    dict
+      Populated dict1 with values from dict2
+    """
+
     for key, value in comp.items():
         try:
             if not isinstance(value, tuple):

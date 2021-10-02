@@ -60,6 +60,31 @@ def typecast_check(type_, val):
 
 
 def round_to_2(*args):
+    """
+    Rounds a number to the first two non-zero figures after the decimal point
+
+
+    If is a number is more than or equal to one or less than or equal to negative
+    1, the number is rounded to the hundredths place.  If the number is between
+    1 and -1 (exlusive) then the number is rounded such that the zeros after the
+    decimal and next two non-zero numbers in the decimal are returned.
+
+    Parameters
+    ----------
+    args : float
+        An arbitrary number of numeric args. Expects one or two args. When
+        one argument is passed in it rounds according to the docs above. When
+        two arguments are passed in, the first number is rounded to either the
+        second number's two significant figures' decimal place. Arguments beyond
+        two are discarded.
+
+    Returns
+    -------
+    float
+        the original number rounded to two non-zero numbers after the decimal place
+    """
+
+
     x = args[0]
     if len(args) == 1:
         y = args[0]

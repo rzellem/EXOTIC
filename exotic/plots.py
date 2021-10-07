@@ -79,7 +79,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             plt.plot(x_ref, y_ref, '+r')
         plt.xlabel("x-axis [pixel]")
         plt.ylabel("y-axis [pixel]")
-        plt.title(f"FOV for {targ_name}\n({image_scale} arcsec/pix)")
+        plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlim(pltx[0], pltx[1])
         plt.ylim(plty[0], plty[1])
         ax.grid(False)

@@ -816,11 +816,11 @@ def get_pixel_scale(wcs_header, header, pixel_init):
         image_scale_units = header.comments['PIXSCALE']
         image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
     elif pixel_init:
-        image_scale = f"Image scale in arc-secs/pixel: {pixel_init}"
+        image_scale = f"Image scale in arcsecs/pixel: {pixel_init}"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
-        image_scale_num = user_input("Please enter Image Scale (e.g., 5 arc-sec/pixel): ", type_=float)
-        image_scale = f"Image scale in arc-secs/pixel: {image_scale_num}"
+        image_scale_num = user_input("Please enter Image Scale (e.g., 5 arcsec/pixel): ", type_=float)
+        image_scale = f"Image scale in arcsecs/pixel: {image_scale_num}"
     return image_scale
 
 
@@ -1863,17 +1863,20 @@ def main():
                 log_info(f"Best Comparison Star: #{bestCompStar}")
                 log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
                 log_info("Optimal Method: PSF photometry")
+                bestaperture = "PSF photometry"
             elif minAperture < 0:  # no comp star
                 log_info("Best Comparison Star: None")
                 log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
                 log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
                 log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
                 bestCompStar, comp_coords = None, None
+                bestaperture = str(abs(np.round(minAperture, 2)))
             else:
                 log_info(f"Best Comparison Star: #{bestCompStar}")
                 log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
                 log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
                 log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
+                bestaperture = str(abs(np.round(minAperture, 2)))
             log_info("*********************************************\n")
 
             # Take the BJD times from the image headers

@@ -69,7 +69,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         med_img = median_filter(image, (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
         norm = ImageNormalize(image, interval=ZScaleInterval(), stretch=stretch)
         plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None,
-                   vmin=np.percentile(med_img, 5), vmax=np.percentile(med_img, 99))
+                   vmin=np.nanpercentile(med_img, 5), vmax=np.nanpercentile(med_img, 99))
         plt.plot(x_targ, y_targ, marker='+', color='lime')
         ax.add_artist(target_circle)
         ax.add_artist(target_circle_sky)
@@ -79,7 +79,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             plt.plot(x_ref, y_ref, '+r')
         plt.xlabel("x-axis [pixel]")
         plt.ylabel("y-axis [pixel]")
-        plt.title(f"FOV for {targ_name}\n({image_scale} arcsec/pix)")
+        plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlim(pltx[0], pltx[1])
         plt.ylim(plty[0], plty[1])
         ax.grid(False)

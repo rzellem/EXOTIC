@@ -57,10 +57,14 @@ def plot_image(filename, save=False, bg_min=60, bg_max=99):
     mask, cdata = None, None  # temp til astroscrappy works again for python v3.9
 
     # show how many pixels are saturated
+
     SATURATION = 2**(hdu[extension].header['bitpix'])
-    mmask = cdata >= SATURATION*0.9
+    if SATURATION == None:
+        SATURATION = np.max(data)
+    mmask = image_downscaled >= SATURATION*0.9
     labels, ngroups = label(mmask)
     print('Saturated Areas:',ngroups)
+    print('Saturation level:',SATURATION)
     labeli, counts = np.unique(labels, return_counts=True)
     bad_pix = {'x':[], 'y':[], 'value':[]}
     # loop through each group to find position

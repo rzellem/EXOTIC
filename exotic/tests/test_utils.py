@@ -1,4 +1,5 @@
 from exotic.utils import *
+from unittest.mock import patch
 
 
 class TestRoundToTwo:
@@ -134,3 +135,51 @@ class TestAddSign:
         # coordinate with 6 decimal place precision is ever reached
         assert "-120.000000" != add_sign(-120)
         assert "-120" == add_sign(-120)
+
+
+class TestProcessLatLong:
+    """tests the process_lat_long() function"""
+
+    _ARBITRARY_LONGITUDE = "+152.51"
+    _EXPECTED_LONGITUDE_RESULT = "+152.510000"
+
+    _ARBITRARY_LATITUDE = "+37.04"
+    _EXPECTED_LATITUDE_RESULT = "+37.040000"
+
+    def test_process_lat_long_degree_inputs(self):
+        assert self._EXPECTED_LONGITUDE_RESULT == process_lat_long(self._ARBITRARY_LONGITUDE, "longitude")
+        assert self._EXPECTED_LATITUDE_RESULT == process_lat_long(self._ARBITRARY_LATITUDE, "latitude")
+
+    def test_process_lat_long_dms_inputs(self):
+        assert self._EXPECTED_LONGITUDE_RESULT == process_lat_long("+152:30:36", "longitude")
+        assert self._EXPECTED_LATITUDE_RESULT == process_lat_long("+37:2:24", "latitude")
+
+    @patch("builtins.print")
+    def test_bad_inputs(self, mock_print):
+        result = process_lat_long("foo", "longitude")
+        self._assert_prints_output_and_returns_none(mock_print, result)
+
+    # NOTE: The following two tests might be bugs. Might want to tighten this up a bit
+    def test_when_key_is_not_long_or_lat(self):
+        assert self._EXPECTED_LONGITUDE_RESULT == process_lat_long(self._ARBITRARY_LONGITUDE, "HERP")
+        assert self._EXPECTED_LATITUDE_RESULT == process_lat_long(self._ARBITRARY_LATITUDE, "DERP")
+
+    @patch("builtins.print")
+    def test_process_out_of_range(self, mock_print):
+
+        # When the long and lat are way outside the acceptable values
+        assert "+999.000000" == process_lat_long("+999.0", "longitude")
+        assert "+999.000000" == process_lat_long("+999.0", "latitude")
+
+        # When a plus or minus sign are missing
+        assert "+999.000000" == process_lat_long("999.0", "longitude")
+
+        # When a number without a sign or decimal is passed in
+        mock_print.reset_mock()
+        result = process_lat_long("999", "longitude")
+        self._assert_prints_output_and_returns_none(mock_print, result)
+
+    @staticmethod
+    def _assert_prints_output_and_returns_none(mock_print, result):
+        mock_print.assert_called()
+        assert result is None

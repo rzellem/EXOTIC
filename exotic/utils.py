@@ -101,17 +101,31 @@ def get_val(hdr, ks):
     """
     Pluck the value for a certain key from myriad possible known keys
 
+    See pull request #882 for good details provided by Kalee Tock. Astronomers
+    refer to various pieces of data in non-standard ways. For example, we need
+    to use the latitude of the observation to build a reference frame to fit a
+    light curve.
+
+    Astronomers use different values to refer to latitude. This function gets the
+    desired value by searching through a list of known keys.
+
+    This function can be used to look up the latitude of an observation by
+    passing in the headers of the FITS file as the hdr argument for this function
+    and passing in ["LATITUDE", "LAT", "SITELAT"] as a list of known values via
+    the ks argument.
+
     Parameters
     ----------
     hdr : dict
-        a dictionary of observatory data
+        a dictionary of details about the obervatory originally embedded in the
+        header of the FITS image header.
     ks : list[str]
-        a list of possible keys? PR FIXME: not sure really
+        a list of known values that astronomers use for a piece of information.
 
     Returns
     -------
     str
-        _first_ value of key found in dictionary
+        _first_ match found from the hdr dictionary from the ks list
     """
 
     for key in ks:

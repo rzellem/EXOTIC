@@ -19,16 +19,6 @@ def _capture_input(prompt, **kwargs):
     return input(prompt)
 
 
-def _capture_input_for_tests(prompt, **kwargs):
-    """Fakes capturing user input by having the same signature as
-    _capture_input() but allowing for a test to specify the user's response
-    using the kwarg `user_provided_response`."""
-
-    # NOTE: intentionally does not use kwargs.get in order to introduce some
-    # brittleness, and thus consistency, in testing the `user_input` function
-    return kwargs["user_provided_response"]
-
-
 def user_input(prompt, type_, values=None, input_capture_fx=_capture_input,
                max_tries=1000, **kwargs):
     """

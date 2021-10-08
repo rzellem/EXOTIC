@@ -85,6 +85,15 @@ class TestTypecastCheck:
     def test_uncastable_value(self):
         assert typecast_check(float, "foo") is False
 
+def _capture_input_for_tests(prompt, **kwargs):
+    """Fakes capturing user input by having the same signature as
+    _capture_input() but allowing for a test to specify the user's response
+    using the kwarg `user_provided_response`."""
+
+    # NOTE: intentionally does not use kwargs.get in order to introduce some
+    # brittleness, and thus consistency, in testing the `user_input` function
+    return kwargs["user_provided_response"]
+
 
 class TestUserInput:
     """tests the `user_input()` function"""

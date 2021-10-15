@@ -54,6 +54,36 @@ class TestInitParams:
         assert result.get("foo") is None
 
 
+class TestTypecastCheck:
+    """tests the `typecase_check()` function"""
+
+    @staticmethod
+    def _returns_four_point_oh(val_to_check):
+        assert 4.0 == typecast_check(float, val_to_check)
+
+    def test_checking_for_floats(self):
+        # NOTE: there are two usages (as of 2021-09-20) of the `typecast_check`
+        # function and both check for floats
+
+        # floats return floats
+        self._returns_four_point_oh(4.0)
+
+        # strings that look like floats return floats
+        self._returns_four_point_oh("4.0")
+
+        # ints can be converted to floats
+        self._returns_four_point_oh(4)
+
+        # strings that look like ints can be converted to floats
+        self._returns_four_point_oh("4")
+
+        # really nutty things like 4x10^0 are okay too
+        self._returns_four_point_oh(4e0)
+
+    def test_uncastable_value(self):
+        assert typecast_check(float, "foo") is False
+
+
 class TestRoundToTwo:
     """tests the round_to_2() function"""
 

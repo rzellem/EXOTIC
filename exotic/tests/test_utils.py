@@ -139,6 +139,86 @@ class TestRoundToTwo:
         assert 0.0002 == result
 
 
+class TestGetVal:
+    """tests the get_val() function
+
+    NOTE: this could be changed to a private method. The callers are all
+    internal to this module
+    """
+
+    def test_key_not_lowered(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+        _expected_value = "a hat"
+        hdr = {"LONGITUD": _expected_value}
+
+        assert _expected_value == get_val(hdr, ks)
+
+    def test_lower_key_before_find(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+        _expected_value = "a hat"
+        hdr = {"longitud": _expected_value}
+
+        assert _expected_value == get_val(hdr, ks)
+
+    def test_capitalized_key(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+
+        _expected_value = "a hat"
+        hdr = {"Longitud": _expected_value}
+
+        assert _expected_value == get_val(hdr, ks)
+
+    def test_key_not_found_at_all(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+        _expected_value = "a hat"
+        hdr = {"foo": _expected_value}
+
+        assert get_val(hdr, ks) is None
+
+    # NOTE: an edge case, but maybe we should make the return
+    # more explicit
+    def test_key_in_dict_more_than_once(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+
+        _expected_value = "a hat"
+        hdr = {"LONG": _expected_value,
+               "LONG": "foo" }
+
+        assert _expected_value != get_val(hdr, ks)
+
+
+class TestAddSign:
+    """tests the `add_sign()` function
+
+    NOTE: this could be changed to a private method. The callers are all
+    internal to this module
+    """
+
+    def test_plus_minus_already_present(self):
+        input = "+120"
+        output = "+120"
+        assert output == add_sign(input)
+
+        input = "-120"
+        output = "-120"
+        assert output == add_sign(input)
+
+    def test_adding_plus_to_coordinate(self):
+
+        assert "+120.000000" == add_sign(120)
+
+        # NOTE: may be a bug here where we want to raise awareness that
+        # the coordinate is beyond the coordinate system of planets
+        assert "+820.000000" == add_sign(820)
+
+    def test_adding_minus_to_coordinate(self):
+
+        # NOTE: I don't think the else statement which returns a negative
+        # coordinate with 6 decimal place precision is ever reached
+        assert "-120.000000" != add_sign(-120)
+        assert "-120" == add_sign(-120)
+
+
 class TestProcessLatLong:
     """tests the process_lat_long() function"""
 

@@ -602,19 +602,40 @@ class lc_fitter(object):
 if __name__ == "__main__":
 
     prior = {
-        'rprs': 0.03,                                   # Rp/Rs
-        'ars': 14.25,                                   # a/Rs
-        'per': 3.336817,                                # Period [day]
-        'inc': 87.5,                                    # Inclination [deg]
-        'u0': 1.8, 'u1': -3.3, 'u2': 3.9, 'u3': -1.5,   # limb darkening (nonlinear)
-        'ecc': 0,                                       # Eccentricity
-        'omega': 0,                                     # Arg of periastron
-        'tmid': 0.75,                                   # Time of mid transit [day],
-        'a1': 50,                                     # Airmass coefficients
-        'a2': 0.25
+        'rprs': 0.03,                               # Rp/Rs
+        'ars': 14.25,                               # a/Rs
+        'per': 3.336817,                            # Period [day]
+        'inc': 87.5,                                # Inclination [deg]
+        'u0': 0, 'u1': 0, 'u2': 0, 'u3': 0,         # limb darkening (nonlinear)
+        'ecc': 0,                                   # Eccentricity
+        'omega': 0,                                 # Arg of periastron
+        'tmid': 0.75,                               # Time of mid transit [day],
+        'a1': 50,                                   # Airmass coefficients
+        'a2': 0.25, 
+
+        'teff':5000,
+        'tefferr':50,
+        'met': 0,
+        'meterr': 0,
+        'logg': 3.89, 
+        'loggerr': 0.01
     }
 
-    # TODO example generating LD coefficients
+    # example generating LD coefficients
+    from exotic.exotic import LimbDarkening
+    from ldtk.filters import create_tess
+
+    tessfilter = create_tess()
+
+    ld_obj = LimbDarkening(
+        teff=prior['teff'], teffpos=prior['tefferr'], teffneg=prior['tefferr'],
+        met=prior['met'], metpos=prior['meterr'], metneg=prior['meterr'],
+        logg=prior['logg'], loggpos=prior['loggerr'], loggneg=prior['loggerr'],
+        wl_min=tessfilter.wl.min(), wl_max=tessfilter.wl.max(), filter_type="Clear")
+
+    ld0, ld1, ld2, ld3, filt, wlmin, wlmax = ld_obj.nonlinear_ld()
+
+    prior['u0'],prior['u1'],prior['u2'],prior['u3'] = [ld0[0], ld1[0], ld2[0], ld3[0]]
 
     time = np.linspace(0.65, 0.85, 150)  # [day]
 

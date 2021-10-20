@@ -13,10 +13,9 @@ from bokeh.io import curdoc
 from bokeh.layouts import column, row
 from bokeh.models import ColumnDataSource, Slider, TextInput
 from bokeh.plotting import figure
-from bokeh.models import TextInput, Toggle, FileInput
 
 from exotic.api.elca import transit
-from exotic.exotic import NASAExoplanetArchive
+from exotic.exotic import NASAExoplanetArchive, get_wcs, find_target
 
 # physical constants
 rsun = 6.955e8 #m
@@ -24,37 +23,35 @@ msun = 1.989e30 #kg
 au = 1.496e11 #m
 G = 0.00029591220828559104 # day, AU, Msun
 
-# # load data from file
-# data = json.load(open("sampledata.json", "r"))
-# data['time'] = np.array(data['time'])
+# load data from file
+data = json.load(open("sampledata.json", "r"))
+data['time'] = np.array(data['time'])
 
-# # download priors
-# target = NASAExoplanetArchive(data["name"])
+# download priors
+target = NASAExoplanetArchive(data["name"])
 
-# if target.resolve_name():
-#     planet_name, _, parameters = target.planet_info()
-# else:
-#     raise(Exception(f"can not resolve planet name: {data['name']} in NEA"))
+if target.resolve_name():
+    planet_name, _, parameters = target.planet_info()
+else:
+    raise(Exception(f"can not resolve planet name: {data['name']} in NEA"))
 
-# specify some initial value
 prior = {
-    'rprs': 0.1,                               # Rp/Rs
-    'ars': 14.25,                               # a/Rs
-    'per': 3.336817,                            # Period [day]
-    'inc': 87.5,                                # Inclination [deg]
-    'u0': 0, 'u1': 0, 'u2': 0, 'u3': 0,         # limb darkening (nonlinear)
-    'ecc': 0,                                   # Eccentricity
-    'omega': 0,                                 # Arg of periastron
-    'tmid': 0.5,                               # Time of mid transit [day],
-    'a1': 50,                                   # Airmass coefficients
-    'a2': 0.25, 
+    'rprs':parameters['rprs'],     # Rp/Rs
+    'ars':parameters['aRs'],       # a/Rs
+    'per':parameters['pPer'],      # Period [day]
+    'inc':parameters['inc'],       # Inclination [deg]
+    'u0': 0, 'u1': 0, 'u2': 0, 'u3': 0,  # limb darkening (nonlinear)
+    'ecc': parameters['ecc'],            # Eccentricity
+    'omega': 0,                     # Arg of periastron
+    'tmid':parameters['midT'],      # time of mid transit [day]
 }
 
-data = {'time':np.linspace(0.4,0.6,200)}
-data['flux'] = transit(data['time'], prior)
+print(json.dumps(parameters,indent=4))
+
 
 # generate transit model
-source_transit = ColumnDataSource(data=dict(x=data['time'], y=data['flux']))
+tdata = transit(data['time'], prior)
+source_transit = ColumnDataSource(data=dict(x=data['time'], y=tdata))
 
 # format data for bokeh
 source_noisy = ColumnDataSource(data=dict(x=data['time'], y=data['flux']))
@@ -68,6 +65,7 @@ plot.line('x', 'y', source=source_transit, line_width=3, line_alpha=0.6)
 plot.circle('x', 'y', source=source_noisy, color='black')
 plot.xaxis.axis_label = "Time [day]"
 plot.yaxis.axis_label = "Relative Flux"
+
 
 # Sun + Planet plot
 plot2 = figure(plot_height=400, plot_width=400, x_range=[-2,2], y_range=[-2, 2], title="Exoplanet Transit Simulator")
@@ -93,9 +91,6 @@ tmid = Slider(title="Mid-Transit (Tmid)", value=prior['tmid'], start=min(data['t
 # webtext = urllib.request.urlopen(url).read()
 # newdata = json.loads(webtext)
 
-text_input = TextInput(value="", title="JSON:")
-toggle = Toggle(label="Load", button_type="success")
-
 def update_data(attrname, old, new):
     prior['rprs'] = rprs2.value**0.5
     prior['inc'] = inc.value
@@ -112,8 +107,7 @@ for w in [rprs2, inc, tmid]:
 # TODO set button.on_change to function above
 
 # Set up layouts and add to document
-inputs = column(rprs2, tmid, inc)
-data_inputs = column(text_input, toggle)
+inputs = column(rprs2, tmid, inc) # TODO add text box and button to column
 plots = row(plot, plot2)
-curdoc().add_root(column(data_inputs, plots, inputs, width=800))
+curdoc().add_root(column(plots, inputs, width=800))
 curdoc().title = "Exoplanet Transit"

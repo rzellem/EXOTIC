@@ -37,6 +37,48 @@ def user_input(prompt, type_, values=None):
 
 
 def init_params(comp, dict1, dict2):
+    """
+    Populates dict1 to be used by the reduction program code
+
+
+    Uses comp as a source of acceptable keys to populate. Iterates over the keys
+    in comp and populates dict1 with values from dict2. The values for each of
+    comp's keys can be a string or a tuple. If a comp key has a value that is a
+    string, then dict1 is populated by looking up the value of the key for dict2
+    directly using comps key's value. If a comp key is a tuple then the tuple
+    values are iterated over and dict1 is populated by looking for values in dict2.
+    If both values in comp's tuple are found in dict2 then the last value in the
+    tuple is populated.
+
+    Examples:
+
+    dict1["foo"] is set to 123 when comp = {"foo": "bar"} and dict2 = {"bar": 123}
+
+    dict1["foo"] is set to 123 when comp = {"foo": ("bar", "baz")} and dict2 has
+    a value of 123 where the key is _either_ "bar" or "baz"
+
+    dict1["foo"] is set to 123 when comp = {"foo": ("bar", "baz")} and dict2 has
+    this structure: {"bar": 345, "baz": 123}
+
+    Parameters
+    ----------
+    comp : dict
+        Used to map dictionaries used in the reduction program code to human
+        readable and sensical input provided by humans.
+    dict1 : dict
+        Dictionary to be populated and used by the reduction program
+    dict2 : dict
+        Dictionary provided by other sources like an init file. The keys are more
+        sensical for planetary scientists to provide expected values. In
+        practice, these values are provided predominantly by an init file ?? or
+        an API call for planet_dict ?? FIXME: needs fact checking
+
+    Returns
+    -------
+    dict
+      Populated dict1 with values from dict2
+    """
+
     for key, value in comp.items():
         try:
             if not isinstance(value, tuple):
@@ -53,6 +95,21 @@ def init_params(comp, dict1, dict2):
 
 
 def typecast_check(type_, val):
+    """
+    Casts `val` into `type_`
+
+    Parameters
+    ----------
+    type_ : type
+        type to cast val. ex: float
+    val : any
+
+    Returns
+    -------
+    any
+        value casted to type_. ex 4.0. Returns False if val cannot be casted.
+    """
+
     try:
         return type_(val)
     except (ValueError, TypeError):
@@ -84,7 +141,6 @@ def round_to_2(*args):
         the original number rounded to two non-zero numbers after the decimal place
     """
 
-
     x = args[0]
     if len(args) == 1:
         y = args[0]
@@ -99,6 +155,36 @@ def round_to_2(*args):
 
 # Credit: Kalee Tock
 def get_val(hdr, ks):
+    """
+    Pluck the value for a certain key from myriad possible known keys
+
+    See pull request #882 for good details provided by Kalee Tock. Astronomers
+    refer to various pieces of data in non-standard ways. For example, we need
+    to use the latitude of the observation to build a reference frame to fit a
+    light curve.
+
+    Astronomers use different values to refer to latitude. This function gets the
+    desired value by searching through a list of known keys.
+
+    This function can be used to look up the latitude of an observation by
+    passing in the headers of the FITS file as the hdr argument for this function
+    and passing in ["LATITUDE", "LAT", "SITELAT"] as a list of known values via
+    the ks argument.
+
+    Parameters
+    ----------
+    hdr : dict
+        a dictionary of details about the obervatory originally embedded in the
+        header of the FITS image header.
+    ks : list[str]
+        a list of known values that astronomers use for a piece of information.
+
+    Returns
+    -------
+    str
+        _first_ match found from the hdr dictionary from the ks list
+    """
+
     for key in ks:
         if key in hdr.keys():
             return hdr[key]
@@ -112,6 +198,21 @@ def get_val(hdr, ks):
 
 # Credit: Kalee Tock
 def add_sign(var):
+    """
+    Adds a + or - to the coordinate if one isn't there already
+
+    Parameters
+    ----------
+    var : str
+        Coordinate, in degrees, of a latitude or longitude
+
+    Returns
+    -------
+    str
+        var as a string if +/- already present. Otherwise it adds a +/- depending
+        on the value of var. Returns precision of six digits after the decimal point
+        if +/- not already present in `var`
+    """
     str_var = str(var)
     m = re.search(r"^[+\-]", str_var)
 

@@ -2,6 +2,88 @@ from exotic.utils import *
 from unittest.mock import patch
 
 
+class TestInitParams:
+    """tests the init_params() function"""
+
+    def test_populate_key(self):
+        comp = {"foo": "This is used to make the init file make sense"}
+        dict1 = {"foo": None}
+        dict2 = {"This is used to make the init file make sense": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert type(result) == dict
+        assert result.get("foo") == 123
+
+    def test_key_error(self):
+        comp = {"foo": "bar"}
+        dict1 = {"herp": None}
+        dict2 = {"derp": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") is None
+        assert result == dict1
+
+    def test_when_val_in_comp_is_tuple(self):
+        # NOTE: Accepts bar or baz as keys in dict2
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"bar": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") == 123
+
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"baz": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") == 123
+
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"bar": 234, "baz": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") == 123
+
+        comp = {"foo": ("bar", "baz")}
+        dict1 = {"foo": None}
+        dict2 = {"herp": 123}
+
+        result = init_params(comp, dict1, dict2)
+        assert result.get("foo") is None
+
+
+class TestTypecastCheck:
+    """tests the `typecase_check()` function"""
+
+    @staticmethod
+    def _returns_four_point_oh(val_to_check):
+        assert 4.0 == typecast_check(float, val_to_check)
+
+    def test_checking_for_floats(self):
+        # NOTE: there are two usages (as of 2021-09-20) of the `typecast_check`
+        # function and both check for floats
+
+        # floats return floats
+        self._returns_four_point_oh(4.0)
+
+        # strings that look like floats return floats
+        self._returns_four_point_oh("4.0")
+
+        # ints can be converted to floats
+        self._returns_four_point_oh(4)
+
+        # strings that look like ints can be converted to floats
+        self._returns_four_point_oh("4")
+
+        # really nutty things like 4x10^0 are okay too
+        self._returns_four_point_oh(4e0)
+
+    def test_uncastable_value(self):
+        assert typecast_check(float, "foo") is False
+
+
 class TestRoundToTwo:
     """tests the round_to_2() function"""
 
@@ -55,6 +137,86 @@ class TestRoundToTwo:
         # not sure if this is an acceptable edge case? 0.00195 may be desired.
         result = round_to_2(0.0001951234)
         assert 0.0002 == result
+
+
+class TestGetVal:
+    """tests the get_val() function
+
+    NOTE: this could be changed to a private method. The callers are all
+    internal to this module
+    """
+
+    def test_key_not_lowered(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+        _expected_value = "a hat"
+        hdr = {"LONGITUD": _expected_value}
+
+        assert _expected_value == get_val(hdr, ks)
+
+    def test_lower_key_before_find(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+        _expected_value = "a hat"
+        hdr = {"longitud": _expected_value}
+
+        assert _expected_value == get_val(hdr, ks)
+
+    def test_capitalized_key(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+
+        _expected_value = "a hat"
+        hdr = {"Longitud": _expected_value}
+
+        assert _expected_value == get_val(hdr, ks)
+
+    def test_key_not_found_at_all(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+        _expected_value = "a hat"
+        hdr = {"foo": _expected_value}
+
+        assert get_val(hdr, ks) is None
+
+    # NOTE: an edge case, but maybe we should make the return
+    # more explicit
+    def test_key_in_dict_more_than_once(self):
+        ks = ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]
+
+        _expected_value = "a hat"
+        hdr = {"LONG": _expected_value,
+               "LONG": "foo" }
+
+        assert _expected_value != get_val(hdr, ks)
+
+
+class TestAddSign:
+    """tests the `add_sign()` function
+
+    NOTE: this could be changed to a private method. The callers are all
+    internal to this module
+    """
+
+    def test_plus_minus_already_present(self):
+        input = "+120"
+        output = "+120"
+        assert output == add_sign(input)
+
+        input = "-120"
+        output = "-120"
+        assert output == add_sign(input)
+
+    def test_adding_plus_to_coordinate(self):
+
+        assert "+120.000000" == add_sign(120)
+
+        # NOTE: may be a bug here where we want to raise awareness that
+        # the coordinate is beyond the coordinate system of planets
+        assert "+820.000000" == add_sign(820)
+
+    def test_adding_minus_to_coordinate(self):
+
+        # NOTE: I don't think the else statement which returns a negative
+        # coordinate with 6 decimal place precision is ever reached
+        assert "-120.000000" != add_sign(-120)
+        assert "-120" == add_sign(-120)
 
 
 class TestProcessLatLong:

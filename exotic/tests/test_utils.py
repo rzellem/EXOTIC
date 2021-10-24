@@ -267,3 +267,115 @@ class TestProcessLatLong:
     def _assert_prints_output_and_returns_none(mock_print, result):
         mock_print.assert_called()
         assert result is None
+
+
+class TestFind(unittest.TestCase):
+    """tests the find() function"""
+
+    def test_whipple_special_case(self):
+
+        hdr = {"OBSERVAT": "Whipple Observatory",
+               "LONG": 4,
+               "LAT": 3}
+
+        # these search keys are copied from the implementation code
+        search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
+        whipple_observatory_longitude = "-110.73"
+        result = find(hdr, search_keys)
+
+        assert result == whipple_observatory_longitude
+
+        # these search keys are copied from the implementation code
+        search_keys = ['LATITUDE', 'LAT', 'SITELAT']
+        whipple_observatory_latitude = "+37.04"
+        result = find(hdr, search_keys)
+
+        assert result == whipple_observatory_latitude
+
+        # these search keys are copied from the implementation code
+        search_keys = ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV']
+        whipple_observatory_height = 2606
+        result = find(hdr, search_keys)
+
+        assert result == whipple_observatory_height
+
+    def test_boyce_observatory(self):
+        """This does not appear to used in the implementation code"""
+
+        hdr = {"OBSERVAT": "NOT Whipple Observatory",
+               "LONG": "-123.45",
+               "LAT": "+34.56"}
+
+        search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
+        result = find(hdr, search_keys, obs="Boyce")
+
+        assert result == "-116.3334"  # this value is hard coded in the function
+
+        search_keys = ['LATITUDE', 'LAT', 'SITELAT']
+        result = find(hdr, search_keys, obs="Boyce")
+
+        assert result == "+32.6135"  # this value is hard coded in the function
+
+    def test_mobs_observatory(self):
+        """This does not appear to used in the implementation code"""
+
+        hdr = {"OBSERVAT": "NOT Whipple Observatory",
+               "LONG": "-123.45",
+               "LAT": "+34.56"}
+
+        search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
+        result = find(hdr, search_keys, obs="MObs")
+
+        assert result == "-110.73"  # this value is hard coded in the function
+
+        search_keys = ['LATITUDE', 'LAT', 'SITELAT']
+        result = find(hdr, search_keys, obs="MObs")
+
+        assert result == "+37.04"  # this value is hard coded in the function
+
+    @patch("exotic.utils.process_lat_long")
+    def test_generic_hdr(self, mock_pll):
+        """This mimics calls by the implementation code"""
+        # NOTE: this test is coupled to the implementation of
+        # exotic.utils.process_lat_long as the result of that function is used
+        # in the return value of this function. That's fine for now but a future
+        # improvement could be made to decouple the two functions
+
+        hdr = {"OBSERVAT": "NOT Whipple Observatory",
+               "LONG": "-123.45",
+               "LAT": "+34.56"}
+
+        # NOTE: the order of these keys matters!
+        search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
+        mock_pll.return_value = hdr["LONG"]
+        result = find(hdr, search_keys)
+
+        mock_pll.assert_called_once()
+        assert result == hdr["LONG"]
+
+        mock_pll.reset_mock()
+        # NOTE: the order of these keys matters!
+        search_keys = ['LATITUDE', 'LAT', 'SITELAT']
+        mock_pll.return_value = hdr["LAT"]
+        result = find(hdr, search_keys)
+        mock_pll.assert_called_once()
+        assert result == hdr["LAT"]
+        # NOTE: actual return value is "+34.560000" but I mocked this call
+
+    @patch("exotic.utils.get_val")
+    def test_ks_zero_not_expected(self, mock_get_val):
+        # NOTE: returns whatever is returned in `val = get_val()`
+
+        hdr = {"OBSERVAT": "NOT Whipple Observatory",
+               "LONG": "-123.45",
+               "LAT": "+34.56"}
+        # NOTE: changed search key order
+        search_keys = ['FOO', 'LONGITUDE', 'SITELONG']
+        get_val_returns = 3
+        mock_get_val.return_value = get_val_returns
+
+        result = find(hdr, search_keys)
+
+        mock_get_val.assert_called_once()
+        assert result == get_val_returns
+        assert type(result) == int

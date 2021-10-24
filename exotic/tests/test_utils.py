@@ -1,3 +1,5 @@
+import unittest
+
 from exotic.utils import *
 from unittest.mock import patch
 

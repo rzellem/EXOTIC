@@ -174,7 +174,7 @@ def get_val(hdr, ks):
     Parameters
     ----------
     hdr : dict
-        a dictionary of details about the obervatory originally embedded in the
+        a dictionary of details about the observatory originally embedded in the
         header of the FITS image header.
     ks : list[str]
         a list of known values that astronomers use for a piece of information.
@@ -267,6 +267,26 @@ def process_lat_long(val, key):
 
 # Credit: Kalee Tock
 def find(hdr, ks, obs=None):
+    """
+    finds stuff
+
+    Parameters
+    ----------
+    hdr : dict
+        a dictionary of details about the observatory originally embedded in the
+        header of the FITS image header.
+    ks : list[str]
+        a list of known values that astronomers use for a piece of information.
+    obs : string
+        A specific observatory. Should be one of 'Boyce' or 'MObs' (no quotes).
+        Other values are ignored.
+
+    Returns
+    -------
+    any
+        Most often returns a string but can return anything. Designed to return
+        the latitude or longitude of an observation as a string.
+    """
     # Special stuff for MObs and Boyce-Astro Observatories
     boyce = {"LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405}
     mobs = {"LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606}

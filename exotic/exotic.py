@@ -1236,7 +1236,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
+        'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0), pDict['aRs'] + 15 * pDict['aRsUnc']],
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
@@ -2024,7 +2024,7 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
-            'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
+            'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0), pDict['aRs'] + 15 * pDict['aRsUnc']],
             'a2': [-3, 3],
         }
 

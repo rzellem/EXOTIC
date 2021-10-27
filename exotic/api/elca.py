@@ -53,7 +53,7 @@ try:
     from ultranest import ReactiveNestedSampler
 except ImportError:
     import dynesty
-    from dynesty import plotting
+    import dynesty.plotting
     from dynesty.utils import resample_equal
     from scipy.stats import gaussian_kde
 try:
@@ -318,9 +318,9 @@ class lc_fitter(object):
         self.phase = get_phase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
         if self.mode == "ns":
-            self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters['a2'], self.errors['a2'],
+            self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters.get('a2',0), self.errors.get('a2',1e-6),
                                                              self.transit, self.airmass, self.data)
-        self.airmass_model = self.parameters['a1'] * np.exp(self.parameters['a2'] * self.airmass)
+        self.airmass_model = self.parameters['a1'] * np.exp(self.parameters.get('a2',0) * self.airmass)
         self.model = self.transit * self.airmass_model
         self.detrended = self.data / self.airmass_model
         self.detrendederr = self.dataerr / self.airmass_model
@@ -399,7 +399,7 @@ class lc_fitter(object):
             dsampler.run_nested(maxcall=1e6)
             self.results = dsampler.results
 
-            tests = [copy.deepcopy(self.prior) for i in range(6)]
+            tests = [copy.deepcopy(self.prior) for i in range(5)]
 
             # Derive kernel density estimate for best fit
             weights = np.exp(self.results.logwt - self.results.logz[-1])
@@ -420,7 +420,7 @@ class lc_fitter(object):
 
                 counts, bins = np.histogram(samples[:, i], bins=100, weights=weights)
                 mi = np.argmax(counts)
-                tests[5][freekeys[i]] = bins[mi] + 0.5 * np.mean(np.diff(bins))
+                tests[4][freekeys[i]] = bins[mi] + 0.5 * np.mean(np.diff(bins))
 
                 # finds median and +- 2sigma, will vary from mode if non-gaussian
                 self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:, i], [0.025, 0.5, 0.975],
@@ -434,14 +434,14 @@ class lc_fitter(object):
 
             for i in range(len(freekeys)):
                 tests[3][freekeys[i]] = samples[mask][bi, i]
-                tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
+                #tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
 
-            # find best fit
+            # find best fit from chi2 minimization
             chis = []
             for i in range(len(tests)):
                 lightcurve = transit(self.time, tests[i])
-                tests[i]['a1'] = mc_a1(tests[i]['a2'], 0, lightcurve, self.airmass, self.data)[0]
-                airmass = tests[i]['a1'] * np.exp(tests[i]['a2'] * self.airmass)
+                tests[i]['a1'] = mc_a1(tests[i].get('a2',0), self.errors.get('a2',1e-6), lightcurve, self.airmass, self.data)[0]
+                airmass = tests[i]['a1'] * np.exp(tests[i].get('a2',0) * self.airmass)
                 residuals = self.data - (lightcurve * airmass)
                 chis.append(np.sum(residuals ** 2))
 
@@ -611,7 +611,7 @@ if __name__ == "__main__":
         'omega': 0,                                 # Arg of periastron
         'tmid': 0.75,                               # Time of mid transit [day],
         'a1': 50,                                   # Airmass coefficients
-        'a2': 0.25, 
+        'a2': 0.,                                   # trend = a1 * np.exp(a2 * airmass)
 
         'teff':5000,
         'tefferr':50,
@@ -642,7 +642,8 @@ if __name__ == "__main__":
     # simulate extinction from airmass
     stime = time-time[0]
     alt = 90 * np.cos(4*stime-np.pi/6)
-    airmass = 1./np.cos(np.deg2rad(90-alt))
+    #airmass = 1./np.cos(np.deg2rad(90-alt))
+    airmass = np.zeros(time.shape[0])
 
     # GENERATE NOISY DATA
     data = transit(time, prior)*prior['a1']*np.exp(prior['a2']*airmass)
@@ -654,7 +655,9 @@ if __name__ == "__main__":
         'rprs': [0, 0.1],
         'tmid': [min(time), max(time)],
         'ars': [13, 15],
-        'a2': [0, 0.3]
+        #'a2': [0, 0.3] # uncomment if you want to fit for airmass
+        # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
+        # and is solved for during the fit
     }
 
     myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds, mode='ns')

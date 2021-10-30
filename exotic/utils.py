@@ -13,14 +13,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def _capture_input(prompt, **kwargs):
-    """Captures user input. Do not use kwargs"""
-
-    return input(prompt)
-
-
-def user_input(prompt, type_, values=None, input_capture_fx=_capture_input,
-               max_tries=1000, **kwargs):
+def user_input(prompt, type_, values=None, max_tries=1000):
     """
     Captures user_input and casts it to the expected type
 
@@ -32,19 +25,14 @@ def user_input(prompt, type_, values=None, input_capture_fx=_capture_input,
     type_ : type
         The type expected to be captured from the user. The user's response is
         attempted to be cast to this type.
-    values : list[type]
+    values : list[type_]
         Acceptable values to receive from the user. If the response from the user
         is valid after the type check BUT the response is not in this list then
         the user will be prompted to try again.
-    input_capture_fx : function
-        A function to capture user input. This should be used just for tests
     max_tries : int
         The maximum number of times the user should be prompted to provide valid
         input. Defaults to 1000. Inserted to the function's signature to aid in
         simplicity of tests.
-    kwargs : dict
-        Added to aid in the simplicity of testing this function. `user_provided_response`
-        is currently the only used kwarg.
 
     Returns
     -------
@@ -61,7 +49,7 @@ def user_input(prompt, type_, values=None, input_capture_fx=_capture_input,
             return None
 
         try:
-            result = type_(input_capture_fx(prompt, **kwargs))
+            result = type_(input(prompt))
             log.debug(f"{prompt}{result}")
         except ValueError:
             tries_count = tries_count + 1

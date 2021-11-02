@@ -1,7 +1,212 @@
-import unittest
-
 from exotic.utils import *
 from unittest.mock import patch
+
+
+class TestUserInput:
+    """tests the `user_input()` function"""
+
+    @patch("builtins.print", autospec=True)
+    @patch("builtins.input", autospec=True)
+    def test_max_retries_exceeded(self, mock_input, mock_print):
+        """
+        added in order to get the `while True` to expire and make the function
+        testable
+        """
+
+        # NOTE: foo is not in the accepted `values` arg
+        user_provided_input = "foo"
+        max_retry_count = 4
+        mock_input.return_value = user_provided_input
+
+        result = user_input("Enter a y or n",
+                            type_=str,
+                            values=["y", "n"],
+                            max_tries=max_retry_count)
+
+        # NOTE: n+1. n = number or retries allows, +1 to message the user
+        # that the max retries have expired
+        assert mock_input.call_count == max_retry_count
+        assert mock_print.call_count == (max_retry_count + 1)
+        assert result is None
+
+    @patch("builtins.print", autospec=True)
+    @patch("builtins.input", autospec=True)
+    def test_yes_no_responses(self, mock_input, mock_print):
+        """NOTE: used in various places in the code. Not arbitrary"""
+
+        user_provided_input = "y"
+        mock_input.return_value = user_provided_input
+        assert user_provided_input == user_input("Enter a y or n",
+                                                 type_=str,
+                                                 values=["y", "n"],
+                                                 max_tries=1)
+
+        # NOTE: foo is not in the accepted `values` arg
+        user_provided_input = "foo"
+        mock_input.reset_mock()
+        mock_input.return_value = user_provided_input
+        result = user_input("Enter a y or n",
+                            type_=str,
+                            values=["y", "n"],
+                            max_tries=1)
+
+        assert result is None
+
+        acceptable_values = ["foo", "bar"]
+        mock_input.reset_mock()
+        mock_input.return_value = user_provided_input
+        result = user_input("More abstractly, provide an acceptable value",
+                            type_=str,
+                            values=acceptable_values,
+                            max_tries=1)
+
+        assert result == user_provided_input
+
+    @patch("builtins.print", autospec=True)
+    @patch("builtins.input", autospec=True)
+    def test_when_floats_are_expected(self, mock_input, mock_print):
+        """
+        Test _not_ ints and _not_ strs (special cases in the function under test)
+        Commonly used to ask for floats
+        """
+
+        # golden path case:
+        user_provided_input = 3.14
+        mock_input.return_value = user_provided_input
+        result = user_input("More floaty now, provide an acceptable value",
+                            type_=float,
+                            max_tries=1)
+
+        mock_print.assert_not_called()
+        assert result == user_provided_input
+
+        user_provided_input = 3  # int
+        expected_result = 3.0  # float
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        mock_input.return_value = user_provided_input
+        result = user_input("More maddening, provide something that can be cast",
+                            type_=float,
+                            max_tries=1)
+
+        mock_print.assert_not_called()
+        assert 3 == 3.0  # this passes. That's kind of annoying b/c lhs is an int
+        assert type(result) == float
+        assert result == expected_result
+
+        # NOTE: raises a value error
+        user_provided_input = "foo"
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        mock_input.return_value = user_provided_input
+        result = user_input("More maddening, provide something that can be cast",
+                            type_=float,
+                            max_tries=1)
+
+        assert 2 == mock_print.call_count  # called once for invalid + max try expiry
+        assert result is None
+
+    @patch("builtins.print", autospec=True)
+    @patch("builtins.input", autospec=True)
+    def test_when_int_is_expected(self, mock_input, mock_print):
+        user_provided_input = 123
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            max_tries=1)
+
+        mock_print.assert_not_called()
+        assert result == user_provided_input
+
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        allowed_values = [123, 234]
+        user_provided_input = allowed_values[0]
+        mock_input.return_value = user_provided_input
+
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            values=allowed_values,
+                            max_tries=1)
+
+        mock_print.assert_not_called()
+        assert result == user_provided_input
+
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        user_provided_input = 456  # not allowed
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            values=allowed_values,
+                            max_tries=1)
+
+        assert 2 == mock_print.call_count  # called once for invalid + max try expiry
+        assert result is None
+
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        user_provided_input = "foo"  # can't be cast to an int
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me an int, any int",
+                            type_=int,
+                            max_tries=1)
+
+        assert 2 == mock_print.call_count # called once for invalid + max try expiry
+        assert result is None
+
+    @patch("builtins.print", autospec=True)
+    @patch("builtins.input", autospec=True)
+    def test_when_str_is_expected(self, mock_input, mock_print):
+
+        allowed_values = ["foo", "bar"]
+
+        user_provided_input = allowed_values[0]
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            values=allowed_values,
+                            max_tries=1)
+
+        mock_print.assert_not_called()
+        assert result == user_provided_input
+
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        user_provided_input = "not allowed!"
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            values=allowed_values,
+                            max_tries=1)
+
+        assert 2 == mock_print.call_count
+        assert result is None
+
+        # # with spaces and weird capitalization
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        user_provided_input = " FoO     "
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me a str, any str",
+                            type_=str,
+                            values=allowed_values,
+                            max_tries=1)
+
+        # this is used in the function. Pretty brittle test
+        mock_print.assert_not_called()
+        assert result == user_provided_input.lower().strip()
+
+        mock_input.reset_mock()
+        mock_print.reset_mock()
+        user_provided_input = "@llowed!"
+        mock_input.return_value = user_provided_input
+        result = user_input("Give me a str with non alpha-nums, any str",
+                            type_=str,
+                            max_tries=1)
+
+        mock_print.assert_not_called()
+        assert result == user_provided_input
 
 
 class TestInitParams:
@@ -269,7 +474,7 @@ class TestProcessLatLong:
         assert result is None
 
 
-class TestFind(unittest.TestCase):
+class TestFind:
     """tests the find() function"""
 
     def test_whipple_special_case(self):

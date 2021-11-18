@@ -38,7 +38,7 @@
 # ########################################################################### #
 # Exoplanet light curve analysis
 #
-# Fit a time series of exoplanet transit data with a light curve model.
+# Fit an exoplanet transit model to time series data.
 # ########################################################################### #
 
 import copy

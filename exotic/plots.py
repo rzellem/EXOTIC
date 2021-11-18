@@ -67,9 +67,9 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             ref_circle = plt.Circle((x_ref, y_ref), aper, color='r', fill=False, ls='-.', label='Comp')
             ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color='r', fill=False, ls='--', lw=.5)
         med_img = median_filter(image, (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
-        norm = ImageNormalize(image, interval=ZScaleInterval(), stretch=stretch)
-        plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None,
-                   vmin=np.nanpercentile(med_img, 5), vmax=np.nanpercentile(med_img, 99))
+        norm = ImageNormalize(image, interval=ZScaleInterval(), stretch=stretch, vmin=np.nanpercentile(med_img, 5),
+                              vmax=np.nanpercentile(med_img, 99))
+        plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
         plt.plot(x_targ, y_targ, marker='+', color='lime')
         ax.add_artist(target_circle)
         ax.add_artist(target_circle_sky)

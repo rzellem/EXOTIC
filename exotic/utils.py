@@ -13,22 +13,59 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def user_input(prompt, type_, values=None):
+def user_input(prompt, type_, values=None, max_tries=1000):
+    """
+    Captures user_input and casts it to the expected type
+
+
+    Parameters
+    ----------
+    prompt : str
+        A message shown to the user to get a desired answer in the right type
+    type_ : type
+        The type expected to be captured from the user. The user's response is
+        attempted to be cast to this type.
+    values : list[type_]
+        Acceptable values to receive from the user. If the response from the user
+        is valid after the type check BUT the response is not in this list then
+        the user will be prompted to try again.
+    max_tries : int
+        The maximum number of times the user should be prompted to provide valid
+        input. Defaults to 1000. Inserted to the function's signature to aid in
+        simplicity of tests.
+
+    Returns
+    -------
+    any
+        The user's response cast to the type provided by the `type_` argument to
+        the function.
+    """
+
+    tries_count = 0
+
     while True:
+        if tries_count >= max_tries:
+            print("You have exceeded the maximum number of retries")
+            return None
+
         try:
             result = type_(input(prompt))
             log.debug(f"{prompt}{result}")
         except ValueError:
+            tries_count = tries_count + 1
             print("Sorry, not a valid datatype.")
             continue
+
         if type_ == str and values is not None:
             result = result.lower().strip()
             if result not in values:
+                tries_count = tries_count + 1
                 print("Sorry, your response was not valid.")
             else:
                 return result
         elif type_ == int and values is not None:
             if result not in values:
+                tries_count = tries_count + 1
                 print("Sorry, your response was not valid.")
             else:
                 return result

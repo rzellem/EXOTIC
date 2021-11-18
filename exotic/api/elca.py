@@ -38,8 +38,7 @@
 # ########################################################################### #
 # Exoplanet light curve analysis
 #
-# Authors: Kyle Pearson, Marlee Smith, Rob Zellem
-# Supplemental Code: Gael Roudier and Jason Eastman
+# Fit a time series of exoplanet transit data with a light curve model.
 # ########################################################################### #
 
 import copy
@@ -47,8 +46,8 @@ from numba import njit
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
-# from scipy.ndimage import gaussian_filter as norm_kde
 from scipy.signal import savgol_filter
+from scipy import spatial
 try:
     from ultranest import ReactiveNestedSampler
 except ImportError:
@@ -61,171 +60,37 @@ try:
 except:
     from .plotting import corner
 
+from pylightcurve.models.exoplanet_lc import transit as pytransit
 
-def tldlc(z, rprs, g1=0, g2=0, g3=0, g4=0, nint=int(2**3)):
-    """
-    G. ROUDIER: Light curve model
-    """
-    ldlc = np.zeros(z.size)
-    xin = z.copy() - rprs
-    xin[xin < 0e0] = 0e0
-    xout = z.copy() + rprs
-    xout[xout > 1e0] = 1e0
-    select = xin > 1e0
-    if True in select:
-        ldlc[select] = 1e0
-    xint = np.linspace(1e0, 0e0, nint)
-    znot = z.copy()[~select]
-    xinnot = np.arccos(xin[~select])
-    xoutnot = np.arccos(xout[~select])
-    xrs = np.array([xint]).T*(xinnot - xoutnot) + xoutnot
-    xrs = np.cos(xrs)
-    diffxrs = np.diff(xrs, axis=0)
-    extxrs = np.zeros((xrs.shape[0]+1, xrs.shape[1]))
-    extxrs[1:-1, :] = xrs[1:, :] - diffxrs/2.
-    extxrs[0, :] = xrs[0, :] - diffxrs[0]/2.
-    extxrs[-1, :] = xrs[-1, :] + diffxrs[-1]/2.
-    occulted = vecoccs(znot, extxrs, rprs)
-    diffocc = np.diff(occulted, axis=0)
-    si = vecistar(xrs, g1, g2, g3, g4)
-    drop = np.sum(diffocc*si, axis=0)
-    inldlc = 1. - drop
-    ldlc[~select] = np.array(inldlc)
-    return ldlc
+def weightedflux(flux,gw,nearest):
+    return np.sum(flux[nearest]*gw,axis=-1)
 
-
-def vecistar(xrs, g1, g2, g3, g4):
-    """
-    G. ROUDIER: Stellar surface extinction model
-    """
-    ldnorm = (-g1/10e0 - g2/6e0 - 3e0*g3/14e0 - g4/4e0 + 5e-1)*2e0*np.pi
-    select = xrs < 1e0
-    mu = np.zeros(xrs.shape)
-    mu[select] = (1e0 - xrs[select]**2)**(1e0/4e0)
-    s1 = g1*(1e0 - mu)
-    s2 = g2*(1e0 - mu**2)
-    s3 = g3*(1e0 - mu**3)
-    s4 = g4*(1e0 - mu**4)
-    outld = (1e0 - (s1+s2+s3+s4))/ldnorm
-    return outld
-
-
-def vecoccs(z, xrs, rprs):
-    """
-    G. ROUDIER: Stellar surface occulation model
-    """
-    out = np.zeros(xrs.shape)
-    vecxrs = xrs.copy()
-    selx = vecxrs > 0e0
-    veczsel = np.array([z.copy()]*xrs.shape[0])
-    veczsel[veczsel < 0e0] = 0e0
-    select1 = (vecxrs <= rprs - veczsel) & selx
-    select2 = (vecxrs >= rprs + veczsel) & selx
-    select = (~select1) & (~select2) & selx
-    zzero = veczsel == 0e0
-    if True in select1 & zzero:
-        out[select1 & zzero] = np.pi*(np.square(vecxrs[select1 & zzero]))
-        pass
-    if True in select2 & zzero:
-        out[select2 & zzero] = np.pi*(rprs**2)
-    if True in select & zzero:
-        out[select & zzero] = np.pi*(rprs**2)
-    if True in select1 & ~zzero:
-        out[select1 & ~zzero] = np.pi*(np.square(vecxrs[select1 & ~zzero]))
-        pass
-    if True in select2:
-        out[select2 & ~zzero] = np.pi*(rprs**2)
-    if True in select & ~zzero:
-        redxrs = vecxrs[select & ~zzero]
-        redz = veczsel[select & ~zzero]
-        s1 = (np.square(redz) + np.square(redxrs) - rprs**2)/(2e0*redz*redxrs)
-        s1[s1 > 1e0] = 1e0
-        s2 = (np.square(redz) + rprs**2 - np.square(redxrs))/(2e0*redz*(rprs+0.0001))
-        s2[s2 > 1e0] = 1e0
-        fs3 = -redz + redxrs + rprs
-        ss3 = redz + redxrs - rprs
-        ts3 = redz - redxrs + rprs
-        os3 = redz + redxrs + rprs
-        s3 = fs3*ss3*ts3*os3
-        zselect = s3 < 0e0
-        if True in zselect:
-            s3[zselect] = 0e0
-        out[select & ~zzero] = (np.square(redxrs)*np.arccos(s1) +
-                                (rprs**2)*np.arccos(s2) - (5e-1)*np.sqrt(s3))
-        pass
-    return out
-
-
-@njit(cache=True)
-def time2z(time, ipct, tknot, sma, orbperiod, ecc, tperi=None, epsilon=1e-5):
-    """
-    G. ROUDIER: Time samples in [Days] to separation in [R*]
-    """
-    tperii = 0
-    if tperi is not None:
-        ft0 = (tperi - tknot) % orbperiod
-        ft0 /= orbperiod
-        if ft0 > 0.5:
-            ft0 += -1e0
-        M0 = 2e0*np.pi*ft0
-        E0 = solveme(M0, ecc, epsilon)
-        realf = np.sqrt(1e0 - ecc)*np.cos(E0/2e0)
-        imagf = np.sqrt(1e0 + ecc)*np.sin(E0/2e0)
-        w = np.angle(np.complex(realf, imagf))
-        if abs(ft0) < epsilon:
-            w = np.pi/2e0
-            tperii = tknot
-            pass
-        pass
-    else:
-        w = np.pi/2e0
-        tperii = tknot
-        pass
-
-    ft = (time - tperii) % orbperiod
-    ft /= orbperiod
-    sft = np.copy(ft)
-    sft[(sft > 0.5)] += -1e0
-    M = 2e0*np.pi*ft
-    E = solveme(M, ecc, epsilon)
-    realf = np.sqrt(1. - ecc)*np.cos(E/2e0)
-    imagf = np.sqrt(1. + ecc)*np.sin(E/2e0)
-    st = np.vstack((realf, imagf))
-    f = np.array([2e0 * np.angle(np.complex(st[0][i], st[1][i])) for i in range(len(imagf))])
-    r = sma*(1e0 - ecc**2)/(1e0 + ecc*np.cos(f))
-    z = r*np.sqrt(1e0**2 - (np.sin(w+f)**2)*(np.sin(ipct*np.pi/180e0))**2)
-    z[sft < 0] *= -1e0
-    return z, sft
-
-
-@njit(cache=True)
-def solveme(M, e, eps):
-    """
-    G. ROUDIER: Newton Raphson solver for true anomaly
-    M is a numpy array
-    """
-    E = M.copy()  # numba only allows copy() with no arguments
-    for i in np.arange(M.shape[0]):
-        while abs(E[i] - e*np.sin(E[i]) - M[i]) > eps:
-            num = E[i] - e*np.sin(E[i]) - M[i]
-            den = 1. - e*np.cos(E[i])
-            E[i] = E[i] - num/den
-            pass
-        pass
-    return E
-
+def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):
+    Xm = (X - np.median(X,0))*w
+    kdtree = spatial.cKDTree(Xm*feature_scale)
+    nearest = np.zeros((X.shape[0],neighbors))
+    gw = np.zeros((X.shape[0],neighbors),dtype=float)
+    for point in range(X.shape[0]):
+        ind = kdtree.query(kdtree.data[point],neighbors+1)[1][1:]
+        dX = Xm[ind] - Xm[point]
+        Xstd = np.std(dX,0)
+        gX = np.exp(-dX**2/(2*Xstd**2))
+        gwX = np.product(gX,1)
+        gw[point,:] = gwX/gwX.sum()
+        nearest[point,:] = ind
+    gw[np.isnan(gw)] = 0.01
+    return gw, nearest.astype(int)
 
 def transit(times, values):
-    sep, phase = time2z(times, values['inc'], values['tmid'], values['ars'], values['per'], values['ecc'])
-    model = tldlc(abs(sep), values['rprs'], values['u0'], values['u1'], values['u2'], values['u3'])
+    model = pytransit([values['u0'], values['u1'], values['u2'], values['u3']], 
+                    values['rprs'], values['per'], values['ars'], 
+                    values['ecc'], values['inc'], values['omega'],
+                    values['tmid'], times, method='claret', precision=3)
     return model
-
 
 def get_phase(times, per, tmid):
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
-
-# @njit(fastmath=True)
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
     model = transit*np.exp(np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass)
@@ -241,7 +106,10 @@ def round_to_2(*args):
     if np.floor(y) >= 1.:
         roundval = 2
     else:
-        roundval = -int(np.floor(np.log10(abs(y)))) + 1
+        try:
+            roundval = -int(np.floor(np.log10(abs(y)))) + 1
+        except:
+            roundval = 1
     return round(x, roundval)
 
 # average data into bins of dt from start to finish
@@ -278,7 +146,7 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, mode='ns', verbose=True):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -288,6 +156,7 @@ class lc_fitter(object):
         self.max_ncalls = 2e5
         self.verbose = verbose
         self.mode = mode
+        self.neighbors = neighbors
         if self.mode == "lm":
             self.fit_LM()
         elif self.mode == "ns":
@@ -297,7 +166,21 @@ class lc_fitter(object):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
 
-        def lc2min(pars):
+        # trim data around predicted transit/eclipse time
+        if np.ndim(self.airmass) == 2:
+            print(f'Computing nearest neighbors and gaussian weights for {len(self.time)} npts...')
+            self.gw, self.nearest = gaussian_weights(self.airmass, neighbors=self.neighbors)
+
+        def lc2min_nneighbor(pars):
+            for i in range(len(pars)):
+                self.prior[freekeys[i]] = pars[i]
+            lightcurve = transit(self.time, self.prior)
+            detrended = self.data/lightcurve
+            wf = weightedflux(detrended, self.gw, self.nearest)
+            model = lightcurve*wf
+            return ((self.data-model)/self.dataerr)**2
+
+        def lc2min_airmass(pars):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
@@ -305,8 +188,12 @@ class lc_fitter(object):
             return ((self.data-model)/self.dataerr)**2
 
         try:
-            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys],
-                                bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
+            if np.ndim(self.airmass) == 2:
+                res = least_squares(lc2min_nneighbor, x0=[self.prior[k] for k in freekeys],
+                                    bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
+            else:
+                res = least_squares(lc2min_airmass, x0=[self.prior[k] for k in freekeys],
+                                    bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
         except Exception as e:
             print(f"{e} \nbounded light curve fitting failed...check priors "
                   "(e.g. estimated mid-transit time + orbital period)")
@@ -316,7 +203,13 @@ class lc_fitter(object):
                     print(f"bound: [{boundarray[i, 0]}, {boundarray[i, 1]}] prior: {self.prior[k]}")
 
             print("removing bounds and trying again...")
-            res = least_squares(lc2min, x0=[self.prior[k] for k in freekeys], method='lm', jac='3-point', loss='linear')
+
+            if np.ndim(self.airmass) == 2:
+                res = least_squares(lc2min_nneighbor, x0=[self.prior[k] for k in freekeys],
+                                     method='lm', jac='3-point', loss='linear')
+            else:
+                res = least_squares(lc2min_airmass, x0=[self.prior[k] for k in freekeys],
+                                     method='lm', jac='3-point', loss='linear')
 
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
@@ -333,10 +226,19 @@ class lc_fitter(object):
         if self.mode == "ns":
             self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters.get('a2',0), self.errors.get('a2',1e-6),
                                                              self.transit, self.airmass, self.data)
-        self.airmass_model = self.parameters['a1'] * np.exp(self.parameters.get('a2',0) * self.airmass)
-        self.model = self.transit * self.airmass_model
-        self.detrended = self.data / self.airmass_model
-        self.detrendederr = self.dataerr / self.airmass_model
+
+        if np.ndim(self.airmass) == 2:
+            detrended = self.data/self.transit
+            self.wf = weightedflux(detrended, self.gw, self.nearest)
+            self.model = self.transit*self.wf
+            self.detrended = self.data / self.wf
+            self.detrendederr = self.dataerr / self.wf
+        else:
+            self.airmass_model = self.parameters['a1'] * np.exp(self.parameters.get('a2',0) * self.airmass)
+            self.model = self.transit * self.airmass_model
+            self.detrended = self.data / self.airmass_model
+            self.detrendederr = self.dataerr / self.airmass_model
+        
         self.residuals = self.data - self.model
         self.chi2 = np.sum(self.residuals ** 2 / self.dataerr ** 2)
         self.bic = len(self.bounds) * np.log(len(self.time)) - 2 * np.log(self.chi2)
@@ -391,7 +293,6 @@ class lc_fitter(object):
 
         try:
             self.ns_type = 'ultranest'
-            # TODO vectorize loglike
             test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
             self.results = test.run(max_ncalls=int(self.max_ncalls))
 
@@ -618,10 +519,10 @@ if __name__ == "__main__":
         'rprs': 0.02,                               # Rp/Rs
         'ars': 14.25,                               # a/Rs
         'per': 3.33,                                # Period [day]
-        'inc': 87.5,                                # Inclination [deg]
+        'inc': 88.5,                                # Inclination [deg]
         'u0': 0, 'u1': 0, 'u2': 0, 'u3': 0,         # limb darkening (nonlinear)
-        'ecc': 0,                                   # Eccentricity
-        'omega': 0,                                 # Arg of periastron
+        'ecc': 0.5,                                   # Eccentricity
+        'omega': 120,                                 # Arg of periastron
         'tmid': 0.75,                               # Time of mid transit [day],
         'a1': 50,                                   # Airmass coefficients
         'a2': 0.,                                   # trend = a1 * np.exp(a2 * airmass)
@@ -650,7 +551,7 @@ if __name__ == "__main__":
 
     prior['u0'],prior['u1'],prior['u2'],prior['u3'] = [ld0[0], ld1[0], ld2[0], ld3[0]]
 
-    time = np.linspace(0.65, 0.85, 150)  # [day]
+    time = np.linspace(0.7, 0.8, 1000)  # [day]
 
     # simulate extinction from airmass
     stime = time-time[0]
@@ -666,7 +567,7 @@ if __name__ == "__main__":
     # add bounds for free parameters only
     mybounds = {
         'rprs': [0, 0.1],
-        'tmid': [min(time), max(time)],
+        'tmid': [prior['tmid']-0.01, prior['tmid']+0.01],
         'ars': [13, 15],
         #'a2': [0, 0.3] # uncomment if you want to fit for airmass
         # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)

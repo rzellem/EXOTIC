@@ -166,6 +166,7 @@ class Inputs:
             'inc': 'Orbital Inclination (deg)',
             'incUnc': ('Orbital Inclination (deg) Uncertainty', 'Orbital Inclination (deg) Uncertainity'),
             'ecc': 'Orbital Eccentricity (0 if null)', 'teff': 'Star Effective Temperature (K)',
+            'omega': 'Argument of Periastron (deg)',
             'teffUncPos': 'Star Effective Temperature (+) Uncertainty',
             'teffUncNeg': 'Star Effective Temperature (-) Uncertainty',
             'met': 'Star Metallicity ([FE/H])', 'metUncPos': 'Star Metallicity (+) Uncertainty',

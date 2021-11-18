@@ -62,6 +62,7 @@
             "Orbital Inclination (deg)": 88.98,
             "Orbital Inclination (deg) Uncertainty": 0.7602631123499285,
             "Orbital Eccentricity (0 if null)": 0.159,
+            "Argument of Periastron (deg)": 50,
             "Star Effective Temperature (K)": 6001.0,
             "Star Effective Temperature (+) Uncertainty": 88.0,
             "Star Effective Temperature (-) Uncertainty": -88.0,

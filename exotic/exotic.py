@@ -281,7 +281,7 @@ def fluxConvert(fluxList, errorList, fluxFormat):
     # If units already in flux, do nothing, perform appropriate conversions to flux otherwise
     if fluxFormat == 'magnitude':
         convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
-        convertedNegativeErrors = 10. ** ((-1. * (fluxList - errofrList)) / 2.5)
+        convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
         fluxList = 10. ** ((-1. * fluxList) / 2.5)
     elif fluxFormat == 'millimagnitude':
         convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)

@@ -96,6 +96,7 @@ class NASAExoplanetArchive:
                 "Orbital Inclination (deg)": self.pl_dict['inc'],
                 "Orbital Inclination (deg) Uncertainty": self.pl_dict['incUnc'],
                 "Orbital Eccentricity (0 if null)": self.pl_dict['ecc'],
+                "Argument of Periastron (deg)": self.pl_dict['omega'],
                 "Star Effective Temperature (K)": self.pl_dict['teff'],
                 "Star Effective Temperature (+) Uncertainty": self.pl_dict['teffUncPos'],
                 "Star Effective Temperature (-) Uncertainty": self.pl_dict['teffUncNeg'],
@@ -325,7 +326,7 @@ class NASAExoplanetArchive:
             'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
             'inc': data['pl_orbincl'],
             'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
-
+            'omega': data.get('pl_orblper', 0),
             'ecc': data.get('pl_orbeccen', 0),
             'teff': data['st_teff'],
             'teffUncPos': data['st_tefferr1'],

@@ -1213,7 +1213,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         'inc': pDict['inc'],  # Inclination [deg]
         'u0': ld[0], 'u1': ld[1], 'u2': ld[2], 'u3': ld[3],  # limb darkening (nonlinear)
         'ecc': pDict['ecc'],  # Eccentricity
-        'omega': 0,  # Arg of periastron
+        'omega': pDict['omega'],  # Arg of periastron
         'tmid': pDict['midT'],  # time of mid transit [day]
         'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
         'a2': 0,  # Flux lower bound
@@ -1236,7 +1236,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     mybounds = {
         'rprs': [0, pDict['rprs'] * 1.25],
         'tmid': [lower, upper],
-        'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
+        'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0.), pDict['aRs'] + 15 * pDict['aRsUnc']],
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
@@ -2005,7 +2005,7 @@ def main():
             'inc': pDict['inc'],  # Inclination [deg]
             'u0': ld0[0], 'u1': ld1[0], 'u2': ld2[0], 'u3': ld3[0],  # limb darkening (nonlinear)
             'ecc': pDict['ecc'],  # Eccentricity
-            'omega': 0,  # Arg of periastron
+            'omega': pDict['omega'],  # Arg of periastron
             'tmid': pDict['midT'],  # time of mid transit [day]
             'a2': 0,  # Flux lower bound
         }
@@ -2024,7 +2024,7 @@ def main():
         mybounds = {
             'rprs': [0, pDict['rprs'] * 1.25],
             'tmid': [lower, upper],
-            'ars': [pDict['aRs'] - 15 * pDict['aRsUnc'], pDict['aRs'] + 15 * pDict['aRsUnc']],
+            'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0.), pDict['aRs'] + 15 * pDict['aRsUnc']],
             'a2': [-3, 3],
         }
 
@@ -2116,6 +2116,11 @@ def main():
 
         log_info("\n************************")
         log_info("End of Reduction Process")
+        log_info("************************")
+
+        log_info("\n\n************************")
+        log_info("EXOTIC has successfully run!!!")
+        log_info("It is now safe to close this window.")
         log_info("************************")
 
         log.debug("Stopped ...")

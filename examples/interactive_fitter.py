@@ -111,4 +111,3 @@ inputs = column(rprs2, tmid, inc) # TODO add text box and button to column
 plots = row(plot, plot2)
 curdoc().add_root(column(plots, inputs, width=800))
 curdoc().title = "Exoplanet Transit"
-

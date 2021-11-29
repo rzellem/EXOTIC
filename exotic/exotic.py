@@ -2118,6 +2118,11 @@ def main():
         log_info("End of Reduction Process")
         log_info("************************")
 
+        log_info("\n\n************************")
+        log_info("EXOTIC has successfully run!!!")
+        log_info("It is now safe to close this window.")
+        log_info("************************")
+
         log.debug("Stopped ...")
 
 

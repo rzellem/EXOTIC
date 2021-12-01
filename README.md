@@ -13,6 +13,9 @@ The EXOplanet Transit Interpretation Code relies upon the [transit method](https
 
 The objective of this pipeline is to help you reduce your images of your transiting exoplanet into a lightcurve, and fit a model to your data to extract planetary information that is crucial to increasing the efficiency of larger observational platforms, and futhering our astronomical knowledge.
 
+## New Users
+Below are the instructions for installing and running EXOTIC for the first time. However, if you are a new user, we recommend you follow the "How to Run EXOTIC Locally on your Computer using the Sample Data" tutorial, which includes detailed installation instructions, on our website under ["How to Analyze Your Exoplanet Observations"](https://exoplanets.nasa.gov/exoplanet-watch/how-to-contribute/how-to-reduce-your-data/).
+
 ## Installation and Running
 
 EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer. You can also use EXOTIC via the free Google Colab, which features cloud computing, many helpful plotting functions, and a simplified installation. However, if you are a user with many images or large images, we recommend running EXOTIC locally on your own computer.

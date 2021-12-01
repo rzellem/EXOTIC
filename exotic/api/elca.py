@@ -383,7 +383,7 @@ class lc_fitter(object):
             str(round_to_2(rprs2err))
         )
         
-        lclabel2 = r"$T_{\textit{mid}}$ = %s $\pm$ %s BJD$_{\textit{TDB}}$" %(
+        lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" %(
             str(round_to_2(self.parameters['tmid'], self.errors.get('tmid',0))),
             str(round_to_2(self.errors.get('tmid',0)))
         )

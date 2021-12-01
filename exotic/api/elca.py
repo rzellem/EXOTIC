@@ -402,7 +402,7 @@ class lc_fitter(object):
             si = np.argsort(self.phase)
             bt2, br2, _ = time_bin(self.phase[si]*self.parameters['per'], self.residuals[si]/np.median(self.data)*1e2, bin_dt)
             axs[1].plot(self.phase, self.residuals/np.median(self.data)*1e2, 'k.', alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format( np.std(self.residuals/np.median(self.data)*1e2)))
-            axs[1].plot(bt2/self.parameters['per'],br2,'bs',alpha=1,zorder=2,label=r'$\sigma$ = {:.2f} %'.format(np.std(br2)))
+            axs[1].plot(bt2/self.parameters['per'],br2,'bs',alpha=1,zorder=2)
             axs[1].set_xlim([min(self.phase), max(self.phase)])
             axs[1].set_xlabel("Phase", fontsize=14)
 

@@ -1051,6 +1051,14 @@ def main():
             ecc_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
+            # "Argument of Periastron (deg)": 50,
+            omega_label = tk.Label(root, text="Argument of Periastron (degrees)", justify=tk.LEFT)
+            omega_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            omega_entry.insert(tk.END, "0.")
+            omega_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            omega_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
             #         "Star Effective Temperature (K)": 6001.0,
             Teff_label = tk.Label(root, text="Star Effective Temperature (K)", justify=tk.LEFT)
             Teff_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
@@ -1141,6 +1149,7 @@ def main():
                 input_data['inc'] = inc_entry.get()
                 input_data['incUnc'] = incerr_entry.get()
                 input_data['ecc'] = ecc_entry.get()
+                input_data['omega'] = omega_entry.get()
                 input_data['teff'] = Teff_entry.get()
                 input_data['teffUncPos'] = Tefferrpos_entry.get()
                 input_data['teffUncNeg'] = Tefferrneg_entry.get()
@@ -1451,6 +1460,7 @@ def main():
                     "Orbital Inclination (deg)": float(input_data['inc']),
                     "Orbital Inclination (deg) Uncertainty": float(input_data['incUnc']),
                     "Orbital Eccentricity (0 if null)": float(input_data['ecc']),
+                    "Argument of Periastron (deg)": float(input_data['omega']),
                     "Star Effective Temperature (K)": float(input_data['teff']),
                     "Star Effective Temperature (+) Uncertainty": float(input_data['teffUncPos']),
                     "Star Effective Temperature (-) Uncertainty": float(input_data['teffUncNeg']),

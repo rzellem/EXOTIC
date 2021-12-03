@@ -21,7 +21,7 @@ python_dateutil~=2.8
 pyvo~=1.1
 requests~=2.26
 scipy~=1.7
-scikit-image~=0.18
+scikit-image~=0.19
 tenacity~=8.0
 ultranest~=3.3.3 ; platform_system != "Windows"
 pylightcurve~=4.0.1

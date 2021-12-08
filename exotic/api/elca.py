@@ -123,7 +123,7 @@ def time_bin(time, flux, dt=1./(60*24)):
         if mask.sum() > 0:
             bflux[i] = np.nanmean(flux[mask])
             btime[i] = np.nanmean(time[mask])
-            bstds[i] = np.nanstd(flux[mask])/(1+mask.sum())**0.5
+            bstds[i] = np.nanstd(flux[mask])/(mask.sum()**0.5)
     zmask = (bflux==0) | (btime==0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask], bstds[~zmask]
 

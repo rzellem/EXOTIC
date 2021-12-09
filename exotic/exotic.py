@@ -900,10 +900,16 @@ def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     return a * gausx * gausy + b
 
 
-def mesh_box(pos, box):
+def mesh_box(pos, box, maxx=0, maxy=0):
     pos = [int(np.round(pos[0])), int(np.round(pos[1]))]
-    x = np.arange(pos[0] - box, pos[0] + box + 1)
-    y = np.arange(pos[1] - box, pos[1] + box + 1)
+    if maxx:
+        x = np.arange(max(0,pos[0] - box), min(maxx, pos[0] + box + 1))
+    else:
+        x = np.arange(max(0,pos[0] - box), pos[0] + box + 1)
+    if maxy:
+        y = np.arange(max(0,pos[1] - box), min(maxy, pos[1] + box + 1))
+    else:
+        y = np.arange(max(0,pos[1] - box), pos[1] + box + 1)
     xv, yv = np.meshgrid(x, y)
     return xv.astype(int), yv.astype(int)
 
@@ -911,17 +917,17 @@ def mesh_box(pos, box):
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
 def fit_centroid(data, pos, psf_function=gaussian_psf, box=10):
     # get sub field in image
-    xv, yv = mesh_box(pos, box)
-
-    init = [np.nanmax(data[yv, xv]) - np.nanmin(data[yv, xv]), 1, 1, 0, np.nanmin(data[yv, xv])]
-
+    xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
+    subarray = data[yv, xv]
+    init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
+    
     # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
-    lo = [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(data[yv, xv]) - 1]
-    up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(data[yv, xv]) + 1]
+    lo = [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(subarray) - 1]
+    up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(subarray) + 1]
 
     def fcn2min(pars):
         model = psf_function(xv, yv, *pars)
-        return (data[yv, xv] - model).flatten()
+        return (subarray - model).flatten()
 
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
@@ -1084,6 +1090,8 @@ def realTimeReduce(i, target_name, info_dict, ax):
     tar_comp_dist = {
         'comp': np.zeros(2, dtype=int)
     }
+
+    print("initial image:", inputfiles[0])
 
     # open files, calibrate, align, photometry
     for i, fileName in enumerate(inputfiles):

@@ -1091,8 +1091,6 @@ def realTimeReduce(i, target_name, info_dict, ax):
         'comp': np.zeros(2, dtype=int)
     }
 
-    print("initial image:", inputfiles[0])
-
     # open files, calibrate, align, photometry
     for i, fileName in enumerate(inputfiles):
         hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,

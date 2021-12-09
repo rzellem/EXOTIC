@@ -427,7 +427,7 @@ class lc_fitter(object):
             si = np.argsort(self.time)
             sii = np.argsort(self.time_upsample)
             axs[0].errorbar(bt,bf,yerr=bs,alpha=1,zorder=2,color='blue',ls='none',marker='s')
-            axs[0].plot(self.time_sample[sii], self.transit_sample[sii], 'r-', zorder=3, label=lclabel)
+            axs[0].plot(self.time_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.time), max(self.time)])
             axs[0].set_xlabel("Time [day]", fontsize=14)
 

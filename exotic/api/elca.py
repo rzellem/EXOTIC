@@ -123,7 +123,7 @@ def time_bin(time, flux, dt=1./(60*24)):
         if mask.sum() > 0:
             bflux[i] = np.nanmean(flux[mask])
             btime[i] = np.nanmean(time[mask])
-            bstds[i] = np.nanstd(flux[mask])/(1+mask.sum())**0.5
+            bstds[i] = np.nanstd(flux[mask])/(mask.sum()**0.5)
     zmask = (bflux==0) | (btime==0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask], bstds[~zmask]
 
@@ -223,10 +223,12 @@ class lc_fitter(object):
     def create_fit_variables(self):
         self.phase = get_phase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
+        self.time_upsample = np.linspace(min(self.time), max(self.time),1000)
+        self.transit_upsample = transit(self.time_upsample, self.parameters)
+        self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
         if self.mode == "ns":
             self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters.get('a2',0), self.errors.get('a2',1e-6),
                                                              self.transit, self.airmass, self.data)
-
         if np.ndim(self.airmass) == 2:
             detrended = self.data/self.transit
             self.wf = weightedflux(detrended, self.gw, self.nearest)
@@ -409,7 +411,9 @@ class lc_fitter(object):
             si = np.argsort(self.phase)
             bt2, bf2, bs = time_bin(self.phase[si]*self.parameters['per'], self.detrended[si], bin_dt)
             axs[0].errorbar(bt2/self.parameters['per'],bf2,yerr=bs,alpha=1,zorder=2,color='blue',ls='none',marker='s')
-            axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
+            #axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
+            sii = np.argsort(self.phase_upsample)
+            axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.phase), max(self.phase)])
             axs[0].set_xlabel("Phase ", fontsize=14)
         else:
@@ -421,8 +425,9 @@ class lc_fitter(object):
 
             bt, bf, bs = time_bin(self.time, self.detrended, bin_dt)
             si = np.argsort(self.time)
+            sii = np.argsort(self.time_upsample)
             axs[0].errorbar(bt,bf,yerr=bs,alpha=1,zorder=2,color='blue',ls='none',marker='s')
-            axs[0].plot(self.time[si], self.transit[si], 'r-', zorder=3, label=lclabel)
+            axs[0].plot(self.time_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.time), max(self.time)])
             axs[0].set_xlabel("Time [day]", fontsize=14)
 

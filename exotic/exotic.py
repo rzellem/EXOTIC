@@ -939,6 +939,7 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
 
+    # override psf fit results with weighted centroid
     if weightedcenter:
         res.x[0] = wx
         res.x[1] = wy

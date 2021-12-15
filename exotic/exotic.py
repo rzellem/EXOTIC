@@ -2011,8 +2011,6 @@ def main():
                 goodTimes = timeConvert(goodTimes, exotic_infoDict['file_time'], pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
-                print("check flux convert")
-                import pdb; pdb.set_trace()
                 goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, exotic_infoDict['file_units'])
 
         # for k in myfit.bounds.keys():

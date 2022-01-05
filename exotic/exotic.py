@@ -90,6 +90,7 @@ from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
+from skimage.util import view_as_windows
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
@@ -775,6 +776,22 @@ def transformation(image_data, file_name, roi=1):
         return results[0]
     except Exception as ee:
         log_info(ee)
+
+        ws = 5
+        # smooth image and try to align again
+        windows = view_as_windows(image_data[0], (ws,ws), step=1)
+        medimg = np.median(windows, axis=(2,3))
+
+        windows = view_as_windows(image_data[1], (ws,ws), step=1)
+        medimg1 = np.median(windows, axis=(2,3))
+
+        try:
+            results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
+            return results[0]
+        except Exception as ee:
+            log_info(ee)
+
+        log_info(file_name)
 
         for p in [99, 98, 95, 90]:
             for it in [2, 1, 0]:

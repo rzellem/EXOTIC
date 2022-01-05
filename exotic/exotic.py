@@ -1717,10 +1717,7 @@ def main():
                     if i == 0:
                         tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
                     else:
-                        try:
-                            tform = transformation(np.array([imageData, firstImage]), fileName)
-                        except:
-                            pass
+                        tform = transformation(np.array([imageData, firstImage]), fileName)
 
                     tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
                     psf_data['target'][i] = fit_centroid(imageData, [tx, ty])

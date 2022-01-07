@@ -835,7 +835,7 @@ def get_pixel_scale(wcs_header, header, pixel_init):
         image_scale = f"Image scale in arcsecs/pixel: {pixel_init}"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
-        image_scale_num = user_input("Please enter Image Scale (units in arcsec/pixel): ", type_=float)
+        image_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
         image_scale = f"Image scale in arcsecs/pixel: {image_scale_num}"
     return image_scale
 

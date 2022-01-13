@@ -518,6 +518,168 @@ class lc_fitter(object):
         return fig
 
 
+# simultaneously fit multiple data sets with global and local parameters
+class glc_fitter(lc_fitter):
+    # needed for lc_fitter
+    ns_type = 'ultranest'
+
+    def __init__(self, input_data, global_bounds, local_bounds, individual_fit=False, verbose=False):
+        # keys for input_data: time, flux, ferr, airmass, priors all numpy arrays
+        self.data = copy.deepcopy(input_data)
+        self.global_bounds = global_bounds
+        self.local_bounds = local_bounds
+        self.individual_fit = individual_fit
+        self.verbose = verbose
+
+        self.fit_nested()
+
+    def fit_nested(self):
+
+        # create bound arrays for generating samples
+        nobs = len(self.data)
+        gfreekeys = list(self.global_bounds.keys())
+
+        if isinstance(self.local_bounds, dict):
+            lfreekeys = list(self.local_bounds.keys())
+            boundarray = np.vstack([ [self.global_bounds[k] for k in gfreekeys], [self.local_bounds[k] for k in lfreekeys]*nobs ])
+        else:
+            # if list type
+            lfreekeys = list(self.local_bounds[0].keys())
+            boundarray = [self.global_bounds[k] for k in gfreekeys]
+            for i in range(nobs): 
+                boundarray.extend([self.local_bounds[i][k] for k in lfreekeys])
+            boundarray = np.array(boundarray)
+
+        # fit individual light curves to constrain priors
+        if self.individual_fit:
+            for i in range(nobs):
+
+                print(f"Fitting individual light curve {i+1}/{nobs}")
+                mybounds = dict(**self.local_bounds, **self.global_bounds)
+                if 'per' in mybounds: del(mybounds['per'])
+
+                myfit = lc_fitter(
+                    self.data[i]['time'],
+                    self.data[i]['flux'],
+                    self.data[i]['ferr'],
+                    self.data[i]['airmass'],
+                    self.data[i]['priors'],
+                    mybounds
+                )
+
+                self.data[i]['individual'] = myfit.parameters.copy()
+                
+                # update local priors
+                for j, key in enumerate(self.local_bounds.keys()):
+
+                    boundarray[j+i*len(self.local_bounds)+len(gfreekeys),0] = myfit.parameters[key] - 5*myfit.errors[key]
+                    boundarray[j+i*len(self.local_bounds)+len(gfreekeys),1] = myfit.parameters[key] + 5*myfit.errors[key]
+                    if key == 'rprs':
+                        boundarray[j+i*len(self.local_bounds)+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
+
+                del(myfit)
+
+        # transform unit cube to prior volume
+        bounddiff = np.diff(boundarray,1).reshape(-1)
+        def prior_transform(upars):
+            return (boundarray[:,0] + bounddiff*upars)
+
+        def loglike(pars):
+            chi2 = 0
+
+            # for each light curve
+            for i in range(nobs):
+
+                # global keys
+                for j, key in enumerate(gfreekeys):
+                    self.data[i]['priors'][key] = pars[j]
+
+                # local keys
+                for j, key in enumerate(lfreekeys):
+                    self.data[i]['priors'][key] = pars[j+i*len(lfreekeys)+len(gfreekeys)]
+
+                # compute model
+                model = transit(self.data[i]['time'], self.data[i]['priors'])
+                model *= np.exp(self.data[i]['priors']['a2']*self.data[i]['airmass'])
+                detrend = self.data[i]['flux']/model
+                model *= np.median(detrend)
+
+                chi2 += np.sum( ((self.data[i]['flux']-model)/self.data[i]['ferr'])**2 )
+
+            # maximization metric for nested sampling
+            return -0.5*chi2
+
+        freekeys = []+gfreekeys
+        for n in range(nobs):
+            for k in lfreekeys:
+                freekeys.append(f"local_{n}_{k}")
+
+        if self.verbose:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5)
+        else:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5, show_status=self.verbose, viz_callback=self.verbose)
+
+        self.errors = {}
+        self.quantiles = {}
+        self.parameters = {}
+
+        for i, key in enumerate(freekeys):
+
+            self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+            self.errors[key] = self.results['posterior']['stdev'][i]
+            self.quantiles[key] = [
+                self.results['posterior']['errlo'][i],
+                self.results['posterior']['errup'][i]]
+
+        for n in range(nobs):
+            for k in lfreekeys:
+                pkey = f"local_{n}_{k}"
+                self.data[n]['priors'][k] = self.parameters[pkey]
+
+            # solve for a1
+            model = transit(self.data[n]['time'], self.data[n]['priors'])
+            airmass = np.exp(self.data[n]['airmass']*self.data[n]['priors']['a2'])
+            detrend = self.data[n]['flux']/(model*airmass)
+            self.data[n]['priors']['a1'] = np.median(detrend)
+
+    def plot_bestfit(self):
+        # TODO mosaic
+        nobs = len(self.data)
+        nrows = nobs//4+1
+        fig,ax = plt.subplots(nrows, 4, figsize=(5+5*nrows,4*nrows))
+
+        # turn off all axes
+        for i in range(nrows*4):
+            ri = int(i/4)
+            ci = i%4
+            if ax.ndim == 1:
+                ax[i].axis('off')
+            else:
+                ax[ri,ci].axis('off')
+
+        # plot observations
+        for i in range(nobs):
+            ri = int(i/4)
+            ci = i%4
+            model = transit(self.data[i]['time'], self.data[i]['priors'])
+            airmass = np.exp(self.data[i]['airmass']*self.data[i]['priors']['a2'])
+            detrend = self.data[i]['flux']/(model*airmass)
+
+            if ax.ndim == 1:
+                ax[i].axis('on')
+                ax[i].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), ls='none', marker='o', color='black', alpha=0.5)
+                ax[i].plot(self.data[i]['time'], model, 'r-')
+                ax[i].set_xlabel("Time")
+
+            else:
+                ax[ri,ci].axis('on')
+                ax[ri,ci].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), ls='none', marker='o', color='black', alpha=0.5)
+                ax[ri,ci].plot(self.data[i]['time'], model, 'r-')
+                ax[ri,ci].set_xlabel("Time")
+        plt.tight_layout()
+        return fig            
+
+
 if __name__ == "__main__":
 
     prior = {

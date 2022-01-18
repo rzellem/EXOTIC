@@ -133,7 +133,9 @@ def main():
     else:
         print(f"\nSUCCESS: Valid Python version {platform.python_version()} detected!\n")
 
-    root = tk.Tk()
+    root=tk.Tk() 
+    root.protocol("WM_DELETE_WINDOW", exit)
+
     root.title(f"EXOTIC v{__version__}")
 
     tk.Label(root,
@@ -165,7 +167,8 @@ def main():
 
     root.mainloop()
 
-    root = tk.Tk()
+    root=tk.Tk() 
+    root.protocol("WM_DELETE_WINDOW", exit)
     root.title(f"EXOTIC v{__version__}")
 
     reduction_opt = tk.IntVar()
@@ -198,7 +201,8 @@ def main():
 
     if reduction_opt.get() == 1:
         # First ask user how they want to enter the observing information
-        root = tk.Tk()
+        root=tk.Tk() 
+        root.protocol("WM_DELETE_WINDOW", exit)
         obsinfo = tk.StringVar()
 
         input_data = {}
@@ -231,7 +235,8 @@ def main():
         root.mainloop()
 
         if obsinfo.get() == "manual":
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             window_label = tk.Label(root,
@@ -287,7 +292,8 @@ def main():
 
             tk.mainloop()
         else:
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             # # "Directory with FITS files": "sample-data/HatP32Dec202017",
@@ -306,7 +312,8 @@ def main():
             tk.mainloop()
 
         if obsinfo.get() == "manual":
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             window_label = tk.Label(root,
@@ -374,7 +381,8 @@ def main():
                 json.dump(new_inits, initsf, indent=4)
             print(f"{fname} saved!")
 
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             window_label = tk.Label(root,
@@ -419,7 +427,8 @@ def main():
             print("################################################\n\n")
             pass
     else:
-        root = tk.Tk()
+        root=tk.Tk() 
+        root.protocol("WM_DELETE_WINDOW", exit)
         root.title(f"EXOTIC v{__version__}")
 
         fitsortext = tk.IntVar()
@@ -441,6 +450,7 @@ def main():
                        padx=20,
                        variable=fitsortext,
                        value=2).pack(anchor=tk.W)
+        fitsortext.set(2)
 
         # Button for closing
         exit_button = tk.Button(root, text="Next", command=root.destroy)
@@ -450,7 +460,8 @@ def main():
         root.mainloop()
 
         if fitsortext.get() == 2:
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
             i=0; j=0
 
@@ -528,7 +539,8 @@ def main():
             root.mainloop()
 
         # First ask user how they want to enter the observing information
-        root = tk.Tk()
+        root=tk.Tk() 
+        root.protocol("WM_DELETE_WINDOW", exit)
         obsinfo = tk.StringVar()
 
         root.title(f"EXOTIC v{__version__}")
@@ -560,7 +572,8 @@ def main():
 
 
         if obsinfo.get() == "manual":
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             initparams = tk.IntVar()
@@ -755,7 +768,8 @@ def main():
             obsnotes_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
-            # root = tk.Tk()
+            # root=tk.Tk() 
+            # root.protocol("WM_DELETE_WINDOW", exit)
             # root.title(f"EXOTIC v{__version__}")
             #
             # window_label = tk.Label(root,
@@ -833,7 +847,8 @@ def main():
 
         try:
             if filteroptions.get() == "N/A":
-                root = tk.Tk()
+                root=tk.Tk() 
+                root.protocol("WM_DELETE_WINDOW", exit)
                 root.title(f"EXOTIC v{__version__}")
 
                 i = 0
@@ -876,7 +891,8 @@ def main():
             pass
 
         # then ask user how they want to enter the planetary information
-        root = tk.Tk()
+        root=tk.Tk() 
+        root.protocol("WM_DELETE_WINDOW", exit)
         root.title(f"EXOTIC v{__version__}")
 
         planetparams = tk.StringVar()
@@ -913,7 +929,8 @@ def main():
         root.mainloop()
 
         if planetparams.get() == "manual":
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             initparams = tk.IntVar()
@@ -1169,7 +1186,8 @@ def main():
             tk.mainloop()
 
         elif planetparams.get() == 'nea':
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             initparams = tk.IntVar()
@@ -1227,7 +1245,8 @@ def main():
             tk.mainloop()
 
         if (planetparams.get() == "inits") or (obsinfo.get() == "inits"):
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             # # "Directory with FITS files": "sample-data/HatP32Dec202017",
@@ -1246,7 +1265,8 @@ def main():
             tk.mainloop()
 
             # if (obsinfo.get() == "manual"):
-            #     root = tk.Tk()
+            #     root=tk.Tk() 
+            # root.protocol("WM_DELETE_WINDOW", exit)
             #     root.title(f"EXOTIC v{__version__}")
             #
             #     window_label = tk.Label(root,
@@ -1285,12 +1305,12 @@ def main():
             #     # exit_button.pack(pady=20)
             #     root.update()
             #     root.mainloop()
-
             # root.mainloop()
 
         # Create an initialization file if it does not already exist
         if (planetparams.get() != "inits") or (obsinfo.get() != "inits"):
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             initparams = tk.IntVar()
@@ -1485,7 +1505,8 @@ def main():
                 json.dump(new_inits, initsf, indent=4)
             print(f"{fname} saved!")
 
-            root = tk.Tk()
+            root=tk.Tk() 
+            root.protocol("WM_DELETE_WINDOW", exit)
             root.title(f"EXOTIC v{__version__}")
 
             window_label = tk.Label(root,

@@ -1919,6 +1919,8 @@ def main():
                 log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
                 bestaperture = str(abs(np.round(minAperture, 2)))
             log_info("*********************************************\n")
+            
+            import pdb; pdb.set_trace()
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:

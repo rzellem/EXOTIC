@@ -539,23 +539,24 @@ class glc_fitter(lc_fitter):
         nobs = len(self.data)
         gfreekeys = list(self.global_bounds.keys())
 
-        if isinstance(self.local_bounds, dict):
-            lfreekeys = list(self.local_bounds.keys())
-            boundarray = np.vstack([ [self.global_bounds[k] for k in gfreekeys], [self.local_bounds[k] for k in lfreekeys]*nobs ])
-        else:
-            # if list type
-            lfreekeys = list(self.local_bounds[0].keys())
-            boundarray = [self.global_bounds[k] for k in gfreekeys]
-            for i in range(nobs): 
-                boundarray.extend([self.local_bounds[i][k] for k in lfreekeys])
-            boundarray = np.array(boundarray)
+        # if isinstance(self.local_bounds, dict):
+        #     lfreekeys = list(self.local_bounds.keys())
+        #     boundarray = np.vstack([ [self.global_bounds[k] for k in gfreekeys], [self.local_bounds[k] for k in lfreekeys]*nobs ])
+        # else:
+        #     # if list type
+        lfreekeys = []
+        boundarray = [self.global_bounds[k] for k in gfreekeys]
+        for i in range(nobs):
+            lfreekeys.append(list(self.local_bounds[i].keys()))
+            boundarray.extend([self.local_bounds[i][k] for k in lfreekeys[-1]])
+        boundarray = np.array(boundarray)
 
         # fit individual light curves to constrain priors
         if self.individual_fit:
             for i in range(nobs):
 
                 print(f"Fitting individual light curve {i+1}/{nobs}")
-                mybounds = dict(**self.local_bounds, **self.global_bounds)
+                mybounds = dict(**self.local_bounds[i], **self.global_bounds)
                 if 'per' in mybounds: del(mybounds['per'])
 
                 myfit = lc_fitter(
@@ -568,14 +569,14 @@ class glc_fitter(lc_fitter):
                 )
 
                 self.data[i]['individual'] = myfit.parameters.copy()
-                
+                ti = sum([len(self.local_bounds[k]) for k in range(i)])
                 # update local priors
-                for j, key in enumerate(self.local_bounds.keys()):
+                for j, key in enumerate(self.local_bounds[i].keys()):
 
-                    boundarray[j+i*len(self.local_bounds)+len(gfreekeys),0] = myfit.parameters[key] - 5*myfit.errors[key]
-                    boundarray[j+i*len(self.local_bounds)+len(gfreekeys),1] = myfit.parameters[key] + 5*myfit.errors[key]
+                    boundarray[j+ti+len(gfreekeys),0] = myfit.parameters[key] - 5*myfit.errors[key]
+                    boundarray[j+ti+len(gfreekeys),1] = myfit.parameters[key] + 5*myfit.errors[key]
                     if key == 'rprs':
-                        boundarray[j+i*len(self.local_bounds)+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
+                        boundarray[j+ti+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
 
                 del(myfit)
 
@@ -595,8 +596,9 @@ class glc_fitter(lc_fitter):
                     self.data[i]['priors'][key] = pars[j]
 
                 # local keys
-                for j, key in enumerate(lfreekeys):
-                    self.data[i]['priors'][key] = pars[j+i*len(lfreekeys)+len(gfreekeys)]
+                ti = sum([len(self.local_bounds[k]) for k in range(i)])
+                for j, key in enumerate(lfreekeys[i]):
+                    self.data[i]['priors'][key] = pars[j+ti+len(gfreekeys)]
 
                 # compute model
                 model = transit(self.data[i]['time'], self.data[i]['priors'])
@@ -611,7 +613,7 @@ class glc_fitter(lc_fitter):
 
         freekeys = []+gfreekeys
         for n in range(nobs):
-            for k in lfreekeys:
+            for k in lfreekeys[n]:
                 freekeys.append(f"local_{n}_{k}")
 
         if self.verbose:
@@ -632,7 +634,7 @@ class glc_fitter(lc_fitter):
                 self.results['posterior']['errup'][i]]
 
         for n in range(nobs):
-            for k in lfreekeys:
+            for k in lfreekeys[n]:
                 pkey = f"local_{n}_{k}"
                 self.data[n]['priors'][k] = self.parameters[pkey]
 
@@ -703,20 +705,11 @@ if __name__ == "__main__":
     }
 
     # example generating LD coefficients
-    from exotic.exotic import LimbDarkening
-    from ldtk.filters import create_tess
+    from pylightcurve import exotethys
 
-    tessfilter = create_tess()
+    u0,u1,u2,u3 = exotethys(prior['logg'], prior['teff'], prior['met'], 'TESS', method='claret', stellar_model='phoenix')
 
-    ld_obj = LimbDarkening(
-        teff=prior['teff'], teffpos=prior['tefferr'], teffneg=prior['tefferr'],
-        met=prior['met'], metpos=prior['meterr'], metneg=prior['meterr'],
-        logg=prior['logg'], loggpos=prior['loggerr'], loggneg=prior['loggerr'],
-        wl_min=tessfilter.wl.min(), wl_max=tessfilter.wl.max(), filter_type="Clear")
-
-    ld0, ld1, ld2, ld3, filt, wlmin, wlmax = ld_obj.nonlinear_ld()
-
-    prior['u0'],prior['u1'],prior['u2'],prior['u3'] = [ld0[0], ld1[0], ld2[0], ld3[0]]
+    prior['u0'],prior['u1'],prior['u2'],prior['u3'] =  u0,u1,u2,u3
 
     time = np.linspace(0.7, 0.8, 1000)  # [day]
 

@@ -8,6 +8,7 @@ if __name__ == "__main__":
     # simulate input data
     epochs = np.random.choice(np.arange(100), 5, replace=False)
     input_data = []
+    local_bounds = []
 
     for i, epoch in enumerate(epochs):
 
@@ -45,6 +46,12 @@ if __name__ == "__main__":
             'priors':prior
         })
 
+        # individual properties
+        local_bounds.append({
+            'rprs':[0,0.2],
+            'a2':[-0.5,0]
+        })
+
         #plt.plot(time,flux,marker='o')
         #plt.plot(time, model,ls='-')
         #plt.show()
@@ -54,13 +61,6 @@ if __name__ == "__main__":
         'per':[3.5-0.0001,3.5+0.0001],
         'tmid':[1-0.01,1+0.01],
         'ars':[14,14.5],
-    }
-
-    # individual properties
-    local_bounds = {
-        'rprs':[0,0.2],
-        'a1':[0,1e4],
-        'a2':[-0.5,0]
     }
 
     print('epochs:',epochs)

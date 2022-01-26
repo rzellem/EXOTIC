@@ -6,7 +6,7 @@ from exotic.api.elca import transit, glc_fitter
 if __name__ == "__main__":
 
     # simulate input data
-    epochs = np.random.choice(np.arange(100), 5, replace=False)
+    epochs = np.random.choice(np.arange(100), 3, replace=False)
     input_data = []
     local_bounds = []
 
@@ -64,10 +64,16 @@ if __name__ == "__main__":
     }
 
     print('epochs:',epochs)
-    myfit = glc_fitter(input_data, global_bounds, local_bounds, individual_fit=True, verbose=True)
+    myfit = glc_fitter(input_data, global_bounds, local_bounds, individual_fit=False, verbose=True)
+
+    myfit.plot_bestfit()
+    plt.show()
 
     myfit.plot_triangle()
     plt.show()
 
-    myfit.plot_bestfit()
+    myfit.plot_bestfits()
     plt.show()
+
+
+

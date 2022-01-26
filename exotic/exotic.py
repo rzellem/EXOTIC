@@ -1919,8 +1919,6 @@ def main():
                 log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
                 bestaperture = str(abs(np.round(minAperture, 2)))
             log_info("*********************************************\n")
-            
-            import pdb; pdb.set_trace()
 
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
@@ -2066,6 +2064,12 @@ def main():
         prior['tmid'] = pDict['midT'] + np.floor(phase).max() * prior['per']
         upper = pDict['midT'] + 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] + 35 * pDict['pPerUnc'])
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
+
+        # clip bounds so they're within 1 orbit
+        if upper > prior['tmid'] + 0.5*prior['per']:
+            upper = prior['tmid'] + 0.5*prior['per']
+        if lower < prior['tmid'] - 0.5*prior['per']:
+            lower = prior['tmid'] - 0.5*prior['per']
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)

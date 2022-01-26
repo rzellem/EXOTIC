@@ -518,6 +518,254 @@ class lc_fitter(object):
         return fig
 
 
+# simultaneously fit multiple data sets with global and local parameters
+class glc_fitter(lc_fitter):
+    # needed for lc_fitter
+    ns_type = 'ultranest'
+
+    def __init__(self, input_data, global_bounds, local_bounds, individual_fit=False, verbose=False):
+        # keys for input_data: time, flux, ferr, airmass, priors all numpy arrays
+        self.data = copy.deepcopy(input_data)
+        self.global_bounds = global_bounds
+        self.local_bounds = local_bounds
+        self.individual_fit = individual_fit
+        self.verbose = verbose
+
+        self.fit_nested()
+
+    def fit_nested(self):
+
+        # create bound arrays for generating samples
+        nobs = len(self.data)
+        gfreekeys = list(self.global_bounds.keys())
+
+        # if isinstance(self.local_bounds, dict):
+        #     lfreekeys = list(self.local_bounds.keys())
+        #     boundarray = np.vstack([ [self.global_bounds[k] for k in gfreekeys], [self.local_bounds[k] for k in lfreekeys]*nobs ])
+        # else:
+        #     # if list type
+        lfreekeys = []
+        boundarray = [self.global_bounds[k] for k in gfreekeys]
+        for i in range(nobs):
+            lfreekeys.append(list(self.local_bounds[i].keys()))
+            boundarray.extend([self.local_bounds[i][k] for k in lfreekeys[-1]])
+        boundarray = np.array(boundarray)
+
+        # fit individual light curves to constrain priors
+        if self.individual_fit:
+            for i in range(nobs):
+
+                print(f"Fitting individual light curve {i+1}/{nobs}")
+                mybounds = dict(**self.local_bounds[i], **self.global_bounds)
+                if 'per' in mybounds: del(mybounds['per'])
+
+                myfit = lc_fitter(
+                    self.data[i]['time'],
+                    self.data[i]['flux'],
+                    self.data[i]['ferr'],
+                    self.data[i]['airmass'],
+                    self.data[i]['priors'],
+                    mybounds
+                )
+
+                self.data[i]['individual'] = myfit.parameters.copy()
+                ti = sum([len(self.local_bounds[k]) for k in range(i)])
+                # update local priors
+                for j, key in enumerate(self.local_bounds[i].keys()):
+
+                    boundarray[j+ti+len(gfreekeys),0] = myfit.parameters[key] - 5*myfit.errors[key]
+                    boundarray[j+ti+len(gfreekeys),1] = myfit.parameters[key] + 5*myfit.errors[key]
+                    if key == 'rprs':
+                        boundarray[j+ti+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
+
+                del(myfit)
+
+        # transform unit cube to prior volume
+        bounddiff = np.diff(boundarray,1).reshape(-1)
+        def prior_transform(upars):
+            return (boundarray[:,0] + bounddiff*upars)
+
+        def loglike(pars):
+            chi2 = 0
+
+            # for each light curve
+            for i in range(nobs):
+
+                # global keys
+                for j, key in enumerate(gfreekeys):
+                    self.data[i]['priors'][key] = pars[j]
+
+                # local keys
+                ti = sum([len(self.local_bounds[k]) for k in range(i)])
+                for j, key in enumerate(lfreekeys[i]):
+                    self.data[i]['priors'][key] = pars[j+ti+len(gfreekeys)]
+
+                # compute model
+                model = transit(self.data[i]['time'], self.data[i]['priors'])
+                model *= np.exp(self.data[i]['priors']['a2']*self.data[i]['airmass'])
+                detrend = self.data[i]['flux']/model
+                model *= np.median(detrend)
+
+                chi2 += np.sum( ((self.data[i]['flux']-model)/self.data[i]['ferr'])**2 )
+
+            # maximization metric for nested sampling
+            return -0.5*chi2
+
+        freekeys = []+gfreekeys
+        for n in range(nobs):
+            for k in lfreekeys[n]:
+                freekeys.append(f"local_{n}_{k}")
+
+        if self.verbose:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5)
+        else:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5, show_status=self.verbose, viz_callback=self.verbose)
+
+        self.quantiles = {}
+        self.errors = {}
+        self.parameters = self.data[0]['priors'].copy()
+
+        for i, key in enumerate(freekeys):
+            self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+            self.errors[key] = self.results['posterior']['stdev'][i]
+            self.quantiles[key] = [
+                self.results['posterior']['errlo'][i],
+                self.results['posterior']['errup'][i]]
+
+        for n in range(nobs):
+            self.data[n]['errors'] = {}
+            for k in lfreekeys[n]:
+                pkey = f"local_{n}_{k}"
+                self.data[n]['priors'][k] = self.parameters[pkey]
+                self.data[n]['errors'][k] = self.errors[pkey]
+
+                if k == 'rprs' and 'rprs' not in freekeys:
+                    self.parameters[k] = self.data[n]['priors'][k]
+                    self.errors[k] = self.data[n]['errors'][k]
+
+            # solve for a1
+            model = transit(self.data[n]['time'], self.data[n]['priors'])
+            airmass = np.exp(self.data[n]['airmass']*self.data[n]['priors']['a2'])
+            detrend = self.data[n]['flux']/(model*airmass)
+            self.data[n]['priors']['a1'] = np.median(detrend)
+            self.data[n]['residuals'] = self.data[n]['flux'] - model*airmass*self.data[n]['priors']['a1']
+            self.data[n]['detrend'] = self.data[n]['flux']/(airmass*self.data[n]['priors']['a1'])
+
+    def plot_bestfits(self):
+        nrows = len(self.data)//4+1
+        fig,ax = plt.subplots(nrows, 4, figsize=(5+5*nrows,4*nrows))
+
+        # turn off all axes
+        for i in range(nrows*4):
+            ri = int(i/4)
+            ci = i%4
+            if ax.ndim == 1:
+                ax[i].axis('off')
+            else:
+                ax[ri,ci].axis('off')
+
+        markers = ['o','v','^','<','>','s','p','*','h','H','D','d','P','X']
+        colors = ['black','blue','green','orange','purple','brown','pink','grey','magenta','cyan','yellow','lime']
+
+        # plot observations
+        for i in range(len(self.data)):
+            ri = int(i/4)
+            ci = i%4
+            model = transit(self.data[i]['time'], self.data[i]['priors'])
+            airmass = np.exp(self.data[i]['airmass']*self.data[i]['priors']['a2'])
+            detrend = self.data[i]['flux']/(model*airmass)
+
+            if ax.ndim == 1:
+                ax[i].axis('on')
+                ax[i].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), 
+                                ls='none', marker=markers[i], color=colors[i], alpha=0.5)
+                ax[i].plot(self.data[i]['time'], model, 'r-', zorder=2)
+                ax[i].set_xlabel("Time")
+
+            else:
+                ax[ri,ci].axis('on')
+                ax[ri,ci].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), 
+                                   ls='none', marker=markers[i], color=colors[i], alpha=0.5)
+                ax[ri,ci].plot(self.data[i]['time'], model, 'r-', zorder=2)
+                ax[ri,ci].set_xlabel("Time")
+        plt.tight_layout()
+        return fig
+
+    def plot_bestfit(self, title="", bin_dt=30./(60*24)):
+        f = plt.figure(figsize=(9,6))
+        f.subplots_adjust(top=0.92,bottom=0.09,left=0.14,right=0.98, hspace=0)
+        ax_lc = plt.subplot2grid((4,5), (0,0), colspan=5,rowspan=3)
+        ax_res = plt.subplot2grid((4,5), (3,0), colspan=5, rowspan=1)
+        axs = [ax_lc, ax_res]
+
+        axs[0].set_title(title)
+        axs[0].set_ylabel("Relative Flux", fontsize=14)
+        axs[0].grid(True,ls='--')
+
+        rprs2 = self.parameters['rprs']**2
+        rprs2err = 2*self.parameters['rprs']*self.errors['rprs']
+        lclabel1 = r"$R^{2}_{p}/R^{2}_{s}$ = %s $\pm$ %s" %(
+            str(round_to_2(rprs2, rprs2err)),
+            str(round_to_2(rprs2err))
+        )
+        
+        lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" %(
+            str(round_to_2(self.parameters['tmid'], self.errors.get('tmid',0))),
+            str(round_to_2(self.errors.get('tmid',0)))
+        )
+
+        lclabel = lclabel1 + "\n" + lclabel2
+        minp = 1
+        maxp = 0
+
+        min_std = 1
+        markers = ['o','v','^','<','>','s','p','*','h','H','D','d','P','X']
+        colors = ['black','blue','green','orange','purple','brown','pink','grey','magenta','cyan','yellow','lime']
+        for n in range(len(self.data)):
+            phase = get_phase(self.data[n]['time'], self.parameters['per'], self.data[n]['priors']['tmid'])
+            si = np.argsort(phase)
+            bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.data[n]['residuals'][si]/np.median(self.data[n]['flux'])*1e2, bin_dt)
+            
+            # plot data
+            axs[0].errorbar(phase, self.data[n]['detrend'], yerr=np.std(self.data[n]['residuals'])/np.median(self.data[n]['flux']), 
+                            ls='none', marker=markers[n], color=colors[n], zorder=1, alpha=0.2)
+        
+            # plot residuals
+            axs[1].plot(phase, self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2, color=colors[n], marker=markers[n], ls='none',
+                         alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format( np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2)))
+
+            # plot binned data
+            bt2, bf2, bs = time_bin(phase[si]*self.data[n]['priors']['per'], self.data[n]['detrend'][si], bin_dt)
+            axs[0].errorbar(bt2/self.data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=colors[n],ls='none',marker=markers[n])
+
+            # replace min and max for upsampled lc model
+            minp = min(minp, min(phase))
+            maxp = max(maxp, max(phase))
+            min_std = min(min_std, np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])))
+
+        # best fit model
+        self.time_upsample = np.linspace(minp*self.parameters['per']+self.parameters['tmid'], 
+                                         maxp*self.parameters['per']+self.parameters['tmid'], 10000)
+        self.transit_upsample = transit(self.time_upsample, self.parameters)
+        self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
+        sii = np.argsort(self.phase_upsample)
+        axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
+
+        axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
+        axs[0].set_xlabel("Phase ", fontsize=14)
+        axs[0].set_ylim([1-self.parameters['rprs']**2-5*min_std, 1+5*min_std])
+        axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
+        axs[1].set_xlabel("Phase", fontsize=14)
+        axs[1].set_ylim([-5*min_std*1e2, 5*min_std*1e2])
+
+        axs[0].get_xaxis().set_visible(False)
+        axs[1].legend(loc='best')
+        axs[0].legend(loc='best')
+        axs[1].set_ylabel("Residuals [%]", fontsize=14)
+        axs[1].grid(True,ls='--',axis='y')
+        return f,axs
+
+
 if __name__ == "__main__":
 
     prior = {
@@ -541,20 +789,11 @@ if __name__ == "__main__":
     }
 
     # example generating LD coefficients
-    from exotic.exotic import LimbDarkening
-    from ldtk.filters import create_tess
+    from pylightcurve import exotethys
 
-    tessfilter = create_tess()
+    u0,u1,u2,u3 = exotethys(prior['logg'], prior['teff'], prior['met'], 'TESS', method='claret', stellar_model='phoenix')
 
-    ld_obj = LimbDarkening(
-        teff=prior['teff'], teffpos=prior['tefferr'], teffneg=prior['tefferr'],
-        met=prior['met'], metpos=prior['meterr'], metneg=prior['meterr'],
-        logg=prior['logg'], loggpos=prior['loggerr'], loggneg=prior['loggerr'],
-        wl_min=tessfilter.wl.min(), wl_max=tessfilter.wl.max(), filter_type="Clear")
-
-    ld0, ld1, ld2, ld3, filt, wlmin, wlmax = ld_obj.nonlinear_ld()
-
-    prior['u0'],prior['u1'],prior['u2'],prior['u3'] = [ld0[0], ld1[0], ld2[0], ld3[0]]
+    prior['u0'],prior['u1'],prior['u2'],prior['u3'] =  u0,u1,u2,u3
 
     time = np.linspace(0.7, 0.8, 1000)  # [day]
 

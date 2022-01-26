@@ -2064,6 +2064,12 @@ def main():
         upper = pDict['midT'] + 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] + 35 * pDict['pPerUnc'])
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
 
+        # clip bounds so they're within 1 orbit
+        if upper > prior['tmid'] + 0.5*prior['per']:
+            upper = prior['tmid'] + 0.5*prior['per']
+        if lower < prior['tmid'] - 0.5*prior['per']:
+            lower = prior['tmid'] - 0.5*prior['per']
+
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)
             log_info(f"start:{np.min(goodTimes)}", error=True)

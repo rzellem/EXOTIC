@@ -81,7 +81,7 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-from numba import njit
+# from numba import njit
 import numpy as np
 # photometry
 from photutils import CircularAperture
@@ -90,7 +90,7 @@ from scipy.optimize import least_squares
 from scipy.stats import mode
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
-# from scipy.ndimage import binary_dilation, label, generic_filter
+from skimage.util import view_as_windows
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
@@ -777,6 +777,22 @@ def transformation(image_data, file_name, roi=1):
     except Exception as ee:
         log_info(ee)
 
+        ws = 5
+        # smooth image and try to align again
+        windows = view_as_windows(image_data[0], (ws,ws), step=1)
+        medimg = np.median(windows, axis=(2,3))
+
+        windows = view_as_windows(image_data[1], (ws,ws), step=1)
+        medimg1 = np.median(windows, axis=(2,3))
+
+        try:
+            results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
+            return results[0]
+        except Exception as ee:
+            log_info(ee)
+
+        log_info(file_name)
+
         for p in [99, 98, 95, 90]:
             for it in [2, 1, 0]:
 
@@ -819,7 +835,7 @@ def get_pixel_scale(wcs_header, header, pixel_init):
         image_scale = f"Image scale in arcsecs/pixel: {pixel_init}"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
-        image_scale_num = user_input("Please enter Image Scale (e.g., 5 arcsec/pixel): ", type_=float)
+        image_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
         image_scale = f"Image scale in arcsecs/pixel: {image_scale_num}"
     return image_scale
 
@@ -891,7 +907,6 @@ def find_target(target, hdufile, verbose=False):
     return pixcoord[0]
 
 
-@njit
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     rx = (x - x0) * np.cos(rot) - (y - y0) * np.sin(rot)
     ry = (x - x0) * np.sin(rot) + (y - y0) * np.cos(rot)
@@ -915,12 +930,16 @@ def mesh_box(pos, box, maxx=0, maxy=0):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, psf_function=gaussian_psf, box=10):
+def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=True):
     # get sub field in image
     xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
     subarray = data[yv, xv]
     init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
     
+    # compute flux weighted centroid in x and y
+    wx = np.sum(xv[0]*subarray.sum(0))/subarray.sum(0).sum()
+    wy = np.sum(yv[:,0]*subarray.sum(1))/subarray.sum(1).sum()
+
     # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
     lo = [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(subarray) - 1]
     up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(subarray) + 1]
@@ -935,6 +954,11 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=10):
         log_info(f"Warning: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?", warn=True)
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
+
+    # override psf fit results with weighted centroid
+    if weightedcenter:
+        res.x[0] = wx
+        res.x[1] = wy
 
     return res.x
 
@@ -1188,7 +1212,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     si = np.argsort(times)
     dt = np.mean(np.diff(np.sort(times)))
     ndt = int(25. / 24. / 60. / dt) * 2 + 1
-    filtered_data = sigma_clip((tFlux / cFlux)[si], sigma=3, dt=ndt)
+    if ndt > len(times):
+        ndt = int(len(times)/4) * 2 + 1
+    filtered_data = sigma_clip((tFlux / cFlux)[si], sigma=3, dt=max(5,ndt))
     arrayFinalFlux = (tFlux / cFlux)[si][~filtered_data]
     f1 = tFlux[si][~filtered_data]
     sigf1 = f1 ** 0.5
@@ -1206,10 +1232,15 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
     nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(
         arrayAirmass)
-    arrayFinalFlux = arrayFinalFlux[~nanmask]
-    arrayNormUnc = arrayNormUnc[~nanmask]
-    arrayTimes = arrayTimes[~nanmask]
-    arrayAirmass = arrayAirmass[~nanmask]
+
+    if np.sum(~nanmask) <= 1:
+        log_info('No data left after filtering', warn=True)
+    else:
+        arrayFinalFlux = arrayFinalFlux[~nanmask]
+        arrayNormUnc = arrayNormUnc[~nanmask]
+        arrayTimes = arrayTimes[~nanmask]
+        arrayAirmass = arrayAirmass[~nanmask]
+
 
     # -----LM LIGHTCURVE FIT--------------------------------------
     prior = {
@@ -1246,6 +1277,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
+
+    if np.isnan(arrayTimes).any() or np.isnan(arrayFinalFlux).any() or np.isnan(arrayNormUnc).any():
+        log_info("\nWarning: NANs in time, flux or error", warn=True)
 
     myfit = lc_fitter(
         arrayTimes,
@@ -1920,14 +1954,21 @@ def main():
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
-            if len(OOT) == 0:  # if user does not get any out-of-transit data, normalize by the max data instead
-                OOT = (bestlmfit.transit == np.nanmax(bestlmfit.transit))
-            OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
-            goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
 
-            # Normalize by OOT per AAVSO Database upload requirements
-            goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes[OOT])
-            goodFluxes = goodFluxes / np.nanmedian(goodFluxes[OOT])
+            if sum(OOT) <= 1:
+                OOTscatter = np.std(bestlmfit.residuals)
+                goodNormUnc = OOTscatter * bestlmfit.airmass_model
+                goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes)
+                goodFluxes = goodFluxes / np.nanmedian(goodFluxes)
+            else:
+                OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
+                goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
+                goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes[OOT])
+                goodFluxes = goodFluxes / np.nanmedian(goodFluxes[OOT])
+
+            if np.isnan(goodFluxes).all():
+                log_info("Error: No valid photometry data found.", error=True)
+                return
 
             goodTimes = goodTimes[si][gi]
             goodFluxes = goodFluxes[si][gi]
@@ -1986,11 +2027,13 @@ def main():
                 goodTimes = timeConvert(goodTimes, exotic_infoDict['file_time'], pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
+                print("check flux convert")
+                import pdb; pdb.set_trace()
                 goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, exotic_infoDict['file_units'])
 
         # for k in myfit.bounds.keys():
         #     print(f"{myfit.parameters[k]:.6f} +- {myfit.errors[k]}")
-
+        
         if args.photometry:
             log_info("\nPhotometric Extraction Complete.")
             return
@@ -2021,6 +2064,12 @@ def main():
         upper = pDict['midT'] + 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] + 35 * pDict['pPerUnc'])
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
 
+        # clip bounds so they're within 1 orbit
+        if upper > prior['tmid'] + 0.5*prior['per']:
+            upper = prior['tmid'] + 0.5*prior['per']
+        if lower < prior['tmid'] - 0.5*prior['per']:
+            lower = prior['tmid'] - 0.5*prior['per']
+
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)
             log_info(f"start:{np.min(goodTimes)}", error=True)
@@ -2033,6 +2082,10 @@ def main():
             'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0.), pDict['aRs'] + 15 * pDict['aRsUnc']],
             'a2': [-3, 3],
         }
+
+        if np.isnan(goodFluxes).all():
+            log_info("Error: No valid photometry data found.", error=True)
+            return
 
         # final light curve fit
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')

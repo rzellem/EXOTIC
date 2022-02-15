@@ -6,13 +6,13 @@ from exotic.api.elca import transit, glc_fitter
 if __name__ == "__main__":
 
     # simulate input data
-    epochs = np.random.choice(np.arange(100), 3, replace=False)
+    epochs = np.random.choice(np.arange(100), 11, replace=False)
     input_data = []
     local_bounds = []
 
     for i, epoch in enumerate(epochs):
 
-        nobs = np.random.randint(50) + 100
+        nobs = np.random.randint(50) + 25
         phase = np.linspace(-0.02-0.01*np.random.random(), 0.02+0.01*np.random.random(), nobs)
         
         prior = {
@@ -43,7 +43,8 @@ if __name__ == "__main__":
             'flux':flux,
             'ferr':ferr,
             'airmass':airmass,
-            'priors':prior
+            'priors':prior,
+            'name':f"epoch{i}"
         })
 
         # individual properties
@@ -67,13 +68,21 @@ if __name__ == "__main__":
     myfit = glc_fitter(input_data, global_bounds, local_bounds, individual_fit=False, verbose=True)
 
     myfit.plot_bestfit()
-    plt.show()
+    plt.savefig("bestfit.png")
+    plt.close()
 
-    myfit.plot_triangle()
-    plt.show()
+    myfit.plot_stack()
+    plt.tight_layout()
+    plt.savefig("stackfit.png")
+    plt.close()
 
     myfit.plot_bestfits()
-    plt.show()
+    plt.savefig("bestfits.png")
+    plt.close()
+
+    myfit.plot_triangle()
+    plt.savefig("posterior.png")
+    plt.close()
 
 
 

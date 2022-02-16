@@ -81,7 +81,7 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-from numba import njit
+# from numba import njit
 import numpy as np
 # photometry
 from photutils import CircularAperture
@@ -835,7 +835,7 @@ def get_pixel_scale(wcs_header, header, pixel_init):
         image_scale = f"Image scale in arcsecs/pixel: {pixel_init}"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
-        image_scale_num = user_input("Please enter Image Scale (e.g., 5 arcsec/pixel): ", type_=float)
+        image_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
         image_scale = f"Image scale in arcsecs/pixel: {image_scale_num}"
     return image_scale
 
@@ -907,7 +907,6 @@ def find_target(target, hdufile, verbose=False):
     return pixcoord[0]
 
 
-@njit
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
     rx = (x - x0) * np.cos(rot) - (y - y0) * np.sin(rot)
     ry = (x - x0) * np.sin(rot) + (y - y0) * np.cos(rot)

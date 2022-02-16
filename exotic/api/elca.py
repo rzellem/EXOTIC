@@ -42,7 +42,7 @@
 # ########################################################################### #
 
 import copy
-from numba import njit
+# from numba import njit
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
@@ -288,7 +288,7 @@ class lc_fitter(object):
             model *= np.median(detrend)
             return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
 
-        @njit(fastmath=True)
+        # @njit(fastmath=True)
         def prior_transform(upars):
             # transform unit cube to prior volume
             return boundarray[:, 0] + bounddiff * upars

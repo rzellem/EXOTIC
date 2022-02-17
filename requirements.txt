@@ -7,7 +7,7 @@ astroalign~=2.4
 astropy>=4.3
 astroquery~=0.4
 barycorrpy~=0.4
-cython~=0.29.26 ; platform_system != "Windows"
+cython~=0.29.28 ; platform_system != "Windows"
 dynesty~=1.1 ; platform_system == "Windows"
 holoviews~=1.14
 LDTk~=1.7

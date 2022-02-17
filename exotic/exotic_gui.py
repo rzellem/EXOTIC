@@ -142,6 +142,7 @@ class FileSelect(tk.Frame):
 class fovPlot(tk.Frame):
 
     def __init__(self, parent, firstImage, plot_params, wcs):
+        self.starList = tk.StringVar()
         tk.Frame.__init__(self, master=parent)
 
         # self.protocol("WM_DELETE_WINDOW", exit)
@@ -271,8 +272,38 @@ class fovPlot(tk.Frame):
 
         cid = self.im_fig.canvas.mpl_connect('button_press_event', self.onclickImage1)
 
-        exit_button = tk.Button(parent, text="Next", command=parent.destroy).grid(column=6, row=10, sticky='W', columnspan=5, pady=10, padx=5)
+        exit_button = tk.Button(parent, text="Confirm Star Selection", command=self.setStars).grid(column=6, row=10, sticky='W',
+                                                                                 columnspan=5, pady=10, padx=5)
+
+        exit_button = tk.Button(parent, text="Next", command=parent.destroy).grid(column=9, row=10, sticky='W', columnspan=5, pady=10, padx=5)
         # exit_button.pack(anchor=tk.CENTER)
+
+    #     self.btnFind = tk.Button(self, text="Browse", command=self.setFilePath, anchor=tk.W)
+    #     self.btnFind.grid(row=0, column=2)
+    #
+    # def setFilePath(self):
+    #     file_selected = filedialog.askopenfilename()
+    #     self.filePath.set(file_selected)
+    #
+    # @property
+    # def file_path(self):
+    #     return self.filePath.get()
+
+    def setStars(self):
+        # need to update starlist to be a list of x/y coords
+        print('comps: ',self.get_comp())
+        print('target: ',self.get_target())
+        allstars = str(self.get_target()) + str(self.get_comp())
+        # import pdb; pdb.set_trace()
+        # file_selected = filedialog.askopenfilename()
+        self.starList.set(allstars)
+        # parent.destroy
+
+    @property
+    def stars(self):
+        return self.setStars.get()
+
+
 
     # def exit(self):
     #    if self.targetInfo != (0,0) and len(self.comparisonText) != 0:
@@ -1223,40 +1254,41 @@ def main():
 
             firstImage = f1[0].data
 
-            animate_toggle(True)
+            # animate_toggle(True)
             starInfo = fovPlot(root, firstImage, params, None)
+            # import pdb; pdb.set_trace()
             # TODO - need to code in a way to go to the next image if the first/current one is clouded out
-            animate_toggle()
+            # animate_toggle()
 
-            def save_input():
-                target = starInfo.get_target()
-                comps = starInfo.get_comp()
-
-                if (target == "[0, 0]") or (comps == "()"):
-                    print("You must select at least one of each Star type")
-                else:
-                    input_data['targetpos'] = starInfo.get_target()
-                    input_data['comppos'] = starInfo.get_comp()
-                    # print(input_data['targetpos'])
-                    # print(input_data['comppos'])
-
-                    # Why does this require quit additionally to kill the loop?? Frame vs Tk class thing  maybe - todo
-                    # starInfo.quit()
-                    starInfo.annihilate()
-
-                    # root.quit()
-                    # root.after(5, root.destroy)
-
-            # tk.Button(root,
-            #           text="Next",
-            #           command=save_input).grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
-
-            # # Button for closing
-            # exit_button = tk.Button(root, text="Next", command=save_input)
-            # # exit_button.pack(pady=20)
-            # exit_button.grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
-
-            root.mainloop()
+            # def save_input():
+            #     target = starInfo.get_target()
+            #     comps = starInfo.get_comp()
+            #
+            #     if (target == "[0, 0]") or (comps == "()"):
+            #         print("You must select at least one of each Star type")
+            #     else:
+            #         input_data['targetpos'] = starInfo.get_target()
+            #         input_data['comppos'] = starInfo.get_comp()
+            #         # print(input_data['targetpos'])
+            #         # print(input_data['comppos'])
+            #
+            #         # Why does this require quit additionally to kill the loop?? Frame vs Tk class thing  maybe - todo
+            #         # starInfo.quit()
+            #         starInfo.annihilate()
+            #
+            #         # root.quit()
+            #         # root.after(5, root.destroy)
+            #
+            # # tk.Button(root,
+            # #           text="Next",
+            # #           command=save_input).grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
+            #
+            # # # Button for closing
+            # # exit_button = tk.Button(root, text="Next", command=save_input)
+            # # # exit_button.pack(pady=20)
+            # # exit_button.grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
+            #
+            # root.mainloop()
 
 
 

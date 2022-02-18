@@ -275,7 +275,7 @@ class fovPlot(tk.Frame):
         exit_button = tk.Button(parent, text="Confirm Star Selection", command=self.setStars).grid(column=6, row=10, sticky='W',
                                                                                  columnspan=5, pady=10, padx=5)
 
-        exit_button = tk.Button(parent, text="Next", command=parent.destroy).grid(column=9, row=10, sticky='W', columnspan=5, pady=10, padx=5)
+        # exit_button = tk.Button(parent, text="Next", command=parent.destroy).grid(column=9, row=10, sticky='W', columnspan=5, pady=10, padx=5)
         # exit_button.pack(anchor=tk.CENTER)
 
     #     self.btnFind = tk.Button(self, text="Browse", command=self.setFilePath, anchor=tk.W)
@@ -1256,6 +1256,10 @@ def main():
 
             # animate_toggle(True)
             starInfo = fovPlot(root, firstImage, params, None)
+
+            exit_button = tk.Button(root, text="Next", command=root.destroy).grid(column=9, row=10, sticky='W',
+                                                                                      columnspan=5, pady=10, padx=5)
+
             # import pdb; pdb.set_trace()
             # TODO - need to code in a way to go to the next image if the first/current one is clouded out
             # animate_toggle()

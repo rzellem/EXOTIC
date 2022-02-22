@@ -25,4 +25,3 @@ scikit-image~=0.18
 tenacity~=8.0
 ultranest~=3.3.3 ; platform_system != "Windows"
 pylightcurve~=4.0.1
-auto_stretch

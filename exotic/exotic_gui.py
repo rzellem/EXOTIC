@@ -274,7 +274,7 @@ class fovPlot(tk.Frame):
 
         cid = self.im_fig.canvas.mpl_connect('button_press_event', self.onclickImage1)
 
-        exit_button = tk.Button(parent, text="Confirm Star Selection", command=self.setStars).grid(column=6, row=10, sticky='W',
+        exit_button = tk.Button(parent, text="Save Star Selection", command=self.setStars).grid(column=6, row=10, sticky='W',
                                                                                  columnspan=5, pady=10, padx=5)
 
         # exit_button = tk.Button(parent, text="Next", command=parent.destroy).grid(column=9, row=10, sticky='W', columnspan=5, pady=10, padx=5)
@@ -628,14 +628,13 @@ def main():
             comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
 
-            def save_input2():
+            def save_input():
                 input_data['comppos'] = ast.literal_eval(comppos_entry.get())
-                input_data['targetpos'] = ast.literal_eval(targetpos_entry.get())
                 input_data['pName'] = planet_entry.get()
                 root.destroy()
 
             # Button for closing
-            exit_button = tk.Button(root, text="Next", command=save_input2)
+            exit_button = tk.Button(root, text="Next", command=save_input)
             # exit_button.pack(pady=20)
             exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
 
@@ -917,7 +916,6 @@ def main():
         exit_button.pack(pady=20, anchor=tk.E)
 
         root.mainloop()
-
 
         if obsinfo.get() == "manual":
             root=tk.Tk() 
@@ -1257,45 +1255,9 @@ def main():
 
             # animate_toggle(True)
             starInfo = fovPlot(root, firstImage, params, None)
-
             exit_button = tk.Button(root, text="Next", command=root.destroy).grid(column=9, row=10, sticky='W',
                                                                                       columnspan=5, pady=10, padx=5)
-
             print(starInfo.get_comp())
-            # TODO - need to code in a way to go to the next image if the first/current one is clouded out
-            # animate_toggle()
-
-            # def save_input():
-            #     target = starInfo.get_target()
-            #     comps = starInfo.get_comp()
-            #
-            #     if (target == "[0, 0]") or (comps == "()"):
-            #         print("You must select at least one of each Star type")
-            #     else:
-            #         input_data['targetpos'] = starInfo.get_target()
-            #         input_data['comppos'] = starInfo.get_comp()
-            #         # print(input_data['targetpos'])
-            #         # print(input_data['comppos'])
-            #
-            #         # Why does this require quit additionally to kill the loop?? Frame vs Tk class thing  maybe - todo
-            #         # starInfo.quit()
-            #         starInfo.annihilate()
-            #
-            #         # root.quit()
-            #         # root.after(5, root.destroy)
-            #
-            # # tk.Button(root,
-            # #           text="Next",
-            # #           command=save_input).grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
-            #
-            # # # Button for closing
-            # # exit_button = tk.Button(root, text="Next", command=save_input)
-            # # # exit_button.pack(pady=20)
-            # # exit_button.grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
-            #
-            # root.mainloop()
-
-
         else:
             # raise(Exception("feature not supported yet"))
             pass

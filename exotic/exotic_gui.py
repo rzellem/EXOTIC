@@ -96,6 +96,8 @@ except ImportError:  # package import
 
 animate_toggle()
 
+global input_data
+input_data = {}
 
 class FolderSelect(tk.Frame):
     def __init__(self, parent=None, folderDescription="", default_text="", **kw):
@@ -294,7 +296,6 @@ class fovPlot(tk.Frame):
         print('comps: ',self.get_comp())
         print('target: ',self.get_target())
         allstars = str(self.get_target()) + str(self.get_comp())
-        # import pdb; pdb.set_trace()
         # file_selected = filedialog.askopenfilename()
         self.starList.set(allstars)
         # parent.destroy
@@ -302,8 +303,6 @@ class fovPlot(tk.Frame):
     @property
     def stars(self):
         return self.setStars.get()
-
-
 
     # def exit(self):
     #    if self.targetInfo != (0,0) and len(self.comparisonText) != 0:
@@ -455,9 +454,14 @@ class fovPlot(tk.Frame):
 
     def get_target(self):
         target = str(self.targetInfo)
-        target = target.replace("(", "[")
-        target = target.replace(")", "]")
-
+        target = target.replace("(", "")
+        target = target.replace(")", "")
+        if target != "" or target != "None":
+            pos = target.split(",")
+            pos = [float(x) for x in pos]
+            input_data['target'] = pos
+        else:
+            input_data['target'] = target
         return target
 
     # Likely not needed formatting for input file (i.e. match current standard)
@@ -466,8 +470,8 @@ class fovPlot(tk.Frame):
         comp = comp.replace("(", "[")
         comp = comp.replace(")", "]")
         comp = comp[1:-1]
-
-        return "(" + comp + ")"
+        input_data['comparison'] = json.loads(f"[{comp}]")
+        return comp
 
 def main():
     try:
@@ -552,8 +556,6 @@ def main():
         root.protocol("WM_DELETE_WINDOW", exit)
         obsinfo = tk.StringVar()
 
-        input_data = {}
-
         root.title(f"EXOTIC v{__version__}")
 
         tk.Label(root,
@@ -626,14 +628,14 @@ def main():
             comppos_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             comppos_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
 
-            def save_input():
+            def save_input2():
                 input_data['comppos'] = ast.literal_eval(comppos_entry.get())
                 input_data['targetpos'] = ast.literal_eval(targetpos_entry.get())
                 input_data['pName'] = planet_entry.get()
                 root.destroy()
 
             # Button for closing
-            exit_button = tk.Button(root, text="Next", command=save_input)
+            exit_button = tk.Button(root, text="Next", command=save_input2)
             # exit_button.pack(pady=20)
             exit_button.grid(row=i, column=3, sticky=tk.W, pady=10)
 
@@ -802,7 +804,6 @@ def main():
         # Button for closing
         exit_button = tk.Button(root, text="Next", command=root.destroy)
         exit_button.pack(pady=20, anchor=tk.E)
-        input_data = {}  # for saving entries
 
         root.mainloop()
 
@@ -1260,7 +1261,7 @@ def main():
             exit_button = tk.Button(root, text="Next", command=root.destroy).grid(column=9, row=10, sticky='W',
                                                                                       columnspan=5, pady=10, padx=5)
 
-            # import pdb; pdb.set_trace()
+            print(starInfo.get_comp())
             # TODO - need to code in a way to go to the next image if the first/current one is clouded out
             # animate_toggle()
 
@@ -1293,16 +1294,6 @@ def main():
             # # exit_button.grid(column=6, row=4, pady=15, sticky='W', columnspan=5)
             #
             # root.mainloop()
-
-
-
-
-
-
-
-
-
-
 
 
         else:
@@ -1857,8 +1848,8 @@ def main():
 
                         "Plate Solution? (y/n)": input_data['platesolve'],
 
-                        "Target Star X & Y Pixel": (input_data['targetpos']),
-                        "Comparison Star(s) X & Y Pixel": (input_data['comppos'])
+                        "Target Star X & Y Pixel": input_data['target'],
+                        "Comparison Star(s) X & Y Pixel": input_data['comparison']
                     }
 
                     if flats_dir.folder_path == 'null':

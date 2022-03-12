@@ -102,7 +102,7 @@ setuptools.setup(name=NAME,
                  include_package_data=True,
                  zip_safe=False,
                  install_requires=requirements_read(),
-                 python_requires=f">='{PYTHON_REQUIREMENTS}'",
+                 python_requires=f">={PYTHON_REQUIREMENTS}",
                  setup_requires=REQUIREMENTS_SETUP,
                  entry_points={
                      'console_scripts': [

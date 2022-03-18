@@ -2,6 +2,8 @@
 
 py_commands="python3 python"
 pip_commands="pip3 pip"
+requirements_base="requirements-base.txt"
+cython_version_default="0.29.26"
 ver_py_min="3.6"
 ver_py_max="4.0"
 py_download="https://www.python.org/downloads/"
@@ -30,6 +32,15 @@ version_within_range () {
         return 0
     fi
     return 1
+}
+
+# report path to script source if it is executed from another dir
+source_path() {
+    path_current="$(pwd)"
+    path_script_rel="${BASH_SOURCE:-${0}}"
+    path_script="$( echo -n "${path_current:+${path_current}/}${path_script_rel}" | 
+        sed -e ':loop' -e 's#//#/#;s#\./##;' -e 't loop' )"
+    echo -n "$(cd $(dirname ${path_script}) && pwd)"
 }
 
 # test for python installation and version compatibility
@@ -120,8 +131,14 @@ then
 fi
 # exec commands using determinate pip
 echo "INFO: Installing EXOTIC build dependencies. ..."
-${pip_runner} install wheel
 ${pip_runner} install setuptools
+${pip_runner} install wheel
+if [[ -f "$(source_path)/${requirements_base}" ]] ; 
+then 
+    ${pip_runner} install -r "$(source_path)/${requirements_base}"
+else
+    ${pip_runner} install "cython~=${cython_version_default} ; platform_system != 'Windows'" 
+fi
 echo "INFO: Installing EXOTIC core. ..."
 ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."

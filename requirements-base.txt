@@ -1,0 +1,5 @@
+# base packages -- do not add/modify packages here without compelling reason
+setuptools
+wheel
+cython~=0.29.26 ; platform_system != 'Windows'  # also change version in run scripts
+importlib-metadata>=3.6 ; python_version<='3.7'

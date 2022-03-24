@@ -774,9 +774,7 @@ def transformation(image_data, file_name, roi=1):
     try:
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         return results[0]
-    except Exception as ee:
-        log_info(ee)
-
+    except Exception:
         ws = 5
         # smooth image and try to align again
         windows = view_as_windows(image_data[0], (ws,ws), step=1)
@@ -788,10 +786,8 @@ def transformation(image_data, file_name, roi=1):
         try:
             results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
             return results[0]
-        except Exception as ee:
-            log_info(ee)
-
-        log_info(file_name)
+        except Exception:
+            pass
 
         for p in [99, 98, 95, 90]:
             for it in [2, 1, 0]:
@@ -806,10 +802,10 @@ def transformation(image_data, file_name, roi=1):
                 try:
                     results = aa.find_transform(mask1, mask0)
                     return results[0]
-                except Exception as ee:
-                    log_info(ee)
+                except Exception:
+                    pass
 
-    log_info(f"Warning: Alignment failed - {file_name}", warn=True)
+    log_info(f"Warning: Following image failed to align - {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 

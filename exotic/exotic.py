@@ -1611,7 +1611,7 @@ def main():
                 compStarList = exotic_infoDict['comp_stars']
 
             # aperture sizes in stdev (sigma) of PSF
-            apers = np.linspace(3, 6, 7)
+            apers = np.linspace(1.5, 6, 20)
             annuli = np.linspace(6, 15, 19)
 
             # alloc psf fitting param

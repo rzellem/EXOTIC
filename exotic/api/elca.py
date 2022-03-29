@@ -42,8 +42,10 @@
 # ########################################################################### #
 
 import copy
-# from numba import njit
+from itertools import cycle
+
 import numpy as np
+from astropy.time import Time
 import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
@@ -378,13 +380,16 @@ class lc_fitter(object):
         axs[0].set_ylabel("Relative Flux", fontsize=14)
         axs[0].grid(True,ls='--')
 
-        rprs2 = self.parameters['rprs']**2
-        rprs2err = 2*self.parameters['rprs']*self.errors['rprs']
-        lclabel1 = r"$R^{2}_{p}/R^{2}_{s}$ = %s $\pm$ %s" %(
-            str(round_to_2(rprs2, rprs2err)),
-            str(round_to_2(rprs2err))
-        )
-        
+        try:
+            rprs2 = self.parameters['rprs']**2
+            rprs2err = 2*self.parameters['rprs']*self.errors['rprs']
+            lclabel1 = r"$R^{2}_{p}/R^{2}_{s}$ = %s $\pm$ %s" %(
+                str(round_to_2(rprs2, rprs2err)),
+                str(round_to_2(rprs2err))
+            )
+        except:
+            lclabel1 = ""
+
         lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" %(
             str(round_to_2(self.parameters['tmid'], self.errors.get('tmid',0))),
             str(round_to_2(self.errors.get('tmid',0)))
@@ -556,7 +561,14 @@ class glc_fitter(lc_fitter):
             for i in range(nobs):
 
                 print(f"Fitting individual light curve {i+1}/{nobs}")
-                mybounds = dict(**self.local_bounds[i], **self.global_bounds)
+                try:
+                    mybounds = dict(**self.local_bounds[i], **self.global_bounds)
+                except:
+                    mybounds = {}
+                    for k in self.local_bounds[i]:
+                        mybounds[k] = self.local_bounds[i][k]
+                    for k in self.global_bounds:
+                        mybounds[k] = self.global_bounds[k]
                 if 'per' in mybounds: del(mybounds['per'])
 
                 myfit = lc_fitter(
@@ -575,8 +587,17 @@ class glc_fitter(lc_fitter):
 
                     boundarray[j+ti+len(gfreekeys),0] = myfit.parameters[key] - 5*myfit.errors[key]
                     boundarray[j+ti+len(gfreekeys),1] = myfit.parameters[key] + 5*myfit.errors[key]
+
                     if key == 'rprs':
                         boundarray[j+ti+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
+
+                # print name and stdev of residuals
+                mint = np.min(self.data[i]['time'])
+                maxt = np.max(self.data[i]['time'])
+                try:
+                    print(f"{self.data[i]['name']} & {Time(mint,format='jd').isot} & {Time(maxt,format='jd').isot} & {np.std(myfit.residuals)} & {len(self.data[i]['time'])}")
+                except:
+                    print(f"{self.data[i]['name']} & {mint} & {maxt} & {np.std(myfit.residuals)} & {len(self.data[i]['time'])}")
 
                 del(myfit)
 
@@ -604,7 +625,7 @@ class glc_fitter(lc_fitter):
                 model = transit(self.data[i]['time'], self.data[i]['priors'])
                 model *= np.exp(self.data[i]['priors']['a2']*self.data[i]['airmass'])
                 detrend = self.data[i]['flux']/model
-                model *= np.median(detrend)
+                model *= np.mean(detrend)
 
                 chi2 += np.sum( ((self.data[i]['flux']-model)/self.data[i]['ferr'])**2 )
 
@@ -617,9 +638,9 @@ class glc_fitter(lc_fitter):
                 freekeys.append(f"local_{n}_{k}")
 
         if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=6e5)
         else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5, show_status=self.verbose, viz_callback=self.verbose)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=6e5, show_status=self.verbose, viz_callback=self.verbose)
 
         self.quantiles = {}
         self.errors = {}
@@ -647,30 +668,34 @@ class glc_fitter(lc_fitter):
             model = transit(self.data[n]['time'], self.data[n]['priors'])
             airmass = np.exp(self.data[n]['airmass']*self.data[n]['priors']['a2'])
             detrend = self.data[n]['flux']/(model*airmass)
-            self.data[n]['priors']['a1'] = np.median(detrend)
+            self.data[n]['priors']['a1'] = np.mean(detrend)
             self.data[n]['residuals'] = self.data[n]['flux'] - model*airmass*self.data[n]['priors']['a1']
             self.data[n]['detrend'] = self.data[n]['flux']/(airmass*self.data[n]['priors']['a1'])
 
     def plot_bestfits(self):
         nrows = len(self.data)//4+1
-        fig,ax = plt.subplots(4, nrows, figsize=(5*nrows, 5+5*nrows))
+        fig,ax = plt.subplots(nrows, 4, figsize=(5+5*nrows, 5*nrows))
 
         # turn off all axes
         for i in range(nrows*4):
-            ci = int(i/4)
-            ri = i%4
+            ri = int(i/4)
+            ci = i%4
             if ax.ndim == 1:
                 ax[i].axis('off')
             else:
                 ax[ri,ci].axis('off')
 
-        markers = ['o','v','^','<','>','s','p','*','h','H','D','d','P','X']
-        colors = ['black','blue','green','orange','purple','brown','pink','grey','magenta','cyan','yellow','lime']
+        # cycle the colors and markers
+        markers = cycle(['o','v','^','<','>','s','*','h','H','D','d','P','X'])
+        colors = cycle(['black','blue','green','orange','purple','grey','magenta','cyan','lime'])
 
         # plot observations
         for i in range(len(self.data)):
-            ci = int(i/4)
-            ri = i%4
+            ri = int(i/4)
+            ci = i%4
+            ncolor = next(colors)
+            nmarker = next(markers)
+
             model = transit(self.data[i]['time'], self.data[i]['priors'])
             airmass = np.exp(self.data[i]['airmass']*self.data[i]['priors']['a2'])
             detrend = self.data[i]['flux']/(model*airmass)
@@ -678,14 +703,14 @@ class glc_fitter(lc_fitter):
             if ax.ndim == 1:
                 ax[i].axis('on')
                 ax[i].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), 
-                                ls='none', marker=markers[i], color=colors[i], alpha=0.5)
+                                ls='none', marker=nmarker, color=ncolor, alpha=0.5)
                 ax[i].plot(self.data[i]['time'], model, 'r-', zorder=2)
                 ax[i].set_xlabel("Time")
                 ax[i].set_title(f"{self.data[i].get('name','')}")
             else:
                 ax[ri,ci].axis('on')
                 ax[ri,ci].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), 
-                                   ls='none', marker=markers[i], color=colors[i], alpha=0.5)
+                                   ls='none', marker=nmarker, color=ncolor, alpha=0.5)
                 ax[ri,ci].plot(self.data[i]['time'], model, 'r-', zorder=2)
                 ax[ri,ci].set_xlabel("Time")
                 ax[ri,ci].set_title(f"{self.data[i].get('name','')}")
@@ -694,7 +719,7 @@ class glc_fitter(lc_fitter):
         return fig
 
     def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05):
-        f = plt.figure(figsize=(12,9))
+        f = plt.figure(figsize=(15,12))
         f.subplots_adjust(top=0.92,bottom=0.09,left=0.1,right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4,5), (0,0), colspan=5,rowspan=3)
         ax_res = plt.subplot2grid((4,5), (3,0), colspan=5, rowspan=1)
@@ -721,29 +746,64 @@ class glc_fitter(lc_fitter):
         maxp = 0
 
         min_std = 1
-        markers = ['o','v','^','<','>','s','p','*','h','H','D','d','P','X']
-        colors = ['black','blue','green','orange','purple','brown','pink','grey','magenta','cyan','yellow','lime']
+        # cycle the colors and markers
+        markers = cycle(['o','v','^','<','>','s','*','h','H','D','d','P','X'])
+        colors = cycle(['black','blue','green','orange','purple','grey','magenta','cyan','lime'])
+
+        alldata = {
+            'time': [],
+            'flux': [],
+            'detrend': [],
+            'ferr': [],
+            'residuals': [],
+        }
+
         for n in range(len(self.data)):
+            ncolor = next(colors)
+            nmarker = next(markers)
+            alldata['time'].extend(self.data[n]['time'].tolist())
+            alldata['detrend'].extend(self.data[n]['detrend'].tolist())
+            alldata['flux'].extend(self.data[n]['flux'].tolist())
+            alldata['ferr'].extend(self.data[n]['ferr'].tolist())
+            alldata['residuals'].extend(self.data[n]['residuals'].tolist())
+            
             phase = get_phase(self.data[n]['time'], self.parameters['per'], self.data[n]['priors']['tmid'])
             si = np.argsort(phase)
-            bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.data[n]['residuals'][si]/np.median(self.data[n]['flux'])*1e2, bin_dt)
-            
+            #bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.data[n]['residuals'][si]/np.median(self.data[n]['flux'])*1e2, bin_dt)
+
             # plot data
             axs[0].errorbar(phase, self.data[n]['detrend'], yerr=np.std(self.data[n]['residuals'])/np.median(self.data[n]['flux']), 
-                            ls='none', marker=markers[n], color=colors[n], zorder=1, alpha=alpha)
-        
+                            ls='none', marker=nmarker, color=ncolor, zorder=1, alpha=alpha)
+
             # plot residuals
-            axs[1].plot(phase, self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2, color=colors[n], marker=markers[n], ls='none',
-                         alpha=0.2, label=r'{} $\sigma$ = {:.2f} %'.format(self.data[n].get('name',''),np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2)))
+            axs[1].plot(phase, self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2, color=ncolor, marker=nmarker, ls='none',
+                         alpha=0.2)
 
             # plot binned data
             bt2, bf2, bs = time_bin(phase[si]*self.data[n]['priors']['per'], self.data[n]['detrend'][si], bin_dt)
-            axs[0].errorbar(bt2/self.data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=colors[n],ls='none',marker=markers[n])
+            axs[0].errorbar(bt2/self.data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=ncolor,ls='none',marker=nmarker,
+                            label=r'{}: {:.2f} %'.format(self.data[n].get('name',''),np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2)))
 
             # replace min and max for upsampled lc model
             minp = min(minp, min(phase))
             maxp = max(maxp, max(phase))
             min_std = min(min_std, np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])))
+
+        # create binned plot for all the data
+        for k in alldata.keys():
+            alldata[k] = np.array(alldata[k])
+            
+        phase = get_phase(alldata['time'], self.parameters['per'], self.data[n]['priors']['tmid'])
+        si = np.argsort(phase)
+        bt, br, _ = time_bin(phase[si]*self.parameters['per'], alldata['residuals'][si]/np.median(alldata['flux']), 2*bin_dt)
+        bt, bf, bs = time_bin(phase[si]*self.parameters['per'], alldata['detrend'][si], 2*bin_dt)
+
+        axs[0].errorbar(bt/self.parameters['per'],bf,yerr=bs,alpha=1,zorder=2,color='white',ls='none',marker='o',ms=9,
+                        markeredgecolor='black',
+                        ecolor='black',
+                        label=r'All Data: {:.2f} %'.format(np.std(br)*1e2))
+
+        axs[1].plot(bt/self.parameters['per'],br*1e2,color='white',ls='none',marker='o',ms=9,markeredgecolor='black')
 
         # best fit model
         self.time_upsample = np.linspace(minp*self.parameters['per']+self.parameters['tmid'], 
@@ -761,8 +821,8 @@ class glc_fitter(lc_fitter):
         axs[1].set_ylim([-5*min_std*1e2, 5*min_std*1e2])
 
         axs[0].get_xaxis().set_visible(False)
-        axs[1].legend(loc='best',ncol=len(self.data)//4+1)
-        axs[0].legend(loc='best')
+        #axs[1].legend(loc='best',ncol=len(self.data)//6+1)
+        axs[0].legend(loc='best',ncol=len(self.data)//7+1)
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
         axs[1].grid(True,ls='--',axis='y')
         return f,axs
@@ -791,20 +851,24 @@ class glc_fitter(lc_fitter):
         maxp = 0
 
         min_std = 1
-        markers = ['o','v','^','<','>','s','p','*','h','H','D','d','P','X']
-        colors = ['black','blue','green','orange','purple','brown','pink','grey','magenta','cyan','yellow','lime']
+        # cycle the colors and markers
+        markers = cycle(['o','v','^','<','>','s','*','h','H','D','d','P','X'])
+        colors = cycle(['black','blue','green','orange','purple','grey','magenta','cyan','lime'])
         for n in range(len(self.data)):
+            ncolor = next(colors)
+            nmarker = next(markers)
+
             phase = get_phase(self.data[n]['time'], self.parameters['per'], self.data[n]['priors']['tmid'])
             si = np.argsort(phase)
             bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.data[n]['residuals'][si]/np.median(self.data[n]['flux'])*1e2, bin_dt)
             
             # plot data
             ax.errorbar(phase, self.data[n]['detrend']-n*dy, yerr=np.std(self.data[n]['residuals'])/np.median(self.data[n]['flux']), 
-                            ls='none', marker=markers[n], color=colors[n], zorder=1, alpha=0.25)
+                            ls='none', marker=nmarker, color=ncolor, zorder=1, alpha=0.25)
         
             # plot binned data
             bt2, bf2, bs = time_bin(phase[si]*self.data[n]['priors']['per'], self.data[n]['detrend'][si]-n*dy, bin_dt)
-            ax.errorbar(bt2/self.data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=colors[n],ls='none',marker=markers[n])
+            ax.errorbar(bt2/self.data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=ncolor,ls='none',marker=nmarker)
 
             # replace min and max for upsampled lc model
             minp = min(minp, min(phase))
@@ -817,7 +881,7 @@ class glc_fitter(lc_fitter):
             self.transit_upsample = transit(self.time_upsample, self.parameters)
             self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
             sii = np.argsort(self.phase_upsample)
-            ax.plot(self.phase_upsample[sii], self.transit_upsample[sii]-n*dy, ls='-', color=colors[n], zorder=3, label=self.data[n].get('name',''))
+            ax.plot(self.phase_upsample[sii], self.transit_upsample[sii]-n*dy, ls='-', color=ncolor, zorder=3, label=self.data[n].get('name',''))
 
         ax.set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         ax.set_xlabel("Phase ", fontsize=14)

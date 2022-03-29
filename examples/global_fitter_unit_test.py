@@ -6,13 +6,13 @@ from exotic.api.elca import transit, glc_fitter
 if __name__ == "__main__":
 
     # simulate input data
-    epochs = np.random.choice(np.arange(100), 11, replace=False)
+    epochs = np.random.choice(np.arange(100), 10, replace=False)
     input_data = []
     local_bounds = []
 
     for i, epoch in enumerate(epochs):
 
-        nobs = np.random.randint(50) + 25
+        nobs = np.random.randint(25) + 15
         phase = np.linspace(-0.02-0.01*np.random.random(), 0.02+0.01*np.random.random(), nobs)
         
         prior = {
@@ -49,7 +49,6 @@ if __name__ == "__main__":
 
         # individual properties
         local_bounds.append({
-            'rprs':[0,0.2],
             'a2':[-0.5,0]
         })
 
@@ -59,9 +58,10 @@ if __name__ == "__main__":
 
     # shared properties between light curves
     global_bounds = {
-        'per':[3.5-0.0001,3.5+0.0001],
+        #'per':[3.5-0.0001,3.5+0.0001],
         'tmid':[1-0.01,1+0.01],
-        'ars':[14,14.5],
+        #'ars':[14,14.5],
+       'rprs':[0,0.2],
     }
 
     print('epochs:',epochs)
@@ -77,6 +77,7 @@ if __name__ == "__main__":
     plt.close()
 
     myfit.plot_bestfits()
+    plt.tight_layout()
     plt.savefig("bestfits.png")
     plt.close()
 

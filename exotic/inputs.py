@@ -189,7 +189,7 @@ class Inputs:
 
 
 def check_imaging_files(directory, img_type):
-    file_extensions = ['.fits', '.fit', '.fts', '.fz', '.gz']
+    file_extensions = ['.fits', '.fit', '.fts', '.fz', '.fits.gz', 'fit.gz']
     input_files = []
 
     while True:
@@ -198,7 +198,7 @@ def check_imaging_files(directory, img_type):
             if directory.is_dir() and str(directory).strip():
                 for ext in file_extensions:
                     for file in directory.iterdir():
-                        if file.is_file() and file.name.lower().endswith(ext.lower()) \
+                        if file.is_file() and file.name.lower().endswith('.fits.gz') \
                                 and file.name[0:2] not in ('ref', 'wcs'):
                             input_files.append(str(file))
                     if input_files:

@@ -1,10 +1,9 @@
 # pipreqs /path/to/your/project/
--r requirements-base.txt
 astroalign~=2.4
 astropy>=4.3
 astroquery~=0.4
 barycorrpy~=0.4
-dynesty~=1.1 ; platform_system == "Windows"
+dynesty~=1.1 ; platform_system == 'Windows'
 holoviews~=1.14
 LDTk~=1.7
 lmfit~=1.0
@@ -21,4 +20,3 @@ requests~=2.27
 scipy~=1.7
 scikit-image~=0.18
 tenacity~=8.0
-ultranest~=3.3.3 ; platform_system != "Windows"

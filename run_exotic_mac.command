@@ -8,6 +8,7 @@ ver_py_min="3.6"
 ver_py_max="4.0"
 py_download="https://www.python.org/downloads/"
 pip_download="https://bootstrap.pypa.io/get-pip.py"
+exotic_url="https://github.com/rzellem/EXOTIC"
 test_url="https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 #test_url="https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select%201%20from%20DUAL"
 cert_instructions="https://news.ycombinator.com/item?id=13626273"
@@ -41,6 +42,21 @@ source_path() {
     path_script="$( echo -n "${path_current:+${path_current}/}${path_script_rel}" | 
         sed -e ':loop' -e 's#//#/#;s#\./##;' -e 't loop' )"
     echo -n "$(cd $(dirname ${path_script}) && pwd)"
+}
+
+log_startup() {
+    {
+        echo "==== ERROR LOG ${date_str} ====" 2>&1
+        echo "path_script=$(source_path)" 2>&1
+        echo "py_runner=${py_runner}" 2>&1
+        echo "pip_runner=${pip_runner}" 2>&1
+        echo 2>&1
+        printenv | grep -i '^path'
+        echo 2>&1
+        echo "pip_freeze=" 2>&1
+        pip freeze 2>&1 ;
+        echo
+    } >> "${date_str}_exotic_start.log"
 }
 
 # test for python installation and version compatibility
@@ -122,9 +138,9 @@ echo "INFO: Validating certificate store. ..."
 test_result=$(${py_runner} -u -c "import urllib.request; urllib.request.urlopen('${test_url}')" 2>&1)
 if grep -q 'CERTIFICATE_VERIFY_FAILED' <<< "${test_result}" ; 
 then 
-    echo "ERROR: Incompatible or missing network security certificates. Please install"
-    echo "       and configure the 'certifi' module from PyPi. EXITING!"
-    echo "       Example: Applications > Python 3.9 > Install Certificates.command"
+    echo "ERROR: Incompatible or missing network security certificates. Please"
+    echo "       install and configure the 'certifi' module from PyPi. EXITING!"
+    echo "       Exa.: Applications > Python 3.9 > Install Certificates.command"
     echo "For more information, see ${cert_instructions}. ..."
     echo
     exit 65
@@ -142,4 +158,18 @@ fi
 echo "INFO: Installing EXOTIC core. ..."
 ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
-zsh -c "exotic-gui"
+if ${pip_runner} freeze | grep -iq 'exotiic' ; 
+then
+    zsh -c "exotic-gui"
+else
+    date_str="$( date +%y%m%d )"
+    echo "ERROR: Unable to launch EXOTIC, installation failed. Please verify"
+    echo "       installation steps reported on screen or open a support"
+    echo "       ticket with the file '${date_str}_exotic_start.log' attached."
+    echo "       ${exotic_url}/issues/new/choose"
+    log_startup
+    echo "       EXITING!"
+    exit 65
+fi
+echo "COMPLETE, EXITING!"
+exit 0

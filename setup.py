@@ -14,7 +14,7 @@
 # pip3 install --exists-action w --progress-bar ascii -r requirements.txt  # install req's
 # pip3 install exotic --no-index --find-links file:///proj/survey-ws/source/EXOTIC/dist/  # install locally
 # CLEAN PREVIOUS BUILDS: 
-# rm -r dist *.egg* build ; pip3 uninstall exotic ; # pipenv uninstall exotic
+# rm -r dist *.egg* .egg* build ; pip3 uninstall exotic ; # pipenv uninstall exotic
 
 import re
 import time
@@ -27,7 +27,7 @@ AUTHOR = "Exoplanet Watch at NASA JPL"
 AUTHOR_EMAIL = "exoplanetwatch@jpl.nasa.gov"
 DESCRIPTION = "EXOTIC: EXOplanet Transit Interpretation Code"
 NAME = "exotic"
-PYTHON_REQUIREMENTS = "3.6"
+PYTHON_REQUIREMENTS = "3.8"
 URL = "https://github.com/rzellem/EXOTIC"
 
 REQUIREMENTS_SETUP = ["setuptools_scm"]
@@ -48,20 +48,6 @@ def license_read():
     # provide one-line summary per LICENSE spec
     lic = f"Proprietary -- Copyright (c) 2019-{annum}, California Institute of Technology." 
     return lic
-
-
-def requirements_read():
-    requirements = []
-    requirements_path = Path("requirements.txt")
-    if not requirements_path.exists():
-        return requirements
-    with requirements_path.open('r', encoding="utf8") as f:
-        for line in f:
-            # detect and skip comment lines
-            if re.match(r"^\s*#.*", line):
-                continue
-            requirements.append(str(line).strip())
-    return requirements
 
 
 setuptools.setup(name=NAME,
@@ -101,7 +87,6 @@ setuptools.setup(name=NAME,
                  packages=setuptools.find_packages(exclude=["tests", "*.tests", "*.tests.*", "tests.*"]),
                  include_package_data=True,
                  zip_safe=False,
-                 install_requires=requirements_read(),
                  python_requires=f">={PYTHON_REQUIREMENTS}",
                  setup_requires=REQUIREMENTS_SETUP,
                  entry_points={

@@ -62,8 +62,10 @@ except:
 
 from pylightcurve.models.exoplanet_lc import transit as pytransit
 
+
 def weightedflux(flux,gw,nearest):
     return np.sum(flux[nearest]*gw,axis=-1)
+
 
 def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):
     Xm = (X - np.median(X,0))*w
@@ -81,21 +83,25 @@ def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):
     gw[np.isnan(gw)] = 0.01
     return gw, nearest.astype(int)
 
+
 def transit(times, values):
     model = pytransit([values['u0'], values['u1'], values['u2'], values['u3']], 
-                    values['rprs'], values['per'], values['ars'], 
-                    values['ecc'], values['inc'], values['omega'],
-                    values['tmid'], times, method='claret', precision=3)
+                      values['rprs'], values['per'], values['ars'],
+                      values['ecc'], values['inc'], values['omega'],
+                      values['tmid'], times, method='claret', precision=3)
     return model
+
 
 def get_phase(times, per, tmid):
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
+
 
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
     model = transit*np.exp(np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass)
     detrend = data / model
     return np.mean(np.median(detrend, 0)), np.std(np.median(detrend, 0))
+
 
 def round_to_2(*args):
     x = args[0]
@@ -111,6 +117,7 @@ def round_to_2(*args):
         except:
             roundval = 1
     return round(x, roundval)
+
 
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt=1./(60*24)):
@@ -206,10 +213,10 @@ class lc_fitter(object):
 
             if np.ndim(self.airmass) == 2:
                 res = least_squares(lc2min_nneighbor, x0=[self.prior[k] for k in freekeys],
-                                     method='lm', jac='3-point', loss='linear')
+                                    method='lm', jac='3-point', loss='linear')
             else:
                 res = least_squares(lc2min_airmass, x0=[self.prior[k] for k in freekeys],
-                                     method='lm', jac='3-point', loss='linear')
+                                    method='lm', jac='3-point', loss='linear')
 
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
@@ -296,7 +303,12 @@ class lc_fitter(object):
         try:
             self.ns_type = 'ultranest'
             test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
-            self.results = test.run(max_ncalls=int(self.max_ncalls))
+
+            noop = lambda *args, **kwargs: None
+            if self.verbose is True:
+                self.results = test.run(max_ncalls=int(self.max_ncalls))
+            else:
+                self.results = test.run(max_ncalls=int(self.max_ncalls), show_status=False, viz_callback=noop)
 
             for i, key in enumerate(freekeys):
                 self.parameters[key] = self.results['maximum_likelihood']['point'][i]
@@ -350,7 +362,7 @@ class lc_fitter(object):
 
             for i in range(len(freekeys)):
                 tests[3][freekeys[i]] = samples[mask][bi, i]
-                #tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
+                # tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
 
             # find best fit from chi2 minimization
             chis = []
@@ -403,7 +415,7 @@ class lc_fitter(object):
         if phase:
             si = np.argsort(self.phase)
             bt2, br2, _ = time_bin(self.phase[si]*self.parameters['per'], self.residuals[si]/np.median(self.data)*1e2, bin_dt)
-            axs[1].plot(self.phase, self.residuals/np.median(self.data)*1e2, 'k.', alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format( np.std(self.residuals/np.median(self.data)*1e2)))
+            axs[1].plot(self.phase, self.residuals/np.median(self.data)*1e2, 'k.', alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals/np.median(self.data)*1e2)))
             axs[1].plot(bt2/self.parameters['per'],br2,'bs',alpha=1,zorder=2)
             axs[1].set_xlim([min(self.phase), max(self.phase)])
             axs[1].set_xlabel("Phase", fontsize=14)
@@ -411,15 +423,15 @@ class lc_fitter(object):
             si = np.argsort(self.phase)
             bt2, bf2, bs = time_bin(self.phase[si]*self.parameters['per'], self.detrended[si], bin_dt)
             axs[0].errorbar(bt2/self.parameters['per'],bf2,yerr=bs,alpha=1,zorder=2,color='blue',ls='none',marker='s')
-            #axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
+            # axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
             sii = np.argsort(self.phase_upsample)
             axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.phase), max(self.phase)])
             axs[0].set_xlabel("Phase ", fontsize=14)
         else:
             bt, br, _ = time_bin(self.time, self.residuals/np.median(self.data)*1e2, bin_dt)
-            axs[1].plot(self.time, self.residuals/np.median(self.data)*1e2, 'k.', alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format( np.std(self.residuals/np.median(self.data)*1e2)))
-            axs[1].plot(bt,br,'bs',alpha=1,zorder=2,label=r'$\sigma$ = {:.2f} %'.format( np.std(br)))
+            axs[1].plot(self.time, self.residuals/np.median(self.data)*1e2, 'k.', alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals/np.median(self.data)*1e2)))
+            axs[1].plot(bt,br,'bs',alpha=1,zorder=2,label=r'$\sigma$ = {:.2f} %'.format(np.std(br)))
             axs[1].set_xlim([min(self.time), max(self.time)])
             axs[1].set_xlabel("Time [day]", fontsize=14)
 
@@ -447,23 +459,23 @@ class lc_fitter(object):
             titles = []
             labels= []
             flabels = {
-                'rprs':r'R$_{p}$/R$_{s}$',
-                'per':r'Period [day]',
-                'tmid':r'T$_{mid}$',
-                'ars':r'a/R$_{s}$',
-                'inc':r'Inc. [deg]',
-                'u1':r'u$_1$',
-                'fpfs':r'F$_{p}$/F$_{s}$',
-                'omega':r'$\omega$',
-                'ecc':r'$e$',
-                'c0':r'$c_0$',
-                'c1':r'$c_1$',
-                'c2':r'$c_2$',
-                'c3':r'$c_3$',
-                'c4':r'$c_4$',
-                'a0':r'$a_0$',
-                'a1':r'$a_1$',
-                'a2':r'$a_2$'
+                'rprs': r'R$_{p}$/R$_{s}$',
+                'per': r'Period [day]',
+                'tmid': r'T$_{mid}$',
+                'ars': r'a/R$_{s}$',
+                'inc': r'Inc. [deg]',
+                'u1': r'u$_1$',
+                'fpfs': r'F$_{p}$/F$_{s}$',
+                'omega': r'$\omega$',
+                'ecc': r'$e$',
+                'c0': r'$c_0$',
+                'c1': r'$c_1$',
+                'c2': r'$c_2$',
+                'c3': r'$c_3$',
+                'c4': r'$c_4$',
+                'a0': r'$a_0$',
+                'a1': r'$a_1$',
+                'a2': r'$a_2$'
             }
             for i, key in enumerate(self.quantiles):
                 labels.append(flabels.get(key, key))
@@ -476,38 +488,38 @@ class lc_fitter(object):
                 if key == 'a2' or key == 'a1':
                     continue
 
-                mask3 = mask3 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 3*self.errors[key]) ) & \
-                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 3*self.errors[key]) )
+                mask3 = mask3 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 3*self.errors[key])) & \
+                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 3*self.errors[key]))
 
-                mask1 = mask1 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - self.errors[key]) ) & \
-                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + self.errors[key]) )
+                mask1 = mask1 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - self.errors[key])) & \
+                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + self.errors[key]))
 
-                mask2 = mask2 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 2*self.errors[key]) ) & \
-                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 2*self.errors[key]) )
+                mask2 = mask2 & (self.results['weighted_samples']['points'][:,i] > (self.parameters[key] - 2*self.errors[key])) & \
+                    (self.results['weighted_samples']['points'][:,i] < (self.parameters[key] + 2*self.errors[key]))
 
             chi2 = self.results['weighted_samples']['logl']*-2
             fig = corner(self.results['weighted_samples']['points'],
-                labels= labels,
-                bins=int(np.sqrt(self.results['samples'].shape[0])),
-                range= ranges,
-                #quantiles=(0.1, 0.84),
-                plot_contours=True,
-                levels=[ np.percentile(chi2[mask1],95), np.percentile(chi2[mask2],95), np.percentile(chi2[mask3],95)],
-                plot_density=False,
-                titles=titles,
-                data_kwargs={
-                    'c':chi2,
-                    'vmin':np.percentile(chi2[mask3],1),
-                    'vmax':np.percentile(chi2[mask3],95),
-                    'cmap':'viridis'
-                },
-                label_kwargs={
-                    'labelpad':15,
-                },
-                hist_kwargs={
-                    'color':'black',
-                }
-            )
+                         labels=labels,
+                         bins=int(np.sqrt(self.results['samples'].shape[0])),
+                         range=ranges,
+                         # quantiles=(0.1, 0.84),
+                         plot_contours=True,
+                         levels=[np.percentile(chi2[mask1], 95), np.percentile(chi2[mask2], 95),
+                                 np.percentile(chi2[mask3], 95)],
+                         plot_density=False,
+                         titles=titles,
+                         data_kwargs={
+                             'c': chi2,
+                             'vmin': np.percentile(chi2[mask3], 1),
+                             'vmax': np.percentile(chi2[mask3], 95),
+                             'cmap': 'viridis'
+                         },
+                         label_kwargs={
+                             'labelpad': 15,
+                         },
+                         hist_kwargs={
+                             'color': 'black',
+                         })
         else:
             fig, axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()),
                                                    quantiles_2d=[0.4, 0.85],
@@ -529,8 +541,8 @@ class glc_fitter(lc_fitter):
         self.global_bounds = global_bounds
         self.local_bounds = local_bounds
         self.individual_fit = individual_fit
+        self.max_ncalls = 4e5
         self.verbose = verbose
-
         self.fit_nested()
 
     def fit_nested(self):
@@ -557,7 +569,8 @@ class glc_fitter(lc_fitter):
 
                 print(f"Fitting individual light curve {i+1}/{nobs}")
                 mybounds = dict(**self.local_bounds[i], **self.global_bounds)
-                if 'per' in mybounds: del(mybounds['per'])
+                if 'per' in mybounds:
+                    del(mybounds['per'])
 
                 myfit = lc_fitter(
                     self.data[i]['time'],
@@ -578,12 +591,13 @@ class glc_fitter(lc_fitter):
                     if key == 'rprs':
                         boundarray[j+ti+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
 
-                del(myfit)
+                del myfit
 
         # transform unit cube to prior volume
         bounddiff = np.diff(boundarray,1).reshape(-1)
+
         def prior_transform(upars):
-            return (boundarray[:,0] + bounddiff*upars)
+            return boundarray[:,0] + bounddiff*upars
 
         def loglike(pars):
             chi2 = 0
@@ -606,7 +620,7 @@ class glc_fitter(lc_fitter):
                 detrend = self.data[i]['flux']/model
                 model *= np.median(detrend)
 
-                chi2 += np.sum( ((self.data[i]['flux']-model)/self.data[i]['ferr'])**2 )
+                chi2 += np.sum(((self.data[i]['flux']-model)/self.data[i]['ferr'])**2)
 
             # maximization metric for nested sampling
             return -0.5*chi2
@@ -616,10 +630,13 @@ class glc_fitter(lc_fitter):
             for k in lfreekeys[n]:
                 freekeys.append(f"local_{n}_{k}")
 
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5)
+        noop = lambda *args, **kwargs: None
+        if self.verbose is True:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(
+                max_ncalls=int(self.max_ncalls))
         else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5, show_status=self.verbose, viz_callback=self.verbose)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(
+                max_ncalls=int(self.max_ncalls), show_status=False, viz_callback=noop)
 
         self.quantiles = {}
         self.errors = {}
@@ -658,7 +675,7 @@ class glc_fitter(lc_fitter):
         # turn off all axes
         for i in range(nrows*4):
             ri = int(i/4)
-            ci = i%4
+            ci = i % 4
             if ax.ndim == 1:
                 ax[i].axis('off')
             else:
@@ -670,7 +687,7 @@ class glc_fitter(lc_fitter):
         # plot observations
         for i in range(len(self.data)):
             ri = int(i/4)
-            ci = i%4
+            ci = i % 4
             model = transit(self.data[i]['time'], self.data[i]['priors'])
             airmass = np.exp(self.data[i]['airmass']*self.data[i]['priors']['a2'])
             detrend = self.data[i]['flux']/(model*airmass)
@@ -678,7 +695,7 @@ class glc_fitter(lc_fitter):
             if ax.ndim == 1:
                 ax[i].axis('on')
                 ax[i].errorbar(self.data[i]['time'], self.data[i]['flux']/airmass/detrend.mean(), yerr=self.data[i]['ferr']/airmass/detrend.mean(), 
-                                ls='none', marker=markers[i], color=colors[i], alpha=0.5)
+                               ls='none', marker=markers[i], color=colors[i], alpha=0.5)
                 ax[i].plot(self.data[i]['time'], model, 'r-', zorder=2)
                 ax[i].set_xlabel("Time")
 
@@ -691,7 +708,7 @@ class glc_fitter(lc_fitter):
         plt.tight_layout()
         return fig
 
-    def plot_bestfit(self, title="", bin_dt=30./(60*24)):
+    def plot_bestfit(self, title="", bin_dt=30./(60*24), zoom=False, phase=True):
         f = plt.figure(figsize=(9,6))
         f.subplots_adjust(top=0.92,bottom=0.09,left=0.14,right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4,5), (0,0), colspan=5,rowspan=3)
@@ -732,7 +749,7 @@ class glc_fitter(lc_fitter):
         
             # plot residuals
             axs[1].plot(phase, self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2, color=colors[n], marker=markers[n], ls='none',
-                         alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format( np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2)))
+                        alpha=0.2, label=r'$\sigma$ = {:.2f} %'.format(np.std(self.data[n]['residuals']/np.median(self.data[n]['flux'])*1e2)))
 
             # plot binned data
             bt2, bf2, bs = time_bin(phase[si]*self.data[n]['priors']['per'], self.data[n]['detrend'][si], bin_dt)
@@ -800,7 +817,7 @@ if __name__ == "__main__":
     # simulate extinction from airmass
     stime = time-time[0]
     alt = 90 * np.cos(4*stime-np.pi/6)
-    #airmass = 1./np.cos(np.deg2rad(90-alt))
+    # airmass = 1./np.cos(np.deg2rad(90-alt))
     airmass = np.zeros(time.shape[0])
 
     # GENERATE NOISY DATA
@@ -813,7 +830,7 @@ if __name__ == "__main__":
         'rprs': [0, 0.1],
         'tmid': [prior['tmid']-0.01, prior['tmid']+0.01],
         'ars': [13, 15],
-        #'a2': [0, 0.3] # uncomment if you want to fit for airmass
+        # 'a2': [0, 0.3] # uncomment if you want to fit for airmass
         # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
         # and is solved for during the fit
     }

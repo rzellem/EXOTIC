@@ -152,9 +152,9 @@ log = logging.getLogger(__name__)
 
 def log_info(string, warn=False, error=False):
     if error:
-        print(f"\033[91m {string}\033[00m")
+        print(f"\033[31m {string}\033[0m")
     elif warn:
-        print(f"\033[33m {string}\033[00m")
+        print(f"\033[33m {string}\033[0m")
     else:
         print(string)
     log.debug(string)

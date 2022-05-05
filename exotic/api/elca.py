@@ -307,7 +307,12 @@ class lc_fitter(object):
         try:
             self.ns_type = 'ultranest'
             test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
-            self.results = test.run(max_ncalls=int(self.max_ncalls))
+
+            noop = lambda *args, **kwargs: None
+            if self.verbose is True:
+                self.results = test.run(max_ncalls=int(self.max_ncalls))
+            else:
+                self.results = test.run(max_ncalls=int(self.max_ncalls), show_status=False, viz_callback=noop)
 
             for i, key in enumerate(freekeys):
                 self.parameters[key] = self.results['maximum_likelihood']['point'][i]
@@ -319,11 +324,11 @@ class lc_fitter(object):
             self.ns_type = 'dynesty'
             dsampler = dynesty.DynamicNestedSampler(
                 loglike, prior_transform,
-                ndim=len(freekeys), bound='multi', sample='unif',
-                maxiter_init=5000, dlogz_init=1, dlogz=0.05,
-                maxiter_batch=100, maxbatch=10, nlive_batch=100
-            )
-            dsampler.run_nested(maxcall=1e6)
+                ndim=len(freekeys), bound='multi', sample='unif')
+            dsampler.run_nested(maxcall=int(1e6),
+                                maxiter_init=5000, dlogz_init=1, dlogz=0.05,
+                                maxiter_batch=100, maxbatch=10, nlive_batch=100
+                                )
             self.results = dsampler.results
 
             tests = [copy.deepcopy(self.prior) for i in range(5)]
@@ -494,19 +499,17 @@ class lc_fitter(object):
                 if key == 'a2' or key == 'a1':
                     continue
 
-                mask3 = mask3 & (self.results['weighted_samples']['points'][:, i] > (
-                            self.parameters[key] - 3 * self.errors[key])) & \
-                        (self.results['weighted_samples']['points'][:, i] < (
-                                    self.parameters[key] + 3 * self.errors[key]))
+                mask3 = mask3 & \
+                    (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - 3 * self.errors[key])) & \
+                    (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + 3 * self.errors[key]))
 
-                mask1 = mask1 & (self.results['weighted_samples']['points'][:, i] > (
-                            self.parameters[key] - self.errors[key])) & \
-                        (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + self.errors[key]))
+                mask1 = mask1 & \
+                    (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - self.errors[key])) & \
+                    (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + self.errors[key]))
 
-                mask2 = mask2 & (self.results['weighted_samples']['points'][:, i] > (
-                            self.parameters[key] - 2 * self.errors[key])) & \
-                        (self.results['weighted_samples']['points'][:, i] < (
-                                    self.parameters[key] + 2 * self.errors[key]))
+                mask2 = mask2 & \
+                    (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - 2 * self.errors[key])) & \
+                    (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + 2 * self.errors[key]))
 
             chi2 = self.results['weighted_samples']['logl'] * -2
             fig = corner(self.results['weighted_samples']['points'],
@@ -549,10 +552,17 @@ class glc_fitter(lc_fitter):
 
     def __init__(self, input_data, global_bounds, local_bounds, individual_fit=False, verbose=False):
         # keys for input_data: time, flux, ferr, airmass, priors all numpy arrays
+        # TODO: enable inheritance from parent class -- must verify input keys
+        # if input_data is not None and isinstance(input_data, dict):
+        #     super().__init__(input_data.get('time'), input_data.get('flux'), input_data.get('ferr'),
+        #                      input_data.get('airmass'), input_data.get('priors'), local_bounds)
+        # else:
+        #     super.__init__(*([None] * 6))
         self.data = copy.deepcopy(input_data)
         self.global_bounds = global_bounds
         self.local_bounds = local_bounds
         self.individual_fit = individual_fit
+        self.max_ncalls = 4e5
         self.verbose = verbose
 
         self.fit_nested()
@@ -565,9 +575,10 @@ class glc_fitter(lc_fitter):
 
         # if isinstance(self.local_bounds, dict):
         #     lfreekeys = list(self.local_bounds.keys())
-        #     boundarray = np.vstack([ [self.global_bounds[k] for k in gfreekeys], [self.local_bounds[k] for k in lfreekeys]*nobs ])
-        # else:
-        #     # if list type
+        #     boundarray = np.vstack(
+        #         [[self.global_bounds[k] for k in gfreekeys], [self.local_bounds[k] for k in lfreekeys] * nobs]
+        #     )
+        # else:  # if list type
         lfreekeys = []
         boundarray = [self.global_bounds[k] for k in gfreekeys]
         for i in range(nobs):
@@ -581,7 +592,8 @@ class glc_fitter(lc_fitter):
 
                 print(f"Fitting individual light curve {i + 1}/{nobs}")
                 mybounds = dict(**self.local_bounds[i], **self.global_bounds)
-                if 'per' in mybounds: del (mybounds['per'])
+                if 'per' in mybounds:
+                    del (mybounds['per'])
 
                 myfit = lc_fitter(
                     self.data[i]['time'],
@@ -602,13 +614,13 @@ class glc_fitter(lc_fitter):
                     if key == 'rprs':
                         boundarray[j + ti + len(gfreekeys), 0] = max(0, myfit.parameters[key] - 5 * myfit.errors[key])
 
-                del (myfit)
+                del myfit
 
         # transform unit cube to prior volume
         bounddiff = np.diff(boundarray, 1).reshape(-1)
 
         def prior_transform(upars):
-            return (boundarray[:, 0] + bounddiff * upars)
+            return boundarray[:, 0] + bounddiff * upars
 
         def loglike(pars):
             chi2 = 0
@@ -641,12 +653,13 @@ class glc_fitter(lc_fitter):
             for k in lfreekeys[n]:
                 freekeys.append(f"local_{n}_{k}")
 
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5)
+        noop = lambda *args, **kwargs: None
+        if self.verbose is True:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(
+                max_ncalls=int(self.max_ncalls))
         else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
-                                                                                         show_status=self.verbose,
-                                                                                         viz_callback=self.verbose)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(
+                max_ncalls=int(self.max_ncalls), show_status=False, viz_callback=noop)
 
         self.quantiles = {}
         self.errors = {}
@@ -721,7 +734,7 @@ class glc_fitter(lc_fitter):
         plt.tight_layout()
         return fig
 
-    def plot_bestfit(self, title="", bin_dt=30. / (60. * 24.)):
+    def plot_bestfit(self, title="", bin_dt=30. / (60. * 24.), zoom=False, phase=True):
         f = plt.figure(figsize=(9, 6))
         f.subplots_adjust(top=0.92, bottom=0.09, left=0.14, right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4, 5), (0, 0), colspan=5, rowspan=3)

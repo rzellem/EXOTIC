@@ -322,12 +322,11 @@ class lc_fitter(object):
                     self.results['posterior']['errup'][i]]
         except NameError:
             self.ns_type = 'dynesty'
-            dsampler = dynesty.DynamicNestedSampler(
-                loglike, prior_transform,
-                ndim=len(freekeys), bound='multi', sample='unif')
-            dsampler.run_nested(maxcall=int(1e6),
-                                maxiter_init=5000, dlogz_init=1, dlogz=0.05,
-                                maxiter_batch=100, maxbatch=10, nlive_batch=100
+            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform,
+                                                    ndim=len(freekeys), bound='multi', sample='unif'
+                                                    )
+            dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
+                                maxbatch=10, nlive_batch=100
                                 )
             self.results = dsampler.results
 

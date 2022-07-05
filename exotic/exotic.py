@@ -541,6 +541,7 @@ class LimbDarkening:
 
     def _custom(self):
         self.filter_type = 'N/A'
+        self.filter_desc = 'Custom'
         if not self.wl_min:
             self.wl_min = user_input("FWHM Minimum wavelength (nm):", type_=float)
         if not self.wl_max:
@@ -548,7 +549,8 @@ class LimbDarkening:
         self._calculate_ld()
 
     def _user_entered(self):
-        self.filter_type = user_input("\nEnter in your filter name:", type_=str)
+        self.filter_type = 'N/A'
+        self.filter_desc = 'Custom'
         ld_0 = user_input("\nEnter in your first nonlinear term:", type_=float)
         ld0_unc = user_input("Enter in your first nonlinear term uncertainty:", type_=float)
         ld_1 = user_input("\nEnter in your second nonlinear term:", type_=float)
@@ -559,7 +561,7 @@ class LimbDarkening:
         ld3_unc = user_input("Enter in your fourth nonlinear term uncertainty:", type_=float)
         self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
 
-        log.debug(f"Filter name: {self.filter_type}")
+        log.debug(f"Filter Abbreviation: {self.filter_type}")
         log.debug(f"User-defined nonlinear limb-darkening coefficients: {ld_0}+/-{ld0_unc}, {ld_1}+/-{ld1_unc}, "
                   f"{ld_2}+/-{ld2_unc}, {ld_3}+/-{ld3_unc}")
 

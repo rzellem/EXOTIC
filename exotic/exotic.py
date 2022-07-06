@@ -1818,10 +1818,14 @@ def main():
 
             log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
 
+            ref_flux_opt = False
+            ref_flux_dict = {}
+
             # Aperture Photometry
             for a, aper in enumerate(apers):
                 for an, annulus in enumerate(annuli):
                     tFlux = aper_data['target'][:, a, an]
+                    ref_flux_opt = False
 
                     # fit without a comparison star
                     myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
@@ -1839,6 +1843,7 @@ def main():
                         minAperture = -aper
                         minAnnulus = annulus
                         # arrayNormUnc = tFlux ** 0.5
+                        ref_flux_opt = True
 
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
@@ -1864,6 +1869,9 @@ def main():
                         cFlux = aper_data[ckey][:, a, an]
 
                         myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+
+                        if ref_flux_opt:
+                            ref_flux_dict[ckey] = {'flux': np.copy(myfit.data), 'lmfit': myfit}
 
                         for k in myfit.bounds.keys():
                             log.debug(f"  {k}: {myfit.parameters[k]:.6f}")

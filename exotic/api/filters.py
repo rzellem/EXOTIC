@@ -27,7 +27,7 @@ fwhm = {
 
         # Stromgren
         "Stromgren u": {"name": "STU", "desc": "Stromgren u", "fwhm": ("336.3", "367.7")},
-        "Stromgren v": {"name": "STV", "desc": "Stromgren v", "fwhm": ("418.5", "401.5")},
+        "Stromgren v": {"name": "STV", "desc": "Stromgren v", "fwhm": ("401.5", "418.5")},
         "Stromgren b": {"name": "STB", "desc": "Stromgren b", "fwhm": ("459.55", "478.05")},
         "Stromgren y": {"name": "STY", "desc": "Stromgren y", "fwhm": ("536.7", "559.3")},
         "Stromgren Hbw": {"name": "STHBW", "desc": "Stromgren Hbw", "fwhm": ("481.5", "496.5")},

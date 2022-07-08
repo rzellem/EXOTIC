@@ -26,10 +26,17 @@ fwhm = {
         "Sloan z": {"name": "SZ", "desc": "Sloan z", "fwhm": ("841.2", "978.2")},
 
         # Stromgren
+        "Stromgren u": {"name": "STU", "desc": "Stromgren u", "fwhm": ("336.3", "367.7")},
+        "Stromgren v": {"name": "STV", "desc": "Stromgren v", "fwhm": ("418.5", "401.5")},
         "Stromgren b": {"name": "STB", "desc": "Stromgren b", "fwhm": ("459.55", "478.05")},
         "Stromgren y": {"name": "STY", "desc": "Stromgren y", "fwhm": ("536.7", "559.3")},
         "Stromgren Hbw": {"name": "STHBW", "desc": "Stromgren Hbw", "fwhm": ("481.5", "496.5")},
         "Stromgren Hbn": {"name": "STHBN", "desc": "Stromgren Hbn", "fwhm": ("487.5", "484.5")},
+
+        # Optec
+        "Optec Wing A": {"name": "MA", "desc": "Optec Wing A", "fwhm": ("706.5", "717.5")},
+        "Optec Wing B": {"name": "MB", "desc": "Optec Wing B", "fwhm": ("748.5", "759.5")},
+        "Optec Wing C": {"name": "MI", "desc": "Optec Wing C", "fwhm": ("1003.0", "1045.0")},
 
         # MObs Clear Filter; Source(s): Martin Fowler
         "MObs CV": {"name": "CV", "desc": "MObs CV", "fwhm": ("350.0", "850.0")},
@@ -37,11 +44,18 @@ fwhm = {
         # Astrodon CBB; Source(s): George Silvis; https://astrodon.com/products/astrodon-exo-planet-filter/
         "Astrodon ExoPlanet-BB": {"name": "CBB", "desc": "Astrodon ExoPlanet-BB", "fwhm": ("500.0", "1000.0")},
 
-        # LCO; Source(s): Kalee Tock and Michael Fitzgerald; https://lco.global/observatory/instruments/filters/
+        # LCO; Source(s): Kalee Tock and Michael Fitzgerald; 0.4m & 1.0m Telescopes; https://lco.global/observatory/instruments/filters/
+        "LCO Bessell U": {"name": "N/A", "desc": "LCO Bessell U", "fwhm": ("325.0", "375.0")},
         "LCO Bessell B": {"name": "N/A", "desc": "LCO Bessell B", "fwhm": ("391.6", "480.6")},
         "LCO Bessell V": {"name": "N/A", "desc": "LCO Bessell V", "fwhm": ("502.8", "586.8")},
+        "LCO Bessell R": {"name": "N/A", "desc": "LCO Bessell R", "fwhm": ("561.7", "719.7")},
+        "LCO Bessell I": {"name": "N/A", "desc": "LCO Bessell I", "fwhm": ("721.0", "875.0")},
+
         "LCO Pan-STARRS w": {"name": "N/A", "desc": "LCO Pan-STARRS w", "fwhm": ("404.2", "845.8")},
+        "LCO Pan-STARRS Y": {"name": "N/A", "desc": "LCO Pan-STARRS Y", "fwhm": ("948.0", "1060.0")},
         "LCO Pan-STARRS zs": {"name": "N/A", "desc": "LCO Pan-STARRS zs", "fwhm": ("818.0", "922.0")},
+
+        "LCO SDSS u'": {"name": "N/A", "desc": "LCO SDSS u'", "fwhm": ("325.5", "382.5")},
         "LCO SDSS g'": {"name": "N/A", "desc": "LCO SDSS g'", "fwhm": ("402.0", "552.0")},
         "LCO SDSS r'": {"name": "N/A", "desc": "LCO SDSS r'", "fwhm": ("552.0", "691.0")},
         "LCO SDSS i'": {"name": "N/A", "desc": "LCO SDSS i'", "fwhm": ("690.0", "819.0")},

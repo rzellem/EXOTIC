@@ -95,6 +95,14 @@ from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
 
+from scipy.spatial import Delaunay
+from skimage.measure import ransac
+from skimage.transform import SimilarityTransform
+import sep
+from scipy.spatial import distance
+import requests
+import pandas as pd
+
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
     from .api.elca import lc_fitter, binner, transit, get_phase
@@ -768,8 +776,99 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
     return image_data
 
 
+def vsx_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
+    comp_stars = {}
+    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
+    result = requests.get(url)
+    data = result.json()
+    data = pd.json_normalize(data['photometry'])
+
+    for label in data['label']:
+        star = data[data['label'] == label]
+        for bands in star['bands']:
+            for dict_ in bands:
+                if dict_['band'] == filter:
+                    ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
+                    pix_ra, pix_dec = search_wcs(file).world_to_pixel_values(ra, dec)
+                    comp_stars[label] = {'x': int(pix_ra.min()), 'y': int(pix_dec.min()), 'mag': dict_['mag'], 'err': dict_['error']}
+
+    return comp_stars
+
+
+class Found(Exception):
+    pass
+
+
+def del_tri(image, points):
+    image = image.astype("float32")
+    bkg = sep.Background(image)
+    data_sub = image - bkg
+    objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)
+    objects.sort(order="flux")
+    objects = objects[::-1]
+
+    sources = np.array(list(zip(objects['x'][:points], objects['y'][:points])))
+
+    del_source = Delaunay(sources)
+
+    simplices_points = [[sources[vertex[0]].tolist(), sources[vertex[1]].tolist(), sources[vertex[2]].tolist()]
+                        for vertex in del_source.simplices]
+
+    lengths = [[distance.euclidean(triangle[0], triangle[1]),
+                distance.euclidean(triangle[1], triangle[2]),
+                distance.euclidean(triangle[2], triangle[0])]
+               for triangle in simplices_points]
+
+    points = []
+    for elem in zip(lengths, simplices_points):
+        points.append([x for _, x in sorted(zip(elem[0], elem[1]))])
+
+    lengths = [sorted(length) for length in lengths]
+
+    return lengths, points
+
+
+def homography(image_data, roiy, roix, pts):
+    tri1, pts1 = del_tri(image_data[0][roiy, roix], pts)
+    tri2, pts2 = del_tri(image_data[1][roiy, roix], pts)
+
+    matches, matches_ref = [], []
+    np_ones = np.ones(3)
+    tri_matches = 0
+
+    try:
+        for i, trii in enumerate(tri1):
+            # if tri_matches == 5:
+            #     raise Found
+
+            for j, trij in enumerate(tri2):
+                ratio = np.array(trii) / np.array(trij)
+                residual = np.abs(ratio - np_ones)
+                if (residual <= 0.005).sum() == 3:
+                    tri_matches += 1
+                    print(f"Ratio {tri_matches}: {ratio}")
+                    print(f"Redisual {tri_matches}: {residual}\n")
+                    for pts in pts1[i]:
+                        matches.append(pts)
+                    for pts in pts2[j]:
+                        matches_ref.append(pts)
+                    break
+    except Found:
+        pass
+
+    print(f"Difference: {np.array(matches_ref) - np.array(matches)}\n")
+
+    transform_robust, inliers = ransac((np.array(matches_ref), np.array(matches)), SimilarityTransform,
+                                       min_samples=5,
+                                       residual_threshold=0.5, max_trials=1000)
+
+    return transform_robust
+
+
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, file_name, roi=1):
+    pts = 30
+
     # crop image to ROI
     height = image_data.shape[1]
     width = image_data.shape[2]
@@ -778,8 +877,10 @@ def transformation(image_data, file_name, roi=1):
 
     # Find transformation from .FITS files and catch exceptions if not able to.
     try:
-        results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
-        return results[0]
+        # results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
+        # print(f"\n\nResults: {np.subtract(transform_robust.params, results[0].params)}")
+        return homography(image_data, roix, roiy, pts)
+        # return results[0]
     except Exception:
         ws = 5
         # smooth image and try to align again
@@ -790,8 +891,8 @@ def transformation(image_data, file_name, roi=1):
         medimg1 = np.median(windows, axis=(2,3))
 
         try:
-            results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
-            return results[0]
+            # results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
+            return homography([medimg, medimg1], roix, roiy, pts)
         except Exception:
             pass
 
@@ -806,8 +907,8 @@ def transformation(image_data, file_name, roi=1):
                 mask0 = binary_erosion(mask0, iterations=it)
 
                 try:
-                    results = aa.find_transform(mask1, mask0)
-                    return results[0]
+                    # results = aa.find_transform(mask1, mask0)
+                    return homography([mask0, mask1], roix, roiy, pts)
                 except Exception:
                     pass
 
@@ -1604,6 +1705,8 @@ def main():
                 tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
+                vsx_comp_stars = vsx_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+
                 for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
                     ra = ra_file[int(comp[1])][int(comp[0])]
                     dec = dec_file[int(comp[1])][int(comp[0])]
@@ -1871,7 +1974,8 @@ def main():
                         myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                         if ref_flux_opt:
-                            ref_flux_dict[ckey] = {'flux': np.copy(myfit.data), 'lmfit': myfit}
+                            if ckey in ['ckey1', 'ckey2', 'ckey6']:
+                                ref_flux_dict[ckey] = {'flux': np.copy(myfit.data), 'lmfit': myfit}
 
                         for k in myfit.bounds.keys():
                             log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -1964,6 +2068,9 @@ def main():
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
+
+            Mc = 8.374
+            Mt = Mc - (-2.5 * np.log(goodFluxes[OOT]))
 
             if sum(OOT) <= 1:
                 OOTscatter = np.std(bestlmfit.residuals)

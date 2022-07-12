@@ -776,7 +776,7 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
     return image_data
 
 
-def vsx_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
+def vsp_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
     comp_stars = {}
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
@@ -790,79 +790,32 @@ def vsx_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
                 if dict_['band'] == filter:
                     ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
                     pix_ra, pix_dec = search_wcs(file).world_to_pixel_values(ra, dec)
-                    comp_stars[label] = {'x': int(pix_ra.min()), 'y': int(pix_dec.min()), 'mag': dict_['mag'], 'err': dict_['error']}
+                    comp_stars[label] = {
+                        'xy': [int(pix_ra.min()), int(pix_dec.min())],
+                        'mag': dict_['mag'],
+                        'err': dict_['error']
+                    }
 
     return comp_stars
 
 
-class Found(Exception):
-    pass
+def check_comps(comp_stars, vsx_comp_stars, imsf=10):
+    comp_stars_list = comp_stars.copy()
 
+    vsx_pix = [comp['xy'] for comp in vsx_comp_stars.values()]
 
-def del_tri(image, points):
-    image = image.astype("float32")
-    bkg = sep.Background(image)
-    data_sub = image - bkg
-    objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)
-    objects.sort(order="flux")
-    objects = objects[::-1]
+    for vsx_comp in vsx_pix:
+        inlist = False
+        for i, comp in enumerate(comp_stars):
+            if comp[0] - imsf <= vsx_comp[0] <= comp[0] + imsf \
+                    and comp[1] - imsf <= vsx_comp[1] <= comp[1] + imsf:
+                comp_stars_list[i] = vsx_comp
+                inlist = True
 
-    sources = np.array(list(zip(objects['x'][:points], objects['y'][:points])))
+        if not inlist:
+            comp_stars_list.append(vsx_comp)
 
-    del_source = Delaunay(sources)
-
-    simplices_points = [[sources[vertex[0]].tolist(), sources[vertex[1]].tolist(), sources[vertex[2]].tolist()]
-                        for vertex in del_source.simplices]
-
-    lengths = [[distance.euclidean(triangle[0], triangle[1]),
-                distance.euclidean(triangle[1], triangle[2]),
-                distance.euclidean(triangle[2], triangle[0])]
-               for triangle in simplices_points]
-
-    points = []
-    for elem in zip(lengths, simplices_points):
-        points.append([x for _, x in sorted(zip(elem[0], elem[1]))])
-
-    lengths = [sorted(length) for length in lengths]
-
-    return lengths, points
-
-
-def homography(image_data, roiy, roix, pts):
-    tri1, pts1 = del_tri(image_data[0][roiy, roix], pts)
-    tri2, pts2 = del_tri(image_data[1][roiy, roix], pts)
-
-    matches, matches_ref = [], []
-    np_ones = np.ones(3)
-    tri_matches = 0
-
-    try:
-        for i, trii in enumerate(tri1):
-            # if tri_matches == 5:
-            #     raise Found
-
-            for j, trij in enumerate(tri2):
-                ratio = np.array(trii) / np.array(trij)
-                residual = np.abs(ratio - np_ones)
-                if (residual <= 0.005).sum() == 3:
-                    tri_matches += 1
-                    print(f"Ratio {tri_matches}: {ratio}")
-                    print(f"Redisual {tri_matches}: {residual}\n")
-                    for pts in pts1[i]:
-                        matches.append(pts)
-                    for pts in pts2[j]:
-                        matches_ref.append(pts)
-                    break
-    except Found:
-        pass
-
-    print(f"Difference: {np.array(matches_ref) - np.array(matches)}\n")
-
-    transform_robust, inliers = ransac((np.array(matches_ref), np.array(matches)), SimilarityTransform,
-                                       min_samples=5,
-                                       residual_threshold=0.5, max_trials=1000)
-
-    return transform_robust
+    return comp_stars_list, vsx_pix
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -877,10 +830,8 @@ def transformation(image_data, file_name, roi=1):
 
     # Find transformation from .FITS files and catch exceptions if not able to.
     try:
-        # results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
-        # print(f"\n\nResults: {np.subtract(transform_robust.params, results[0].params)}")
-        return homography(image_data, roix, roiy, pts)
-        # return results[0]
+        results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
+        return results[0]
     except Exception:
         ws = 5
         # smooth image and try to align again
@@ -891,8 +842,8 @@ def transformation(image_data, file_name, roi=1):
         medimg1 = np.median(windows, axis=(2,3))
 
         try:
-            # results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
-            return homography([medimg, medimg1], roix, roiy, pts)
+            results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
+            return results[0]
         except Exception:
             pass
 
@@ -907,8 +858,8 @@ def transformation(image_data, file_name, roi=1):
                 mask0 = binary_erosion(mask0, iterations=it)
 
                 try:
-                    # results = aa.find_transform(mask1, mask0)
-                    return homography([mask0, mask1], roix, roiy, pts)
+                    results = aa.find_transform(mask1, mask0)
+                    return results[0]
                 except Exception:
                     pass
 
@@ -1693,6 +1644,7 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
+            vsp_list = []
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -1705,9 +1657,11 @@ def main():
                 tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                vsx_comp_stars = vsx_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                vsp_comp_stars = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
 
-                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
+                exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
+
+                for compn, comp in enumerate(exotic_infoDict['comp_stars']):
                     ra = ra_file[int(comp[1])][int(comp[0])]
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
@@ -1733,9 +1687,12 @@ def main():
                 'target_bg': np.zeros((len(inputfiles), len(apers), len(annuli)))
             }
             tar_comp_dist = {}
+            vsp_num = []
 
             for i, coord in enumerate(compStarList):
                 ckey = f"comp{i + 1}"
+                if coord in vsp_list:
+                    vsp_num.append(i)
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
@@ -1921,8 +1878,9 @@ def main():
 
             log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
 
-            ref_flux_opt = False
             ref_flux_dict = {}
+            if vsp_list:
+                ref_flux_dict = {i: None for i in vsp_num}
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
@@ -1974,8 +1932,8 @@ def main():
                         myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                         if ref_flux_opt:
-                            if ckey in ['ckey1', 'ckey2', 'ckey6']:
-                                ref_flux_dict[ckey] = {'flux': np.copy(myfit.data), 'lmfit': myfit}
+                            if j in vsp_num:
+                                ref_flux_dict[j] = {'flux': np.copy(myfit.data), 'lmfit': myfit}
 
                         for k in myfit.bounds.keys():
                             log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -2069,9 +2027,6 @@ def main():
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
 
-            Mc = 8.374
-            Mt = Mc - (-2.5 * np.log(goodFluxes[OOT]))
-
             if sum(OOT) <= 1:
                 OOTscatter = np.std(bestlmfit.residuals)
                 goodNormUnc = OOTscatter * bestlmfit.airmass_model
@@ -2120,6 +2075,29 @@ def main():
                       exotic_infoDict['date'])
 
             log_info("\n\nOutput File Saved")
+
+            # goodFluxes[OOT]
+            # goodTimes[OOT]
+            # goodNormUnc[OOT] — > best lm fit in code
+            # if bestCompStar not in vsp_num:
+            #     refCompList = {i: None for i in vsp_num}
+            #
+            #     for comp in ref_flux_dict.keys():
+            #         refCompList[comp] = {
+            #             'norm': ref_flux_dict[comp]['flux'] / np.nanmedian(ref_flux_dict[comp]['flux']),
+            #             'unc': OOTscatter * ref_flux_dict[comp]['lmfit'].airmass_model,
+            #             'res': goodFluxes - refCompList['norm']
+            #         }
+            #
+            #         plt.plot(goodTimes, refCompList[comp]['res'], '.')
+            #         plt.title(str(comp))
+            #         plt.show()
+            #     import pdb; pdb.set_trace()
+
+                # Mc = chosen['mag']
+                # Mc_err = chosen['err']
+                # Mt = Mc - (-2.5 * np.log(goodFluxes[OOT]))
+
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar, comp_coords = None, None

@@ -346,6 +346,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty",
                      "Orbital Inclination (deg)",
                      "Orbital Inclination (deg) Uncertainty",
+                     "Argument of Periastron (deg)",
                      "Orbital Eccentricity (0 if null)",
                      "Star Effective Temperature (K)",
                      "Star Effective Temperature Positive Uncertainty (K)",
@@ -1349,7 +1350,7 @@ def main():
 
     userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                  'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
-                 'inc': None, 'incUnc': None, 'ecc': None, 'teff': None,
+                 'inc': None, 'incUnc': None, 'omega': None, 'ecc': None, 'teff': None,
                  'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                  'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
@@ -2024,7 +2025,6 @@ def main():
 
             if exotic_infoDict['file_units'] != 'flux':
                 print("check flux convert")
-                import pdb; pdb.set_trace()
                 goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, exotic_infoDict['file_units'])
 
         # for k in myfit.bounds.keys():

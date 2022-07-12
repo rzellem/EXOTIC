@@ -69,5 +69,5 @@ fwhm_alias = {
               "H NIR 1.6micron": "Near-Infrared H",
               "K NIR 2.2 micron": "Near-Infrared K",
               "K NIR 2.2micron": "Near-Infrared K",
-              "MObs CV": "Clear (unfiltered) reduced to V sequence",
+              "Clear (unfiltered) reduced to V sequence": "MObs CV"
 }

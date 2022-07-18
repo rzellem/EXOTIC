@@ -144,6 +144,7 @@ try:  # simple version
     from .version import __version__
 except ImportError:  # package import
     from version import __version__
+import json
 
 animate_toggle()  # CLOSE PRELOAD ANIMATION
 # -- IMPORTS END --------------------------------------------------------------
@@ -1659,6 +1660,9 @@ def main():
 
                 vsp_comp_stars = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
 
+                with open("comp_stars.json", 'w') as f:
+                    json.dump(vsp_comp_stars, f)
+
                 exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
 
                 for compn, comp in enumerate(exotic_infoDict['comp_stars']):
@@ -1878,6 +1882,7 @@ def main():
 
             log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
 
+            tfinalFlux = None
             ref_flux_dict = {}
             if vsp_list:
                 ref_flux_dict = {i: None for i in vsp_num}
@@ -1904,6 +1909,7 @@ def main():
                         minAperture = -aper
                         minAnnulus = annulus
                         # arrayNormUnc = tFlux ** 0.5
+                        tfinalFlux = tFlux
                         ref_flux_opt = True
 
                         # sets the lists we want to print to correspond to the optimal aperature
@@ -1933,7 +1939,13 @@ def main():
 
                         if ref_flux_opt:
                             if j in vsp_num:
-                                ref_flux_dict[j] = {'flux': np.copy(myfit.data), 'lmfit': myfit}
+                                ref_flux_dict[j] = {'data': cFlux,
+                                                    'residuals': np.copy(myfit.residuals),
+                                                    'airmass_model': np.copy(myfit.airmass_model),
+                                                    'transit': np.copy(myfit.transit),
+                                                    'airmass': np.copy(myfit.airmass),
+                                                    'time': np.copy(myfit.time)
+                                                    }
 
                         for k in myfit.bounds.keys():
                             log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -2076,23 +2088,43 @@ def main():
 
             log_info("\n\nOutput File Saved")
 
-            # goodFluxes[OOT]
-            # goodTimes[OOT]
-            # goodNormUnc[OOT] — > best lm fit in code
-            # if bestCompStar not in vsp_num:
-            #     refCompList = {i: None for i in vsp_num}
-            #
-            #     for comp in ref_flux_dict.keys():
-            #         refCompList[comp] = {
-            #             'norm': ref_flux_dict[comp]['flux'] / np.nanmedian(ref_flux_dict[comp]['flux']),
-            #             'unc': OOTscatter * ref_flux_dict[comp]['lmfit'].airmass_model,
-            #             'res': goodFluxes - refCompList['norm']
-            #         }
-            #
-            #         plt.plot(goodTimes, refCompList[comp]['res'], '.')
-            #         plt.title(str(comp))
-            #         plt.show()
-            #     import pdb; pdb.set_trace()
+            refCompList = {}
+
+            with open("saved_data_2.json", 'w') as f:
+                json.dump({
+                    "target": {
+                        "data": tfinalFlux.tolist(),
+                        # "unc": goodNormUnc,
+                        "residuals": bestlmfit.residuals.tolist(),
+                        'airmass_model': bestlmfit.airmass_model.tolist(),
+                        'transit': bestlmfit.transit.tolist(),
+                        'airmass': bestlmfit.airmass.tolist(),
+                        'time': bestlmfit.time.tolist()
+                    }
+                }, f)
+                if bestCompStar not in vsp_num:
+                    for comp in ref_flux_dict.keys():
+                        json.dump({f"{comp}":
+                                       {"data": ref_flux_dict[comp]['data'].tolist(),
+                                        "residuals": ref_flux_dict[comp]['residuals'].tolist(),
+                                        'airmass_model': ref_flux_dict[comp]['airmass_model'].tolist(),
+                                        'transit': ref_flux_dict[comp]['transit'].tolist(),
+                                        'airmass': ref_flux_dict[comp]['airmass'].tolist(),
+                                        'time': ref_flux_dict[comp]['time'].tolist()
+                                        }}, f)
+                        # OOT = (ref_flux_dict[comp].transit == 1)
+                        # ref_norm = ref_flux_dict[comp].data / np.nanmedian(ref_flux_dict[comp].data)
+                        #
+                        # refCompList[comp] = {
+                        #     'norm': ref_norm,
+                        #     'unc': np.std(ref_flux_dict[comp].residuals) * ref_flux_dict[comp].airmass_model,
+                        #     'res': goodFluxes[OOT] - ref_norm[OOT],
+                        #     'air': np.copy(ref_flux_dict[comp].airmass)
+                        # }
+
+                    # plt.plot(goodTimes, refCompList[comp]['res'], '.')
+                    # plt.title(str(comp))
+                    # plt.show()
 
                 # Mc = chosen['mag']
                 # Mc_err = chosen['err']

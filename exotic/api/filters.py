@@ -40,6 +40,7 @@ fwhm = {
         # LCO; Source(s): Kalee Tock and Michael Fitzgerald; https://lco.global/observatory/instruments/filters/
         "LCO Bessell B": {"name": "N/A", "desc": "LCO Bessell B", "fwhm": ("391.6", "480.6")},
         "LCO Bessell V": {"name": "N/A", "desc": "LCO Bessell V", "fwhm": ("502.8", "586.8")},
+        "LCO Bessell U": {"name": "N/A", "desc": "LCO Bessell U", "fwhm": ("325.0", "375.0")},
         "LCO Pan-STARRS w": {"name": "N/A", "desc": "LCO Pan-STARRS w", "fwhm": ("404.2", "845.8")},
         "LCO Pan-STARRS zs": {"name": "N/A", "desc": "LCO Pan-STARRS zs", "fwhm": ("818.0", "922.0")},
         "LCO SDSS g'": {"name": "N/A", "desc": "LCO SDSS g'", "fwhm": ("402.0", "552.0")},

@@ -85,6 +85,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 # photometry
 from photutils import CircularAperture
+import pandas as pd
+import requests
 # scipy imports
 from scipy.optimize import least_squares
 from scipy.stats import mode
@@ -94,14 +96,6 @@ from skimage.util import view_as_windows
 from skimage.transform import SimilarityTransform
 # error handling for scraper
 from tenacity import retry, stop_after_delay
-
-from scipy.spatial import Delaunay
-from skimage.measure import ransac
-from skimage.transform import SimilarityTransform
-import sep
-from scipy.spatial import distance
-import requests
-import pandas as pd
 
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
@@ -144,7 +138,6 @@ try:  # simple version
     from .version import __version__
 except ImportError:  # package import
     from version import __version__
-import json
 
 animate_toggle()  # CLOSE PRELOAD ANIMATION
 # -- IMPORTS END --------------------------------------------------------------
@@ -2087,28 +2080,28 @@ def main():
 
             if not bestCompStar:
                 for ckey in ref_flux_dict.keys():
-                    goodTimes = np.intersect1d(np.array(bestlmfit.time), np.array(ref_flux_dict[ckey]['myfit'].time))
-                    comp_mask = [True if i in goodTimes else False for i in ref_flux_dict[ckey]['myfit'].time]
-                    tar_mask = [True if i in goodTimes else False for i in bestlmfit.time]
+                    intx_times = np.intersect1d(np.array(bestlmfit.time), np.array(ref_flux_dict[ckey]['myfit'].time))
+                    comp_mask = [True if i in intx_times else False for i in ref_flux_dict[ckey]['myfit'].time]
+                    tar_mask = [True if i in intx_times else False for i in bestlmfit.time]
 
-                    OOT = (np.array(ref_flux_dict[ckey]['myfit'].transit)[comp_mask] == 1) # possibly fix this to intersect both
-                    OOTscatter = np.std((np.array(ref_flux_dict[ckey]['myfit'].data) / np.array(ref_flux_dict[ckey]['myfit'].airmass_model))[comp_mask][OOT])
-                    goodNormUnc = OOTscatter * np.array(ref_flux_dict[ckey]['myfit'].airmass_model)[comp_mask][OOT]
-                    goodNormUnc = goodNormUnc / np.nanmedian(np.array(bestlmfit.data)[tar_mask][OOT])
+                    oot_mask = (np.array(ref_flux_dict[ckey]['myfit'].transit)[comp_mask] == 1) # possibly fix this to intersect both
+                    oot_scatter = np.std((np.array(ref_flux_dict[ckey]['myfit'].data) / np.array(ref_flux_dict[ckey]['myfit'].airmass_model))[comp_mask][oot_mask])
+                    norm_unc = oot_scatter * np.array(ref_flux_dict[ckey]['myfit'].airmass_model)[comp_mask][oot_mask]
+                    norm_unc = norm_unc / np.nanmedian(np.array(bestlmfit.data)[tar_mask][oot_mask])
 
                     ref_norm = (np.array(ref_flux_dict[ckey]['myfit'].data))[comp_mask]
                     tar_norm = (np.array(bestlmfit.data) / np.nanmedian(np.array(bestlmfit.data)))[tar_mask]
 
                     refCompDict[ckey] = {
-                        'times': goodTimes,
+                        'times': intx_times,
                         'cmask': comp_mask,
                         'norm': ref_norm,
-                        'norm_unc': goodNormUnc,
-                        'res': tar_norm[OOT] - ref_norm[OOT],
+                        'norm_unc': norm_unc,
+                        'res': tar_norm[oot_mask] - ref_norm[oot_mask],
                         'xy': ref_flux_dict[ckey]['xy']
                     }
 
-                    plt.plot(goodTimes[OOT], refCompDict[ckey]['res'], '.', label=f"{ref_flux_dict[ckey]['xy']}")
+                    plt.plot(intx_times[oot_mask], refCompDict[ckey]['res'], '.', label=f"{ref_flux_dict[ckey]['xy']}")
 
                 plt.title("Best Comparison Star")
                 plt.ylabel("Residuals (flux)")
@@ -2140,16 +2133,16 @@ def main():
                         chosen = ref_flux_dict[ckey]
                         break
 
-                goodTimes = np.intersect1d(np.array(bestlmfit.time), np.array(chosen['myfit'].time))
-                comp_mask = [True if i in goodTimes else False for i in chosen['myfit'].time]
-                OOT = (np.array(chosen['myfit'].transit)[comp_mask] == 1)
+                intx_times = np.intersect1d(np.array(bestlmfit.time), np.array(chosen['myfit'].time))
+                comp_mask = [True if i in intx_times else False for i in chosen['myfit'].time]
+                oot_mask = (np.array(chosen['myfit'].transit)[comp_mask] == 1)
 
-                F = np.array(chosen['myfit'].data)[comp_mask][OOT]
+                F = np.array(chosen['myfit'].data)[comp_mask][oot_mask]
                 Mt = Mc - (2.5 * np.log10(F))
                 F_err = refCompDict[ckey]['norm_unc']
                 Mt_err = (Mc_err**2 +(-2.5*F_err/(F*np.log(10)))**2)**0.5
 
-                plt.errorbar(goodTimes[OOT], Mt, yerr=Mt_err, fmt='.', label='Target')
+                plt.errorbar(intx_times[oot_mask], Mt, yerr=Mt_err, fmt='.', label='Target')
                 plt.title(f"Vmag: {round(np.median(Mt), 2)})")
                 plt.ylim([11.0, 11.5])
                 plt.ylabel("Vmag")

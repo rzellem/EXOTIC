@@ -782,6 +782,7 @@ def vsp_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
     data = result.json()
+    chart_id = data['chartid']
     data = pd.json_normalize(data['photometry'])
 
     for label in data['label']:
@@ -789,6 +790,7 @@ def vsp_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
         for bands in star['bands']:
             for dict_ in bands:
                 if dict_['band'] == filter:
+                    # X28101
                     ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
                     pix_ra, pix_dec = search_wcs(file).world_to_pixel_values(ra, dec)
                     comp_stars[label] = {
@@ -797,26 +799,26 @@ def vsp_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
                         'err': dict_['error']
                     }
 
-    return comp_stars
+    return comp_stars, chart_id
 
 
 def check_comps(comp_stars, vsx_comp_stars, imsf=10):
     comp_stars_list = comp_stars.copy()
 
-    vsx_pix = [comp['xy'] for comp in vsx_comp_stars.values()]
+    vsp_pix = [comp['xy'] for comp in vsx_comp_stars.values()]
 
-    for vsx_comp in vsx_pix:
+    for vsp_comp in vsp_pix:
         inlist = False
         for i, comp in enumerate(comp_stars):
-            if comp[0] - imsf <= vsx_comp[0] <= comp[0] + imsf \
-                    and comp[1] - imsf <= vsx_comp[1] <= comp[1] + imsf:
-                comp_stars_list[i] = vsx_comp
+            if comp[0] - imsf <= vsp_comp[0] <= comp[0] + imsf \
+                    and comp[1] - imsf <= vsp_comp[1] <= comp[1] + imsf:
+                comp_stars_list[i] = vsp_comp
                 inlist = True
 
         if not inlist:
-            comp_stars_list.append(vsx_comp)
+            comp_stars_list.append(vsp_comp)
 
-    return comp_stars_list, vsx_pix
+    return comp_stars_list, vsp_pix
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1646,6 +1648,7 @@ def main():
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
             vsp_list = []
+            chart_id = None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -1658,7 +1661,7 @@ def main():
                 tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                vsp_comp_stars = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
 
                 with open("comp_stars.json", 'w') as f:
                     json.dump(vsp_comp_stars, f)
@@ -1882,7 +1885,6 @@ def main():
 
             log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
 
-            tfinalFlux = None
             ref_flux_dict = {}
             if vsp_list:
                 ref_flux_dict = {i: None for i in vsp_num}
@@ -1909,7 +1911,6 @@ def main():
                         minAperture = -aper
                         minAnnulus = annulus
                         # arrayNormUnc = tFlux ** 0.5
-                        tfinalFlux = tFlux
                         ref_flux_opt = True
 
                         # sets the lists we want to print to correspond to the optimal aperature
@@ -1939,13 +1940,10 @@ def main():
 
                         if ref_flux_opt:
                             if j in vsp_num:
-                                ref_flux_dict[j] = {'data': cFlux,
-                                                    'residuals': np.copy(myfit.residuals),
-                                                    'airmass_model': np.copy(myfit.airmass_model),
-                                                    'transit': np.copy(myfit.transit),
-                                                    'airmass': np.copy(myfit.airmass),
-                                                    'time': np.copy(myfit.time)
-                                                    }
+                                ref_flux_dict[j] = {
+                                    'myfit': myfit,
+                                    'xy': compStarList[j]
+                                }
 
                         for k in myfit.bounds.keys():
                             log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -2088,47 +2086,80 @@ def main():
 
             log_info("\n\nOutput File Saved")
 
-            refCompList = {}
+            refCompDict = {}
 
-            with open("saved_data_2.json", 'w') as f:
-                json.dump({
-                    "target": {
-                        "data": tfinalFlux.tolist(),
-                        # "unc": goodNormUnc,
-                        "residuals": bestlmfit.residuals.tolist(),
-                        'airmass_model': bestlmfit.airmass_model.tolist(),
-                        'transit': bestlmfit.transit.tolist(),
-                        'airmass': bestlmfit.airmass.tolist(),
-                        'time': bestlmfit.time.tolist()
+            if not bestCompStar:
+                for ckey in ref_flux_dict.keys():
+                    goodTimes = np.intersect1d(np.array(bestlmfit.time), np.array(ref_flux_dict[ckey]['myfit'].time))
+                    comp_mask = [True if i in goodTimes else False for i in ref_flux_dict[ckey]['myfit'].time]
+                    tar_mask = [True if i in goodTimes else False for i in bestlmfit.time]
+
+                    OOT = (np.array(ref_flux_dict[ckey]['myfit'].transit)[comp_mask] == 1) # possibly fix this to intersect both
+                    OOTscatter = np.std((np.array(ref_flux_dict[ckey]['myfit'].data) / np.array(ref_flux_dict[ckey]['myfit'].airmass_model))[comp_mask][OOT])
+                    goodNormUnc = OOTscatter * np.array(ref_flux_dict[ckey]['myfit'].airmass_model)[comp_mask][OOT]
+                    goodNormUnc = goodNormUnc / np.nanmedian(np.array(bestlmfit.data)[tar_mask][OOT])
+
+                    ref_norm = (np.array(ref_flux_dict[ckey]['myfit'].data))[comp_mask]
+                    tar_norm = (np.array(bestlmfit.data) / np.nanmedian(np.array(bestlmfit.data)))[tar_mask]
+
+                    refCompDict[ckey] = {
+                        'times': goodTimes,
+                        'cmask': comp_mask,
+                        'norm': ref_norm,
+                        'norm_unc': goodNormUnc,
+                        'res': tar_norm[OOT] - ref_norm[OOT],
+                        'xy': ref_flux_dict[ckey]['xy']
                     }
-                }, f)
-                if bestCompStar not in vsp_num:
-                    for comp in ref_flux_dict.keys():
-                        json.dump({f"{comp}":
-                                       {"data": ref_flux_dict[comp]['data'].tolist(),
-                                        "residuals": ref_flux_dict[comp]['residuals'].tolist(),
-                                        'airmass_model': ref_flux_dict[comp]['airmass_model'].tolist(),
-                                        'transit': ref_flux_dict[comp]['transit'].tolist(),
-                                        'airmass': ref_flux_dict[comp]['airmass'].tolist(),
-                                        'time': ref_flux_dict[comp]['time'].tolist()
-                                        }}, f)
-                        # OOT = (ref_flux_dict[comp].transit == 1)
-                        # ref_norm = ref_flux_dict[comp].data / np.nanmedian(ref_flux_dict[comp].data)
-                        #
-                        # refCompList[comp] = {
-                        #     'norm': ref_norm,
-                        #     'unc': np.std(ref_flux_dict[comp].residuals) * ref_flux_dict[comp].airmass_model,
-                        #     'res': goodFluxes[OOT] - ref_norm[OOT],
-                        #     'air': np.copy(ref_flux_dict[comp].airmass)
-                        # }
 
-                    # plt.plot(goodTimes, refCompList[comp]['res'], '.')
-                    # plt.title(str(comp))
-                    # plt.show()
+                    plt.plot(goodTimes[OOT], refCompDict[ckey]['res'], '.', label=f"{ref_flux_dict[ckey]['xy']}")
 
-                # Mc = chosen['mag']
-                # Mc_err = chosen['err']
-                # Mt = Mc - (-2.5 * np.log(goodFluxes[OOT]))
+                plt.title("Best Comparison Star")
+                plt.ylabel("Residuals (flux)")
+                plt.xlabel("Time (JD)")
+                plt.legend()
+                plt.savefig("Best_Comp_Star.png")
+                plt.show()
+
+                chi2Sum = {}
+
+                for key, value in refCompDict.items():
+                    expected = np.ones(len(value['norm']))
+                    chi2Sum[key] = np.sum((np.power(value['norm'] - expected, 2)) / expected)
+
+                chosen = None
+                min_ind = min(chi2Sum, key=chi2Sum.get)
+                comp_xy = compStarList[min_ind]
+
+                for ckey in vsp_comp_stars.keys():
+                    if comp_xy == vsp_comp_stars[ckey]['xy']:
+                        chosen = vsp_comp_stars[ckey]
+                        break
+
+                Mc = chosen['mag']
+                Mc_err = chosen['err']
+
+                for ckey in ref_flux_dict.keys():
+                    if comp_xy == ref_flux_dict[ckey]['xy']:
+                        chosen = ref_flux_dict[ckey]
+                        break
+
+                goodTimes = np.intersect1d(np.array(bestlmfit.time), np.array(chosen['myfit'].time))
+                comp_mask = [True if i in goodTimes else False for i in chosen['myfit'].time]
+                OOT = (np.array(chosen['myfit'].transit)[comp_mask] == 1)
+
+                F = np.array(chosen['myfit'].data)[comp_mask][OOT]
+                Mt = Mc - (2.5 * np.log10(F))
+                F_err = refCompDict[ckey]['norm_unc']
+                Mt_err = (Mc_err**2 +(-2.5*F_err/(F*np.log(10)))**2)**0.5
+
+                plt.errorbar(goodTimes[OOT], Mt, yerr=Mt_err, fmt='.', label='Target')
+                plt.title(f"Vmag: {round(np.median(Mt), 2)})")
+                plt.ylim([11.0, 11.5])
+                plt.ylabel("Vmag")
+                plt.xlabel("Time (JD)")
+                plt.legend()
+                plt.savefig("Stellar_Variability.png")
+                plt.show()
 
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []

@@ -1663,9 +1663,6 @@ def main():
 
                 vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
 
-                with open("comp_stars.json", 'w') as f:
-                    json.dump(vsp_comp_stars, f)
-
                 exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
 
                 for compn, comp in enumerate(exotic_infoDict['comp_stars']):

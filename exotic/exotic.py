@@ -126,6 +126,10 @@ try:  # output files
     from output_files import OutputFiles
 except ImportError:  # package import
     from .output_files import OutputFiles
+try:  # output files
+    from VSPoutput_files import VSPOutputFiles
+except ImportError:  # package import
+    from .VSPoutput_files import VSPOutputFiles
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
 except ImportError:  # package import
@@ -2141,7 +2145,16 @@ def main():
                 Mt = Mc - (2.5 * np.log10(F))
                 F_err = refCompDict[ckey]['norm_unc']
                 Mt_err = (Mc_err**2 +(-2.5*F_err/(F*np.log(10)))**2)**0.5
-
+                vsp_label = [key for key, value in vsp_comp_stars.items() if value['xy'] == comp_xy][0]
+                vsp_params = {
+                    'time': intx_times,
+                    'mag': Mt,
+                    'mag_err': Mt_err,
+                    'cname': vsp_label,
+                    'cmag': Mc,
+                    'chart_id': chart_id,
+                    'OOT': oot_mask
+                }
                 plt.errorbar(intx_times[oot_mask], Mt, yerr=Mt_err, fmt='.', label='Target')
                 plt.title(f"Vmag: {round(np.median(Mt), 2)})")
                 plt.ylim([11.0, 11.5])
@@ -2294,7 +2307,8 @@ def main():
         fig = myfit.plot_triangle()
         fig.savefig(Path(exotic_infoDict['save']) / "temp" /
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
-
+        
+        VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
@@ -2316,6 +2330,7 @@ def main():
             if bestCompStar:
                 exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
             output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
+            VSPoutput_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 

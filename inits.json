@@ -42,6 +42,7 @@
             "Observing Notes": "Weather, seeing was nice.",
 
             "Plate Solution? (y/n)": "y",
+            "Target Variable? (y/n)": "y",
 
             "Target Star X & Y Pixel": [424, 286],
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]

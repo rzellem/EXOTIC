@@ -123,17 +123,15 @@ try:  # nea
 except ImportError:  # package import
     from api.nea import NASAExoplanetArchive
 try:  # output files
-    from output_files import OutputFiles
+    from output_files import OutputFiles, VSPOutputFiles
 except ImportError:  # package import
-    from .output_files import OutputFiles
-try:  # output files
-    from VSPoutput_files import VSPOutputFiles
-except ImportError:  # package import
-    from .VSPoutput_files import VSPOutputFiles
+    from .output_files import OutputFiles, VSPOutputFiles
 try:  # plots
-    from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
+    from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
+        plot_stellar_variability, plot_variable_residuals
 except ImportError:  # package import
-    from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
+    from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
+        plot_stellar_variability, plot_variable_residuals
 try:  # tools
     from utils import round_to_2, user_input
 except ImportError: # package import
@@ -1089,39 +1087,39 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     return mode(dat.flatten(), nan_policy='omit').mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
-def best_comp(ref_flux, tfit, ref_comp, comp_stars):
+def variability_calc(ref_flux, ckey, lmfit):
+    intx_times = np.intersect1d(np.array(lmfit.time), np.array(ref_flux[ckey]['myfit'].time))
+    comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
+    tar_mask = [True if i in intx_times else False for i in lmfit.time]
+
+    OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
+    OOT_scatter = np.std(
+        (np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[
+            comp_mask][OOT])
+    norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask][OOT]
+    norm_unc = norm_unc / np.nanmedian(np.array(lmfit.data)[tar_mask][OOT])
+
+    ref_norm = (np.array(ref_flux[ckey]['myfit'].data))[comp_mask]
+    tar_norm = (np.array(lmfit.data) / np.nanmedian(np.array(lmfit.data)))[tar_mask]
+
+    comp_dict = {
+        'times': intx_times,
+        'cmask': comp_mask,
+        'norm': ref_norm,
+        'norm_unc': norm_unc,
+        'res': tar_norm[OOT] - ref_norm[OOT],
+        'xy': ref_flux[ckey]['xy']
+    }
+
+    return comp_dict, OOT
+
+
+def find_comp(ref_flux, lmfit, ref_comp, comp_stars, save):
     for ckey in ref_flux.keys():
-        intx_times = np.intersect1d(np.array(tfit.time), np.array(ref_flux[ckey]['myfit'].time))
-        comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
-        tar_mask = [True if i in intx_times else False for i in tfit.time]
+        ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit)
+        plt.plot(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], '.', label=f"{ref_flux[ckey]['xy']}")
 
-        OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
-        OOT_scatter = np.std(
-            (np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[
-                comp_mask][OOT])
-        norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask][OOT]
-        norm_unc = norm_unc / np.nanmedian(np.array(tfit.data)[tar_mask][OOT])
-
-        ref_norm = (np.array(ref_flux[ckey]['myfit'].data))[comp_mask]
-        tar_norm = (np.array(tfit.data) / np.nanmedian(np.array(tfit.data)))[tar_mask]
-
-        ref_comp[ckey] = {
-            'times': intx_times,
-            'cmask': comp_mask,
-            'norm': ref_norm,
-            'norm_unc': norm_unc,
-            'res': tar_norm[OOT] - ref_norm[OOT],
-            'xy': ref_flux[ckey]['xy']
-        }
-
-        plt.plot(intx_times[OOT], ref_comp[ckey]['res'], '.', label=f"{ref_flux[ckey]['xy']}")
-
-    plt.title("Best Comparison Star")
-    plt.ylabel("Residuals (flux)")
-    plt.xlabel("Time (JD)")
-    plt.legend()
-    plt.savefig("Best_Comp_Star.png")
-    plt.show()
+    plot_variable_residuals(save)
 
     chi2_sum = {}
 
@@ -1134,12 +1132,14 @@ def best_comp(ref_flux, tfit, ref_comp, comp_stars):
     return comp_stars[min_ind], ref_comp
 
 
-def stellar_variability(ref_flux, tfit, comp_stars, vsp_comp_stars, target):
+def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save):
     ref_comp = {}
-    comp_xy = None
 
-    if not target:
-        comp_xy, ref_comp = best_comp(ref_flux, tfit, comp_stars, ref_comp)
+    if not best_comp or (best_comp not in vsp_ind):
+        comp_xy, ref_comp = find_comp(ref_flux, lmfit, ref_comp, comp_stars, save)
+    else:
+        comp_xy = comp_stars[best_comp]
+        ref_comp[best_comp] = variability_calc(ref_flux, best_comp, lmfit)
 
     comp_star = [vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_xy == vsp_comp_stars[ckey]['xy']][0]
 
@@ -1147,7 +1147,7 @@ def stellar_variability(ref_flux, tfit, comp_stars, vsp_comp_stars, target):
 
     comp_flux, ckey = [(ref_flux[ckey], ckey) for ckey in ref_flux.keys() if comp_xy == ref_flux[ckey]['xy']][0]
 
-    intx_times = np.intersect1d(np.array(tfit.time), np.array(comp_flux['myfit'].time))
+    intx_times = np.intersect1d(np.array(lmfit.time), np.array(comp_flux['myfit'].time))
     comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
     OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
 
@@ -1156,14 +1156,20 @@ def stellar_variability(ref_flux, tfit, comp_stars, vsp_comp_stars, target):
     F_err = ref_comp[ckey]['norm_unc']
     Mt_err = (Mc_err ** 2 + (-2.5 * F_err / (F * np.log(10))) ** 2) ** 0.5
 
-    plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, fmt='.', label='Target')
-    plt.title(f"Vmag: {np.round(np.median(Mt), 2)})")
-    plt.ylim([np.min(Mt) - 0.5, np.max(Mt) + 0.5])
-    plt.ylabel("Vmag")
-    plt.xlabel("Time (JD)")
-    plt.legend()
-    plt.savefig("Stellar_Variability.png")
-    plt.show()
+    vsp_label = [key for key, value in vsp_comp_stars.items() if value['xy'] == comp_xy][0]
+    vsp_params = {
+        'time': intx_times,
+        'mag': Mt,
+        'mag_err': Mt_err,
+        'cname': vsp_label,
+        'cmag': Mc,
+        'chart_id': id,
+        'OOT': OOT
+    }
+
+    plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save)
+
+    return vsp_params
 
 
 # Mid-Transit Time Prior Helper Functions
@@ -1722,7 +1728,7 @@ def main():
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
             vsp_list = []
-            chart_id = None
+            chart_id, vsp_comp_stars = None, None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -1735,7 +1741,8 @@ def main():
                 tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                if exotic_infoDict['st_var_opt'] == 'y':
+                    vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
 
                 exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
 
@@ -2155,9 +2162,10 @@ def main():
                       goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
                       exotic_infoDict['date'])
 
-            log_info("\n\nOutput File Saved")
+            if exotic_infoDict['st_var_opt'] == 'y':
+                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'])
 
-            stellar_variability(ref_flux_dict, bestlmfit, compStarList, vsp_comp_stars, bestCompStar)
+            log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar, comp_coords = None, None
@@ -2302,7 +2310,8 @@ def main():
         fig.savefig(Path(exotic_infoDict['save']) / "temp" /
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
-        VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
+        if exotic_infoDict['st_var_opt'] == 'y':
+            VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
@@ -2324,7 +2333,8 @@ def main():
             if bestCompStar:
                 exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
             output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
-            VSPoutput_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
+            if exotic_infoDict['st_var_opt'] == 'y':
+                VSPoutput_files.aavso(goodAirmasses)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 

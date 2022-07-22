@@ -126,6 +126,10 @@ try:  # output files
     from output_files import OutputFiles
 except ImportError:  # package import
     from .output_files import OutputFiles
+try:  # output files
+    from VSPoutput_files import VSPOutputFiles
+except ImportError:  # package import
+    from .VSPoutput_files import VSPOutputFiles
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
 except ImportError:  # package import
@@ -2298,6 +2302,7 @@ def main():
         fig.savefig(Path(exotic_infoDict['save']) / "temp" /
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
+        VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
@@ -2319,6 +2324,7 @@ def main():
             if bestCompStar:
                 exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
             output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
+            VSPoutput_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
 

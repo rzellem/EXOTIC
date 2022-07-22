@@ -1085,6 +1085,83 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     return mode(dat.flatten(), nan_policy='omit').mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
+def best_comp(ref_flux, tfit, ref_comp, comp_stars):
+    for ckey in ref_flux.keys():
+        intx_times = np.intersect1d(np.array(tfit.time), np.array(ref_flux[ckey]['myfit'].time))
+        comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
+        tar_mask = [True if i in intx_times else False for i in tfit.time]
+
+        OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
+        OOT_scatter = np.std(
+            (np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[
+                comp_mask][OOT])
+        norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask][OOT]
+        norm_unc = norm_unc / np.nanmedian(np.array(tfit.data)[tar_mask][OOT])
+
+        ref_norm = (np.array(ref_flux[ckey]['myfit'].data))[comp_mask]
+        tar_norm = (np.array(tfit.data) / np.nanmedian(np.array(tfit.data)))[tar_mask]
+
+        ref_comp[ckey] = {
+            'times': intx_times,
+            'cmask': comp_mask,
+            'norm': ref_norm,
+            'norm_unc': norm_unc,
+            'res': tar_norm[OOT] - ref_norm[OOT],
+            'xy': ref_flux[ckey]['xy']
+        }
+
+        plt.plot(intx_times[OOT], ref_comp[ckey]['res'], '.', label=f"{ref_flux[ckey]['xy']}")
+
+    plt.title("Best Comparison Star")
+    plt.ylabel("Residuals (flux)")
+    plt.xlabel("Time (JD)")
+    plt.legend()
+    plt.savefig("Best_Comp_Star.png")
+    plt.show()
+
+    chi2_sum = {}
+
+    for key, value in ref_comp.items():
+        expected = np.ones(len(value['norm']))
+        chi2_sum[key] = np.sum((np.power(value['norm'] - expected, 2)) / expected)
+
+    min_ind = min(chi2_sum, key=chi2_sum.get)
+
+    return comp_stars[min_ind], ref_comp
+
+
+def stellar_variability(ref_flux, tfit, comp_stars, vsp_comp_stars, target):
+    ref_comp = {}
+    comp_xy = None
+
+    if not target:
+        comp_xy, ref_comp = best_comp(ref_flux, tfit, comp_stars, ref_comp)
+
+    comp_star = [vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_xy == vsp_comp_stars[ckey]['xy']][0]
+
+    Mc, Mc_err = comp_star['mag'], comp_star['err']
+
+    comp_flux, ckey = [(ref_flux[ckey], ckey) for ckey in ref_flux.keys() if comp_xy == ref_flux[ckey]['xy']][0]
+
+    intx_times = np.intersect1d(np.array(tfit.time), np.array(comp_flux['myfit'].time))
+    comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
+    OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
+
+    F = np.array(comp_flux['myfit'].data)[comp_mask][OOT]
+    Mt = Mc - (2.5 * np.log10(F))
+    F_err = ref_comp[ckey]['norm_unc']
+    Mt_err = (Mc_err ** 2 + (-2.5 * F_err / (F * np.log(10))) ** 2) ** 0.5
+
+    plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, fmt='.', label='Target')
+    plt.title(f"Vmag: {np.round(np.median(Mt), 2)})")
+    plt.ylim([np.min(Mt) - 0.5, np.max(Mt) + 0.5])
+    plt.ylabel("Vmag")
+    plt.xlabel("Time (JD)")
+    plt.legend()
+    plt.savefig("Stellar_Variability.png")
+    plt.show()
+
+
 # Mid-Transit Time Prior Helper Functions
 def numberOfTransitsAway(timeData, period, originalT):
     return int((np.nanmin(timeData) - originalT) / period) + 1
@@ -2076,81 +2153,7 @@ def main():
 
             log_info("\n\nOutput File Saved")
 
-            refCompDict = {}
-
-            if not bestCompStar:
-                for ckey in ref_flux_dict.keys():
-                    intx_times = np.intersect1d(np.array(bestlmfit.time), np.array(ref_flux_dict[ckey]['myfit'].time))
-                    comp_mask = [True if i in intx_times else False for i in ref_flux_dict[ckey]['myfit'].time]
-                    tar_mask = [True if i in intx_times else False for i in bestlmfit.time]
-
-                    oot_mask = (np.array(ref_flux_dict[ckey]['myfit'].transit)[comp_mask] == 1) # possibly fix this to intersect both
-                    oot_scatter = np.std((np.array(ref_flux_dict[ckey]['myfit'].data) / np.array(ref_flux_dict[ckey]['myfit'].airmass_model))[comp_mask][oot_mask])
-                    norm_unc = oot_scatter * np.array(ref_flux_dict[ckey]['myfit'].airmass_model)[comp_mask][oot_mask]
-                    norm_unc = norm_unc / np.nanmedian(np.array(bestlmfit.data)[tar_mask][oot_mask])
-
-                    ref_norm = (np.array(ref_flux_dict[ckey]['myfit'].data))[comp_mask]
-                    tar_norm = (np.array(bestlmfit.data) / np.nanmedian(np.array(bestlmfit.data)))[tar_mask]
-
-                    refCompDict[ckey] = {
-                        'times': intx_times,
-                        'cmask': comp_mask,
-                        'norm': ref_norm,
-                        'norm_unc': norm_unc,
-                        'res': tar_norm[oot_mask] - ref_norm[oot_mask],
-                        'xy': ref_flux_dict[ckey]['xy']
-                    }
-
-                    plt.plot(intx_times[oot_mask], refCompDict[ckey]['res'], '.', label=f"{ref_flux_dict[ckey]['xy']}")
-
-                plt.title("Best Comparison Star")
-                plt.ylabel("Residuals (flux)")
-                plt.xlabel("Time (JD)")
-                plt.legend()
-                plt.savefig("Best_Comp_Star.png")
-                plt.show()
-
-                chi2Sum = {}
-
-                for key, value in refCompDict.items():
-                    expected = np.ones(len(value['norm']))
-                    chi2Sum[key] = np.sum((np.power(value['norm'] - expected, 2)) / expected)
-
-                chosen = None
-                min_ind = min(chi2Sum, key=chi2Sum.get)
-                comp_xy = compStarList[min_ind]
-
-                for ckey in vsp_comp_stars.keys():
-                    if comp_xy == vsp_comp_stars[ckey]['xy']:
-                        chosen = vsp_comp_stars[ckey]
-                        break
-
-                Mc = chosen['mag']
-                Mc_err = chosen['err']
-
-                for ckey in ref_flux_dict.keys():
-                    if comp_xy == ref_flux_dict[ckey]['xy']:
-                        chosen = ref_flux_dict[ckey]
-                        break
-
-                intx_times = np.intersect1d(np.array(bestlmfit.time), np.array(chosen['myfit'].time))
-                comp_mask = [True if i in intx_times else False for i in chosen['myfit'].time]
-                oot_mask = (np.array(chosen['myfit'].transit)[comp_mask] == 1)
-
-                F = np.array(chosen['myfit'].data)[comp_mask][oot_mask]
-                Mt = Mc - (2.5 * np.log10(F))
-                F_err = refCompDict[ckey]['norm_unc']
-                Mt_err = (Mc_err**2 +(-2.5*F_err/(F*np.log(10)))**2)**0.5
-
-                plt.errorbar(intx_times[oot_mask], Mt, yerr=Mt_err, fmt='.', label='Target')
-                plt.title(f"Vmag: {round(np.median(Mt), 2)})")
-                plt.ylim([11.0, 11.5])
-                plt.ylabel("Vmag")
-                plt.xlabel("Time (JD)")
-                plt.legend()
-                plt.savefig("Stellar_Variability.png")
-                plt.show()
-
+            stellar_variability(ref_flux_dict, bestlmfit, compStarList, vsp_comp_stars, bestCompStar)
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar, comp_coords = None, None

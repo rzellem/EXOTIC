@@ -147,7 +147,7 @@ def plot_variable_residuals(save):
 
 
 def plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name):
-    plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, color="darkslateblue", fmt='.', label='Target')
+    plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, color="tomato", fmt='.', label='Target')
     plt.title(f"{s_name}")
     plt.ylim([np.min(Mt) - 0.5, np.max(Mt) + 0.5])
     plt.ylabel("Vmag")

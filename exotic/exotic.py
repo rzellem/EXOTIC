@@ -621,7 +621,8 @@ def search_wcs(file):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', category=FITSFixedWarning)
         header = fits.getheader(filename=file)
-        return WCS(header)
+        # return WCS(header)
+        return WCS(fits.open(file)[('SCI', 1)].header)
 
 
 def get_wcs(file, directory=""):
@@ -1106,10 +1107,10 @@ def jd_bjd(non_bjd, p_dict, info_dict):
     return goodTimes
 
 
-def variability_calc(ref_flux, ckey, lmfit):
-    intx_times = np.intersect1d(np.array(lmfit.time), np.array(ref_flux[ckey]['myfit'].time))
+def variability_calc(ref_flux, ckey, lmfit, good_times):
+    intx_times = np.intersect1d(np.array(good_times), np.array(ref_flux[ckey]['myfit'].time))
     comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
-    tar_mask = [True if i in intx_times else False for i in lmfit.time]
+    tar_mask = [True if i in intx_times else False for i in good_times]
 
     OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
     OOT_scatter = np.std(
@@ -1133,7 +1134,7 @@ def variability_calc(ref_flux, ckey, lmfit):
     return comp_dict, OOT
 
 
-def find_comp(ref_flux, lmfit, ref_comp, comp_stars, vsp_comp_stars, save):
+def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save):
     alpha_res = np.linspace(0, 1, len(ref_flux.keys()) + 1)
     labels = {}
 
@@ -1141,7 +1142,7 @@ def find_comp(ref_flux, lmfit, ref_comp, comp_stars, vsp_comp_stars, save):
         labels[tuple(value['xy'])] = key
 
     for i, ckey in enumerate(ref_flux.keys()):
-        ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit)
+        ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit, good_times)
         plt.plot(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], '.', alpha=alpha_res[i + 1], color="rebeccapurple",
                  label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
 
@@ -1150,8 +1151,8 @@ def find_comp(ref_flux, lmfit, ref_comp, comp_stars, vsp_comp_stars, save):
     chi2_sum = {}
 
     for key, value in ref_comp.items():
-        expected = np.zeros(len(value['norm']))  # possibly ones or zeros
-        chi2_sum[key] = np.sum((np.power(value['norm'] - expected, 2)) / expected)
+        expected = np.ones(len(value['norm']))  # possibly ones or zeros
+        chi2_sum[key] = np.sum(np.power(expected - value['norm'], 2)) / len(value['norm'])
 
     min_ind = min(chi2_sum, key=chi2_sum.get)
 
@@ -1162,11 +1163,19 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
                         p_dict, info_dict):
     ref_comp = {}
 
+    if not bjd_inc:
+        good_times = jd_bjd(lmfit.time, p_dict, info_dict)
+
+        for ckey in ref_flux.keys():
+            ref_flux[ckey]['myfit'].time = jd_bjd(ref_flux[ckey]['myfit'].time, p_dict, info_dict)
+    else:
+        good_times = lmfit.time
+
     if not best_comp or (best_comp not in vsp_ind):
-        comp_xy, ref_comp = find_comp(ref_flux, lmfit, ref_comp, comp_stars, vsp_comp_stars, save)
+        comp_xy, ref_comp = find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save)
     else:
         comp_xy = comp_stars[best_comp]
-        ref_comp[best_comp] = variability_calc(ref_flux, best_comp, lmfit)
+        ref_comp[best_comp] = variability_calc(ref_flux, best_comp, lmfit, good_times)
 
     comp_star = [vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_xy == vsp_comp_stars[ckey]['xy']][0]
 
@@ -1174,7 +1183,7 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
 
     comp_flux, ckey = [(ref_flux[ckey], ckey) for ckey in ref_flux.keys() if comp_xy == ref_flux[ckey]['xy']][0]
 
-    intx_times = np.intersect1d(np.array(lmfit.time), np.array(comp_flux['myfit'].time))
+    intx_times = np.intersect1d(np.array(good_times), np.array(comp_flux['myfit'].time))
     comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
     OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
 
@@ -1759,7 +1768,8 @@ def main():
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
-                wcs_header = fits.getheader(filename=wcs_file)
+                # wcs_header = fits.getheader(filename=wcs_file)
+                wcs_header = fits.open(wcs_file)[('SCI', 1)].header
                 ra_file, dec_file = get_radec(wcs_header)
 
                 # Checking pixel coordinates against plate solution
@@ -2179,7 +2189,8 @@ def main():
 
             if exotic_infoDict['st_var_opt'] == 'y':
                 vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
-                                                 vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc)
+                                                 vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc,
+                                                 pDict, exotic_infoDict)
 
             log_info("\n\nOutput File Saved")
         else:

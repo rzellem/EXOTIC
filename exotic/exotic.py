@@ -1087,6 +1087,25 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     return mode(dat.flatten(), nan_policy='omit').mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
+def jd_bjd(non_bjd, p_dict, info_dict):
+    try:
+        resultos = utc_tdb.JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'],
+                                           lat=info_dict['lat'], longi=info_dict['long'],
+                                           alt=info_dict['elev'])
+        goodTimes = resultos[0]
+    except:
+        targetloc = astropy.coordinates.SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg),
+                                                 frame='icrs')
+        obsloc = astropy.coordinates.EarthLocation(lat=info_dict['lat'], lon=info_dict['long'],
+                                                   height=info_dict['elev'])
+        timesToConvert = astropy.time.Time(non_bjd, format='jd', scale='utc', location=obsloc)
+        ltt_bary = timesToConvert.light_travel_time(targetloc)
+        time_barycentre = timesToConvert.tdb + ltt_bary
+        goodTimes = time_barycentre.value
+
+    return goodTimes
+
+
 def variability_calc(ref_flux, ckey, lmfit):
     intx_times = np.intersect1d(np.array(lmfit.time), np.array(ref_flux[ckey]['myfit'].time))
     comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
@@ -1114,17 +1133,24 @@ def variability_calc(ref_flux, ckey, lmfit):
     return comp_dict, OOT
 
 
-def find_comp(ref_flux, lmfit, ref_comp, comp_stars, save):
-    for ckey in ref_flux.keys():
+def find_comp(ref_flux, lmfit, ref_comp, comp_stars, vsp_comp_stars, save):
+    alpha_res = np.linspace(0, 1, len(ref_flux.keys()) + 1)
+    labels = {}
+
+    for key, value in vsp_comp_stars.items():
+        labels[tuple(value['xy'])] = key
+
+    for i, ckey in enumerate(ref_flux.keys()):
         ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit)
-        plt.plot(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], '.', label=f"{ref_flux[ckey]['xy']}")
+        plt.plot(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], '.', alpha=alpha_res[i + 1], color="rebeccapurple",
+                 label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
 
     plot_variable_residuals(save)
 
     chi2_sum = {}
 
     for key, value in ref_comp.items():
-        expected = np.ones(len(value['norm']))
+        expected = np.zeros(len(value['norm']))  # possibly ones or zeros
         chi2_sum[key] = np.sum((np.power(value['norm'] - expected, 2)) / expected)
 
     min_ind = min(chi2_sum, key=chi2_sum.get)
@@ -1132,11 +1158,12 @@ def find_comp(ref_flux, lmfit, ref_comp, comp_stars, save):
     return comp_stars[min_ind], ref_comp
 
 
-def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save):
+def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save, s_name, bjd_inc,
+                        p_dict, info_dict):
     ref_comp = {}
 
     if not best_comp or (best_comp not in vsp_ind):
-        comp_xy, ref_comp = find_comp(ref_flux, lmfit, ref_comp, comp_stars, save)
+        comp_xy, ref_comp = find_comp(ref_flux, lmfit, ref_comp, comp_stars, vsp_comp_stars, save)
     else:
         comp_xy = comp_stars[best_comp]
         ref_comp[best_comp] = variability_calc(ref_flux, best_comp, lmfit)
@@ -1167,7 +1194,7 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
         'OOT': OOT
     }
 
-    plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save)
+    plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name)
 
     return vsp_params
 
@@ -2082,6 +2109,7 @@ def main():
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
+                bjd_inc = True
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
                 log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
@@ -2089,22 +2117,9 @@ def main():
                 log_info("Please be patient- this step can take a few minutes.")
 
                 animate_toggle(True)
-                try:
-                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'],
-                                                       lat=exotic_infoDict['lat'], longi=exotic_infoDict['long'],
-                                                       alt=exotic_infoDict['elev'])
-                    goodTimes = resultos[0]
-                except:
-                    targetloc = astropy.coordinates.SkyCoord(pDict['ra'], pDict['dec'], unit=(u.deg, u.deg),
-                                                             frame='icrs')
-                    obsloc = astropy.coordinates.EarthLocation(lat=exotic_infoDict['lat'], lon=exotic_infoDict['long'],
-                                                               height=exotic_infoDict['elev'])
-                    timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
-                    ltt_bary = timesToConvert.light_travel_time(targetloc)
-                    time_barycentre = timesToConvert.tdb + ltt_bary
-                    goodTimes = time_barycentre.value
-
+                goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
                 animate_toggle()
+                bjd_inc = False
 
             # sigma clip
             si = np.argsort(goodTimes)
@@ -2163,7 +2178,8 @@ def main():
                       exotic_infoDict['date'])
 
             if exotic_infoDict['st_var_opt'] == 'y':
-                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'])
+                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
+                                                 vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc)
 
             log_info("\n\nOutput File Saved")
         else:

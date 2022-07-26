@@ -140,19 +140,20 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
 def plot_variable_residuals(save):
     plt.title("Stellar Variability Residuals")
     plt.ylabel("Residuals (flux)")
-    plt.xlabel("Time (JD)")
+    plt.xlabel("Time (BJD_TDB)")
     plt.legend()
     plt.savefig(Path(save) / "temp" / f"Variable_Residuals.png")
+    plt.close()
 
 
-def plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save):
-    plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, fmt='.', label='Target')
-    plt.title(f"Vmag: {np.round(np.median(Mt), 2)})")
+def plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name):
+    plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, color="darkslateblue", fmt='.', label='Target')
+    plt.title(f"{s_name}")
     plt.ylim([np.min(Mt) - 0.5, np.max(Mt) + 0.5])
     plt.ylabel("Vmag")
-    plt.xlabel("Time (JD)")
-    plt.legend()
+    plt.xlabel("Time (BJD_TDB)")
     plt.savefig(Path(save) / "temp" / f"Stellar_Variability.png")
+    plt.close()
 
 
 # Observation statistics from PSF data

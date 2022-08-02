@@ -146,9 +146,9 @@ def plot_variable_residuals(save):
     plt.close()
 
 
-def plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name):
+def plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name, label):
     plt.errorbar(intx_times[OOT], Mt, yerr=Mt_err, color="tomato", fmt='.', label='Target')
-    plt.title(f"{s_name}")
+    plt.title(f"{s_name} (Median Mt: {np.median(Mt):5f}, Label: {label})")
     plt.ylim([np.min(Mt) - 0.5, np.max(Mt) + 0.5])
     plt.ylabel("Vmag")
     plt.xlabel("Time (BJD_TDB)")

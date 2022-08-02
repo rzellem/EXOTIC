@@ -1199,10 +1199,10 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
     Mt = Mc - (2.5 * np.log10(F))
     F_err = ref_comp[ckey]['norm_unc']
     Mt_err = (Mc_err ** 2 + (-2.5 * F_err / (F * np.log(10))) ** 2) ** 0.5
-    Mc_errMC = np.random.normal(Mc, Mc_err, int(1e6))
-    F_errMC = np.random.normal(np.nanmedian(F), np.nanmedian(F_err), int(1e6))
-    Mt_errMC = Mc_errMC - 2.5*np.log10(F_errMC)
-    Mt_errMCstd = np.std(Mt_errMC)
+    # Mc_errMC = np.random.normal(Mc, Mc_err, int(1e6))
+    # F_errMC = np.random.normal(np.nanmedian(F), np.nanmedian(F_err), int(1e6))
+    # Mt_errMC = Mc_errMC - 2.5*np.log10(F_errMC)
+    # Mt_errMCstd = np.std(Mt_errMC)
 
     vsp_label = [key for key, value in vsp_comp_stars.items() if value['xy'] == comp_xy][0]
     vsp_params = {
@@ -1215,8 +1215,9 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
         'OOT': OOT
     }
 
-    plot_stellar_variability(intx_times, OOT, Mt, Mt_errMCstd, save, s_name, vsp_label)
+    # plot_stellar_variability(intx_times, OOT, Mt, Mt_errMCstd, save, s_name, vsp_label)
     plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name, vsp_label)
+    import pdb; pdb.set_trace()
     return vsp_params
 
 

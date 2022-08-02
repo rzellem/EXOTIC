@@ -38,10 +38,11 @@
             "Obs. Elevation (meters)": 2616,
             "Camera Type (CCD or DSLR)": "CCD",
             "Pixel Binning": "1x1",
-            "Filter Name (aavso.org/filters)": "CV",
+            "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",
 
             "Plate Solution? (y/n)": "y",
+            "Add Comparison Stars from AAVSO? (y/n)": "y",
 
             "Target Star X & Y Pixel": [424, 286],
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]

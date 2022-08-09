@@ -23,8 +23,8 @@
             "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
     },
     "user_info": {
-            "Directory with FITS files": "/Users/rzellem/Documents/EXOTIC/sample-data/HatP32Dec202017",
-            "Directory to Save Plots": "/Users/rzellem/Documents/EXOTIC/sample-data/",
+            "Directory with FITS files": "/Users/tfatahi/Downloads/EXOTIC_sampledata-main/HatP32Dec202017",
+            "Directory to Save Plots": "/Users/tfatahi/Documents/EXOTIC/save",
             "Directory of Flats": null,
             "Directory of Darks": null,
             "Directory of Biases": null,
@@ -45,7 +45,7 @@
             "Add Comparison Stars from AAVSO? (y/n)": "y",
 
             "Target Star X & Y Pixel": [424, 286],
-            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]
+            "Comparison Star(s) X & Y Pixel": [[465, 183], [], [], [], [], [], [], [], []]
     },
     "planetary_parameters": {
             "Target Star RA": "02:04:10",

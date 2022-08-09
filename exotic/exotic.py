@@ -693,8 +693,8 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 def variableStarCheck(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
-    radius = u.Quantity(20.0, u.arcsec)
-    return False
+    return vsx_variable(sample.ra.deg, sample.dec.deg)
+    # radius = u.Quantity(20.0, u.arcsec)
     # # Query GAIA first to check for variability using the phot_variable_flag trait
     # gaia_result = gaia_query(sample, radius)
     # if not gaia_result:
@@ -735,11 +735,27 @@ def variableStarCheck(ra, dec):
 
 
 @retry(stop=stop_after_delay(30))
-def vsx_query(ra, dec, maglimit=14):
+def vsx_auid(ra, dec, radius=0.01, maglimit=14):
     try:
-        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius=0.01&tomag={maglimit}&format=json"
+        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
         result = requests.get(url)
-        data = result.json()
+        return result.json()['VSXObjects']['VSXObject'][0]['AUID']
+    except Exception:
+        log.info("\nThe target star does not have an AUID.")
+        return False
+
+
+@retry(stop=stop_after_delay(30))
+def vsx_variable(ra, dec, radius=0.01, maglimit=14):
+    try:
+        # check stars
+        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
+        result = requests.get(url)
+        var = result.json()['VSXObjects']['VSXObject'][0]['Category']
+
+        if var.lower() == "variable":
+            return True
+        return False
     except Exception:
         return False
 
@@ -784,8 +800,9 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
     return image_data
 
 
-def vsp_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
+def vsp_query(ra, dec, file, filter='V', fov=18.5, maglimit=14):
     comp_stars = {}
+    stars_count = 0
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
     data = result.json()
@@ -805,6 +822,10 @@ def vsp_query(ra, dec, file, filter='V', img_scale=2, fov=30, maglimit=14):
                             'mag': dict_['mag'],
                             'err': dict_['error']
                         }
+                        stars_count += 1
+
+        if stars_count == 2:
+            break
 
     return comp_stars, chart_id
 
@@ -1124,11 +1145,9 @@ def variability_calc(ref_flux, ckey, lmfit, good_times):
     tar_mask = [True if i in intx_times else False for i in good_times]
 
     OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
-    OOT_scatter = np.std(
-        (np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[
-            comp_mask][OOT])
-    norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask][OOT]
-    norm_unc = norm_unc / np.nanmedian(np.array(lmfit.data)[tar_mask][OOT])
+    OOT_scatter = np.std((np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[comp_mask])
+    norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask]
+    norm_unc /= np.nanmedian(ref_flux[ckey]['myfit'].data[comp_mask])
 
     ref_norm = (np.array(ref_flux[ckey]['myfit'].data) / np.nanmedian(np.array(ref_flux[ckey]['myfit'].data)))[comp_mask]
     tar_norm = (np.array(lmfit.data) / np.nanmedian(np.array(lmfit.data)))[tar_mask]
@@ -1171,6 +1190,7 @@ def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars,
 def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save, s_name, bjd_inc,
                         p_dict, info_dict):
     ref_comp = {}
+    idx_list, vsp_params = [], []
 
     if not bjd_inc:
         good_times = jd_bjd(lmfit.time, p_dict, info_dict)
@@ -1196,29 +1216,52 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
     comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
     OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
 
-    F = np.array(comp_flux['myfit'].data)[comp_mask][OOT]
-    Mt = Mc - (2.5 * np.log10(F))
-    F_err = ref_comp[ckey]['norm_unc']
-    Mt_err = (Mc_err ** 2 + (-2.5 * F_err / (F * np.log(10))) ** 2) ** 0.5
-    # Mc_errMC = np.random.normal(Mc, Mc_err, int(1e6))
-    # F_errMC = np.random.normal(np.nanmedian(F), np.nanmedian(F_err), int(1e6))
-    # Mt_errMC = Mc_errMC - 2.5*np.log10(F_errMC)
-    # Mt_errMCstd = np.std(Mt_errMC)
-
     vsp_label = [key for key, value in vsp_comp_stars.items() if value['xy'] == comp_xy][0]
-    vsp_params = {
-        'time': intx_times,
-        'mag': Mt,
-        'mag_err': Mt_err,
-        'cname': vsp_label,
-        'cmag': Mc,
-        'chart_id': id,
-        'OOT': OOT
-    }
+    curr = OOT[0]
+    idxs = []
 
-    # plot_stellar_variability(intx_times, OOT, Mt, Mt_errMCstd, save, s_name, vsp_label)
-    plot_stellar_variability(intx_times, OOT, Mt, Mt_err, save, s_name, vsp_label)
-    import pdb; pdb.set_trace()
+    for i, bl in enumerate(OOT):
+        if bl != curr:
+            idxs.append(i)
+            curr = bl
+
+    if len(idxs) > 1:
+        idx_list.append([0, idxs[0]])
+        idx_list.append([idxs[1], len(OOT) - 1])
+    elif len(idxs) == 0:
+        idx_list.append([0, len(OOT) - 1])
+    elif OOT[0]:
+        idx_list.append([0, idxs[0]])
+    elif not OOT[0]:
+        idx_list.append([idxs[0], len(OOT) - 1])
+
+    for idx in idx_list:
+        OOT_scatter = np.std(
+            (np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[
+                comp_mask][idx[0]:idx[1]])
+        norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask][idx[0]:idx[1]]
+        norm_unc /= np.nanmedian(ref_flux[ckey]['myfit'].data[comp_mask][idx[0]:idx[1]])
+
+        rel_flux = np.array(comp_flux['myfit'].data)[comp_mask][idx[0]:idx[1]]
+        model = np.exp(comp_flux['myfit'].parameters['a2'] * comp_flux['myfit'].airmass_model[comp_mask][idx[0]:idx[1]])
+        detrended = rel_flux / model
+        Mt = Mc - (2.5 * np.log10(detrended))
+        rel_flux_err = norm_unc
+        Mt_err = (Mc_err ** 2 + (-2.5 * rel_flux_err / (detrended * np.log(10))) ** 2) ** 0.5
+
+        vsp_params.append({
+            'time': np.mean(intx_times[idx[0]:idx[1]]),
+            'idx': idx,
+            'mag': np.median(Mt),
+            'mag_err': np.median(Mt_err),
+            'cname': vsp_label,
+            'cmag': Mc,
+            'chart_id': id,
+            'pos': ref_flux[ckey]['xy']
+        })
+
+    plot_stellar_variability(vsp_params, save, s_name, vsp_label)
+
     return vsp_params
 
 
@@ -1478,7 +1521,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         mode='lm'
     )
 
-    return myfit
+    return myfit, f1, f2
 
 
 def parse_args():
@@ -1792,10 +1835,7 @@ def main():
                 tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                if exotic_infoDict['aavso_comp'] == 'y':
-                    vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
-
-                exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
+                auid = vsx_auid(tar_radec[0], tar_radec[1])
 
                 for compn, comp in enumerate(exotic_infoDict['comp_stars']):
                     ra = ra_file[int(comp[1])][int(comp[0])]
@@ -1807,6 +1847,11 @@ def main():
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
                         log_info("\nCurrent comparison star is variable, proceeding to next star.")
                         exotic_infoDict['comp_stars'].remove(comp)
+
+                if exotic_infoDict['aavso_comp'] == 'y':
+                    vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                    exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
+
                 compStarList = exotic_infoDict['comp_stars']
 
             # aperture sizes in stdev (sigma) of PSF
@@ -1982,7 +2027,7 @@ def main():
                 psf_data[ckey] = psf_data[ckey][~badmask]
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                 for k in myfit.bounds.keys():
                     log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -2019,6 +2064,8 @@ def main():
                 if j in vsp_num:
                     ref_flux_dict[j] = {
                         'myfit': myfit,
+                        'tflux': tFlux1,
+                        'cflux': cFlux1,
                         'xy': compStarList[j]
                     }
 
@@ -2032,7 +2079,7 @@ def main():
                     temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
+                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
                     for k in myfit.bounds.keys():
                         log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -2072,11 +2119,13 @@ def main():
                         ckey = f"comp{j + 1}"
                         cFlux = aper_data[ckey][:, a, an]
 
-                        myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                        myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                         if j in vsp_num:
                             temp_ref_flux[j] = {
                                 'myfit': myfit,
+                                'tflux': tFlux1,
+                                'cflux': cFlux1,
                                 'xy': compStarList[j]
                             }
 
@@ -2119,6 +2168,8 @@ def main():
                             if j in vsp_num:
                                 ref_flux_dict[j] = {
                                     'myfit': myfit,
+                                    'tflux': tFlux1,
+                                    'cflux': cFlux1,
                                     'xy': compStarList[j]
                                 }
 
@@ -2386,11 +2437,12 @@ def main():
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
             if fitsortext == 1:
-                output_files.final_planetary_params(phot_opt=True, comp_star=bestCompStar, comp_coords=comp_coords,
+                output_files.final_planetary_params(phot_opt=True, vsp_params=vsp_params,
+                                                    comp_star=bestCompStar, comp_coords=comp_coords,
                                                     min_aper=np.round(minAperture, 2),
                                                     min_annul=np.round(minAnnulus, 2))
             else:
-                output_files.final_planetary_params(phot_opt=False)
+                output_files.final_planetary_params(phot_opt=False, vsp_params=vsp_params)
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
@@ -2400,7 +2452,7 @@ def main():
             if vsp_params:
                 VSPoutput_files.aavso(goodAirmasses)
         except Exception as e:
-            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
+            log_info(f"\nError: Could not create vspAAVSO.txt. {error_txt}\n\t{e}", error=True)
 
         log_info("Output Files Saved")
 

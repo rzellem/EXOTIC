@@ -32,7 +32,7 @@ class OutputFiles:
                                                             self.fit.transit, self.fit.airmass_model):
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
-    def final_planetary_params(self, phot_opt, comp_star=None, comp_coords=None, min_aper=None, min_annul=None):
+    def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None, min_annul=None):
         params_file = self.dir / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         params_num = {
@@ -50,6 +50,10 @@ class OutputFiles:
                                           f"{round_to_2(self.fit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * std(self.fit.residuals / median(self.fit.data)))} %",
         }
+
+        if vsp_params:
+            params_num["Variable Reference Star"] = f"AAVSO Label: {vsp_params[0]['cname']}, " + \
+                                                    f"Position: {vsp_params[0]['pos']}"
 
         if phot_opt:
             phot_ext = {"Best Comparison Star": f"#{comp_star} - {comp_coords}" if min_aper >= 0 else str(comp_star)}
@@ -138,7 +142,6 @@ class VSPOutputFiles:
         with params_file.open('w') as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
-                    f"#SECONDARY_OBSCODES={self.i_dict['second_obs']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
                     "#DATE_TYPE=BJD_TDB\n"  # fixed
@@ -152,10 +155,11 @@ class VSPOutputFiles:
                 "aavso.org/data-usage-guidelines\n")
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
-            for aavsoC in range(0, len(self.vsp_params['time'][self.vsp_params['OOT']])):
-                f.write(f"{self.p_dict['sName']},"f"{round(self.vsp_params['time'][self.vsp_params['OOT']][aavsoC], 5)}," f"{round(self.vsp_params['mag'][aavsoC], 5)}," f"{round(self.vsp_params['mag_err'][aavsoC],5)},"
-                        "V,NO,STD," f"{self.vsp_params['cname']}," f"{self.vsp_params['cmag']}," "na,na," f"{round(airmasses[aavsoC], 7)}," "na," 
-                        f"{self.vsp_params['chart_id']}," "na\n")
+            for vsp_p in self.vsp_params:
+                f.write(f"{self.p_dict['sName']},"f"{round(vsp_p['time'], 5)}," f"{round(vsp_p['mag'], 5)}," f"{round(vsp_p['mag_err'], 5)},"
+                        "V,NO,STD," f"{vsp_p['cname']}," f"{round(vsp_p['cmag'], 5)}," "na,na," 
+                        f"{round(median(airmasses[vsp_p['idx'][0]:vsp_p['idx'][1]]), 7)}," "na," 
+                        f"{vsp_p['chart_id']}," "na\n")
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

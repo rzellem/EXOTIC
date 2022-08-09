@@ -1170,14 +1170,21 @@ def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars,
     for key, value in vsp_comp_stars.items():
         labels[tuple(value['xy'])] = key
 
+    markerlist = ['.','v','s','D','^']
+    colorlist = ["firebrick","darkorange","olivedrab","lightseagreen","steelblue","rebeccapurple","mediumvioletred"]
+    k = 0
     for i, ckey in enumerate(ref_flux.keys()):
+        if i >= len(colorlist):
+            i = 0
+        if k >= len(markerlist):
+            k = 0
         ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit, good_times)
-        plt.plot(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], '.',
-                 label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
-
+        plt.errorbar(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], fmt = markerlist[k], color = colorlist[i],
+            label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
+        k+=1
     plot_variable_residuals(save)
-
     std_dict = {}
+
 
     for key, value in ref_comp.items():
         std_dict[key] = np.std(value['res'])

@@ -189,7 +189,7 @@ class Inputs:
 
 
 def check_imaging_files(directory, img_type):
-    file_extensions = ['.fits', '.fit', '.fts', '.fz']
+    file_extensions = ['.fits', '.fit', '.fts', '.fz', 'fits.gz']
     input_files = []
 
     while True:

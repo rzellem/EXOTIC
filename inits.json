@@ -38,7 +38,7 @@
             "Obs. Elevation (meters)": 2616,
             "Camera Type (CCD or DSLR)": "CCD",
             "Pixel Binning": "1x1",
-            "Filter Name (aavso.org/filters)": "V",
+            "Filter Name (aavso.org/filters)": "CV",
             "Observing Notes": "Weather, seeing was nice.",
 
             "Plate Solution? (y/n)": "y",
@@ -77,8 +77,6 @@
             "Pre-reduced File:": "/sample-data/NormalizedFlux_HAT-P-32 b_December 17, 2017.txt",
             "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
             "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
-
-
 
             "Filter Minimum Wavelength (nm)": null,
             "Filter Maximum Wavelength (nm)": null,

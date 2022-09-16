@@ -40,7 +40,7 @@ class Inputs:
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
             'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
-            'pixel_bin': pixel_bin, 'filter': filter_type, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
+            'pixel_bin': pixel_bin, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
             'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
@@ -428,12 +428,6 @@ def pixel_bin(pix_bin):
     if not pix_bin:
         pix_bin = user_input("Please enter the pixel binning: ", type_=str)
     return pix_bin
-
-
-def filter_type(f_type):
-    if not f_type:
-        f_type = user_input("Please enter the filter name: ", type_=str)
-    return f_type
 
 
 def obs_notes(notes):

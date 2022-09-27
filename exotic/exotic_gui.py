@@ -50,6 +50,7 @@ import platform
 import python_version
 import subprocess
 import sys
+from sys import exit
 
 try:
     import tkinter as tk
@@ -740,7 +741,7 @@ def main():
             # i += 1
 
             # choices = ['one', 'two', 'three']
-            choices = [item for item in photometric_filters.keys()]
+            choices = [item for item in photometric_filters.keys()] + ["N/A"]
             choices = sorted(set(choices))  # sort and list unique values
             filteroptions = tk.StringVar(root)
             filteroptions.set(choices[0])  # default value
@@ -815,7 +816,10 @@ def main():
 
             def save_input():
                 input_data['obsnotes'] = obsnotes_entry.get()
-                input_data['obsfilter'] = filteroptions.get()
+                if filteroptions.get() == "N/A":
+                    input_data['obsfilter'] = "N/A"
+                else:
+                    input_data['obsfilter'] = photometric_filters[filteroptions.get()]["name"]
                 input_data['pixbin'] = pixbin_entry.get()
                 input_data['cameratype'] = cameratype_entry.get()
                 input_data['obscode'] = obscode_entry.get()

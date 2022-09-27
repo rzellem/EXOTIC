@@ -1567,7 +1567,7 @@ def main():
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
             if 'CREATOR' in mobs_header:
                 if 'MicroObservatory' in mobs_header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
-                    if exotic_infoDict['second_obs'].upper() != "N/A":
+                    if exotic_infoDict['second_obs'].upper() != "":
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"

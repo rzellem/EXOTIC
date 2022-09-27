@@ -20,4 +20,4 @@ requests~=2.28
 scipy~=1.7
 scikit-image~=0.18
 tenacity~=8.0
-ultranest~=3.3.3 ; platform_system != 'Windows'
+ultranest~=3.5.5 ; platform_system != 'Windows'

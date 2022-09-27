@@ -740,7 +740,7 @@ def main():
             # i += 1
 
             # choices = ['one', 'two', 'three']
-            choices = [item for sublist in photometric_filters for item in sublist]
+            choices = [item for item in photometric_filters.keys()]
             choices = sorted(set(choices))  # sort and list unique values
             filteroptions = tk.StringVar(root)
             filteroptions.set(choices[0])  # default value

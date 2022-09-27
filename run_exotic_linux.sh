@@ -2,10 +2,11 @@
 
 py_commands="python3 python"
 pip_commands="pip3 pip"
-ver_py_min="3.6"
+ver_py_min="3.8"
 ver_py_max="4.0"
 py_download="https://www.python.org/downloads/"
 pip_download="https://bootstrap.pypa.io/get-pip.py"
+exotic_url="https://github.com/rzellem/EXOTIC"
 test_url="https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 #test_url="https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select%201%20from%20DUAL"
 cert_instructions="https://stackoverflow.com/a/57795811/325452 or https://superuser.com/a/719047"
@@ -53,7 +54,7 @@ done
 if [[ -z "${py_runner}" ]];
 then
     echo "ERROR: Incompatible or missing Python runtime. Please install"
-    echo "       Python 3.6 or above. EXITING!"
+    echo "       Python ${ver_py_min} or above. EXITING!"
     echo "For more information, see ${py_download}. ..."
     echo
     exit 65
@@ -79,7 +80,7 @@ done
 # attempt install then exit on failure
 if [[ -z "${pip_runner}" ]];
 then
-    echo "INFO: Installing 'Pip Installs Packages' (pip) for Python3. ..."
+    echo "INFO: Installing 'Pip Installs Packages' (pip) for Python ${ver_py_min%%.*}. ..."
     echo "      DOWNLOADING ..."
     # install pip3
     if curl --version &>/dev/null ;
@@ -90,7 +91,7 @@ then
         wget "${pip_download}"
     else
         echo "ERROR: Unable to download package manager. Please install"
-        echo "       Pip for Python 3. EXITING!"
+        echo "       Pip for Python ${ver_py_min%%.*}. EXITING!"
         echo "For more information, see ${pip_instructions}. ..."
         echo
         exit 65
@@ -101,7 +102,7 @@ then
     if ! ${pip_runner} --version ;
     then
         echo "ERROR: Incompatible or missing package manager. Please install"
-        echo "       Pip for Python 3. EXITING!"
+        echo "       Pip for Python ${ver_py_min%%.*}. EXITING!"
         echo "For more information, see ${pip_instructions}. ..."
         echo
         exit 65
@@ -113,16 +114,27 @@ if grep -q 'CERTIFICATE_VERIFY_FAILED' <<< "${test_result}" ;
 then 
     echo "ERROR: Incompatible or missing network security certificates. Please install"
     echo "       and configure the 'certifi' module from PyPi. EXITING!"
-    echo "       Example: 'pip install --upgrade certifi' ... Then symlink, if needed."
+    echo "       Exa.: 'pip install --upgrade certifi' ... Then symlink, if needed."
     echo "For more information, see ${cert_instructions}. ..."
     echo
     exit 65
 fi
 # exec commands using determinate pip
 echo "INFO: Installing EXOTIC build dependencies. ..."
-${pip_runner} install wheel
 ${pip_runner} install setuptools
+${pip_runner} install wheel
 echo "INFO: Installing EXOTIC core. ..."
 ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
-bash -c "exotic-gui"
+if ${pip_runner} freeze | grep -iq 'exotic' ;
+then
+    bash -c "exotic-gui"
+else
+    echo "ERROR: Unable to launch EXOTIC, installation failed. Please verify installation"
+    echo "       steps reported on screen or open a support ticket at: "
+    echo "       ${exotic_url}/issues/new/choose ."
+    echo "       EXITING!"
+    exit 65
+fi
+echo "COMPLETE, EXITING!"
+exit 0

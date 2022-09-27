@@ -40,7 +40,7 @@ class Inputs:
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
             'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
-            'pixel_bin': pixel_bin, 'filter': filter_type, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
+            'pixel_bin': pixel_bin, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
             'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
@@ -189,7 +189,7 @@ class Inputs:
 
 
 def check_imaging_files(directory, img_type):
-    file_extensions = ['.fits', '.fit', '.fts', '.fz', 'fits.gz']
+    file_extensions = ['.fits', '.fit', '.fts', '.fz', '.fits.gz', '.fit.gz']
     input_files = []
 
     while True:
@@ -208,7 +208,7 @@ def check_imaging_files(directory, img_type):
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, or .fz extensions in {directory}.",
+            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, .fz, or .fits.gz extensions in {directory}.",
                      error=True)
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
                              type_=str, values=['y', 'n'])
@@ -428,12 +428,6 @@ def pixel_bin(pix_bin):
     if not pix_bin:
         pix_bin = user_input("Please enter the pixel binning: ", type_=str)
     return pix_bin
-
-
-def filter_type(f_type):
-    if not f_type:
-        f_type = user_input("Please enter the filter name: ", type_=str)
-    return f_type
 
 
 def obs_notes(notes):

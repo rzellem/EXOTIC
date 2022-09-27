@@ -346,6 +346,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty",
                      "Orbital Inclination (deg)",
                      "Orbital Inclination (deg) Uncertainty",
+                     "Argument of Periastron (deg)",
                      "Orbital Eccentricity (0 if null)",
                      "Star Effective Temperature (K)",
                      "Star Effective Temperature Positive Uncertainty (K)",
@@ -482,6 +483,7 @@ class LimbDarkening:
         self.wl_max = wl_max
         self.fwhm = fwhm
         self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
+        self.filter_desc = None
 
     def nonlinear_ld(self):
         if self.filter_type and not (self.wl_min or self.wl_max):
@@ -501,7 +503,7 @@ class LimbDarkening:
                     self._custom()
             else:
                 self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.wl_min * 1000, self.wl_max * 1000
+        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.filter_desc, self.wl_min * 1000, self.wl_max * 1000
 
     def _standard_list(self):
         log_info("\n\n***************************")
@@ -509,19 +511,21 @@ class LimbDarkening:
         log_info("***************************")
         log_info("\nThe standard bands that are available for limb darkening parameters (https://www.aavso.org/filters)"
                  "\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n")
-        for key, value in self.fwhm.items():
-            log_info(f"\t{key[1]}: {key[0]} - ({value[0]:.2f}-{value[1]:.2f}) nm")
+        for val in self.fwhm.values():
+            log_info(f"\u2022 {val['desc']}:\n\t-Abbreviation: {val['name']}"
+                     f"\n\t-FWHM: ({val['fwhm'][0]}-{val['fwhm'][1]}) nm")
 
     def _standard(self):
         while True:
             try:
                 if not self.filter_type:
                     self._standard_list()
-                    self.filter_type = user_input("\nPlease enter in the filter type (EX: Johnson V, V, STB, RJ):",
-                                                  type_=str)
-                for key, value in self.fwhm.items():
-                    if self.filter_type in (key[0], key[1]) and self.filter_type != 'N/A':
-                        self.filter_type = (key[0], key[1])
+                    self.filter_type = user_input("\nPlease enter in the Filter Name or Abbreviation "
+                                                  "(EX: Johnson V, V, STB, RJ): ", type_=str)
+                for val in self.fwhm.values():
+                    if self.filter_type.lower() in (val['desc'].lower(), val['name'].lower()) \
+                            and self.filter_type != 'N/A'.lower():
+                        self.filter_type = val['desc']
                         break
                 else:
                     raise KeyError
@@ -530,13 +534,15 @@ class LimbDarkening:
                 log_info("\nError: The entered filter is not in the provided list of standard filters.", error=True)
                 self.filter_type = None
 
-        self.wl_min = self.fwhm[self.filter_type][0]
-        self.wl_max = self.fwhm[self.filter_type][1]
-        self.filter_type = self.filter_type[1]
+        self.wl_min = float(self.fwhm[self.filter_type]['fwhm'][0])
+        self.wl_max = float(self.fwhm[self.filter_type]['fwhm'][1])
+        self.filter_desc = self.filter_type
+        self.filter_type = self.fwhm[self.filter_type]['name']
         self._calculate_ld()
 
     def _custom(self):
         self.filter_type = 'N/A'
+        self.filter_desc = 'Custom'
         if not self.wl_min:
             self.wl_min = user_input("FWHM Minimum wavelength (nm):", type_=float)
         if not self.wl_max:
@@ -544,7 +550,8 @@ class LimbDarkening:
         self._calculate_ld()
 
     def _user_entered(self):
-        self.filter_type = user_input("\nEnter in your filter name:", type_=str)
+        self.filter_type = 'N/A'
+        self.filter_desc = 'Custom'
         ld_0 = user_input("\nEnter in your first nonlinear term:", type_=float)
         ld0_unc = user_input("Enter in your first nonlinear term uncertainty:", type_=float)
         ld_1 = user_input("\nEnter in your second nonlinear term:", type_=float)
@@ -555,7 +562,7 @@ class LimbDarkening:
         ld3_unc = user_input("Enter in your fourth nonlinear term uncertainty:", type_=float)
         self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
 
-        log.debug(f"Filter name: {self.filter_type}")
+        log.debug(f"Filter Abbreviation: {self.filter_type}")
         log.debug(f"User-defined nonlinear limb-darkening coefficients: {ld_0}+/-{ld0_unc}, {ld_1}+/-{ld1_unc}, "
                   f"{ld_2}+/-{ld2_unc}, {ld_3}+/-{ld3_unc}")
 
@@ -774,9 +781,7 @@ def transformation(image_data, file_name, roi=1):
     try:
         results = aa.find_transform(image_data[1][roiy, roix], image_data[0][roiy, roix])
         return results[0]
-    except Exception as ee:
-        log_info(ee)
-
+    except Exception:
         ws = 5
         # smooth image and try to align again
         windows = view_as_windows(image_data[0], (ws,ws), step=1)
@@ -788,10 +793,8 @@ def transformation(image_data, file_name, roi=1):
         try:
             results = aa.find_transform(medimg1[roiy, roix], medimg[roiy, roix])
             return results[0]
-        except Exception as ee:
-            log_info(ee)
-
-        log_info(file_name)
+        except Exception:
+            pass
 
         for p in [99, 98, 95, 90]:
             for it in [2, 1, 0]:
@@ -806,10 +809,10 @@ def transformation(image_data, file_name, roi=1):
                 try:
                     results = aa.find_transform(mask1, mask0)
                     return results[0]
-                except Exception as ee:
-                    log_info(ee)
+                except Exception:
+                    pass
 
-    log_info(f"Warning: Alignment failed - {file_name}", warn=True)
+    log_info(f"Warning: Following image failed to align - {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 
@@ -935,7 +938,7 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
     xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
     subarray = data[yv, xv]
     init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
-    
+
     # compute flux weighted centroid in x and y
     wx = np.sum(xv[0]*subarray.sum(0))/subarray.sum(0).sum()
     wy = np.sum(yv[:,0]*subarray.sum(1))/subarray.sum(1).sum()
@@ -1353,7 +1356,7 @@ def main():
 
     userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                  'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
-                 'inc': None, 'incUnc': None, 'ecc': None, 'teff': None,
+                 'inc': None, 'incUnc': None, 'omega': None, 'ecc': None, 'teff': None,
                  'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
                  'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
 
@@ -1516,8 +1519,8 @@ def main():
                                logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
                                wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'],
                                filter_type=exotic_infoDict['filter'])
-        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['wl_min'], exotic_infoDict['wl_max'] = \
-            ld_obj.nonlinear_ld()
+        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['filter_desc'], exotic_infoDict['wl_min'], \
+            exotic_infoDict['wl_max'] = ld_obj.nonlinear_ld()
         ld = [ld0[0], ld1[0], ld2[0], ld3[0]]
 
         # check for Nans + Zeros
@@ -1564,7 +1567,7 @@ def main():
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
             if 'CREATOR' in mobs_header:
                 if 'MicroObservatory' in mobs_header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
-                    if exotic_infoDict['second_obs'].upper() != "N/A":
+                    if exotic_infoDict['second_obs'].upper() != "":
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
@@ -1615,7 +1618,7 @@ def main():
                 compStarList = exotic_infoDict['comp_stars']
 
             # aperture sizes in stdev (sigma) of PSF
-            apers = np.linspace(3, 6, 7)
+            apers = np.linspace(1.5, 6, 20)
             annuli = np.linspace(6, 15, 19)
 
             # alloc psf fitting param
@@ -2028,12 +2031,11 @@ def main():
 
             if exotic_infoDict['file_units'] != 'flux':
                 print("check flux convert")
-                import pdb; pdb.set_trace()
                 goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, exotic_infoDict['file_units'])
 
         # for k in myfit.bounds.keys():
         #     print(f"{myfit.parameters[k]:.6f} +- {myfit.errors[k]}")
-        
+
         if args.photometry:
             log_info("\nPhotometric Extraction Complete.")
             return

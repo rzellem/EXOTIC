@@ -164,6 +164,7 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
 
     filter_type = {
         'name': info_dict['filter'],
+        'desc': info_dict['filter_desc'],
         'fwhm': [{'value': str(info_dict['wl_min']) if info_dict['wl_min'] else info_dict['wl_min'], 'units': "nm"},
                  {'value': str(info_dict['wl_max']) if info_dict['wl_max'] else info_dict['wl_max'], 'units': "nm"}],
     }

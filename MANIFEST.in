@@ -1,0 +1,10 @@
+# syntax: https://docs.python.org/3/distutils/commandref.html
+
+# include documentation in markdown
+include *.md
+
+# include license
+include LICENSE*
+
+# include build-related files
+include *.toml requirements.txt setup.cfg

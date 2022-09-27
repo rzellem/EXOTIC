@@ -1,0 +1,13 @@
+[build-system]
+requires = [
+    "setuptools>=45",
+    "wheel>=0.36",
+    "setuptools_scm[toml]>=6.2",
+    "oldest-supported-numpy",
+    "cython~=0.29.32 ; platform_system != 'Windows'",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "exotic/version.py"
+write_to_template = '__version__ = "{version}"'

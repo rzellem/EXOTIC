@@ -124,7 +124,7 @@ class FileSelect(tk.Frame):
 
 def main():
     try:
-        python_version.check(min=(3, 6, 0), max=(4, 0, 0))
+        python_version.check(min=(3, 8, 0), max=(4, 0, 0))
     except Exception as e:
         print(f"\nERROR: EXOTIC {str(e)}. ... EXITING!\n")
         print("Press the <ENTER> key to continue. ...")

@@ -2,9 +2,7 @@
 
 py_commands="python3 python"
 pip_commands="pip3 pip"
-requirements_base="requirements-base.txt"
-cython_version_default="0.29.26"
-ver_py_min="3.6"
+ver_py_min="3.8"
 ver_py_max="4.0"
 py_download="https://www.python.org/downloads/"
 pip_download="https://bootstrap.pypa.io/get-pip.py"
@@ -35,30 +33,6 @@ version_within_range () {
     return 1
 }
 
-# report path to script source if it is executed from another dir
-source_path() {
-    path_current="$(pwd)"
-    path_script_rel="${BASH_SOURCE:-${0}}"
-    path_script="$( echo -n "${path_current:+${path_current}/}${path_script_rel}" | 
-        sed -e ':loop' -e 's#//#/#;s#\./##;' -e 't loop' )"
-    echo -n "$(cd $(dirname ${path_script}) && pwd)"
-}
-
-log_startup() {
-    {
-        echo "==== ERROR LOG ${date_str} ====" 2>&1
-        echo "path_script=$(source_path)" 2>&1
-        echo "py_runner=${py_runner}" 2>&1
-        echo "pip_runner=${pip_runner}" 2>&1
-        echo 2>&1
-        printenv | grep -i '^path'
-        echo 2>&1
-        echo "pip_freeze=" 2>&1
-        pip freeze 2>&1 ;
-        echo
-    } >> "${date_str}_exotic_start.log"
-}
-
 # test for python installation and version compatibility
 for app in ${py_commands} ; do
     py_version=$(${app} --version 2>&1)
@@ -80,7 +54,7 @@ done
 if [[ -z "${py_runner}" ]];
 then
     echo "ERROR: Incompatible or missing Python runtime. Please install"
-    echo "       Python 3.6 or above. EXITING!"
+    echo "       Python ${ver_py_min} or above. EXITING!"
     echo "For more information, see ${py_download}. ..."
     echo
     exit 65
@@ -106,7 +80,7 @@ done
 # attempt install then exit on failure
 if [[ -z "${pip_runner}" ]];
 then
-    echo "INFO: Installing 'Pip Installs Packages' (pip) for Python3. ..."
+    echo "INFO: Installing 'Pip Installs Packages' (pip) for Python ${ver_py_min%%.*}. ..."
     echo "      DOWNLOADING ..."
     # install pip3
     if curl &>/dev/null ;
@@ -117,7 +91,7 @@ then
         wget "${pip_download}"
     else
         echo "ERROR: Unable to download package manager. Please install"
-        echo "       Pip for Python 3. EXITING!"
+        echo "       Pip for Python ${ver_py_min%%.*}. EXITING!"
         echo "For more information, see ${pip_instructions}. ..."
         echo
         exit 65
@@ -128,7 +102,7 @@ then
     if ! ${pip_runner} --version ;
     then
         echo "ERROR: Incompatible or missing package manager. Please install"
-        echo "       Pip for Python 3. EXITING!"
+        echo "       Pip for Python ${ver_py_min%%.*}. EXITING!"
         echo "For more information, see ${pip_instructions}. ..."
         echo
         exit 65
@@ -138,9 +112,9 @@ echo "INFO: Validating certificate store. ..."
 test_result=$(${py_runner} -u -c "import urllib.request; urllib.request.urlopen('${test_url}')" 2>&1)
 if grep -q 'CERTIFICATE_VERIFY_FAILED' <<< "${test_result}" ; 
 then 
-    echo "ERROR: Incompatible or missing network security certificates. Please"
-    echo "       install and configure the 'certifi' module from PyPi. EXITING!"
-    echo "       Exa.: Applications > Python 3.9 > Install Certificates.command"
+    echo "ERROR: Incompatible or missing network security certificates. Please install"
+    echo "       and configure the 'certifi' module from PyPi. EXITING!"
+    echo "       Exa.: Applications > Python ${ver_py_min%%.*}.x > Install Certificates.command"
     echo "For more information, see ${cert_instructions}. ..."
     echo
     exit 65
@@ -149,25 +123,16 @@ fi
 echo "INFO: Installing EXOTIC build dependencies. ..."
 ${pip_runner} install setuptools
 ${pip_runner} install wheel
-if [[ -f "$(source_path)/${requirements_base}" ]] ; 
-then 
-    ${pip_runner} install -r "$(source_path)/${requirements_base}"
-else
-    ${pip_runner} install "cython~=${cython_version_default} ; platform_system != 'Windows'" 
-fi
 echo "INFO: Installing EXOTIC core. ..."
 ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
-if ${pip_runner} freeze | grep -iq 'exotiic' ; 
+if ${pip_runner} freeze | grep -iq 'exotic' ;
 then
     zsh -c "exotic-gui"
 else
-    date_str="$( date +%y%m%d )"
-    echo "ERROR: Unable to launch EXOTIC, installation failed. Please verify"
-    echo "       installation steps reported on screen or open a support"
-    echo "       ticket with the file '${date_str}_exotic_start.log' attached."
-    echo "       ${exotic_url}/issues/new/choose"
-    log_startup
+    echo "ERROR: Unable to launch EXOTIC, installation failed. Please verify installation"
+    echo "       steps reported on screen or open a support ticket at: "
+    echo "       ${exotic_url}/issues/new/choose ."
     echo "       EXITING!"
     exit 65
 fi

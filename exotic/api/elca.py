@@ -91,6 +91,7 @@ def transit(times, values):
     return model
 
 def get_phase(times, per, tmid):
+    # centers phase between -0.25 to 0.75
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
@@ -311,8 +312,7 @@ class lc_fitter(object):
             dsampler = dynesty.DynamicNestedSampler(
                 loglike, prior_transform,
                 ndim=len(freekeys), bound='multi', sample='unif',
-                maxiter_init=5000, dlogz_init=1, dlogz=0.05,
-                maxiter_batch=100, maxbatch=10, nlive_batch=100
+                dlogz_init=1, dlogz=0.05, maxbatch=2
             )
             dsampler.run_nested(maxcall=1e6)
             self.results = dsampler.results
@@ -635,12 +635,13 @@ class glc_fitter(lc_fitter):
         freekeys = []+gfreekeys
         for n in range(nobs):
             for k in lfreekeys[n]:
-                freekeys.append(f"local_{n}_{k}")
+                #clean_name = self.lc_data[n].get('name', n).replace(' ','_').replace('(','').replace(')','').replace('[','').replace(']','').replace('-','_').split('-')[0]
+                freekeys.append(f"local_{k}_{n}")
 
         if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=6e5)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=7e5)
         else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=6e5, show_status=self.verbose, viz_callback=self.verbose)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=7e5, show_status=self.verbose, viz_callback=self.verbose)
 
         self.quantiles = {}
         self.errors = {}
@@ -656,7 +657,9 @@ class glc_fitter(lc_fitter):
         for n in range(nobs):
             self.lc_data[n]['errors'] = {}
             for k in lfreekeys[n]:
-                pkey = f"local_{n}_{k}"
+                #clean_name = self.lc_data[n].get('name', n).replace(' ','_').replace('(','').replace(')','').replace('[','').replace(']','').replace('-','_').split('-')[0]
+                pkey = f"local_{k}_{n}"
+                
                 self.lc_data[n]['priors'][k] = self.parameters[pkey]
                 self.lc_data[n]['errors'][k] = self.errors[pkey]
 
@@ -705,15 +708,17 @@ class glc_fitter(lc_fitter):
                 ax[i].errorbar(self.lc_data[i]['time'], self.lc_data[i]['flux']/airmass/detrend.mean(), yerr=self.lc_data[i]['ferr']/airmass/detrend.mean(), 
                                 ls='none', marker=nmarker, color=ncolor, alpha=0.5)
                 ax[i].plot(self.lc_data[i]['time'], model, 'r-', zorder=2)
-                ax[i].set_xlabel("Time")
-                ax[i].set_title(f"{self.lc_data[i].get('name','')}")
+                ax[i].set_xlabel("Time [BJD]", fontsize=14)
+                ax[i].set_ylabel("Relative Flux", fontsize=14)
+                ax[i].set_title(f"{self.lc_data[i].get('name','')}", fontsize=16)
             else:
                 ax[ri,ci].axis('on')
                 ax[ri,ci].errorbar(self.lc_data[i]['time'], self.lc_data[i]['flux']/airmass/detrend.mean(), yerr=self.lc_data[i]['ferr']/airmass/detrend.mean(), 
                                    ls='none', marker=nmarker, color=ncolor, alpha=0.5)
                 ax[ri,ci].plot(self.lc_data[i]['time'], model, 'r-', zorder=2)
-                ax[ri,ci].set_xlabel("Time")
-                ax[ri,ci].set_title(f"{self.lc_data[i].get('name','')}")
+                ax[ri,ci].set_xlabel("Time[BJD]", fontsize=14)
+                ax[ri,ci].set_ylabel("Relative Flux", fontsize=14)
+                ax[ri,ci].set_title(f"{self.lc_data[i].get('name','')}", fontsize=16)
 
         plt.tight_layout()
         return fig
@@ -807,7 +812,7 @@ class glc_fitter(lc_fitter):
         axs[0].errorbar(bt/self.parameters['per'],bf,yerr=bs,alpha=1,zorder=2,color='white',ls='none',marker='o',ms=9,
                         markeredgecolor='black',
                         ecolor='black',
-                        label=r'All Data: {:.2f} %'.format(np.std(br)*1e2))
+                        label=r'Binned Data: {:.2f} %'.format(np.std(br)*1e2))
 
         axs[1].plot(bt/self.parameters['per'],br*1e2,color='white',ls='none',marker='o',ms=9,markeredgecolor='black')
 

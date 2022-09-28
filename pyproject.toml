@@ -1,8 +1,8 @@
 [build-system]
 requires = [
-    "setuptools>=45",
-    "wheel>=0.36",
-    "setuptools_scm[toml]>=6.2",
+    "setuptools>=62.6",
+    "wheel>=0.37.1",
+    "setuptools_scm[toml]>=6.4.2",
     "oldest-supported-numpy",
     "cython~=0.29.32 ; platform_system != 'Windows'",
 ]

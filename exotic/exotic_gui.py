@@ -50,7 +50,6 @@ import platform
 import python_version
 import subprocess
 import sys
-from sys import exit
 
 try:
     import tkinter as tk
@@ -790,6 +789,13 @@ def main():
                 platesolve_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1
 
+                aavsocomp = tk.BooleanVar()
+                aavsocomp_check = tk.Checkbutton(root, text="Add Comparison Stars Automatically"
+                                                            "\nfrom AAVSO's VSP API",
+                                                  variable=aavsocomp, onvalue=True, offvalue=False, justify=tk.LEFT)
+                aavsocomp_check.grid(row=i, column=j, sticky=tk.W, pady=2)
+                i += 1
+
                 targetpos_label = tk.Label(root, text="Target Star X & Y Pixel Position", justify=tk.LEFT)
                 targetpos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 targetpos_entry.insert(tk.END, "[x, y]")
@@ -837,6 +843,11 @@ def main():
                         input_data['platesolve'] = 'y'
                     else:
                         input_data['platesolve'] = 'n'
+
+                    if aavsocomp.get():
+                        input_data['aavso_comp'] = 'y'
+                    else:
+                        input_data['aavso_comp'] = 'n'
                 root.destroy()
 
             # Button for closing
@@ -1396,6 +1407,7 @@ def main():
                         "Observing Notes": input_data['obsnotes'],
 
                         "Plate Solution? (y/n)": input_data['platesolve'],
+                        "Add Comparison Stars from AAVSO? (y/n)": input_data['aavso_comp'],
 
                         "Target Star X & Y Pixel": (input_data['targetpos']),
                         "Comparison Star(s) X & Y Pixel": (input_data['comppos'])

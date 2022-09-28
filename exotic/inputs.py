@@ -33,14 +33,14 @@ class Inputs:
             'images': None, 'save': None, 'flats': None, 'darks': None, 'biases': None,
             'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
-            'plate_opt': None, 'tar_coords': None, 'comp_stars': None,
+            'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
             'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
-            'pixel_bin': pixel_bin, 'notes': obs_notes, 'plate_opt': plate_solution_opt,
+            'pixel_bin': pixel_bin, 'notes': obs_notes, 'plate_opt': plate_solution_opt, 'aavso_comp': aavso_comp,
             'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
@@ -153,6 +153,7 @@ class Inputs:
             'camera': 'Camera Type (CCD or DSLR)',
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
             'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)',
+            'aavso_comp': 'Add Comparison Stars from AAVSO? (y/n)',
             'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
         }
         planet_params = {
@@ -208,8 +209,8 @@ def check_imaging_files(directory, img_type):
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, .fz, or .fits.gz extensions in {directory}.",
-                     error=True)
+            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, .fz, fit.gz or .fits.gz extensions "
+                     f"in {directory}.", error=True)
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
                              type_=str, values=['y', 'n'])
             if opt == 'y':
@@ -449,6 +450,14 @@ def plate_solution_opt(opt):
                          "nova.astrometry.net. (y/n): ", type_=str, values=['y', 'n'])
     return opt
 
+
+def aavso_comp(opt):
+    if opt:
+        opt = opt.lower().strip()
+    if opt not in ('y', 'n'):
+        opt = user_input("\nWould you like Comparison Stars added automatically from AAVSO? (y/n): ",
+                         type_=str, values=['y', 'n'])
+    return opt
 
 def target_star_coords(coords, planet):
     if isinstance(coords, list) and len(coords) == 2:

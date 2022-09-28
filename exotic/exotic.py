@@ -851,8 +851,6 @@ def check_comps(comp_stars, vsp_comp_stars, imsf=10):
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, file_name, roi=1):
-    pts = 30
-
     # crop image to ROI
     height = image_data.shape[1]
     width = image_data.shape[2]
@@ -2456,6 +2454,9 @@ def main():
             if bestCompStar:
                 exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
             output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
+        except Exception as e:
+            log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
+        try:
             if vsp_params:
                 VSPoutput_files.aavso(goodAirmasses)
         except Exception as e:

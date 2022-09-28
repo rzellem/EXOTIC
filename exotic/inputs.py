@@ -209,8 +209,8 @@ def check_imaging_files(directory, img_type):
             else:
                 raise NotADirectoryError
         except FileNotFoundError:
-            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, .fz, or .fits.gz extensions in {directory}.",
-                     error=True)
+            log_info(f"\nError: {img_type} files not found with .fits, .fit, .fts, .fz, fit.gz or .fits.gz extensions "
+                     f"in {directory}.", error=True)
             opt = user_input("\nWould you like to enter in an alternate image extension in addition to .FITS? (y/n): ",
                              type_=str, values=['y', 'n'])
             if opt == 'y':

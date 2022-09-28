@@ -50,6 +50,7 @@ import platform
 import python_version
 import subprocess
 import sys
+from sys import exit
 
 try:
     import tkinter as tk
@@ -124,7 +125,7 @@ class FileSelect(tk.Frame):
 
 def main():
     try:
-        python_version.check(min=(3, 6, 0), max=(4, 0, 0))
+        python_version.check(min=(3, 8, 0), max=(4, 0, 0))
     except Exception as e:
         print(f"\nERROR: EXOTIC {str(e)}. ... EXITING!\n")
         print("Press the <ENTER> key to continue. ...")
@@ -740,7 +741,7 @@ def main():
             # i += 1
 
             # choices = ['one', 'two', 'three']
-            choices = [item for sublist in photometric_filters for item in sublist]
+            choices = [item for item in photometric_filters.keys()] + ["N/A"]
             choices = sorted(set(choices))  # sort and list unique values
             filteroptions = tk.StringVar(root)
             filteroptions.set(choices[0])  # default value
@@ -815,7 +816,10 @@ def main():
 
             def save_input():
                 input_data['obsnotes'] = obsnotes_entry.get()
-                input_data['obsfilter'] = filteroptions.get()
+                if filteroptions.get() == "N/A":
+                    input_data['obsfilter'] = "N/A"
+                else:
+                    input_data['obsfilter'] = photometric_filters[filteroptions.get()]["name"]
                 input_data['pixbin'] = pixbin_entry.get()
                 input_data['cameratype'] = cameratype_entry.get()
                 input_data['obscode'] = obscode_entry.get()

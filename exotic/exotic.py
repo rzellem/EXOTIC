@@ -85,6 +85,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 # photometry
 from photutils import CircularAperture
+import pandas as pd
+import requests
 # scipy imports
 from scipy.optimize import least_squares
 from scipy.stats import mode
@@ -121,13 +123,15 @@ try:  # nea
 except ImportError:  # package import
     from api.nea import NASAExoplanetArchive
 try:  # output files
-    from output_files import OutputFiles
+    from output_files import OutputFiles, VSPOutputFiles
 except ImportError:  # package import
-    from .output_files import OutputFiles
+    from .output_files import OutputFiles, VSPOutputFiles
 try:  # plots
-    from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
+    from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
+        plot_stellar_variability, plot_variable_residuals
 except ImportError:  # package import
-    from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux
+    from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
+        plot_stellar_variability, plot_variable_residuals
 try:  # tools
     from utils import round_to_2, user_input
 except ImportError: # package import
@@ -619,6 +623,7 @@ def search_wcs(file):
         warnings.simplefilter('ignore', category=FITSFixedWarning)
         header = fits.getheader(filename=file)
         return WCS(header)
+        # return WCS(fits.open(file)[('SCI', 1)].header)
 
 
 def get_wcs(file, directory=""):
@@ -688,44 +693,70 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 def variableStarCheck(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
-    radius = u.Quantity(20.0, u.arcsec)
+    return vsx_variable(sample.ra.deg, sample.dec.deg)
+    # radius = u.Quantity(20.0, u.arcsec)
+    # # Query GAIA first to check for variability using the phot_variable_flag trait
+    # gaia_result = gaia_query(sample, radius)
+    # if not gaia_result:
+    #     log_info("Warning: Your comparison star cannot be resolved in the Gaia star database; "
+    #              "EXOTIC cannot check if it is variable or not. "
+    #              "\nEXOTIC will still include this star in the reduction. "
+    #              "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
+    # else:
+    #     # Individually go through the phot_variable_flag indicator for each star to see if variable or not
+    #     variableFlagList = gaia_result.columns["phot_variable_flag"]
+    #     constantCounter = 0
+    #     for currFlag in variableFlagList:
+    #         if currFlag == "VARIABLE":
+    #             return True
+    #         elif currFlag == "NOT_AVAILABLE":
+    #             continue
+    #         elif currFlag == "CONSTANT":
+    #             constantCounter += 1
+    #     if constantCounter == len(variableFlagList):
+    #         return False
+    #
+    # # Query SIMBAD and search identifier result table to determine if comparison star is variable in any form
+    # # This is a secondary check if GAIA query returns inconclusive results
+    # star_name = simbad_query(sample)
+    # if not star_name:
+    #     log_info("Warning: Your comparison star cannot be resolved in the SIMBAD star database; "
+    #              "EXOTIC cannot check if it is variable or not. "
+    #              "\nEXOTIC will still include this star in the reduction. "
+    #              "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
+    #     return False
+    # else:
+    #     identifiers = Simbad.query_objectids(star_name)
+    #
+    #     for currName in identifiers:
+    #         if "V*" in currName[0]:
+    #             return True
+    #     return False
 
-    # Query GAIA first to check for variability using the phot_variable_flag trait
-    gaia_result = gaia_query(sample, radius)
-    if not gaia_result:
-        log_info("Warning: Your comparison star cannot be resolved in the Gaia star database; "
-                 "EXOTIC cannot check if it is variable or not. "
-                 "\nEXOTIC will still include this star in the reduction. "
-                 "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
-    else:
-        # Individually go through the phot_variable_flag indicator for each star to see if variable or not
-        variableFlagList = gaia_result.columns["phot_variable_flag"]
-        constantCounter = 0
-        for currFlag in variableFlagList:
-            if currFlag == "VARIABLE":
-                return True
-            elif currFlag == "NOT_AVAILABLE":
-                continue
-            elif currFlag == "CONSTANT":
-                constantCounter += 1
-        if constantCounter == len(variableFlagList):
-            return False
 
-    # Query SIMBAD and search identifier result table to determine if comparison star is variable in any form
-    # This is a secondary check if GAIA query returns inconclusive results
-    star_name = simbad_query(sample)
-    if not star_name:
-        log_info("Warning: Your comparison star cannot be resolved in the SIMBAD star database; "
-                 "EXOTIC cannot check if it is variable or not. "
-                 "\nEXOTIC will still include this star in the reduction. "
-                 "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
+@retry(stop=stop_after_delay(30))
+def vsx_auid(ra, dec, radius=0.01, maglimit=14):
+    try:
+        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
+        result = requests.get(url)
+        return result.json()['VSXObjects']['VSXObject'][0]['AUID']
+    except Exception:
+        log.info("\nThe target star does not have an AUID.")
         return False
-    else:
-        identifiers = Simbad.query_objectids(star_name)
 
-        for currName in identifiers:
-            if "V*" in currName[0]:
-                return True
+
+@retry(stop=stop_after_delay(30))
+def vsx_variable(ra, dec, radius=0.01, maglimit=14):
+    try:
+        # check stars
+        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
+        result = requests.get(url)
+        var = result.json()['VSXObjects']['VSXObject'][0]['Category']
+
+        if var.lower() == "variable":
+            return True
+        return False
+    except Exception:
         return False
 
 
@@ -767,6 +798,55 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
         image_data = image_data / gen_flat
 
     return image_data
+
+
+def vsp_query(ra, dec, file, filter='V', fov=18.5, maglimit=14):
+    comp_stars = {}
+    stars_count = 0
+    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
+    result = requests.get(url)
+    data = result.json()
+    chart_id = data['chartid']
+    data = pd.json_normalize(data['photometry'])
+
+    for label in data['label']:
+        star = data[data['label'] == label]
+        for bands in star['bands']:
+            for dict_ in bands:
+                if dict_['band'] == filter:
+                    ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
+                    pix_ra, pix_dec = search_wcs(file).world_to_pixel_values(ra, dec)
+                    if pix_ra >= 1 and pix_dec >= 1:
+                        comp_stars[label] = {
+                            'xy': [int(pix_ra.min()), int(pix_dec.min())],
+                            'mag': dict_['mag'],
+                            'err': dict_['error']
+                        }
+                        stars_count += 1
+
+        if stars_count == 2:
+            break
+
+    return comp_stars, chart_id
+
+
+def check_comps(comp_stars, vsp_comp_stars, imsf=10):
+    comp_stars_list = comp_stars.copy()
+
+    vsp_pix = [comp['xy'] for comp in vsp_comp_stars.values()]
+
+    for vsp_comp in vsp_pix:
+        inlist = False
+        for i, comp in enumerate(comp_stars):
+            if comp[0] - imsf <= vsp_comp[0] <= comp[0] + imsf \
+                    and comp[1] - imsf <= vsp_comp[1] <= comp[1] + imsf:
+                comp_stars_list[i] = vsp_comp
+                inlist = True
+
+        if not inlist:
+            comp_stars_list.append(vsp_comp)
+
+    return comp_stars_list, vsp_pix
 
 
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
@@ -1038,6 +1118,158 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     return mode(dat.flatten(), nan_policy='omit').mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
+def jd_bjd(non_bjd, p_dict, info_dict):
+    try:
+        resultos = utc_tdb.JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'],
+                                           lat=info_dict['lat'], longi=info_dict['long'],
+                                           alt=info_dict['elev'])
+        goodTimes = resultos[0]
+    except:
+        targetloc = astropy.coordinates.SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg),
+                                                 frame='icrs')
+        obsloc = astropy.coordinates.EarthLocation(lat=info_dict['lat'], lon=info_dict['long'],
+                                                   height=info_dict['elev'])
+        timesToConvert = astropy.time.Time(non_bjd, format='jd', scale='utc', location=obsloc)
+        ltt_bary = timesToConvert.light_travel_time(targetloc)
+        time_barycentre = timesToConvert.tdb + ltt_bary
+        goodTimes = time_barycentre.value
+
+    return goodTimes
+
+
+def variability_calc(ref_flux, ckey, lmfit, good_times):
+    intx_times = np.intersect1d(np.array(good_times), np.array(ref_flux[ckey]['myfit'].time))
+    comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
+    tar_mask = [True if i in intx_times else False for i in good_times]
+
+    OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
+    OOT_scatter = np.std((np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[comp_mask])
+    norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask]
+    norm_unc /= np.nanmedian(ref_flux[ckey]['myfit'].data[comp_mask])
+
+    ref_norm = (np.array(ref_flux[ckey]['myfit'].data) / np.nanmedian(np.array(ref_flux[ckey]['myfit'].data)))[comp_mask]
+    tar_norm = (np.array(lmfit.data) / np.nanmedian(np.array(lmfit.data)))[tar_mask]
+
+    comp_dict = {
+        'times': intx_times,
+        'cmask': comp_mask,
+        'norm': ref_norm,
+        'norm_unc': norm_unc,
+        'res': tar_norm[OOT] - ref_norm[OOT],
+        'xy': ref_flux[ckey]['xy']
+    }
+
+    return comp_dict, OOT
+
+
+def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save):
+    labels = {}
+
+    for key, value in vsp_comp_stars.items():
+        labels[tuple(value['xy'])] = key
+
+    markerlist = ['.','v','s','D','^']
+    colorlist = ["firebrick","darkorange","olivedrab","lightseagreen","steelblue","rebeccapurple","mediumvioletred"]
+    k = 0
+    for i, ckey in enumerate(ref_flux.keys()):
+        if i >= len(colorlist):
+            i = 0
+        if k >= len(markerlist):
+            k = 0
+        ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit, good_times)
+        plt.errorbar(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], fmt = markerlist[k], color = colorlist[i],
+            label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
+        k+=1
+    plot_variable_residuals(save)
+    std_dict = {}
+
+
+    for key, value in ref_comp.items():
+        std_dict[key] = np.std(value['res'])
+
+    min_std = min(std_dict, key=lambda y: abs(std_dict[y]))
+
+    return comp_stars[min_std], ref_comp
+
+
+def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save, s_name, bjd_inc,
+                        p_dict, info_dict):
+    ref_comp = {}
+    idx_list, vsp_params = [], []
+
+    if not bjd_inc:
+        good_times = jd_bjd(lmfit.time, p_dict, info_dict)
+
+        for ckey in ref_flux.keys():
+            ref_flux[ckey]['myfit'].time = jd_bjd(ref_flux[ckey]['myfit'].time, p_dict, info_dict)
+    else:
+        good_times = lmfit.time
+
+    if not best_comp or (best_comp not in vsp_ind):
+        comp_xy, ref_comp = find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save)
+    else:
+        comp_xy = comp_stars[best_comp]
+        ref_comp[best_comp], OOT = variability_calc(ref_flux, best_comp, lmfit, good_times)
+
+    comp_star = [vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_xy == vsp_comp_stars[ckey]['xy']][0]
+
+    Mc, Mc_err = comp_star['mag'], comp_star['err']
+
+    comp_flux, ckey = [(ref_flux[ckey], ckey) for ckey in ref_flux.keys() if comp_xy == ref_flux[ckey]['xy']][0]
+
+    intx_times = np.intersect1d(np.array(good_times), np.array(comp_flux['myfit'].time))
+    comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
+    OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
+
+    vsp_label = [key for key, value in vsp_comp_stars.items() if value['xy'] == comp_xy][0]
+    curr = OOT[0]
+    idxs = []
+
+    for i, bl in enumerate(OOT):
+        if bl != curr:
+            idxs.append(i)
+            curr = bl
+
+    if len(idxs) > 1:
+        idx_list.append([0, idxs[0]])
+        idx_list.append([idxs[1], len(OOT) - 1])
+    elif len(idxs) == 0:
+        idx_list.append([0, len(OOT) - 1])
+    elif OOT[0]:
+        idx_list.append([0, idxs[0]])
+    elif not OOT[0]:
+        idx_list.append([idxs[0], len(OOT) - 1])
+
+    for idx in idx_list:
+        OOT_scatter = np.std(
+            (np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[
+                comp_mask][idx[0]:idx[1]])
+        norm_unc = OOT_scatter * np.array(ref_flux[ckey]['myfit'].airmass_model)[comp_mask][idx[0]:idx[1]]
+        norm_unc /= np.nanmedian(ref_flux[ckey]['myfit'].data[comp_mask][idx[0]:idx[1]])
+
+        rel_flux = np.array(comp_flux['myfit'].data)[comp_mask][idx[0]:idx[1]]
+        model = np.exp(comp_flux['myfit'].parameters['a2'] * comp_flux['myfit'].airmass_model[comp_mask][idx[0]:idx[1]])
+        detrended = rel_flux / model
+        Mt = Mc - (2.5 * np.log10(detrended))
+        rel_flux_err = norm_unc
+        Mt_err = (Mc_err ** 2 + (-2.5 * rel_flux_err / (detrended * np.log(10))) ** 2) ** 0.5
+
+        vsp_params.append({
+            'time': np.mean(intx_times[idx[0]:idx[1]]),
+            'idx': idx,
+            'mag': np.median(Mt),
+            'mag_err': np.median(Mt_err),
+            'cname': vsp_label,
+            'cmag': Mc,
+            'chart_id': id,
+            'pos': ref_flux[ckey]['xy']
+        })
+
+    plot_stellar_variability(vsp_params, save, s_name, vsp_label)
+
+    return vsp_params
+
+
 # Mid-Transit Time Prior Helper Functions
 def numberOfTransitsAway(timeData, period, originalT):
     return int((np.nanmin(timeData) - originalT) / period) + 1
@@ -1294,7 +1526,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         mode='lm'
     )
 
-    return myfit
+    return myfit, f1, f2
 
 
 def parse_args():
@@ -1419,7 +1651,7 @@ def main():
         log_info("Complete Reduction Routine")
         log_info("**************************")
 
-        init_path, wcs_file, wcs_header, ra_file, dec_file = None, None, None, None, None
+        init_path, wcs_file, wcs_header, ra_file, dec_file, vsp_params = None, None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
 
         if isinstance(args.reduce, str):
@@ -1593,10 +1825,13 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
+            vsp_list = []
+            chart_id, vsp_comp_stars = None, None
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
                 wcs_header = fits.getheader(filename=wcs_file)
+                # wcs_header = fits.open(wcs_file)[('SCI', 1)].header
                 ra_file, dec_file = get_radec(wcs_header)
 
                 # Checking pixel coordinates against plate solution
@@ -1605,7 +1840,9 @@ def main():
                 tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
+                auid = vsx_auid(tar_radec[0], tar_radec[1])
+
+                for compn, comp in enumerate(exotic_infoDict['comp_stars']):
                     ra = ra_file[int(comp[1])][int(comp[0])]
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
@@ -1615,6 +1852,11 @@ def main():
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
                         log_info("\nCurrent comparison star is variable, proceeding to next star.")
                         exotic_infoDict['comp_stars'].remove(comp)
+
+                if exotic_infoDict['aavso_comp'] == 'y':
+                    vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                    exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
+
                 compStarList = exotic_infoDict['comp_stars']
 
             # aperture sizes in stdev (sigma) of PSF
@@ -1631,9 +1873,12 @@ def main():
                 'target_bg': np.zeros((len(inputfiles), len(apers), len(annuli)))
             }
             tar_comp_dist = {}
+            vsp_num = []
 
             for i, coord in enumerate(compStarList):
                 ckey = f"comp{i + 1}"
+                if coord in vsp_list:
+                    vsp_num.append(i)
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
@@ -1777,13 +2022,17 @@ def main():
             # PSF flux
             tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
 
+            ref_flux_dict = {}
+            if vsp_list:
+                ref_flux_dict = {i: None for i in vsp_num}
+
             # loop over comp stars
             for j in range(len(compStarList)):
                 ckey = f"comp{j + 1}"
                 psf_data[ckey] = psf_data[ckey][~badmask]
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
                 for k in myfit.bounds.keys():
                     log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -1817,15 +2066,25 @@ def main():
                     finXRefCent = psf_data[ckey][:, 0]
                     finYRefCent = psf_data[ckey][:, 1]
 
+                if j in vsp_num:
+                    ref_flux_dict[j] = {
+                        'myfit': myfit,
+                        'tflux': tFlux1,
+                        'cflux': cFlux1,
+                        'xy': compStarList[j]
+                    }
+
             log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
 
             # Aperture Photometry
             for a, aper in enumerate(apers):
                 for an, annulus in enumerate(annuli):
                     tFlux = aper_data['target'][:, a, an]
+                    ref_flux_opt, ref_flux_opt2, backtrack = False, False, True
+                    temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
+                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
                     for k in myfit.bounds.keys():
                         log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -1840,6 +2099,7 @@ def main():
                         minAperture = -aper
                         minAnnulus = annulus
                         # arrayNormUnc = tFlux ** 0.5
+                        ref_flux_opt = True
 
                         # sets the lists we want to print to correspond to the optimal aperature
                         goodFluxes = np.copy(myfit.data)
@@ -1864,7 +2124,15 @@ def main():
                         ckey = f"comp{j + 1}"
                         cFlux = aper_data[ckey][:, a, an]
 
-                        myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                        myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+
+                        if j in vsp_num:
+                            temp_ref_flux[j] = {
+                                'myfit': myfit,
+                                'tflux': tFlux1,
+                                'cflux': cFlux1,
+                                'xy': compStarList[j]
+                            }
 
                         for k in myfit.bounds.keys():
                             log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
@@ -1881,6 +2149,7 @@ def main():
                             minAperture = aper
                             minAnnulus = annulus
                             # arrayNormUnc = arrayNormUnc
+                            ref_flux_opt2 = True
 
                             # sets the lists we want to print to correspond to the optimal aperature
                             goodFluxes = np.copy(myfit.data)
@@ -1899,6 +2168,21 @@ def main():
                             finYTargCent = psf_data["target"][:, 1]
                             finXRefCent = psf_data[ckey][:, 0]
                             finYRefCent = psf_data[ckey][:, 1]
+
+                        if ref_flux_opt or ref_flux_opt2:
+                            if j in vsp_num:
+                                ref_flux_dict[j] = {
+                                    'myfit': myfit,
+                                    'tflux': tFlux1,
+                                    'cflux': cFlux1,
+                                    'xy': compStarList[j]
+                                }
+
+                            if backtrack:
+                                for i, value in enumerate(temp_ref_flux.values()):
+                                    if value is not None and i != j:
+                                        ref_flux_dict[i] = value
+                                backtrack = False
 
             # log best fit
             log_info("\n\n*********************************************")
@@ -1925,6 +2209,7 @@ def main():
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
+                bjd_inc = True
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
                 log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
@@ -1932,22 +2217,9 @@ def main():
                 log_info("Please be patient- this step can take a few minutes.")
 
                 animate_toggle(True)
-                try:
-                    resultos = utc_tdb.JDUTC_to_BJDTDB(nonBJDTimes, ra=pDict['ra'], dec=pDict['dec'],
-                                                       lat=exotic_infoDict['lat'], longi=exotic_infoDict['long'],
-                                                       alt=exotic_infoDict['elev'])
-                    goodTimes = resultos[0]
-                except:
-                    targetloc = astropy.coordinates.SkyCoord(pDict['ra'], pDict['dec'], unit=(u.deg, u.deg),
-                                                             frame='icrs')
-                    obsloc = astropy.coordinates.EarthLocation(lat=exotic_infoDict['lat'], lon=exotic_infoDict['long'],
-                                                               height=exotic_infoDict['elev'])
-                    timesToConvert = astropy.time.Time(nonBJDTimes, format='jd', scale='utc', location=obsloc)
-                    ltt_bary = timesToConvert.light_travel_time(targetloc)
-                    time_barycentre = timesToConvert.tdb + ltt_bary
-                    goodTimes = time_barycentre.value
-
+                goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
                 animate_toggle()
+                bjd_inc = False
 
             # sigma clip
             si = np.argsort(goodTimes)
@@ -2004,6 +2276,15 @@ def main():
             plot_flux(goodTimes, goodTargets[si][gi], goodTUnc[si][gi], goodReferences[si][gi], goodRUnc[si][gi],
                       goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
                       exotic_infoDict['date'])
+
+            if not bestCompStar:
+                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
+                                                 vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc,
+                                                 pDict, exotic_infoDict)
+            else:
+                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
+                                                 vsp_num, bestCompStar - 1, exotic_infoDict['save'], pDict['sName'],
+                                                 bjd_inc, pDict, exotic_infoDict)
 
             log_info("\n\nOutput File Saved")
         else:
@@ -2149,6 +2430,8 @@ def main():
         fig.savefig(Path(exotic_infoDict['save']) / "temp" /
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
+        if vsp_params:
+            VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
@@ -2159,11 +2442,12 @@ def main():
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
             if fitsortext == 1:
-                output_files.final_planetary_params(phot_opt=True, comp_star=bestCompStar, comp_coords=comp_coords,
+                output_files.final_planetary_params(phot_opt=True, vsp_params=vsp_params,
+                                                    comp_star=bestCompStar, comp_coords=comp_coords,
                                                     min_aper=np.round(minAperture, 2),
                                                     min_annul=np.round(minAnnulus, 2))
             else:
-                output_files.final_planetary_params(phot_opt=False)
+                output_files.final_planetary_params(phot_opt=False, vsp_params=vsp_params)
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
@@ -2172,6 +2456,11 @@ def main():
             output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
+        try:
+            if vsp_params:
+                VSPoutput_files.aavso(goodAirmasses)
+        except Exception as e:
+            log_info(f"\nError: Could not create vspAAVSO.txt. {error_txt}\n\t{e}", error=True)
 
         log_info("Output Files Saved")
 

@@ -50,7 +50,6 @@ import platform
 import python_version
 import subprocess
 import sys
-from sys import exit
 
 try:
     import tkinter as tk

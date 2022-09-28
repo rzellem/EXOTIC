@@ -538,11 +538,10 @@ class lc_fitter(object):
             fig, axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()),
                                                    quantiles_2d=[0.4, 0.85],
                                                    smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
-                                                   hist2d_kwargs={'alpha': 1, 'zorder': 2, 'fill_contours': False})
+                                                   hist2d_kwargs={ 'fill_contours': False})
             dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()),
                                           fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
         return fig
-
 
 # simultaneously fit multiple data sets with global and local parameters
 class glc_fitter(lc_fitter):

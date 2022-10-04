@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-    - uses: actions/checkout@v3
-    - with:
+      uses: actions/checkout@v3
+      with:
         fetch-depth: 0
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -30,8 +30,8 @@ jobs:
         python3 setup.py sdist --format=zip
     - name: Publish package
       env:
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       run: |
         twine check dist/*
         twine upload --verbose dist/*.whl dist/*.zip

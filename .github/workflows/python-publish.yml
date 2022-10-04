@@ -12,7 +12,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+    - name: Checkout code
     - uses: actions/checkout@v3
+    - with:
+        fetch-depth: 0
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -23,8 +26,8 @@ jobs:
         pip3 install --upgrade build setuptools_scm twine
     - name: Build package
       run: |
-        git checkout exotic/version.py && python3 -m build --wheel
-        git checkout exotic/version.py && python3 setup.py sdist --format=zip
+        python3 -m build --wheel
+        python3 setup.py sdist --format=zip
     - name: Publish package
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}

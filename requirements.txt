@@ -2,7 +2,7 @@ astroalign~=2.4
 astropy>=4.3
 astroquery~=0.4
 barycorrpy~=0.4
-dynesty~=1.2.3;platform_system=='Windows'
+dynesty~=2.0.0;platform_system=='Windows'
 holoviews~=1.15
 LDTk~=1.7
 lmfit~=1.0

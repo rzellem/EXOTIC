@@ -81,7 +81,6 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-# from numba import njit
 import numpy as np
 # photometry
 from photutils import CircularAperture
@@ -800,37 +799,48 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
     return image_data
 
 
-def vsp_query(ra, dec, file, filter='V', fov=18.5, maglimit=14):
-    comp_stars = {}
+def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
     stars_count = 0
-    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
+    comp_stars = {}
+
+    wcs_hdr = search_wcs(file)
+    fov = (img_scale * max(axis)) / 60
+    ra, dec = wcs_hdr.pixel_to_world_values(axis[0] // 2, axis[1] // 2)
+
+    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
     data = result.json()
     chart_id = data['chartid']
     data = pd.json_normalize(data['photometry'])
 
-    for label in data['label']:
-        star = data[data['label'] == label]
-        for bands in star['bands']:
-            for dict_ in bands:
-                if dict_['band'] == filter:
-                    ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
-                    pix_ra, pix_dec = search_wcs(file).world_to_pixel_values(ra, dec)
-                    if pix_ra >= 1 and pix_dec >= 1:
-                        comp_stars[label] = {
-                            'xy': [int(pix_ra.min()), int(pix_dec.min())],
-                            'mag': dict_['mag'],
-                            'err': dict_['error']
-                        }
-                        stars_count += 1
+    if obs_filter == "CV":
+        obs_filter = "V"
 
-        if stars_count == 2:
-            break
+    if not data.empty:
+        for label in data['label']:
+            star = data[data['label'] == label]
+            for bands in star['bands']:
+                for dict_ in bands:
+                    if dict_['band'] == obs_filter:
+                        ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
+                        pix_ra, pix_dec = wcs_hdr.world_to_pixel_values(ra, dec)
+                        if (pix_ra < axis[0] and pix_dec < axis[1]) and (pix_ra > 1 and pix_dec > 1):
+                            comp_stars[label] = {
+                                'xy': [int(pix_ra.min()), int(pix_dec.min())],
+                                'mag': dict_['mag'],
+                                'err': dict_['error']
+                            }
+                            stars_count += 1
+            if stars_count == 2:
+                break
+
+    if not comp_stars:
+        log_info("\nNo comparison stars were gathered from AAVSO.\n")
 
     return comp_stars, chart_id
 
 
-def check_comps(comp_stars, vsp_comp_stars, imsf=10):
+def check_comps(comp_stars, vsp_comp_stars, tol=10):
     comp_stars_list = comp_stars.copy()
 
     vsp_pix = [comp['xy'] for comp in vsp_comp_stars.values()]
@@ -838,8 +848,8 @@ def check_comps(comp_stars, vsp_comp_stars, imsf=10):
     for vsp_comp in vsp_pix:
         inlist = False
         for i, comp in enumerate(comp_stars):
-            if comp[0] - imsf <= vsp_comp[0] <= comp[0] + imsf \
-                    and comp[1] - imsf <= vsp_comp[1] <= comp[1] + imsf:
+            if comp[0] - tol <= vsp_comp[0] <= comp[0] + tol \
+                    and comp[1] - tol <= vsp_comp[1] <= comp[1] + tol:
                 comp_stars_list[i] = vsp_comp
                 inlist = True
 
@@ -896,31 +906,35 @@ def transformation(image_data, file_name, roi=1):
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 
-def get_pixel_scale(wcs_header, header, pixel_init):
-    astrometry_scale = None
+def get_img_scale(hdr, wcs_file, pixel_init):
+    if wcs_file:
+        wcs_hdr = fits.getheader(wcs_file)
+        astrometry_scale = [key.value.split(' ') for key in wcs_hdr._cards if 'scale:' in str(key.value)]
 
-    if wcs_header:
-        astrometry_scale = [key.value.split(' ') for key in wcs_header._cards if 'scale:' in str(key.value)]
-
-    if astrometry_scale:
-        image_scale_num = astrometry_scale[0][1]
-        image_scale_units = astrometry_scale[0][2]
-        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
-    elif 'IM_SCALE' in header:
-        image_scale_num = header['IM_SCALE']
-        image_scale_units = header.comments['IM_SCALE']
-        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
-    elif 'PIXSCALE' in header:
-        image_scale_num = header['PIXSCALE']
-        image_scale_units = header.comments['PIXSCALE']
-        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
+        if astrometry_scale:
+            img_scale_num = astrometry_scale[0][1]
+            img_scale_units = astrometry_scale[0][2]
+        else:
+            wcs = WCS(wcs_hdr).proj_plane_pixel_scales()
+            img_scale_num = (wcs[0].value + wcs[1].value) / 2
+            img_scale_units = "arsec/pixel"
+    elif 'IM_SCALE' in hdr:
+        img_scale_num = hdr['IM_SCALE']
+        img_scale_units = hdr.comments['IM_SCALE']
+    elif 'PIXSCALE' in hdr:
+        img_scale_num = hdr['PIXSCALE']
+        img_scale_units = hdr.comments['PIXSCALE']
     elif pixel_init:
-        image_scale = f"Image scale in arcsecs/pixel: {pixel_init}"
+        img_scale_num = pixel_init
+        img_scale_units = "arsec/pixel"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
-        image_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
-        image_scale = f"Image scale in arcsecs/pixel: {image_scale_num}"
-    return image_scale
+        img_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
+        img_scale_units = "arsec/pixel"
+
+    img_scale = f"Image scale in {img_scale_units}: {img_scale_num}"
+
+    return img_scale, float(img_scale_num)
 
 
 def exp_time_med(exptimes):
@@ -1168,21 +1182,21 @@ def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars,
     for key, value in vsp_comp_stars.items():
         labels[tuple(value['xy'])] = key
 
-    markerlist = ['.','v','s','D','^']
-    colorlist = ["firebrick","darkorange","olivedrab","lightseagreen","steelblue","rebeccapurple","mediumvioletred"]
+    markerlist = ['.', 'v', 's', 'D', '^']
+    colorlist = ["firebrick", "darkorange", "olivedrab", "lightseagreen", "steelblue", "rebeccapurple", "mediumvioletred"]
     k = 0
+
     for i, ckey in enumerate(ref_flux.keys()):
         if i >= len(colorlist):
             i = 0
         if k >= len(markerlist):
             k = 0
         ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit, good_times)
-        plt.errorbar(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], fmt = markerlist[k], color = colorlist[i],
-            label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
-        k+=1
+        plt.errorbar(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], fmt=markerlist[k], color=colorlist[i],
+                     label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
+        k += 1
     plot_variable_residuals(save)
     std_dict = {}
-
 
     for key, value in ref_comp.items():
         std_dict[key] = np.std(value['res'])
@@ -1205,7 +1219,7 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
     else:
         good_times = lmfit.time
 
-    if not best_comp or (best_comp not in vsp_ind):
+    if best_comp is None or (best_comp not in vsp_ind):
         comp_xy, ref_comp = find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save)
     else:
         comp_xy = comp_stars[best_comp]
@@ -1823,6 +1837,7 @@ def main():
 
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
+            img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
             vsp_list = []
@@ -1854,7 +1869,8 @@ def main():
                         exotic_infoDict['comp_stars'].remove(comp)
 
                 if exotic_infoDict['aavso_comp'] == 'y':
-                    vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                    vsp_comp_stars, chart_id = vsp_query(wcs_file, [header['NAXIS1'], header['NAXIS2']],
+                                                         exotic_infoDict['filter'], img_scale)
                     exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
 
                 compStarList = exotic_infoDict['comp_stars']
@@ -1918,8 +1934,6 @@ def main():
                 imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
 
                 if i == 0:
-                    image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
-
                     firstImage = np.copy(imageData)
 
                 sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
@@ -2251,7 +2265,7 @@ def main():
             goodAirmasses = goodAirmasses[si][gi]
 
             plot_fov(minAperture, minAnnulus, sigma, finXTargCent[0], finYTargCent[0], finXRefCent[0], finYRefCent[0],
-                     firstImage, image_scale, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
             # Centroid position plots
             plot_centroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
@@ -2277,14 +2291,15 @@ def main():
                       goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
                       exotic_infoDict['date'])
 
-            if not bestCompStar:
-                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
-                                                 vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc,
-                                                 pDict, exotic_infoDict)
-            else:
-                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
-                                                 vsp_num, bestCompStar - 1, exotic_infoDict['save'], pDict['sName'],
-                                                 bjd_inc, pDict, exotic_infoDict)
+            if vsp_comp_stars:
+                if not bestCompStar:
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
+                                                     vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc,
+                                                     pDict, exotic_infoDict)
+                else:
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
+                                                     vsp_num, bestCompStar - 1, exotic_infoDict['save'], pDict['sName'],
+                                                     bjd_inc, pDict, exotic_infoDict)
 
             log_info("\n\nOutput File Saved")
         else:

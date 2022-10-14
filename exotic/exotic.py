@@ -800,11 +800,13 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
 
 
 def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
-    comp_stars = {}
     stars_count = 0
-    fov = (img_scale * max(axis)) / 60
+    comp_stars = {}
+
     wcs_hdr = search_wcs(file)
+    fov = (img_scale * max(axis)) / 60
     ra, dec = wcs_hdr.pixel_to_world_values(axis[0] // 2, axis[1] // 2)
+
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
     data = result.json()

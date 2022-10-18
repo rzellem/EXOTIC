@@ -3,6 +3,7 @@ import sys
 import json
 from pathlib import Path
 from astropy.io import fits
+import re
 
 try:
     from utils import user_input, init_params, typecast_check, \
@@ -459,9 +460,13 @@ def aavso_comp(opt):
                          type_=str, values=['y', 'n'])
     return opt
 
+
 def target_star_coords(coords, planet):
     if isinstance(coords, list) and len(coords) == 2:
         pass
+    elif isinstance(coords, str) and any(str.isdigit(x) for x in coords):
+        coords = ' '.join(re.sub('\D', ' ', coords).split()).split(' ')
+        coords = [int(i) for i in coords]
     else:
         coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=float),
                   user_input(f"\nPlease enter {planet}'s Y Pixel Coordinate: ", type_=float)]
@@ -473,6 +478,9 @@ def comparison_star_coords(comp_stars, rt_bool):
     if isinstance(comp_stars, list) and 1 <= len(comp_stars) <= 10 and \
             all(isinstance(star, list) for star in comp_stars):
         comp_stars = [star for star in comp_stars if star != []]
+    elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
+        comp_stars = ' '.join(re.sub('\D', ' ', comp_stars).split()).split(' ')
+        comp_stars = [[int(comp_stars[i]), int(comp_stars[i+1])] for i in range(0, len(comp_stars), 2)]
     else:
         comp_stars = []
 

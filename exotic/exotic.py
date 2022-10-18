@@ -1511,6 +1511,11 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     upper = prior['tmid'] + np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
     lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
 
+    if upper > prior['tmid'] + 0.25 * prior['per']:
+        upper = prior['tmid'] + 0.25 * prior['per']
+    if lower < prior['tmid'] - 0.25 * prior['per']:
+        lower = prior['tmid'] - 0.25 * prior['per']
+
     if np.floor(arrayPhases).max() - np.floor(arrayPhases).min() == 0:
         log_info("\nWarning:", warn=True)
         log_info(" Estimated mid-transit time is not within the observations", warn=True)
@@ -2363,10 +2368,10 @@ def main():
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
 
         # clip bounds so they're within 1 orbit
-        if upper > prior['tmid'] + 0.5*prior['per']:
-            upper = prior['tmid'] + 0.5*prior['per']
-        if lower < prior['tmid'] - 0.5*prior['per']:
-            lower = prior['tmid'] - 0.5*prior['per']
+        if upper > prior['tmid'] + 0.25*prior['per']:
+            upper = prior['tmid'] + 0.25*prior['per']
+        if lower < prior['tmid'] - 0.25*prior['per']:
+            lower = prior['tmid'] - 0.25*prior['per']
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)

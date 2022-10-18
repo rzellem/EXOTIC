@@ -76,7 +76,7 @@ class OutputFiles:
 
         params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
 
-        with params_file.open('w') as f:
+        with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SECONDARY_OBSCODES={self.i_dict['second_obs']}\n"  # UI
@@ -139,7 +139,7 @@ class VSPOutputFiles:
 
     def aavso(self, airmasses):
         params_file = self.dir / f"vspAAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
-        with params_file.open('w') as f:
+        with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed

@@ -54,20 +54,19 @@ fwhm = {
         "LCO Pan-STARRS w": {"name": "N/A", "desc": "LCO Pan-STARRS w", "fwhm": ("404.2", "845.8")},
         "LCO Pan-STARRS Y": {"name": "N/A", "desc": "LCO Pan-STARRS Y", "fwhm": ("948.0", "1060.0")},
         "LCO Pan-STARRS zs": {"name": "N/A", "desc": "LCO Pan-STARRS zs", "fwhm": ("818.0", "922.0")},
-
-        "LCO SDSS u'": {"name": "N/A", "desc": "LCO SDSS u'", "fwhm": ("325.5", "382.5")},
-        "LCO SDSS g'": {"name": "N/A", "desc": "LCO SDSS g'", "fwhm": ("402.0", "552.0")},
-        "LCO SDSS r'": {"name": "N/A", "desc": "LCO SDSS r'", "fwhm": ("552.0", "691.0")},
-        "LCO SDSS i'": {"name": "N/A", "desc": "LCO SDSS i'", "fwhm": ("690.0", "819.0")},
 }
 
 # aliases to back-reference naming standard updates
 fwhm_alias = {
-              "J NIR 1.2 micron": "Near-Infrared J",
-              "J NIR 1.2micron": "Near-Infrared J",
-              "H NIR 1.6 micron": "Near-Infrared H",
-              "H NIR 1.6micron": "Near-Infrared H",
-              "K NIR 2.2 micron": "Near-Infrared K",
-              "K NIR 2.2micron": "Near-Infrared K",
-              "Clear (unfiltered) reduced to V sequence": "MObs CV",
+        "J NIR 1.2 micron": "Near-Infrared J",
+        "J NIR 1.2micron": "Near-Infrared J",
+        "H NIR 1.6 micron": "Near-Infrared H",
+        "H NIR 1.6micron": "Near-Infrared H",
+        "K NIR 2.2 micron": "Near-Infrared K",
+        "K NIR 2.2micron": "Near-Infrared K",
+        "LCO SDSS u'": "Sloan u",
+        "LCO SDSS g'": "Sloan g",
+        "LCO SDSS r'": "Sloan r",
+        "LCO SDSS i'": "Sloan i",
+        "Clear (unfiltered) reduced to V sequence": "MObs CV",
 }

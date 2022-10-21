@@ -241,22 +241,15 @@ def img_time(hdr, var=False):
         time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
 
     exp = hdr.get('EXPTIME') if hdr.get('EXPTIME') else hdr.get('EXPOSURE')
-    time_dict = {
-        'BJD_TDB': julian_date,
-        'BJD_TBD': julian_date,
-        'BJD': julian_date,
-        'UT-OBS': ut_date,
-        'JULIAN': julian_date,
-        'MJD-OBS': julian_date,
-        'DATE-OBS': ut_date
-    }
 
     hdr_time = next((time for time in time_list if time in hdr), None)
 
     if hdr_time == 'MJD_OBS':
         hdr_time = hdr_time if "epoch" not in hdr.comments[hdr_time] else 'DATE-OBS'
 
-    return time_dict[hdr_time](hdr, hdr_time, exp)
+    if hdr_time in ['UT-OBS', 'DATE-OBS']:
+        return ut_date(hdr, hdr_time, exp)
+    return julian_date(hdr, hdr_time, exp)
 
 
 # Method that gets and returns the airmass from the fits file (Really the Altitude)

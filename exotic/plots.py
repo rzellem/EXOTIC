@@ -129,7 +129,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.close()
 
     # Save normalized flux to text file prior to NS
-    params_file = Path(save) / f"NormalizedFlux_{targ_name}_{date}.txt"
+    params_file = Path(save) / "temp" / f"NormalizedFlux_{targ_name}_{date}.txt"
     with params_file.open('w') as f:
         f.write("BJD,Norm Flux,Norm Err,AM\n")
 
@@ -205,8 +205,8 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
 
     Path(save).mkdir(parents=True, exist_ok=True)
     try:
-        f.savefig(Path(save) / f"FinalLightCurve_{targ_name}_{date}.png", bbox_inches="tight")
-        f.savefig(Path(save) / f"FinalLightCurve_{targ_name}_{date}.pdf", bbox_inches="tight")
+        f.savefig(Path(save) / "temp" / f"FinalLightCurve_{targ_name}_{date}.png", bbox_inches="tight")
+        f.savefig(Path(save) / "temp" / f"FinalLightCurve_{targ_name}_{date}.pdf", bbox_inches="tight")
     except Exception:
         pass
     plt.close()

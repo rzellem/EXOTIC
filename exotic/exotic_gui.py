@@ -838,8 +838,8 @@ def main():
                 input_data['elevation'] = float(elevation_entry.get())
                 input_data['pixscale'] = pixscale_entry.get()
                 if fitsortext.get() == 1:
-                    input_data['comppos'] = ast.literal_eval(comppos_entry.get())
-                    input_data['targetpos'] = ast.literal_eval(targetpos_entry.get())
+                    input_data['comppos'] = str(list(ast.literal_eval(comppos_entry.get())))
+                    input_data['targetpos'] = str(list(ast.literal_eval(targetpos_entry.get())))
 
                     if platesolve.get():
                         input_data['platesolve'] = 'y'

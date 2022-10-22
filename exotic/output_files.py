@@ -21,7 +21,7 @@ class OutputFiles:
         self.dir = Path(self.i_dict['save'])
 
     def final_lightcurve(self, phase):
-        params_file = self.dir / f"FinalLightCurve_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
+        params_file = self.dir / "temp" / f"FinalLightCurve_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
@@ -33,7 +33,7 @@ class OutputFiles:
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None, min_annul=None):
-        params_file = self.dir / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
+        params_file = self.dir / "temp" / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
@@ -76,7 +76,7 @@ class OutputFiles:
 
         params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
 
-        with params_file.open('w') as f:
+        with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SECONDARY_OBSCODES={self.i_dict['second_obs']}\n"  # UI
@@ -139,7 +139,7 @@ class VSPOutputFiles:
 
     def aavso(self, airmasses):
         params_file = self.dir / f"vspAAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
-        with params_file.open('w') as f:
+        with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed

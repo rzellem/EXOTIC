@@ -68,5 +68,6 @@ fwhm_alias = {
         "LCO SDSS g'": "Sloan g",
         "LCO SDSS r'": "Sloan r",
         "LCO SDSS i'": "Sloan i",
+        "Exop": "Astrodon ExoPlanet-BB",
         "Clear (unfiltered) reduced to V sequence": "MObs CV",
 }

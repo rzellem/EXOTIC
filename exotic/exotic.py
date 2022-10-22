@@ -225,7 +225,7 @@ def img_time(hdr, var=False):
 
     Parameters
     ----------
-    hdr : astropy.io.fits
+    hdr : astropy.io.fits.header.Header
         A header file that includes the time of when the image was taken
     var : bool
         Flag for if only JD is needed due to Stellar Variability code (ignore BJD)
@@ -240,7 +240,7 @@ def img_time(hdr, var=False):
     if not var:
         time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
 
-    exp = hdr.get('EXPTIME') if hdr.get('EXPTIME') else hdr.get('EXPOSURE')
+    exp = hdr['EXPTIME'] if 'EXPTIME' in hdr else hdr['EXPOSURE']
 
     hdr_time = next((time for time in time_list if time in hdr), None)
 

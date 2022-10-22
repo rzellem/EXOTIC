@@ -226,7 +226,7 @@ def img_time(hdr, var=False):
     Parameters
     ----------
     hdr : astropy.io.fits.header.Header
-        A header file that includes the time of when the image was taken
+        A header file that includes the time from when the image was taken
     var : bool
         Flag for if only JD is needed due to Stellar Variability code (ignore BJD)
 
@@ -252,23 +252,42 @@ def img_time(hdr, var=False):
     return julian_date(hdr, hdr_time, exp)
 
 
-# Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(image_header, ra, dec, lati, longit, elevation):
-    # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
-    if 'AIRMASS' in image_header:
-        am = float(image_header['AIRMASS'])
-    elif 'TELALT' in image_header:
-        alt = float(image_header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((np.pi / 180) * (90.0 - alt))
-        am = 1 / cosam
-    else:
-        # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
-        pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
+def air_mass(hdr, ra, dec, lat, long, elevation, time):
+    """Scrapes or calculates the airmass at the time of when the image was taken.
+    Airmass(X): X = sec(z), z = secant of the zenith angle (angle between zenith and star)
 
-        location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
-        atime = Time(img_time(image_header), format='jd', scale='utc', location=location)
-        pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
-        am = float(pointingAltAz.secz)
+    Parameters
+    ----------
+    hdr : astropy.io.fits.header.Header
+        A header file that may include the airmass or altitude from when the image was taken
+    ra : float
+        Right Ascension
+    dec : float
+        Declination
+    lat : float
+        Latitude
+    long : float
+        Longitude
+    elevation : float
+        Elevation/Altitude
+
+    Returns
+    -------
+    float
+        Airmass value
+    """
+    if 'AIRMASS' in hdr:
+        am = float(hdr['AIRMASS'])
+    elif 'TELALT' in hdr:
+        alt = float(hdr['TELALT'])
+        cos_am = np.cos((np.pi / 180) * (90.0 - alt))
+        am = 1 / cos_am
+    else:
+        pointing = SkyCoord(f"{ra} {dec}", unit=(u.deg, u.deg), frame='icrs')
+
+        location = EarthLocation.from_geodetic(lat=lat * u.deg, lon=long * u.deg, height=elevation)
+        point_altaz = pointing.transform_to(AltAz(obstime=time, location=location))
+        am = float(point_altaz.secz)
     return am
 
 
@@ -1797,7 +1816,7 @@ def main():
             inputfiles = corruption_check(exotic_infoDict['images'])
 
             # time sort images
-            times, vsp_times = [], []
+            times, jd_times = [], []
             for file in inputfiles:
                 extension = 0
                 header = fits.getheader(filename=file, ext=extension)
@@ -1805,7 +1824,7 @@ def main():
                     extension += 1
                     header = fits.getheader(filename=file, ext=extension)
                 times.append(img_time(header))
-                vsp_times.append(img_time(header, var=True))
+                jd_times.append(img_time(header, var=True))
 
             # checks for MOBS data
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
@@ -1818,7 +1837,7 @@ def main():
 
             si = np.argsort(times)
             times = np.array(times)[si]
-            vsp_times = np.array(vsp_times)[si]
+            jd_times = np.array(jd_times)[si]
 
             inputfiles = np.array(inputfiles)[si]
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
@@ -1912,17 +1931,11 @@ def main():
                     extension += 1
                     image_header = hdul[extension].header
 
-                # AIRMASS
-                airMass = getAirMass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
-                                     exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
-                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+                airMass = air_mass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
+                                   exotic_infoDict['elev'], times[i])
+                airMassList.append(airMass)
 
-                # EXPOSURE_TIME
-                exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
-                if exp:
-                    exptimes.append(image_header['EXPTIME'])
-                else:
-                    exptimes.append(image_header['EXPOSURE'])
+                exptimes.append(image_header['EXPTIME'] if 'EXPTIME' in image_header else image_header['EXPOSURE'])
 
                 # IMAGES
                 imageData = hdul[extension].data
@@ -2221,10 +2234,10 @@ def main():
                 goodTimes = nonBJDTimes
 
                 index_list = np.intersect1d(times, nonBJDTimes)
-                good_vsp_times = [vsp_times[i] for i in index_list]
+                good_jd_times = [jd_times[i] for i in index_list]
                 for key, val in ref_flux_dict.items():
-                    index_list = np.intersect1d(ref_flux_dict[key]['myfit'].time, times)
-                    ref_flux_dict[key]['time'] = [vsp_times[i] for i in index_list]
+                    index_list = np.intersect1d(times, ref_flux_dict[key]['myfit'].time)
+                    ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
 
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
@@ -2236,7 +2249,7 @@ def main():
                 goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
                 animate_toggle()
 
-                good_vsp_times = nonBJDTimes
+                good_jd_times = nonBJDTimes
 
             # sigma clip
             si = np.argsort(goodTimes)
@@ -2296,11 +2309,11 @@ def main():
 
             if vsp_comp_stars:
                 if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_vsp_times, compStarList, chart_id,
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_jd_times, compStarList, chart_id,
                                                      vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'],
                                                      pDict['sName'])
                 else:
-                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_vsp_times, compStarList, chart_id,
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_jd_times, compStarList, chart_id,
                                                      vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                      pDict['sName'])
 

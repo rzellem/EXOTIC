@@ -205,8 +205,8 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
 
     Path(save).mkdir(parents=True, exist_ok=True)
     try:
-        f.savefig(Path(save) / "temp" / f"FinalLightCurve_{targ_name}_{date}.png", bbox_inches="tight")
-        f.savefig(Path(save) / "temp" / f"FinalLightCurve_{targ_name}_{date}.pdf", bbox_inches="tight")
+        f.savefig(Path(save) / f"FinalLightCurve_{targ_name}_{date}.png", bbox_inches="tight")
+        f.savefig(Path(save) / f"FinalLightCurve_{targ_name}_{date}.pdf", bbox_inches="tight")
     except Exception:
         pass
     plt.close()

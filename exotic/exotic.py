@@ -105,18 +105,14 @@ try:  # output files
     from inputs import Inputs
 except ImportError:  # package import
     from .inputs import Inputs
+try:  # ld
+    from .api.ld import LimbDarkening
+except ImportError:  # package import
+    from api.ld import LimbDarkening
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
     from api.plate_solution import PlateSolution
-try:  # nonlinear limb darkening numerics
-    from .api.gael_ld import createldgrid
-except ImportError:  # package import
-    from api.gael_ld import createldgrid
-try:  # filters
-    from .api.filters import fwhm
-except ImportError:  # package import
-    from api.filters import fwhm
 try:  # nea
     from .api.nea import NASAExoplanetArchive
 except ImportError:  # package import
@@ -226,7 +222,7 @@ def img_time(hdr, var=False):
     Parameters
     ----------
     hdr : astropy.io.fits.header.Header
-        A header file that includes the time of when the image was taken
+        A header file that includes the time from when the image was taken
     var : bool
         Flag for if only JD is needed due to Stellar Variability code (ignore BJD)
 
@@ -252,38 +248,44 @@ def img_time(hdr, var=False):
     return julian_date(hdr, hdr_time, exp)
 
 
-# Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(image_header, ra, dec, lati, longit, elevation):
-    # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
-    if 'AIRMASS' in image_header:
-        am = float(image_header['AIRMASS'])
-    elif 'TELALT' in image_header:
-        alt = float(image_header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((np.pi / 180) * (90.0 - alt))
-        am = 1 / cosam
+def air_mass(hdr, ra, dec, lat, long, elevation, time):
+    """Scrapes or calculates the airmass at the time of when the image was taken.
+    Airmass(X): X = sec(z), z = secant of the zenith angle (angle between zenith and star)
+
+    Parameters
+    ----------
+    hdr : astropy.io.fits.header.Header
+        A header file that may include the airmass or altitude from when the image was taken
+    ra : float
+        Right Ascension
+    dec : float
+        Declination
+    lat : float
+        Latitude
+    long : float
+        Longitude
+    elevation : float
+        Elevation/Altitude
+
+    Returns
+    -------
+    float
+        Airmass value
+    """
+    if 'AIRMASS' in hdr:
+        am = float(hdr['AIRMASS'])
+    elif 'TELALT' in hdr:
+        alt = float(hdr['TELALT'])
+        cos_am = np.cos((np.pi / 180) * (90.0 - alt))
+        am = 1 / cos_am
     else:
-        # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
-        pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
+        pointing = SkyCoord(f"{ra} {dec}", unit=(u.deg, u.deg), frame='icrs')
 
-        location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
-        atime = Time(img_time(image_header), format='jd', scale='utc', location=location)
-        pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
-        am = float(pointingAltAz.secz)
+        location = EarthLocation.from_geodetic(lat=lat * u.deg, lon=long * u.deg, height=elevation)
+        time = Time(time, format='jd', scale='utc', location=location)
+        point_altaz = pointing.transform_to(AltAz(obstime=time, location=location))
+        am = float(point_altaz.secz)
     return am
-
-
-# Convert time units to BJD_TDB if pre-reduced file not in proper units
-def timeConvert(timeList, timeFormat, pDict, info_dict):
-    # Perform appropriate conversion for each time format if needed
-    if timeFormat == 'JD_UTC':
-        convertedTimes = JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'],
-                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-    elif timeFormat == 'MJD_UTC':
-        convertedTimes = JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'],
-                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-    timeList = convertedTimes[0]
-
-    return timeList
 
 
 def flux_conversion(fluxes, errors, flux_format):
@@ -477,115 +479,84 @@ def radec_hours_to_degree(ra, dec):
             dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
 
-class LimbDarkening:
+def standard_filter(ld, filter_):
+    if not filter_['filter']:
+        ld.standard_list()
 
-    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
-                 logg=None, loggpos=None, loggneg=None, wl_min=None, wl_max=None, filter_type=None):
-        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
-                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
-                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
-        self.filter_type = filter_type
-        self.wl_min = wl_min
-        self.wl_max = wl_max
-        self.fwhm = fwhm
-        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
-        self.filter_desc = None
-
-    def nonlinear_ld(self):
-        if self.filter_type and not (self.wl_min or self.wl_max):
-            self._standard()
-        elif self.wl_min or self.wl_max:
-            self._custom()
+    while True:
+        if not filter_['filter']:
+            filter_['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
+                                           "(EX: Johnson V, V, STB, RJ): ", type_=str)
+        if ld.check_standard(filter_):
+            break
         else:
-            opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
-                             "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
+            log_info("\nError: The entered filter is not in the provided list of standard filters.", warn=True)
+            filter_['filter'] = None
 
-            if opt == 'y':
-                opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
-                                 type_=int, values=[1, 2])
-                if opt == 1:
-                    self._standard()
-                elif opt == 2:
-                    self._custom()
-            else:
-                self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.filter_desc, self.wl_min * 1000, self.wl_max * 1000
 
-    def _standard_list(self):
-        log_info("\n\n***************************")
-        log_info("Limb Darkening Coefficients")
-        log_info("***************************")
-        log_info("\nThe standard bands that are available for limb darkening parameters (https://www.aavso.org/filters)"
-                 "\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n")
-        for val in self.fwhm.values():
-            log_info(f"\u2022 {val['desc']}:\n\t-Abbreviation: {val['name']}"
-                     f"\n\t-FWHM: ({val['fwhm'][0]}-{val['fwhm'][1]}) nm")
+def check_fwhm(wl, type_):
+    if not isinstance(wl, float):
+        try:
+            wl = float(wl)
+        except (ValueError, TypeError):
+            wl = user_input(f"FWHM {type_} wavelength (nm):", type_=float)
 
-    def _standard(self):
-        while True:
-            try:
-                if not self.filter_type:
-                    self._standard_list()
-                    self.filter_type = user_input("\nPlease enter in the Filter Name or Abbreviation "
-                                                  "(EX: Johnson V, V, STB, RJ): ", type_=str)
-                for val in self.fwhm.values():
-                    if self.filter_type.lower() in (val['desc'].lower(), val['name'].lower()) \
-                            and self.filter_type != 'N/A'.lower():
-                        self.filter_type = val['desc']
-                        break
-                else:
-                    raise KeyError
-                break
-            except KeyError:
-                log_info("\nError: The entered filter is not in the provided list of standard filters.", error=True)
-                self.filter_type = None
+    return wl
 
-        self.wl_min = float(self.fwhm[self.filter_type]['fwhm'][0])
-        self.wl_max = float(self.fwhm[self.filter_type]['fwhm'][1])
-        self.filter_desc = self.filter_type
-        self.filter_type = self.fwhm[self.filter_type]['name']
-        self._calculate_ld()
 
-    def _custom(self):
-        self.filter_type = 'N/A'
-        self.filter_desc = 'Custom'
-        if not self.wl_min:
-            self.wl_min = user_input("FWHM Minimum wavelength (nm):", type_=float)
-        if not self.wl_max:
-            self.wl_max = user_input("FWHM Maximum wavelength (nm):", type_=float)
-        self._calculate_ld()
+def custom_range(ld, filter_):
+    filter_['filter'] = "Custom"
 
-    def _user_entered(self):
-        self.filter_type = 'N/A'
-        self.filter_desc = 'Custom'
-        ld_0 = user_input("\nEnter in your first nonlinear term:", type_=float)
-        ld0_unc = user_input("Enter in your first nonlinear term uncertainty:", type_=float)
-        ld_1 = user_input("\nEnter in your second nonlinear term:", type_=float)
-        ld1_unc = user_input("Enter in your second nonlinear term uncertainty:", type_=float)
-        ld_2 = user_input("\nEnter in your third nonlinear term:", type_=float)
-        ld2_unc = user_input("Enter in your third nonlinear term uncertainty:", type_=float)
-        ld_3 = user_input("\nEnter in your fourth nonlinear term:", type_=float)
-        ld3_unc = user_input("Enter in your fourth nonlinear term uncertainty:", type_=float)
-        self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
+    while True:
+        filter_['wl_min'] = check_fwhm(filter_['wl_min'], 'Minimum')
+        filter_['wl_max'] = check_fwhm(filter_['wl_max'], 'Maximum')
 
-        log.debug(f"Filter Abbreviation: {self.filter_type}")
-        log.debug(f"User-defined nonlinear limb-darkening coefficients: {ld_0}+/-{ld0_unc}, {ld_1}+/-{ld1_unc}, "
-                  f"{ld_2}+/-{ld2_unc}, {ld_3}+/-{ld3_unc}")
+        if filter_['wl_max'] < filter_['wl_min']:
+            log_info("\nError: The entered FWHM upper value is less than the lower value. Please try again.", warn=True)
+            filter_['wl_min'] = filter_['wl_max'] = None
+        else:
+            break
 
-    def _calculate_ld(self):
-        self.wl_min = self.wl_min / 1000
-        self.wl_max = self.wl_max / 1000
-        ld_params = createldgrid(np.array([self.wl_min]), np.array([self.wl_max]), self.priors)
-        self.ld0 = ld_params['LD'][0][0], ld_params['ERR'][0][0]
-        self.ld1 = ld_params['LD'][1][0], ld_params['ERR'][1][0]
-        self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
-        self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
+    ld.set_filter('N/A', filter_['filter'], filter_['wl_min'], filter_['wl_max'])
 
-        log.debug("EXOTIC-calculated nonlinear limb-darkening coefficients: ")
-        log.debug(f"{ld_params['LD'][0][0]} +/- + {ld_params['ERR'][0][0]}")
-        log.debug(f"{ld_params['LD'][1][0]} +/- + {ld_params['ERR'][1][0]}")
-        log.debug(f"{ld_params['LD'][2][0]} +/- + {ld_params['ERR'][2][0]}")
-        log.debug(f"{ld_params['LD'][3][0]} +/- + {ld_params['ERR'][3][0]}")
+
+def user_entered_ld(ld, filter_):
+    order = ['first', 'second', 'third', 'fourth']
+
+    input_list = [(f"\nEnter in your {order[i]} nonlinear term:",
+                   f"\nEnter in your {order[i]} nonlinear term uncertainty:") for i in range(len(order))]
+    ld_ = [(user_input(input_[0], type_=float), user_input(input_[1], type_=float)) for input_ in input_list]
+
+    custom_range(ld, filter_)
+    ld.set_ld(ld_[0], ld_[1], ld_[2], ld_[3])
+
+
+def nonlinear_ld(ld, filter_):
+    u_e = False
+
+    if (filter_['filter'] and filter_['filter'].upper() != 'N/A' and ld.check_standard(filter_)) and \
+            not (filter_['wl_min'] or filter_['wl_max']):
+        pass
+    elif filter_['wl_min'] or filter_['wl_max']:
+        custom_range(ld, filter_)
+    else:
+        opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
+                         "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
+
+        if opt == 'y':
+            opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
+                             type_=int, values=[1, 2])
+            if opt == 1:
+                filter_['filter'] = None
+                standard_filter(ld, filter_)
+            elif opt == 2:
+                custom_range(ld, filter_)
+        else:
+            user_entered_ld(ld, filter_)
+            u_e = True
+
+    if not u_e:
+        ld.calculate_ld()
 
 
 def corruption_check(files):
@@ -1137,10 +1108,8 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
 
 def jd_bjd(non_bjd, p_dict, info_dict):
     try:
-        resultos = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'],
-                                           lat=info_dict['lat'], longi=info_dict['long'],
-                                           alt=info_dict['elev'])
-        goodTimes = resultos[0]
+        goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
+                                    longi=info_dict['long'], alt=info_dict['elev'])[0]
     except:
         targetloc = SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg), frame='icrs')
         obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
@@ -1757,13 +1726,18 @@ def main():
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
-        ld_obj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
-                               met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
-                               logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
-                               wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'],
-                               filter_type=exotic_infoDict['filter'])
-        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['filter_desc'], exotic_infoDict['wl_min'], \
-            exotic_infoDict['wl_max'] = ld_obj.nonlinear_ld()
+        ld_obj = LimbDarkening(pDict)
+        nonlinear_ld(ld_obj, exotic_infoDict)
+
+        exotic_infoDict['filter'] = ld_obj.filter_type
+        exotic_infoDict['filter_desc'] = ld_obj.filter_desc
+        exotic_infoDict['wl_min'] = ld_obj.wl_min
+        exotic_infoDict['wl_max'] = ld_obj.wl_max
+
+        ld0 = ld_obj.ld0
+        ld1 = ld_obj.ld1
+        ld2 = ld_obj.ld2
+        ld3 = ld_obj.ld3
         ld = [ld0[0], ld1[0], ld2[0], ld3[0]]
 
         # check for Nans + Zeros
@@ -1797,7 +1771,7 @@ def main():
             inputfiles = corruption_check(exotic_infoDict['images'])
 
             # time sort images
-            times, vsp_times = [], []
+            times, jd_times = [], []
             for file in inputfiles:
                 extension = 0
                 header = fits.getheader(filename=file, ext=extension)
@@ -1805,7 +1779,7 @@ def main():
                     extension += 1
                     header = fits.getheader(filename=file, ext=extension)
                 times.append(img_time(header))
-                vsp_times.append(img_time(header, var=True))
+                jd_times.append(img_time(header, var=True))
 
             # checks for MOBS data
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
@@ -1818,7 +1792,7 @@ def main():
 
             si = np.argsort(times)
             times = np.array(times)[si]
-            vsp_times = np.array(vsp_times)[si]
+            jd_times = np.array(jd_times)[si]
 
             inputfiles = np.array(inputfiles)[si]
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
@@ -1912,17 +1886,10 @@ def main():
                     extension += 1
                     image_header = hdul[extension].header
 
-                # AIRMASS
-                airMass = getAirMass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
-                                     exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
-                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
+                airMassList.append(air_mass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
+                                            exotic_infoDict['elev'], jd_times[i]))
 
-                # EXPOSURE_TIME
-                exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
-                if exp:
-                    exptimes.append(image_header['EXPTIME'])
-                else:
-                    exptimes.append(image_header['EXPOSURE'])
+                exptimes.append(image_header['EXPTIME'] if 'EXPTIME' in image_header else image_header['EXPOSURE'])
 
                 # IMAGES
                 imageData = hdul[extension].data
@@ -2221,10 +2188,10 @@ def main():
                 goodTimes = nonBJDTimes
 
                 index_list = np.intersect1d(times, nonBJDTimes)
-                good_vsp_times = [vsp_times[i] for i in index_list]
+                good_jd_times = [jd_times[i] for i in index_list]
                 for key, val in ref_flux_dict.items():
-                    index_list = np.intersect1d(ref_flux_dict[key]['myfit'].time, times)
-                    ref_flux_dict[key]['time'] = [vsp_times[i] for i in index_list]
+                    index_list = np.intersect1d(times, ref_flux_dict[key]['myfit'].time)
+                    ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
 
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
@@ -2236,7 +2203,7 @@ def main():
                 goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
                 animate_toggle()
 
-                good_vsp_times = nonBJDTimes
+                good_jd_times = nonBJDTimes
 
             # sigma clip
             si = np.argsort(goodTimes)
@@ -2296,11 +2263,11 @@ def main():
 
             if vsp_comp_stars:
                 if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_vsp_times, compStarList, chart_id,
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_jd_times, compStarList, chart_id,
                                                      vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'],
                                                      pDict['sName'])
                 else:
-                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_vsp_times, compStarList, chart_id,
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_jd_times, compStarList, chart_id,
                                                      vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                      pDict['sName'])
 
@@ -2326,7 +2293,8 @@ def main():
             goodAirmasses = np.array(goodAirmasses)
 
             if exotic_infoDict['file_time'] != 'BJD_TDB':
-                goodTimes = timeConvert(goodTimes, exotic_infoDict['file_time'], pDict, exotic_infoDict)
+                time_offset = 2400000.5 if exotic_infoDict['file_time'] == 'MJD_UTC' else 0.0
+                goodTimes = jd_bjd([time_ + time_offset for time_ in goodTimes], pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
                 print("check flux convert")

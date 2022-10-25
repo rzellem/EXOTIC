@@ -129,11 +129,10 @@ class OutputFiles:
 
 
 class VSPOutputFiles:
-    def __init__(self, fit, p_dict, i_dict, durs, vsp_params):
+    def __init__(self, fit, p_dict, i_dict, vsp_params):
         self.fit = fit
         self.p_dict = p_dict
         self.i_dict = i_dict
-        self.durs = durs
         self.dir = Path(self.i_dict['save'])
         self.vsp_params = vsp_params
 

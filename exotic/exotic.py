@@ -1969,7 +1969,10 @@ def main():
 
                         pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
                         cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        if cx > 0 and cy > 0:
+                            psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        else:
+                            psf_data[ckey][i] = np.empty(7) * np.nan
 
                         if i != 0:
                             if not (tar_comp_dist[ckey][0] - 1 <= abs(int(psf_data[ckey][i][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 1 and
@@ -1992,7 +1995,10 @@ def main():
                         ckey = f"comp{j + 1}"
 
                         cx, cy = tform(coord)[0]
-                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        if cx > 0 and cy > 0:
+                            psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        else:
+                            psf_data[ckey][i] = np.empty(7) * np.nan
 
                         if i == 0:
                             tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
@@ -2014,10 +2020,13 @@ def main():
                         # loop through comp stars
                         for j in range(len(compStarList)):
                             ckey = f"comp{j + 1}"
-                            aper_data[ckey][i][a][an], aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                    psf_data[ckey][i, 0],
-                                                                                                    psf_data[ckey][i, 1],
-                                                                                                    aper, annulus)
+                            if not np.isnan(psf_data[ckey][i][0]):
+                                aper_data[ckey][i][a][an], \
+                                aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData, psf_data[ckey][i, 0],
+                                                                             psf_data[ckey][i, 1], aper, annulus)
+                            else:
+                                aper_data[ckey][i][a][an] = np.nan
+                                aper_data[f"{ckey}_bg"][i][a][an] = np.nan
 
                 # close file + delete from memory
                 hdul.close()
@@ -2451,7 +2460,7 @@ def main():
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
         if vsp_params:
-            VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
+            VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 

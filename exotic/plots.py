@@ -129,7 +129,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.close()
 
     # Save normalized flux to text file prior to NS
-    params_file = Path(save) / f"NormalizedFlux_{targ_name}_{date}.txt"
+    params_file = Path(save) / "temp" / f"NormalizedFlux_{targ_name}_{date}.txt"
     with params_file.open('w') as f:
         f.write("BJD,Norm Flux,Norm Err,AM\n")
 

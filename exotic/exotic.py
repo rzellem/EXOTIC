@@ -65,13 +65,13 @@ aa.PIXEL_TOL = 1
 import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
-import astropy.time
+from astropy.time import Time
 from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
 # UTC to BJD converter import
-from barycorrpy import utc_tdb
+from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 # julian conversion imports
 import dateutil.parser as dup
 from pathlib import Path
@@ -81,7 +81,6 @@ from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import matplotlib.pyplot as plt
-# from numba import njit
 import numpy as np
 # photometry
 from photutils import CircularAperture
@@ -106,18 +105,14 @@ try:  # output files
     from inputs import Inputs
 except ImportError:  # package import
     from .inputs import Inputs
+try:  # ld
+    from .api.ld import LimbDarkening
+except ImportError:  # package import
+    from api.ld import LimbDarkening
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
     from api.plate_solution import PlateSolution
-try:  # nonlinear limb darkening numerics
-    from .api.gael_ld import createldgrid
-except ImportError:  # package import
-    from api.gael_ld import createldgrid
-try:  # filters
-    from .api.filters import fwhm
-except ImportError:  # package import
-    from api.filters import fwhm
 try:  # nea
     from .api.nea import NASAExoplanetArchive
 except ImportError:  # package import
@@ -180,124 +175,133 @@ def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     return nanmask
 
 
-# Get Julian time, don't need to divide by 2 since assume mid-EXPOSURE
-# Find separate funciton in code that does julian conversion to BJD_TDB
-# Method that gets and returns the julian time of the observation
-def getJulianTime(header):
-    exptime_offset = 0
+def exp_offset(hdr, time_unit, exp):
+    """Returns exposure offset (in days) of more than 0 if headers reveals
+    the time was estimated at the start of the exposure rather than the middle
+    """
+    if 'start' in hdr.comments[time_unit]:
+        return exp / (2.0 * 60.0 * 60.0 * 24.0)
+    return 0.0
 
-    exp = header.get('EXPTIME')  # checking for variation in .fits header format
-    if exp:
-        exp = exp
+
+def ut_date(hdr, time_unit, exp):
+    """Converts the Gregorian Date to Julian Date from the header and returns it
+    along with the exposure offset
+    """
+    if time_unit == 'DATE-OBS':
+        greg_date = hdr[time_unit] if 'T' in hdr[time_unit] else f"{hdr[time_unit]}T{hdr['TIME-OBS']}"
     else:
-        exp = header.get('EXPOSURE')
+        greg_date = hdr[time_unit]
 
-    # Grab the BJD first
-    if 'BJD_TDB' in header:
-        julianTime = float(header['BJD_TDB'])
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['BJD_TDB']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-    elif "BJD_TBD" in header:  # looks like TheSky misspells BJD_TDB as BJD_TBD -> hardcoding this common misspelling
-        julianTime = float(header['BJD_TBD'])
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['BJD_TBD']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-    elif 'BJD' in header:
-        julianTime = float(header['BJD'])
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['BJD']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-    # then the DATE-OBS
-    elif "UT-OBS" in header:
-        gDateTime = header['UT-OBS']  # gets the gregorian date and time from the fits file header
-        dt = dup.parse(gDateTime)
-        atime = astropy.time.Time(dt)
-        julianTime = atime.jd
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['UT-OBS']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-    # Then Julian Date
-    elif 'JULIAN' in header:
-        julianTime = float(header['JULIAN'])
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['JULIAN']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-    # Then MJD-OBS last, as in the MicroObservatory headers, it has less precision
-    elif ("MJD-OBS" in header) and ("epoch" not in header.comments['MJD-OBS']):
-        julianTime = float(header["MJD-OBS"]) + 2400000.5
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['MJD-OBS']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
+    dt = dup.parse(greg_date)
+    atime = Time(dt)
+
+    julian_time = atime.jd
+    offset = exp_offset(hdr, time_unit, exp)
+
+    return julian_time + offset
+
+
+def julian_date(hdr, time_unit, exp):
+    """Returns Julian Date from the header along with the exposure offset.
+    If the image is taken from MicroObservatory (MJD-OBS),
+    add a timing offset (2400000.5) due to being less precise
+    """
+    time_offset = 2400000.5 if time_unit == 'MJD-OBS' else 0.0
+
+    julian_time = float(hdr[time_unit]) + time_offset
+    offset = exp_offset(hdr, time_unit, exp)
+
+    return julian_time + offset
+
+
+def img_time(hdr, var=False):
+    """Converts time from the header file to the Julian Date (JD, if needed)
+    and adds an exposure offset (if needed)
+
+    Parameters
+    ----------
+    hdr : astropy.io.fits.header.Header
+        A header file that includes the time from when the image was taken
+    var : bool
+        Flag for if only JD is needed due to Stellar Variability code (ignore BJD)
+
+    Returns
+    -------
+    float
+        Time of when the image was taken in the JD with exposure offset
+    """
+    time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
+
+    if not var:
+        time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
+
+    exp = hdr['EXPTIME'] if 'EXPTIME' in hdr else hdr['EXPOSURE']
+
+    hdr_time = next((time for time in time_list if time in hdr), None)
+
+    if hdr_time == 'MJD_OBS':
+        hdr_time = hdr_time if "epoch" not in hdr.comments[hdr_time] else 'DATE-OBS'
+
+    if hdr_time in ['UT-OBS', 'DATE-OBS']:
+        return ut_date(hdr, hdr_time, exp)
+    return julian_date(hdr, hdr_time, exp)
+
+
+def air_mass(hdr, ra, dec, lat, long, elevation, time):
+    """Scrapes or calculates the airmass at the time of when the image was taken.
+    Airmass(X): X = sec(z), z = secant of the zenith angle (angle between zenith and star)
+
+    Parameters
+    ----------
+    hdr : astropy.io.fits.header.Header
+        A header file that may include the airmass or altitude from when the image was taken
+    ra : float
+        Right Ascension
+    dec : float
+        Declination
+    lat : float
+        Latitude
+    long : float
+        Longitude
+    elevation : float
+        Elevation/Altitude
+
+    Returns
+    -------
+    float
+        Airmass value
+    """
+    if 'AIRMASS' in hdr:
+        am = float(hdr['AIRMASS'])
+    elif 'TELALT' in hdr:
+        alt = float(hdr['TELALT'])
+        cos_am = np.cos((np.pi / 180) * (90.0 - alt))
+        am = 1 / cos_am
     else:
-        if 'T' in header['DATE-OBS']:
-            gDateTime = header['DATE-OBS']  # gets the gregorian date and time from the fits file header
-        else:
-            gDateTime = f"{header['DATE-OBS']}T{header['TIME-OBS']}"
+        pointing = SkyCoord(f"{ra} {dec}", unit=(u.deg, u.deg), frame='icrs')
 
-        dt = dup.parse(gDateTime)
-        atime = astropy.time.Time(dt)
-        julianTime = atime.jd
-        # If the time is from the beginning of the observation, then need to calculate mid-exposure time
-        if "start" in header.comments['DATE-OBS']:
-            exptime_offset = exp / 2. / 60. / 60. / 24.  # assume exptime is in seconds for now
-
-    # If the mid-exposure time is given in the fits header, then no offset is needed to calculate the mid-exposure time
-    return julianTime + exptime_offset
-
-
-# Method that gets and returns the airmass from the fits file (Really the Altitude)
-def getAirMass(image_header, ra, dec, lati, longit, elevation):
-    # Grab airmass from image header; if not listed, calculate it from TELALT; if that isn't listed, then calculate it the hard way
-    if 'AIRMASS' in image_header:
-        am = float(image_header['AIRMASS'])
-    elif 'TELALT' in image_header:
-        alt = float(image_header['TELALT'])  # gets the airmass from the fits file header in (sec(z)) (Secant of the zenith angle)
-        cosam = np.cos((np.pi / 180) * (90.0 - alt))
-        am = 1 / cosam
-    else:
-        # pointing = SkyCoord(str(astropy.coordinates.Angle(raStr+" hours").deg)+" "+str(astropy.coordinates.Angle(decStr+" degrees").deg ), unit=(u.deg, u.deg), frame='icrs')
-        pointing = SkyCoord(str(ra) + " " + str(dec), unit=(u.deg, u.deg), frame='icrs')
-
-        location = EarthLocation.from_geodetic(lat=lati * u.deg, lon=longit * u.deg, height=elevation)
-        atime = astropy.time.Time(getJulianTime(image_header), format='jd', scale='utc', location=location)
-        pointingAltAz = pointing.transform_to(AltAz(obstime=atime, location=location))
-        am = float(pointingAltAz.secz)
+        location = EarthLocation.from_geodetic(lat=lat * u.deg, lon=long * u.deg, height=elevation)
+        time = Time(time, format='jd', scale='utc', location=location)
+        point_altaz = pointing.transform_to(AltAz(obstime=time, location=location))
+        am = float(point_altaz.secz)
     return am
 
 
-# Convert time units to BJD_TDB if pre-reduced file not in proper units
-def timeConvert(timeList, timeFormat, pDict, info_dict):
-    # Perform appropriate conversion for each time format if needed
-    if timeFormat == 'JD_UTC':
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList, ra=pDict['ra'], dec=pDict['dec'],
-                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-    elif timeFormat == 'MJD_UTC':
-        convertedTimes = utc_tdb.JDUTC_to_BJDTDB(timeList + 2400000.5, ra=pDict['ra'], dec=pDict['dec'],
-                                                 lat=info_dict['lat'], longi=info_dict['long'], alt=info_dict['elev'])
-    timeList = convertedTimes[0]
+def flux_conversion(fluxes, errors, flux_format):
+    """Converting differential magnitudes to fluxes and calculating its errors
+    """
+    conv = 1000.0 if flux_format == 'millimagnitude' else 1.0
 
-    return timeList
+    pos_err = 10.0 ** (-0.4 * ((fluxes + errors) / conv))
+    neg_err = 10.0 ** (-0.4 * ((fluxes - errors) / conv))
+    fluxes = 10.0 ** (-0.4 * (fluxes / conv))
 
+    pos_err_dist = abs(pos_err - fluxes)
+    neg_err_dist = abs(neg_err - fluxes)
+    mean_errors = (pos_err_dist * neg_err_dist) ** 0.5
 
-# Convert magnitude units to flux if pre-reduced file not in flux already
-def fluxConvert(fluxList, errorList, fluxFormat):
-    # If units already in flux, do nothing, perform appropriate conversions to flux otherwise
-    if fluxFormat == 'magnitude':
-        convertedPositiveErrors = 10. ** ((-1. * (fluxList + errorList)) / 2.5)
-        convertedNegativeErrors = 10. ** ((-1. * (fluxList - errorList)) / 2.5)
-        fluxList = 10. ** ((-1. * fluxList) / 2.5)
-    elif fluxFormat == 'millimagnitude':
-        convertedPositiveErrors = 10. ** ((-1. * ((fluxList + errorList) / 1000.)) / 2.5)
-        convertedNegativeErrors = 10. ** ((-1. * ((fluxList - errorList) / 1000.)) / 2.5)
-        fluxList = 10. ** (-1. * (fluxList / 1000.) / 2.5)
-
-    # Use distance from mean of upper/lower error bounds to calculate new sigma values
-    positiveErrorDistance = abs(convertedPositiveErrors - fluxList)
-    negativeErrorDistance = abs(convertedNegativeErrors - fluxList)
-    meanErrorList = (positiveErrorDistance * negativeErrorDistance) ** 0.5
-
-    return fluxList, meanErrorList
+    return fluxes, mean_errors
 
 
 # Check for difference between NEA and initialization file
@@ -475,115 +479,84 @@ def radec_hours_to_degree(ra, dec):
             dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
 
-class LimbDarkening:
+def standard_filter(ld, filter_):
+    if not filter_['filter']:
+        ld.standard_list()
 
-    def __init__(self, teff=None, teffpos=None, teffneg=None, met=None, metpos=None, metneg=None,
-                 logg=None, loggpos=None, loggneg=None, wl_min=None, wl_max=None, filter_type=None):
-        self.priors = {'T*': teff, 'T*_uperr': teffpos, 'T*_lowerr': teffneg,
-                       'FEH*': met, 'FEH*_uperr': metpos, 'FEH*_lowerr': metneg,
-                       'LOGG*': logg, 'LOGG*_uperr': loggpos, 'LOGG*_lowerr': loggneg}
-        self.filter_type = filter_type
-        self.wl_min = wl_min
-        self.wl_max = wl_max
-        self.fwhm = fwhm
-        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
-        self.filter_desc = None
-
-    def nonlinear_ld(self):
-        if self.filter_type and not (self.wl_min or self.wl_max):
-            self._standard()
-        elif self.wl_min or self.wl_max:
-            self._custom()
+    while True:
+        if not filter_['filter']:
+            filter_['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
+                                           "(EX: Johnson V, V, STB, RJ): ", type_=str)
+        if ld.check_standard(filter_):
+            break
         else:
-            opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
-                             "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
+            log_info("\nError: The entered filter is not in the provided list of standard filters.", warn=True)
+            filter_['filter'] = None
 
-            if opt == 'y':
-                opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
-                                 type_=int, values=[1, 2])
-                if opt == 1:
-                    self._standard()
-                elif opt == 2:
-                    self._custom()
-            else:
-                self._user_entered()
-        return self.ld0, self.ld1, self.ld2, self.ld3, self.filter_type, self.filter_desc, self.wl_min * 1000, self.wl_max * 1000
 
-    def _standard_list(self):
-        log_info("\n\n***************************")
-        log_info("Limb Darkening Coefficients")
-        log_info("***************************")
-        log_info("\nThe standard bands that are available for limb darkening parameters (https://www.aavso.org/filters)"
-                 "\nas well as filters for MObs and LCO (0.4m telescope) datasets:\n")
-        for val in self.fwhm.values():
-            log_info(f"\u2022 {val['desc']}:\n\t-Abbreviation: {val['name']}"
-                     f"\n\t-FWHM: ({val['fwhm'][0]}-{val['fwhm'][1]}) nm")
+def check_fwhm(wl, type_):
+    if not isinstance(wl, float):
+        try:
+            wl = float(wl)
+        except (ValueError, TypeError):
+            wl = user_input(f"FWHM {type_} wavelength (nm):", type_=float)
 
-    def _standard(self):
-        while True:
-            try:
-                if not self.filter_type:
-                    self._standard_list()
-                    self.filter_type = user_input("\nPlease enter in the Filter Name or Abbreviation "
-                                                  "(EX: Johnson V, V, STB, RJ): ", type_=str)
-                for val in self.fwhm.values():
-                    if self.filter_type.lower() in (val['desc'].lower(), val['name'].lower()) \
-                            and self.filter_type != 'N/A'.lower():
-                        self.filter_type = val['desc']
-                        break
-                else:
-                    raise KeyError
-                break
-            except KeyError:
-                log_info("\nError: The entered filter is not in the provided list of standard filters.", error=True)
-                self.filter_type = None
+    return wl
 
-        self.wl_min = float(self.fwhm[self.filter_type]['fwhm'][0])
-        self.wl_max = float(self.fwhm[self.filter_type]['fwhm'][1])
-        self.filter_desc = self.filter_type
-        self.filter_type = self.fwhm[self.filter_type]['name']
-        self._calculate_ld()
 
-    def _custom(self):
-        self.filter_type = 'N/A'
-        self.filter_desc = 'Custom'
-        if not self.wl_min:
-            self.wl_min = user_input("FWHM Minimum wavelength (nm):", type_=float)
-        if not self.wl_max:
-            self.wl_max = user_input("FWHM Maximum wavelength (nm):", type_=float)
-        self._calculate_ld()
+def custom_range(ld, filter_):
+    filter_['filter'] = "Custom"
 
-    def _user_entered(self):
-        self.filter_type = 'N/A'
-        self.filter_desc = 'Custom'
-        ld_0 = user_input("\nEnter in your first nonlinear term:", type_=float)
-        ld0_unc = user_input("Enter in your first nonlinear term uncertainty:", type_=float)
-        ld_1 = user_input("\nEnter in your second nonlinear term:", type_=float)
-        ld1_unc = user_input("Enter in your second nonlinear term uncertainty:", type_=float)
-        ld_2 = user_input("\nEnter in your third nonlinear term:", type_=float)
-        ld2_unc = user_input("Enter in your third nonlinear term uncertainty:", type_=float)
-        ld_3 = user_input("\nEnter in your fourth nonlinear term:", type_=float)
-        ld3_unc = user_input("Enter in your fourth nonlinear term uncertainty:", type_=float)
-        self.ld0, self.ld1, self.ld2, self.ld3 = (ld_0, ld0_unc), (ld_1, ld1_unc), (ld_2, ld2_unc), (ld_3, ld3_unc)
+    while True:
+        filter_['wl_min'] = check_fwhm(filter_['wl_min'], 'Minimum')
+        filter_['wl_max'] = check_fwhm(filter_['wl_max'], 'Maximum')
 
-        log.debug(f"Filter Abbreviation: {self.filter_type}")
-        log.debug(f"User-defined nonlinear limb-darkening coefficients: {ld_0}+/-{ld0_unc}, {ld_1}+/-{ld1_unc}, "
-                  f"{ld_2}+/-{ld2_unc}, {ld_3}+/-{ld3_unc}")
+        if filter_['wl_max'] < filter_['wl_min']:
+            log_info("\nError: The entered FWHM upper value is less than the lower value. Please try again.", warn=True)
+            filter_['wl_min'] = filter_['wl_max'] = None
+        else:
+            break
 
-    def _calculate_ld(self):
-        self.wl_min = self.wl_min / 1000
-        self.wl_max = self.wl_max / 1000
-        ld_params = createldgrid(np.array([self.wl_min]), np.array([self.wl_max]), self.priors)
-        self.ld0 = ld_params['LD'][0][0], ld_params['ERR'][0][0]
-        self.ld1 = ld_params['LD'][1][0], ld_params['ERR'][1][0]
-        self.ld2 = ld_params['LD'][2][0], ld_params['ERR'][2][0]
-        self.ld3 = ld_params['LD'][3][0], ld_params['ERR'][3][0]
+    ld.set_filter('N/A', filter_['filter'], filter_['wl_min'], filter_['wl_max'])
 
-        log.debug("EXOTIC-calculated nonlinear limb-darkening coefficients: ")
-        log.debug(f"{ld_params['LD'][0][0]} +/- + {ld_params['ERR'][0][0]}")
-        log.debug(f"{ld_params['LD'][1][0]} +/- + {ld_params['ERR'][1][0]}")
-        log.debug(f"{ld_params['LD'][2][0]} +/- + {ld_params['ERR'][2][0]}")
-        log.debug(f"{ld_params['LD'][3][0]} +/- + {ld_params['ERR'][3][0]}")
+
+def user_entered_ld(ld, filter_):
+    order = ['first', 'second', 'third', 'fourth']
+
+    input_list = [(f"\nEnter in your {order[i]} nonlinear term:",
+                   f"\nEnter in your {order[i]} nonlinear term uncertainty:") for i in range(len(order))]
+    ld_ = [(user_input(input_[0], type_=float), user_input(input_[1], type_=float)) for input_ in input_list]
+
+    custom_range(ld, filter_)
+    ld.set_ld(ld_[0], ld_[1], ld_[2], ld_[3])
+
+
+def nonlinear_ld(ld, filter_):
+    u_e = False
+
+    if (filter_['filter'] and filter_['filter'].upper() != 'N/A' and ld.check_standard(filter_)) and \
+            not (filter_['wl_min'] or filter_['wl_max']):
+        pass
+    elif filter_['wl_min'] or filter_['wl_max']:
+        custom_range(ld, filter_)
+    else:
+        opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
+                         "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
+
+        if opt == 'y':
+            opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
+                             type_=int, values=[1, 2])
+            if opt == 1:
+                filter_['filter'] = None
+                standard_filter(ld, filter_)
+            elif opt == 2:
+                custom_range(ld, filter_)
+        else:
+            user_entered_ld(ld, filter_)
+            u_e = True
+
+    if not u_e:
+        ld.calculate_ld()
 
 
 def corruption_check(files):
@@ -800,37 +773,48 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
     return image_data
 
 
-def vsp_query(ra, dec, file, filter='V', fov=18.5, maglimit=14):
-    comp_stars = {}
+def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
     stars_count = 0
-    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra}&dec={dec}&fov={fov}&maglimit={maglimit}"
+    comp_stars = {}
+
+    wcs_hdr = search_wcs(file)
+    fov = (img_scale * max(axis)) / 60
+    ra, dec = wcs_hdr.pixel_to_world_values(axis[0] // 2, axis[1] // 2)
+
+    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
     data = result.json()
     chart_id = data['chartid']
     data = pd.json_normalize(data['photometry'])
 
-    for label in data['label']:
-        star = data[data['label'] == label]
-        for bands in star['bands']:
-            for dict_ in bands:
-                if dict_['band'] == filter:
-                    ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
-                    pix_ra, pix_dec = search_wcs(file).world_to_pixel_values(ra, dec)
-                    if pix_ra >= 1 and pix_dec >= 1:
-                        comp_stars[label] = {
-                            'xy': [int(pix_ra.min()), int(pix_dec.min())],
-                            'mag': dict_['mag'],
-                            'err': dict_['error']
-                        }
-                        stars_count += 1
+    if obs_filter == "CV":
+        obs_filter = "V"
 
-        if stars_count == 2:
-            break
+    if not data.empty:
+        for label in data['label']:
+            star = data[data['label'] == label]
+            for bands in star['bands']:
+                for dict_ in bands:
+                    if dict_['band'] == obs_filter:
+                        ra, dec = radec_hours_to_degree(star['ra'].values[0], star['dec'].values[0])
+                        pix_ra, pix_dec = wcs_hdr.world_to_pixel_values(ra, dec)
+                        if (pix_ra < axis[0] and pix_dec < axis[1]) and (pix_ra > 1 and pix_dec > 1):
+                            comp_stars[label] = {
+                                'xy': [int(pix_ra.min()), int(pix_dec.min())],
+                                'mag': dict_['mag'],
+                                'err': dict_['error']
+                            }
+                            stars_count += 1
+            if stars_count == 2:
+                break
+
+    if not comp_stars:
+        log_info("\nNo comparison stars were gathered from AAVSO.\n")
 
     return comp_stars, chart_id
 
 
-def check_comps(comp_stars, vsp_comp_stars, imsf=10):
+def check_comps(comp_stars, vsp_comp_stars, tol=10):
     comp_stars_list = comp_stars.copy()
 
     vsp_pix = [comp['xy'] for comp in vsp_comp_stars.values()]
@@ -838,8 +822,8 @@ def check_comps(comp_stars, vsp_comp_stars, imsf=10):
     for vsp_comp in vsp_pix:
         inlist = False
         for i, comp in enumerate(comp_stars):
-            if comp[0] - imsf <= vsp_comp[0] <= comp[0] + imsf \
-                    and comp[1] - imsf <= vsp_comp[1] <= comp[1] + imsf:
+            if comp[0] - tol <= vsp_comp[0] <= comp[0] + tol \
+                    and comp[1] - tol <= vsp_comp[1] <= comp[1] + tol:
                 comp_stars_list[i] = vsp_comp
                 inlist = True
 
@@ -896,31 +880,35 @@ def transformation(image_data, file_name, roi=1):
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 
-def get_pixel_scale(wcs_header, header, pixel_init):
-    astrometry_scale = None
+def get_img_scale(hdr, wcs_file, pixel_init):
+    if wcs_file:
+        wcs_hdr = fits.getheader(wcs_file)
+        astrometry_scale = [key.value.split(' ') for key in wcs_hdr._cards if 'scale:' in str(key.value)]
 
-    if wcs_header:
-        astrometry_scale = [key.value.split(' ') for key in wcs_header._cards if 'scale:' in str(key.value)]
-
-    if astrometry_scale:
-        image_scale_num = astrometry_scale[0][1]
-        image_scale_units = astrometry_scale[0][2]
-        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
-    elif 'IM_SCALE' in header:
-        image_scale_num = header['IM_SCALE']
-        image_scale_units = header.comments['IM_SCALE']
-        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
-    elif 'PIXSCALE' in header:
-        image_scale_num = header['PIXSCALE']
-        image_scale_units = header.comments['PIXSCALE']
-        image_scale = f"Image scale in {image_scale_units}: {image_scale_num}"
+        if astrometry_scale:
+            img_scale_num = astrometry_scale[0][1]
+            img_scale_units = astrometry_scale[0][2]
+        else:
+            wcs = WCS(wcs_hdr).proj_plane_pixel_scales()
+            img_scale_num = (wcs[0].value + wcs[1].value) / 2
+            img_scale_units = "arsec/pixel"
+    elif 'IM_SCALE' in hdr:
+        img_scale_num = hdr['IM_SCALE']
+        img_scale_units = hdr.comments['IM_SCALE']
+    elif 'PIXSCALE' in hdr:
+        img_scale_num = hdr['PIXSCALE']
+        img_scale_units = hdr.comments['PIXSCALE']
     elif pixel_init:
-        image_scale = f"Image scale in arcsecs/pixel: {pixel_init}"
+        img_scale_num = pixel_init
+        img_scale_units = "arsec/pixel"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
-        image_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
-        image_scale = f"Image scale in arcsecs/pixel: {image_scale_num}"
-    return image_scale
+        img_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
+        img_scale_units = "arsec/pixel"
+
+    img_scale = f"Image scale in {img_scale_units}: {img_scale_num}"
+
+    return img_scale, float(img_scale_num)
 
 
 def exp_time_med(exptimes):
@@ -959,7 +947,7 @@ def find_target(target, hdufile, verbose=False):
         pm_ra_cosdec=result['pmra'][0] * u.mas / u.yr,
         pm_dec=result['pmdec'][0] * u.mas / u.yr,
         frame="icrs",
-        obstime=astropy.time.Time("2000-1-1T00:00:00")
+        obstime=Time("2000-1-1T00:00:00")
     )
 
     hdu = fits.open(hdufile)[0]
@@ -973,7 +961,7 @@ def find_target(target, hdufile, verbose=False):
     if len(dateobs.split('-')) == 4:
         dateobs = '-'.join(dateobs.split('-')[:-1])
 
-    t = astropy.time.Time(dateobs, format='isot', scale='utc')
+    t = Time(dateobs, format='isot', scale='utc')
     coordpm = coord.apply_space_motion(new_obstime=t)
 
     # wcs coordinate translation
@@ -1120,16 +1108,12 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
 
 def jd_bjd(non_bjd, p_dict, info_dict):
     try:
-        resultos = utc_tdb.JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'],
-                                           lat=info_dict['lat'], longi=info_dict['long'],
-                                           alt=info_dict['elev'])
-        goodTimes = resultos[0]
+        goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
+                                    longi=info_dict['long'], alt=info_dict['elev'])[0]
     except:
-        targetloc = astropy.coordinates.SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg),
-                                                 frame='icrs')
-        obsloc = astropy.coordinates.EarthLocation(lat=info_dict['lat'], lon=info_dict['long'],
-                                                   height=info_dict['elev'])
-        timesToConvert = astropy.time.Time(non_bjd, format='jd', scale='utc', location=obsloc)
+        targetloc = SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg), frame='icrs')
+        obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
+        timesToConvert = Time(non_bjd, format='jd', scale='utc', location=obsloc)
         ltt_bary = timesToConvert.light_travel_time(targetloc)
         time_barycentre = timesToConvert.tdb + ltt_bary
         goodTimes = time_barycentre.value
@@ -1137,10 +1121,10 @@ def jd_bjd(non_bjd, p_dict, info_dict):
     return goodTimes
 
 
-def variability_calc(ref_flux, ckey, lmfit, good_times):
-    intx_times = np.intersect1d(np.array(good_times), np.array(ref_flux[ckey]['myfit'].time))
+def variability_calc(ref_flux, ckey, lmfit, times):
+    intx_times = np.intersect1d(np.array(times), np.array(ref_flux[ckey]['myfit'].time))
     comp_mask = [True if i in intx_times else False for i in ref_flux[ckey]['myfit'].time]
-    tar_mask = [True if i in intx_times else False for i in good_times]
+    tar_mask = [True if i in intx_times else False for i in times]
 
     OOT = (np.array(ref_flux[ckey]['myfit'].transit)[comp_mask] == 1)  # possibly fix this to intersect both
     OOT_scatter = np.std((np.array(ref_flux[ckey]['myfit'].data) / np.array(ref_flux[ckey]['myfit'].airmass_model))[comp_mask])
@@ -1162,27 +1146,27 @@ def variability_calc(ref_flux, ckey, lmfit, good_times):
     return comp_dict, OOT
 
 
-def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save):
+def find_comp(ref_flux, lmfit, times, ref_comp, comp_stars, vsp_comp_stars, save):
     labels = {}
 
     for key, value in vsp_comp_stars.items():
         labels[tuple(value['xy'])] = key
 
-    markerlist = ['.','v','s','D','^']
-    colorlist = ["firebrick","darkorange","olivedrab","lightseagreen","steelblue","rebeccapurple","mediumvioletred"]
+    markerlist = ['.', 'v', 's', 'D', '^']
+    colorlist = ["firebrick", "darkorange", "olivedrab", "lightseagreen", "steelblue", "rebeccapurple", "mediumvioletred"]
     k = 0
+
     for i, ckey in enumerate(ref_flux.keys()):
         if i >= len(colorlist):
             i = 0
         if k >= len(markerlist):
             k = 0
-        ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit, good_times)
-        plt.errorbar(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], fmt = markerlist[k], color = colorlist[i],
-            label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
-        k+=1
+        ref_comp[ckey], OOT = variability_calc(ref_flux, ckey, lmfit, times)
+        plt.errorbar(ref_comp[ckey]['times'][OOT], ref_comp[ckey]['res'], fmt=markerlist[k], color=colorlist[i],
+                     label=f"{labels[tuple(ref_flux[ckey]['xy'])]}")
+        k += 1
     plot_variable_residuals(save)
     std_dict = {}
-
 
     for key, value in ref_comp.items():
         std_dict[key] = np.std(value['res'])
@@ -1192,24 +1176,15 @@ def find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars,
     return comp_stars[min_std], ref_comp
 
 
-def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save, s_name, bjd_inc,
-                        p_dict, info_dict):
+def stellar_variability(ref_flux, lmfit, times, comp_stars, id, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
     ref_comp = {}
     idx_list, vsp_params = [], []
 
-    if not bjd_inc:
-        good_times = jd_bjd(lmfit.time, p_dict, info_dict)
-
-        for ckey in ref_flux.keys():
-            ref_flux[ckey]['myfit'].time = jd_bjd(ref_flux[ckey]['myfit'].time, p_dict, info_dict)
-    else:
-        good_times = lmfit.time
-
-    if not best_comp or (best_comp not in vsp_ind):
-        comp_xy, ref_comp = find_comp(ref_flux, lmfit, good_times, ref_comp, comp_stars, vsp_comp_stars, save)
+    if best_comp is None or (best_comp not in vsp_ind):
+        comp_xy, ref_comp = find_comp(ref_flux, lmfit, times, ref_comp, comp_stars, vsp_comp_stars, save)
     else:
         comp_xy = comp_stars[best_comp]
-        ref_comp[best_comp], OOT = variability_calc(ref_flux, best_comp, lmfit, good_times)
+        ref_comp[best_comp], OOT = variability_calc(ref_flux, best_comp, lmfit, times)
 
     comp_star = [vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_xy == vsp_comp_stars[ckey]['xy']][0]
 
@@ -1217,7 +1192,7 @@ def stellar_variability(ref_flux, lmfit, comp_stars, id, vsp_comp_stars, vsp_ind
 
     comp_flux, ckey = [(ref_flux[ckey], ckey) for ckey in ref_flux.keys() if comp_xy == ref_flux[ckey]['xy']][0]
 
-    intx_times = np.intersect1d(np.array(good_times), np.array(comp_flux['myfit'].time))
+    intx_times = np.intersect1d(np.array(times), np.array(comp_flux['myfit'].time))
     comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
     OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
 
@@ -1310,7 +1285,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
         while header['NAXIS'] == 0:
             extension += 1
             header = fits.getheader(filename=ifile, ext=extension)
-        times.append(getJulianTime(header))
+        times.append(img_time(header))
 
     si = np.argsort(times)
     inputfiles = np.array(inputfiles)[si]
@@ -1362,7 +1337,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
             image_header = hdul[extension].header
 
         # TIME
-        timeVal = getJulianTime(image_header)
+        timeVal = img_time(image_header)
         timeList.append(timeVal)
 
         # IMAGES
@@ -1496,6 +1471,11 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
     upper = prior['tmid'] + np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
     lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
+
+    if upper > prior['tmid'] + 0.25 * prior['per']:
+        upper = prior['tmid'] + 0.25 * prior['per']
+    if lower < prior['tmid'] - 0.25 * prior['per']:
+        lower = prior['tmid'] - 0.25 * prior['per']
 
     if np.floor(arrayPhases).max() - np.floor(arrayPhases).min() == 0:
         log_info("\nWarning:", warn=True)
@@ -1746,13 +1726,18 @@ def main():
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
-        ld_obj = LimbDarkening(teff=pDict['teff'], teffpos=pDict['teffUncPos'], teffneg=pDict['teffUncNeg'],
-                               met=pDict['met'], metpos=pDict['metUncPos'], metneg=pDict['metUncNeg'],
-                               logg=pDict['logg'], loggpos=pDict['loggUncPos'], loggneg=pDict['loggUncNeg'],
-                               wl_min=exotic_infoDict['wl_min'], wl_max=exotic_infoDict['wl_max'],
-                               filter_type=exotic_infoDict['filter'])
-        ld0, ld1, ld2, ld3, exotic_infoDict['filter'], exotic_infoDict['filter_desc'], exotic_infoDict['wl_min'], \
-            exotic_infoDict['wl_max'] = ld_obj.nonlinear_ld()
+        ld_obj = LimbDarkening(pDict)
+        nonlinear_ld(ld_obj, exotic_infoDict)
+
+        exotic_infoDict['filter'] = ld_obj.filter_type
+        exotic_infoDict['filter_desc'] = ld_obj.filter_desc
+        exotic_infoDict['wl_min'] = ld_obj.wl_min
+        exotic_infoDict['wl_max'] = ld_obj.wl_max
+
+        ld0 = ld_obj.ld0
+        ld1 = ld_obj.ld1
+        ld2 = ld_obj.ld2
+        ld3 = ld_obj.ld3
         ld = [ld0[0], ld1[0], ld2[0], ld3[0]]
 
         # check for Nans + Zeros
@@ -1781,19 +1766,20 @@ def main():
             # FLUX DATA EXTRACTION AND MANIPULATION
             #########################################
 
-            timeList, airMassList, exptimes = [], [], []
+            airMassList, exptimes = [], []
 
             inputfiles = corruption_check(exotic_infoDict['images'])
 
             # time sort images
-            times = []
-            for ifile in inputfiles:
+            times, jd_times = [], []
+            for file in inputfiles:
                 extension = 0
-                header = fits.getheader(filename=ifile, ext=extension)
+                header = fits.getheader(filename=file, ext=extension)
                 while header['NAXIS'] == 0:
                     extension += 1
-                    header = fits.getheader(filename=ifile, ext=extension)
-                times.append(getJulianTime(header))
+                    header = fits.getheader(filename=file, ext=extension)
+                times.append(img_time(header))
+                jd_times.append(img_time(header, var=True))
 
             # checks for MOBS data
             mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
@@ -1805,6 +1791,9 @@ def main():
                         exotic_infoDict['second_obs'] = "MOBS"
 
             si = np.argsort(times)
+            times = np.array(times)[si]
+            jd_times = np.array(jd_times)[si]
+
             inputfiles = np.array(inputfiles)[si]
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
@@ -1823,6 +1812,7 @@ def main():
 
             inputfiles = inputfiles[inc:]
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
+            img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
             compStarList = exotic_infoDict['comp_stars']
             tar_radec, comp_radec = None, []
             vsp_list = []
@@ -1854,7 +1844,8 @@ def main():
                         exotic_infoDict['comp_stars'].remove(comp)
 
                 if exotic_infoDict['aavso_comp'] == 'y':
-                    vsp_comp_stars, chart_id = vsp_query(pDict['ra'], pDict['dec'], wcs_file, filter=exotic_infoDict['filter'])
+                    vsp_comp_stars, chart_id = vsp_query(wcs_file, [header['NAXIS1'], header['NAXIS2']],
+                                                         exotic_infoDict['filter'], img_scale)
                     exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
 
                 compStarList = exotic_infoDict['comp_stars']
@@ -1895,21 +1886,10 @@ def main():
                     extension += 1
                     image_header = hdul[extension].header
 
-                # TIME
-                timeVal = getJulianTime(image_header)
-                timeList.append(timeVal)
+                airMassList.append(air_mass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
+                                            exotic_infoDict['elev'], jd_times[i]))
 
-                # AIRMASS
-                airMass = getAirMass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
-                                     exotic_infoDict['elev'])  # gets the airmass at the time the image was taken
-                airMassList.append(airMass)  # adds that airmass value to the list of airmasses
-
-                # EXPOSURE_TIME
-                exp = image_header.get('EXPTIME')  # checking for variation in .fits header format
-                if exp:
-                    exptimes.append(image_header['EXPTIME'])
-                else:
-                    exptimes.append(image_header['EXPOSURE'])
+                exptimes.append(image_header['EXPTIME'] if 'EXPTIME' in image_header else image_header['EXPOSURE'])
 
                 # IMAGES
                 imageData = hdul[extension].data
@@ -1918,8 +1898,6 @@ def main():
                 imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
 
                 if i == 0:
-                    image_scale = get_pixel_scale(wcs_header, image_header, exotic_infoDict['pixel_scale'])
-
                     firstImage = np.copy(imageData)
 
                 sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
@@ -2012,10 +1990,9 @@ def main():
                 log_info("No images to fit...check reference image for alignment (first image of sequence)")
 
             # convert to numpy arrays
-            times = np.array(timeList)[~badmask]
+            times = times[~badmask]
             airmass = np.array(airMassList)[~badmask]
             psf_data["target"] = psf_data["target"][~badmask]
-            si = np.argsort(times)
 
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
@@ -2209,7 +2186,13 @@ def main():
             # Take the BJD times from the image headers
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
-                bjd_inc = True
+
+                index_list = np.intersect1d(times, nonBJDTimes)
+                good_jd_times = [jd_times[i] for i in index_list]
+                for key, val in ref_flux_dict.items():
+                    index_list = np.intersect1d(times, ref_flux_dict[key]['myfit'].time)
+                    ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
+
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:
                 log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
@@ -2219,7 +2202,8 @@ def main():
                 animate_toggle(True)
                 goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
                 animate_toggle()
-                bjd_inc = False
+
+                good_jd_times = nonBJDTimes
 
             # sigma clip
             si = np.argsort(goodTimes)
@@ -2251,7 +2235,7 @@ def main():
             goodAirmasses = goodAirmasses[si][gi]
 
             plot_fov(minAperture, minAnnulus, sigma, finXTargCent[0], finYTargCent[0], finXRefCent[0], finYRefCent[0],
-                     firstImage, image_scale, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
             # Centroid position plots
             plot_centroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
@@ -2259,7 +2243,7 @@ def main():
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
-            # forPhaseResult = utc_tdb.JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
+            # forPhaseResult = JDUTC_to_BJDTDB(tMidtoC, ra=raDeg, dec=decDeg, lat=lati, longi=longit, alt=2000)
             # bjdMidTOld = float(forPhaseResult[0])
             # bjdMidTOld = pDict['midT']
 
@@ -2277,14 +2261,15 @@ def main():
                       goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
                       exotic_infoDict['date'])
 
-            if not bestCompStar:
-                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
-                                                 vsp_num, bestCompStar, exotic_infoDict['save'], pDict['sName'], bjd_inc,
-                                                 pDict, exotic_infoDict)
-            else:
-                vsp_params = stellar_variability(ref_flux_dict, bestlmfit, compStarList, chart_id, vsp_comp_stars,
-                                                 vsp_num, bestCompStar - 1, exotic_infoDict['save'], pDict['sName'],
-                                                 bjd_inc, pDict, exotic_infoDict)
+            if vsp_comp_stars:
+                if not bestCompStar:
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_jd_times, compStarList, chart_id,
+                                                     vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'],
+                                                     pDict['sName'])
+                else:
+                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, good_jd_times, compStarList, chart_id,
+                                                     vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
+                                                     pDict['sName'])
 
             log_info("\n\nOutput File Saved")
         else:
@@ -2308,11 +2293,12 @@ def main():
             goodAirmasses = np.array(goodAirmasses)
 
             if exotic_infoDict['file_time'] != 'BJD_TDB':
-                goodTimes = timeConvert(goodTimes, exotic_infoDict['file_time'], pDict, exotic_infoDict)
+                time_offset = 2400000.5 if exotic_infoDict['file_time'] == 'MJD_UTC' else 0.0
+                goodTimes = jd_bjd([time_ + time_offset for time_ in goodTimes], pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
                 print("check flux convert")
-                goodFluxes, goodNormUnc = fluxConvert(goodFluxes, goodNormUnc, exotic_infoDict['file_units'])
+                goodFluxes, goodNormUnc = flux_conversion(goodFluxes, goodNormUnc, exotic_infoDict['file_units'])
 
         # for k in myfit.bounds.keys():
         #     print(f"{myfit.parameters[k]:.6f} +- {myfit.errors[k]}")
@@ -2348,10 +2334,10 @@ def main():
         lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
 
         # clip bounds so they're within 1 orbit
-        if upper > prior['tmid'] + 0.5*prior['per']:
-            upper = prior['tmid'] + 0.5*prior['per']
-        if lower < prior['tmid'] - 0.5*prior['per']:
-            lower = prior['tmid'] - 0.5*prior['per']
+        if upper > prior['tmid'] + 0.25*prior['per']:
+            upper = prior['tmid'] + 0.25*prior['per']
+        if lower < prior['tmid'] - 0.25*prior['per']:
+            lower = prior['tmid'] - 0.25*prior['per']
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)

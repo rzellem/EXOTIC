@@ -1928,7 +1928,10 @@ def main():
 
                         pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
                         cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        if cx > 0 and cy > 0:
+                            psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        else:
+                            psf_data[ckey][i] = np.empty(7) * np.nan
 
                         if i != 0:
                             if not (tar_comp_dist[ckey][0] - 1 <= abs(int(psf_data[ckey][i][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 1 and
@@ -1951,7 +1954,10 @@ def main():
                         ckey = f"comp{j + 1}"
 
                         cx, cy = tform(coord)[0]
-                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        if cx > 0 and cy > 0:
+                            psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
+                        else:
+                            psf_data[ckey][i] = np.empty(7) * np.nan
 
                         if i == 0:
                             tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
@@ -1973,10 +1979,13 @@ def main():
                         # loop through comp stars
                         for j in range(len(compStarList)):
                             ckey = f"comp{j + 1}"
-                            aper_data[ckey][i][a][an], aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                    psf_data[ckey][i, 0],
-                                                                                                    psf_data[ckey][i, 1],
-                                                                                                    aper, annulus)
+                            if not np.isnan(psf_data[ckey][i][0]):
+                                aper_data[ckey][i][a][an], \
+                                aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData, psf_data[ckey][i, 0],
+                                                                             psf_data[ckey][i, 1], aper, annulus)
+                            else:
+                                aper_data[ckey][i][a][an] = np.nan
+                                aper_data[f"{ckey}_bg"][i][a][an] = np.nan
 
                 # close file + delete from memory
                 hdul.close()
@@ -2099,9 +2108,10 @@ def main():
                     # try to fit data with comp star
                     for j in range(len(compStarList)):
                         ckey = f"comp{j + 1}"
-                        cFlux = aper_data[ckey][:, a, an]
+                        aper_mask = np.isfinite(aper_data[ckey][:, a, an])
+                        cFlux = aper_data[ckey][aper_mask][:, a, an]
 
-                        myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
 
                         if j in vsp_num:
                             temp_ref_flux[j] = {
@@ -2134,17 +2144,17 @@ def main():
                             nonBJDTimes = np.copy(myfit.time)
                             # nonBJDPhases = np.copy(myfit.phase)
                             goodAirmasses = np.copy(myfit.airmass)
-                            goodTargets = tFlux
+                            goodTargets = tFlux[aper_mask]
                             goodReferences = cFlux
-                            goodTUnc = tFlux ** 0.5
+                            goodTUnc = tFlux[aper_mask] ** 0.5
                             goodRUnc = cFlux ** 0.5
                             # goodResids = myfit.residuals
                             bestlmfit = myfit
 
-                            finXTargCent = psf_data["target"][:, 0]
-                            finYTargCent = psf_data["target"][:, 1]
-                            finXRefCent = psf_data[ckey][:, 0]
-                            finYRefCent = psf_data[ckey][:, 1]
+                            finXTargCent = psf_data["target"][aper_mask][:, 0]
+                            finYTargCent = psf_data["target"][aper_mask][:, 1]
+                            finXRefCent = psf_data[ckey][aper_mask][:, 0]
+                            finYRefCent = psf_data[ckey][aper_mask][:, 1]
 
                         if ref_flux_opt or ref_flux_opt2:
                             if j in vsp_num:
@@ -2389,8 +2399,8 @@ def main():
         log_info("\n*********************************************************")
         log_info("FINAL PLANETARY PARAMETERS\n")
         log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
-        log_info(f"  Radius Ratio (Planet/Star) [Rp/Rs]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
-        log_info(f"           Transit depth [(Rp/Rs)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
+        log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
+        log_info(f"           Transit depth [(Rp/R*)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
         log_info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
@@ -2417,7 +2427,7 @@ def main():
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
         if vsp_params:
-            VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, durs, vsp_params)
+            VSPoutput_files = VSPOutputFiles(myfit, pDict, exotic_infoDict, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 

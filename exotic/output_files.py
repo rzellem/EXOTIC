@@ -38,7 +38,7 @@ class OutputFiles:
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
                                        f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
-            "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
+            "Ratio of Planet to Stellar Radius (Rp/R*)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
                                                          f"{round_to_2(self.fit.errors['rprs'])}",
             "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
                                        f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
@@ -95,6 +95,7 @@ class OutputFiles:
                     f"#FILTER={self.i_dict['filter']}\n"
                     f"#FILTER-XC={dumps(filter_dict)}\n"
                     f"#PRIORS=Period={round_to_2(self.p_dict['pPer'], self.p_dict['pPerUnc'])} +/- {round_to_2(self.p_dict['pPerUnc'])}"
+                    f",Rp/R*={round_to_2(self.p_dict['rprs'], self.p_dict['rprsUnc'])} +/- {round_to_2(self.p_dict['rprsUnc'])}"
                     f",a/R*={round_to_2(self.p_dict['aRs'], self.p_dict['aRsUnc'])} +/- {round_to_2(self.p_dict['aRsUnc'])}"
                     f",inc={round_to_2(self.p_dict['inc'], self.p_dict['incUnc'])} +/- {round_to_2(self.p_dict['incUnc'])}"
                     f",ecc={round_to_2(self.p_dict['ecc'])}"
@@ -129,11 +130,10 @@ class OutputFiles:
 
 
 class VSPOutputFiles:
-    def __init__(self, fit, p_dict, i_dict, durs, vsp_params):
+    def __init__(self, fit, p_dict, i_dict, vsp_params):
         self.fit = fit
         self.p_dict = p_dict
         self.i_dict = i_dict
-        self.durs = durs
         self.dir = Path(self.i_dict['save'])
         self.vsp_params = vsp_params
 
@@ -168,6 +168,10 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'value': str(round_to_2(planet_dict['pPer'], planet_dict['pPerUnc'])),
             'uncertainty': str(round_to_2(planet_dict['pPerUnc'])) if planet_dict['pPerUnc'] else planet_dict['pPerUnc'],
             'units': "days"
+        },
+        'Rp/R*': {
+            'value': str(round_to_2(planet_dict['rprs'], planet_dict['rprsUnc'])),
+            'uncertainty': str(round_to_2(planet_dict['rprsUnc'])) if planet_dict['rprsUnc'] else planet_dict['rprsUnc'],
         },
         'a/R*': {
             'value': str(round_to_2(planet_dict['aRs'], planet_dict['aRsUnc'])),

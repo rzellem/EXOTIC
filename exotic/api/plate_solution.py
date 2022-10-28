@@ -79,7 +79,7 @@ class PlateSolution:
 
         job_url = self._get_url(f"jobs/{job_id}")
         download_url = self.api_url.replace("/api/", f"/wcs_file/{job_id}/")
-        wcs_file = Path(self.directory) / "wcs.fits"
+        wcs_file = Path(self.directory) / "temp" / "wcs.fits"
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
             return PlateSolution.fail('Job Status')

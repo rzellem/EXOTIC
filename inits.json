@@ -44,8 +44,8 @@
             "Plate Solution? (y/n)": "y",
             "Add Comparison Stars from AAVSO? (y/n)": "y",
 
-            "Target Star X & Y Pixel": [424, 286],
-            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]
+            "Target Star X & Y Pixel": "[424, 286]",
+            "Comparison Star(s) X & Y Pixel": "[[465, 183], [512, 263], [], [], [], [], [], [], [], []]"
     },
     "planetary_parameters": {
             "Target Star RA": "02:04:10",

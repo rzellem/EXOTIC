@@ -170,7 +170,7 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'units': "days"
         },
         'Rp/R*': {
-            'value': str(round_to_2(planet_dict['rprs'], planet_dict['rprs'])),
+            'value': str(round_to_2(planet_dict['rprs'], planet_dict['rprsUnc'])),
             'uncertainty': str(round_to_2(planet_dict['rprsUnc'])) if planet_dict['rprsUnc'] else planet_dict['rprsUnc'],
         },
         'a/R*': {

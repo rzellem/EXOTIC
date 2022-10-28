@@ -11,7 +11,7 @@
 # ######################## INSTALL PRODUCT REQUIREMENTS ########################
 # pip3 --exists-action w install -r requirements.txt
 # ################################### CLEAN  ###################################
-# rm -r build dist __pycache__ *.egg* .egg* ; git checkout exotic/version.py ; pip3 uninstall exotic
+# rm -r build dist __pycache__ *.egg* .egg* ; git checkout exotic/version.py ; pip3 uninstall exotic -y
 # ############################## RELEASE PRODUCT  ##############################
 # (1) manually update exotic/version.py, commit and push
 # git add exotic/version.py && git commit -m "#<ticket>: Updated version for release" && git push

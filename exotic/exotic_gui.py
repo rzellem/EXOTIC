@@ -791,7 +791,9 @@ def main():
 
                 aavsocomp = tk.BooleanVar()
                 aavsocomp_check = tk.Checkbutton(root, text="Add Comparison Stars Automatically"
-                                                            "\nfrom AAVSO's VSP API",
+                                                            "\nfrom AAVSO's VSP API for Stellar"
+                                                            "\nVariability Reduction \n"
+                                                            "(must have plate solution)",
                                                   variable=aavsocomp, onvalue=True, offvalue=False, justify=tk.LEFT)
                 aavsocomp_check.grid(row=i, column=j, sticky=tk.W, pady=2)
                 i += 1

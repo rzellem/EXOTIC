@@ -144,7 +144,7 @@ class VSPOutputFiles:
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
-                    "#DATE_TYPE=BJD_TDB\n"  # fixed
+                    "#DATE_TYPE=JD\n"  # fixed
                     f"#OBSTYPE={self.i_dict['camera']}\n")
             f.write(
                 "# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science "

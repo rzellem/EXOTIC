@@ -70,7 +70,7 @@ class OutputFiles:
         with params_file.open('w') as f:
             dump(final_params, f, indent=4)
 
-    def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3):
+    def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3, epw_md5):
         priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                              ld0, ld1, ld2, ld3)
 
@@ -110,6 +110,9 @@ class OutputFiles:
                     f",Am1={round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- {round_to_2(self.fit.errors['a1'])}"
                     f",Am2={round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- {round_to_2(self.fit.errors['a2'])}\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
+
+            if epw_md5:
+                f.write(f"#EPW_MD5-XC={epw_md5}\n")
 
             f.write(
                 "# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science "

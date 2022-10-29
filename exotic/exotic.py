@@ -1562,6 +1562,7 @@ def main():
     # ---INITIALIZATION-------------------------------------------------------
 
     xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = ([] for m in range(8))
+    epw_md5 = None
 
     minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
     # minChi2 = 100000
@@ -1781,14 +1782,19 @@ def main():
                 times.append(img_time(header))
                 jd_times.append(img_time(header, var=True))
 
+            header = fits.getheader(filename=inputfiles[0], ext=0)
+
             # checks for MOBS data
-            mobs_header = fits.getheader(filename=inputfiles[0], ext=0)
-            if 'CREATOR' in mobs_header:
-                if 'MicroObservatory' in mobs_header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
+            if 'CREATOR' in header:
+                if 'MicroObservatory' in header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
                     if exotic_infoDict['second_obs'].upper() != "":
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
+
+            # check for EPW_MD5 checksum
+            if 'EPW_MD5' in header:
+                epw_md5 = header['EPW_MD5']
 
             si = np.argsort(times)
             times = np.array(times)[si]
@@ -2449,7 +2455,7 @@ def main():
         try:
             if bestCompStar:
                 exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
-            output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3)
+            output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3, epw_md5)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
         try:

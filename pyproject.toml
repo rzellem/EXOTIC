@@ -1,6 +1,7 @@
 [build-system]
 requires = [
     "cython~=0.29.32;platform_system!='Windows'",
+    "importlib-metadata>=3.6;python_version<='3.7'",
     "oldest-supported-numpy",
     "setuptools>=62.6",
     "setuptools_scm[toml]>=6.4.2",
@@ -9,5 +10,5 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
-write_to = 'exotic/version.py'
+write_to = "exotic/version.py"
 write_to_template = "__version__ = '{version}'\n"

@@ -1196,6 +1196,12 @@ def stellar_variability(ref_flux, lmfit, times, comp_stars, id, vsp_comp_stars, 
     comp_mask = [True if i in intx_times else False for i in comp_flux['myfit'].time]
     OOT = (np.array(comp_flux['myfit'].transit)[comp_mask] == 1)
 
+    if not OOT.any():
+        log_info("Data does not contain any Out-Of-Transit portions.\n"
+                 "Magnitude of star will not be calculated.\n"
+                 "EXOTIC will continue to produce a lightcurve.\n", warn=True)
+        return None
+
     vsp_label = [key for key, value in vsp_comp_stars.items() if value['xy'] == comp_xy][0]
     curr = OOT[0]
     idxs = []
@@ -1846,7 +1852,7 @@ def main():
                     log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
                              f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
-                        log_info("\nCurrent comparison star is variable, proceeding to next star.")
+                        log_info("\nCurrent comparison star is variable, proceeding to next star.", warn=True)
                         exotic_infoDict['comp_stars'].remove(comp)
 
                 if exotic_infoDict['aavso_comp'] == 'y':
@@ -2203,10 +2209,10 @@ def main():
             if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
                 goodTimes = nonBJDTimes
 
-                index_list = np.intersect1d(times, nonBJDTimes)
+                index_list = [i for i, time_ in enumerate(times) if time_ in nonBJDTimes]
                 good_jd_times = [jd_times[i] for i in index_list]
                 for key, val in ref_flux_dict.items():
-                    index_list = np.intersect1d(times, ref_flux_dict[key]['myfit'].time)
+                    index_list = [i for i, time_ in enumerate(times) if time_ in ref_flux_dict[key]['myfit'].time]
                     ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
 
             # If not in there, then convert all the final times into BJD - using astropy alone

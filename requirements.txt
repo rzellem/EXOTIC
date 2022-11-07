@@ -4,6 +4,7 @@ astroquery~=0.4
 barycorrpy~=0.4
 dynesty~=1.2.3;platform_system=='Windows'
 holoviews~=1.15
+importlib-metadata>=3.6;python_version<='3.7'
 imreg_dft~=2.0
 LDTk~=1.7
 lmfit~=1.0

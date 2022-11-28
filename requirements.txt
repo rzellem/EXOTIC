@@ -6,7 +6,7 @@ dynesty~=1.2.3;platform_system=='Windows'
 holoviews~=1.15
 importlib-metadata>=3.6;python_version<='3.7'
 LDTk~=1.7
-lmfit~=1.0
+lmfit~=1.1
 matplotlib>=3.4
 numpy~=1.21
 pandas~=1.3

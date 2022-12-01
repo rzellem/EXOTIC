@@ -2210,10 +2210,10 @@ def main():
                 goodTimes = nonBJDTimes
 
                 index_list = [i for i, time_ in enumerate(times) if time_ in nonBJDTimes]
-                good_jd_times = [jd_times[i] for i in index_list]
+                good_jd_times = [jd_times[int(i)] for i in index_list]
                 for key, val in ref_flux_dict.items():
                     index_list = [i for i, time_ in enumerate(times) if time_ in ref_flux_dict[key]['myfit'].time]
-                    ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
+                    ref_flux_dict[key]['time'] = [jd_times[int(i)] for i in index_list]
 
             # If not in there, then convert all the final times into BJD - using astropy alone
             else:

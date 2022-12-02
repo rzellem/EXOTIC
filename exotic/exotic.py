@@ -1788,7 +1788,11 @@ def main():
                 times.append(img_time(header))
                 jd_times.append(img_time(header, var=True))
 
-            header = fits.getheader(filename=inputfiles[0], ext=0)
+            extension = 0
+            header = fits.getheader(filename=inputfiles[0], ext=extension)
+            while header['NAXIS'] == 0:
+                extension += 1
+                header = fits.getheader(filename=inputfiles[0], ext=extension)
 
             # checks for MOBS data
             if 'CREATOR' in header:

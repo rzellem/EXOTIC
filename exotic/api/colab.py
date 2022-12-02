@@ -261,10 +261,10 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
   hdul = fits.open(first_image)
 
   extension = 0
-  hdr = fits.getheader(filename=file, ext=extension)
+  hdr = fits.getheader(filename=first_image, ext=extension)
   while hdr['NAXIS'] == 0:
     extension += 1
-    hdr = fits.getheader(filename=file, ext=extension)
+    hdr = fits.getheader(filename=first_image, ext=extension)
 
   min, max = "null", "null"
   filter = find(hdr, ['FILTER', 'FILT'], obs)

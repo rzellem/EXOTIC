@@ -1779,16 +1779,17 @@ def main():
 
             # time sort images
             times, jd_times = [], []
+            extension = 0
             for file in inputfiles:
-                extension = 0
-                header = fits.getheader(filename=file, ext=extension)
+                extension_ = 0
+                header = fits.getheader(filename=file, ext=extension_)
                 while header['NAXIS'] == 0:
                     extension += 1
-                    header = fits.getheader(filename=file, ext=extension)
+                    header = fits.getheader(filename=file, ext=extension_)
                 times.append(img_time(header))
                 jd_times.append(img_time(header, var=True))
 
-            header = fits.getheader(filename=inputfiles[0], ext=0)
+            header = fits.getheader(filename=inputfiles[0], ext=extension)
 
             # checks for MOBS data
             if 'CREATOR' in header:

@@ -112,7 +112,7 @@ class OutputFiles:
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
 
             if epw_md5:
-                f.write(f"#EPW_MD5-XC={dumps({'epw_obs_id': epw_md5})}\n")
+                f.write(f"#EPW_MD5-XC={dumps({'epw_checkout_md5': epw_md5})}\n")
 
             f.write(
                 "# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science "

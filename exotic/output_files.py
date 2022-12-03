@@ -141,13 +141,13 @@ class VSPOutputFiles:
         self.vsp_params = vsp_params
 
     def aavso(self, airmasses):
-        params_file = self.dir / f"vspAAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
+        params_file = self.dir / f"AID_AAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
-                    "#DATE_TYPE=JD\n"  # fixed
+                    "#DATE=JD\n"  # fixed
                     f"#OBSTYPE={self.i_dict['camera']}\n")
             f.write(
                 "# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science "

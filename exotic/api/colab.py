@@ -24,7 +24,7 @@ from bokeh.palettes import Viridis256
 from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
 from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PanTool,FreehandDrawTool
 #import bokeh.io
-#from bokeh.io import output_notebook
+from bokeh.io import output_notebook
 from pprint import pprint
 #from IPython.display import Image
 #from ipywidgets import widgets, HBox

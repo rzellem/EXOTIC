@@ -2055,7 +2055,6 @@ def main():
             # loop over comp stars
             for j in range(len(compStarList)):
                 ckey = f"comp{j + 1}"
-                #done above -psf_data[ckey] = psf_data[ckey][~badmask]
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
                 myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)

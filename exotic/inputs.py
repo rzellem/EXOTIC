@@ -37,7 +37,7 @@ class Inputs:
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
-            'random_seed': None
+            'random_seed': None, "demosaic_fmt": None, "demosaic_out": None
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -75,6 +75,8 @@ class Inputs:
                                        self.info_dict['biases'], self.init_opt)
                 if not planet:
                     planet = planet_name(planet)
+                self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'] = \
+                    demosaic_settings(self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'], self.init_opt)
 
         return self.info_dict, planet
 
@@ -153,6 +155,7 @@ class Inputs:
         user_info = {
             'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
+            'demosaic_fmt': 'Demosaic format', 'demosaic_out': 'Demosaic output',
             'aavso_num': ('AAVSO Observer Code (N/A if none)', 'AAVSO Observer Code (blank if none)'),
             'second_obs': ('Secondary Observer Codes (N/A if none)', 'Secondary Observer Codes (blank if none)'),
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
@@ -299,6 +302,18 @@ def check_calibration(directory, image_type):
         return check_imaging_files(directory, image_type)
     return None
 
+def demosaic_settings(demosaic_fmt, demosaic_out, init):
+    opt = None
+    if init == 'n':
+        opt = user_input("\nAre images color and require demosaicing? (y/n): ",
+            type_=str, values=['y', 'n'])
+    if opt == 'y':
+        if not demosaic_fmt:
+            demosaic_fmt = user_input(f"\nWhat is Bayer pattern for camera? (RGGB, BGGR, GRBG, GBRG): ", type_=str, values=['rggb', 'bggr', 'grbg', 'gbrg'])
+            demosaic_fmt = demosaic_fmt.upper()
+        if not demosaic_out:
+            demosaic_out = user_input(f"\nWhat color channel should be processed? (gray, red, green, blue, blueblock): ", type_=str, values=['gray', 'red', 'green', 'blue', 'blueblock'])
+    return demosaic_fmt, demosaic_out
 
 def planet_name(planet):
     if not planet:

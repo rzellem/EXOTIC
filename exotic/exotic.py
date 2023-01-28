@@ -1680,6 +1680,10 @@ def main():
         else:
             pDict = userpDict
             CandidatePlanetBool = False
+        # Seed random number generator (for run to run consistency)
+        if exotic_infoDict['random_seed']:
+            log_info(f"Setting random number seed to {exotic_infoDict['random_seed']}")
+            np.random.seed(exotic_infoDict['random_seed'])
 
         if fitsortext == 1:
             # Only do the dark correction if user selects this option

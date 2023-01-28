@@ -36,7 +36,8 @@ class Inputs:
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
-            'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None
+            'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
+            'random_seed': None
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -188,6 +189,7 @@ class Inputs:
             'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
             'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'),
             'exposure': 'Exposure Time (s)',
+            'random_seed': 'Random Seed'
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])

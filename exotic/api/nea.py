@@ -307,9 +307,7 @@ class NASAExoplanetArchive:
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
 
-        if data['pl_ratdor'] is None:
-            data['pl_ratdor'] = pow((data['pl_orbper'] / 365) ** 2, 1 / 3) / (data['st_rad'] * R_SUN.to('au')).value
-        elif data['pl_ratdor'] < 1 or np.isnan(data['pl_ratdor']):
+        if data['pl_ratdor'] is None or data['pl_ratdor'] < 1 or np.isnan(data['pl_ratdor']):
             data['pl_ratdor'] = pow((data['pl_orbper'] / 365) ** 2, 1 / 3) / (data['st_rad'] * R_SUN.to('au')).value
         else:
             print("WARNING: a/Rs can not be estimated from Nasa Exoplanet Archive. Please use an inits file instead.")

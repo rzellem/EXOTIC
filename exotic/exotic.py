@@ -1010,13 +1010,13 @@ def mesh_box(pos, box, maxx=0, maxy=0):
 def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=True):
     # get sub field in image
     xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
-    # Handle null subfield - cannot solve
-    if xv.shape[0] == 0 or yv.shape[0] == 0:
+    subarray = data[yv, xv]
+    try:
+        init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
+    except ValueError as ve:
+        # Handle null subfield - cannot solve
         log_info(f"Warning: empty subfield for fit_centroid at {np.round(pos, 2)}", warn=True)
         return np.empty(7) * np.nan
-    subarray = data[yv, xv]
-    init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
-
     # compute flux weighted centroid in x and y
     wx = np.sum(xv[0]*subarray.sum(0))/subarray.sum(0).sum()
     wy = np.sum(yv[:,0]*subarray.sum(1))/subarray.sum(1).sum()

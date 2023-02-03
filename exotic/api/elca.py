@@ -594,7 +594,15 @@ class glc_fitter(lc_fitter):
                         mybounds[k] = self.global_bounds[k]
                 if 'per' in mybounds: del(mybounds['per'])
                 if 'inc' in mybounds and 'rprs' in mybounds: del(mybounds['inc'])
+                if 'tmid' in mybounds:
+                    # find the closet mid transit time to the last observation
+                    phase = (self.lc_data[i]['time'][-1] - self.lc_data[i]['priors']['tmid']) / self.lc_data[i]['priors']['per']
+                    nepochs = np.round(phase)
+                    newtmid = self.lc_data[i]['priors']['tmid'] + nepochs * self.lc_data[i]['priors']['per']
+                    err = np.diff(mybounds['tmid'])[0]/2.
+                    mybounds['tmid'] = [newtmid - err, newtmid + err ]
 
+                # fit individual light curve
                 myfit = lc_fitter(
                     self.lc_data[i]['time'],
                     self.lc_data[i]['flux'],
@@ -609,7 +617,12 @@ class glc_fitter(lc_fitter):
                     print(f"WARNING: Stdev of residuals is large! {myfit.res_stdev:.3f} > {self.stdev_cutoff:.3f}")
                     #raise ValueError(f"Stdev of residuals is too large, please remove id: {self.lc_data[i]['name']}
 
+                # copy data over for individual fits
                 self.lc_data[i]['individual'] = myfit.parameters.copy()
+                self.lc_data[i]['individual_err'] = myfit.errors.copy()
+                self.lc_data[i]['res_stdev'] = myfit.res_stdev
+                self.lc_data[i]['quality'] = myfit.quality
+
                 ti = sum([len(self.local_bounds[k]) for k in range(i)])
                 # update local priors
                 for j, key in enumerate(self.local_bounds[i].keys()):
@@ -844,7 +857,7 @@ class glc_fitter(lc_fitter):
                         ecolor='black',
                         label=r'Binned Data: {:.2f} %'.format(np.std(br)*1e2))
 
-        axs[1].plot(bt/self.parameters['per'],br*1e2,color='white',ls='none',marker='o',ms=9,markeredgecolor='black')
+        axs[1].plot(bt/self.parameters['per'],br*1e2,color='white',ls='none',marker='o',ms=11,markeredgecolor='black')
 
         # best fit model
         self.time_upsample = np.linspace(minp*self.parameters['per']+self.parameters['tmid'], 
@@ -852,7 +865,7 @@ class glc_fitter(lc_fitter):
         self.transit_upsample = transit(self.time_upsample, self.lc_data[0]['priors'])
         self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
         sii = np.argsort(self.phase_upsample)
-        axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
+        axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel, lw=3)
 
         axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         axs[0].set_xlabel("Phase ", fontsize=14)
@@ -889,7 +902,6 @@ class glc_fitter(lc_fitter):
             axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
 
         axs[0].get_xaxis().set_visible(False)
-        #axs[1].legend(loc='best',ncol=len(self.lc_data)//6+1)
         axs[0].legend(loc='best',ncol=len(self.lc_data)//7+1)
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
         axs[1].grid(True,ls='--',axis='y')

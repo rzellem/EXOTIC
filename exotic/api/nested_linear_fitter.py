@@ -311,10 +311,8 @@ class linear_fitter(object):
         #perform the weighted least squares regression
         res = sm.WLS(self.residuals, basis.T, weights=1.0/self.dataerr**2).fit()
         coeffs = res.params #retrieve the slope and intercept of the fit from res
+        coeffs_single = res.params
         y_bestfit = np.dot(basis.T, coeffs) # reconstruct signal
-
-        # TODO use uncertainty to derive fill between region
-        #std_dev = np.sqrt(np.diagonal(res.normalized_cov_params)) 
 
 
         # super sample fourier solution
@@ -348,6 +346,7 @@ class linear_fitter(object):
                     marker='.',color='black',
                     label=f'Data')
         ax[1].plot(xnew, y_bestfit_new*24*60, 'r-', label=f'Fourier Fit 1 (Period: {per:.2f})')
+
         ax[1].set_xlabel(f"Epochs",fontsize=14)
         ax[1].set_ylabel("O-C [min]",fontsize=14)
         ax[1].grid(True,ls='--')
@@ -365,11 +364,28 @@ class linear_fitter(object):
         basis_new[1] = np.cos(2*np.pi*newepochs/per)
         y_bestfit_new = np.dot(basis_new.T, coeffs)
         xnewphase = newepochs/per % 1
+        si = np.argsort(xnewphase)
 
+        # use uncertainty to derive fill between region
+        std_dev = np.sqrt(np.diagonal(res.normalized_cov_params)) 
+        samples = []
+        for i in range(1000):
+            coeffs = res.params + np.random.normal(0,1,3)*std_dev
+            samples.append(np.dot(basis_new.T, coeffs))
+        samples = np.array(samples)
+
+        # best fit with one sin wave
         ax[2].plot(xnewphase, y_bestfit_new*24*60, 'r.', ms=4, label=f'Fourier Fit 1')
+
+        # fill between region +/- 1 sigma
+        ax[2].fill_between(xnewphase[si], np.percentile(samples,16,axis=0)[si]*24*60, np.percentile(samples,84,axis=0)[si]*24*60, color='red', alpha=0.3, label='1-sigma region')
+
+        # fill for 3 sigma
+        ax[2].fill_between(xnewphase[si], np.percentile(samples,0.15,axis=0)[si]*24*60, np.percentile(samples,99.85,axis=0)[si]*24*60, color='red', alpha=0.1, label='3-sigma region')
 
         # sort data in phase
         si = np.argsort(newphase)
+
         # bin data into 8 bins
         bins = np.linspace(0,1,8)
         binned = np.zeros(len(bins))
@@ -415,9 +431,7 @@ class linear_fitter(object):
         basis2[1] = np.cos(2*np.pi*self.epochs/per)
         basis2[2] = np.sin(2*np.pi*self.epochs/per2)
         basis2[3] = np.cos(2*np.pi*self.epochs/per2)
-        # fit for the coefficients
-        #coeffs = np.linalg.lstsq(basis2.T, self.residuals, rcond=None)[0]
-        #y_bestfit = np.dot(basis2.T, coeffs) # reconstruct signal
+
         #perform the weighted least squares regression
         res = sm.WLS(self.residuals, basis2.T, weights=1.0/self.dataerr**2).fit()
         coeffs = res.params #retrieve the slope and intercept of the fit from res
@@ -431,8 +445,13 @@ class linear_fitter(object):
         basis_new[2] = np.sin(2*np.pi*xnew/per2)
         basis_new[3] = np.cos(2*np.pi*xnew/per2)
         y_bestfit_new = np.dot(basis_new.T, coeffs)
-
         xnewphase = xnew/per2 % 1
+        si = np.argsort(xnewphase)
+
+        # make single sin wave
+        y_bestfit = np.dot(basis.T, coeffs[:3]) # reconstruct signal
+        residuals = self.residuals - y_bestfit
+
 
         # plot detrended data
         ax[0].semilogx(1./freq2,power2,'k-',alpha=0.5,label='Detrended Data')
@@ -450,16 +469,40 @@ class linear_fitter(object):
 
         # create single sine wave from detrended data
         basis_new = np.ones((3, len(xnew)))
-        basis_new[0] = np.sin(2*np.pi*xnew/per2)
-        basis_new[1] = np.cos(2*np.pi*xnew/per2)
-        y_bestfit_new = np.dot(basis_new.T, coeffs[2:])
-        y_bestfit_new -= np.mean(y_bestfit_new)
-        # if this doesn't do it then re-fit the residuals with a single sine wave
-    
+        basis_new[0] = np.sin(2*np.pi*xnew/per)
+        basis_new[1] = np.cos(2*np.pi*xnew/per)
+        y_best_single = np.dot(basis_new.T, coeffs[:3])
+
+        # create best double sine wave from detrended data
+        basis_new = np.ones((5, len(xnew)))
+        basis_new[0] = np.sin(2*np.pi*xnew/per)
+        basis_new[1] = np.cos(2*np.pi*xnew/per)
+        basis_new[2] = np.sin(2*np.pi*xnew/per2)
+        basis_new[3] = np.cos(2*np.pi*xnew/per2)
+        y_best_double = np.dot(basis_new.T, coeffs)
+
+        # use uncertainty to derive fill between region
+        std_dev = np.sqrt(np.diagonal(res.normalized_cov_params)) 
+        samples = []
+        for i in range(1000):
+            coeffs = res.params + np.random.normal(0, std_dev)
+            ynew = np.dot(basis_new.T, coeffs)
+            ynew -= y_best_single
+            samples.append(ynew)
+        samples = np.array(samples)
+
+        y_bestfit_new = y_best_double - y_best_single
+
         ax[3].plot(xnewphase, y_bestfit_new*24*60, 'c.', ms=4, label=f'Fourier Fit 2')
         ax[3].set_xlabel(f"Phase (Period: {per2:.2f} epochs)",fontsize=14)
         ax[3].set_ylabel("Residuals [min]",fontsize=14)
         ax[3].grid(True,ls='--')
+
+        # fill between region +/- 1 sigma
+        ax[3].fill_between(xnewphase[si], np.percentile(samples,16,axis=0)[si]*24*60, np.percentile(samples,84,axis=0)[si]*24*60, color='cyan', alpha=0.4, label='1-sigma region')
+
+        # fill for 3 sigma
+        ax[3].fill_between(xnewphase[si], np.percentile(samples,0.15,axis=0)[si]*24*60, np.percentile(samples,99.85,axis=0)[si]*24*60, color='cyan', alpha=0.2, label='3-sigma region')
 
         # sort data in phase
         si = np.argsort(newphase)

@@ -290,7 +290,8 @@ class linear_fitter(object):
         maxper = (np.max(self.epochs) - np.min(self.epochs))*3.
 
         # recompute on new grid
-        freq,power = LombScargle(self.epochs, self.residuals).autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
+        ls = LombScargle(self.epochs, self.residuals, dy=self.dataerr)
+        freq,power = ls.autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
 
         # Phase fold data at max peak
         mi = np.argmax(power)
@@ -304,10 +305,18 @@ class linear_fitter(object):
         basis = np.ones((3, len(self.epochs)))
         basis[0] = np.sin(2*np.pi*self.epochs/per)
         basis[1] = np.cos(2*np.pi*self.epochs/per)
-        # fit for the coefficients
-        coeffs = np.linalg.lstsq(basis.T, self.residuals, rcond=None)[0]
-        # reconstruct signal
-        y_bestfit = np.dot(basis.T, coeffs)
+        # fit for the coefficients with ordinary least squares
+        #coeffs = np.linalg.lstsq(basis.T, self.residuals, rcond=None)[0]
+        
+        #perform the weighted least squares regression
+        res = sm.WLS(self.residuals, basis.T, weights=1.0/self.dataerr**2).fit()
+        coeffs = res.params #retrieve the slope and intercept of the fit from res
+        y_bestfit = np.dot(basis.T, coeffs) # reconstruct signal
+
+        # TODO use uncertainty to derive fill between region
+        #std_dev = np.sqrt(np.diagonal(res.normalized_cov_params)) 
+
+
         # super sample fourier solution
         xnew = np.linspace(self.epochs.min(), self.epochs.max(), 1000)
         basis_new = np.ones((3, len(xnew)))
@@ -322,9 +331,16 @@ class linear_fitter(object):
         ax[0].semilogx(self.periods,self.power,'k-',label='Data')
         ax[0].set_xlabel("Period [epoch]",fontsize=14)
         ax[0].set_ylabel('Power',fontsize=14)
-        ax[0].axvline(per,color='red',label=f'Period: {per:.2f}')
+        ax[0].axvline(per,color='red',label=f'Period: {per:.2f}',alpha=0.5)
         ax[0].set_title("Lomb-Scargle Periodogram of O-C Data")
-        ax[0].set_ylim([0,1.1*np.max(self.power)])
+        ax[0].set_ylim([0,0.5*(self.power.max()+np.percentile(self.power,99))])
+
+        # plot false alarm probability on lomb-scargle periodogram
+        fp = ls.false_alarm_probability(power.max(), method='bootstrap')
+        fp_levels = ls.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
+
+        # plot as horizontal line
+        ax[0].axhline(fp_levels[0], color='red', ls='--', label='99% FAP')
 
         # o-c time series with fourier solution
         ax[1].errorbar(self.epochs,self.residuals*24*60,
@@ -386,7 +402,7 @@ class linear_fitter(object):
         maxper = 50
 
         # find periodogram of residuals
-        freq2,power2 = LombScargle(self.epochs, residuals).autopower(minimum_frequency=1./maxper, maximum_frequency=1./minper, nyquist_factor=2)
+        freq2,power2 = LombScargle(self.epochs, residuals, dy=self.dataerr).autopower(minimum_frequency=1./maxper, maximum_frequency=1./minper, nyquist_factor=2)
 
         # find max period
         mi2 = np.argmax(power2)
@@ -400,9 +416,13 @@ class linear_fitter(object):
         basis2[2] = np.sin(2*np.pi*self.epochs/per2)
         basis2[3] = np.cos(2*np.pi*self.epochs/per2)
         # fit for the coefficients
-        coeffs = np.linalg.lstsq(basis2.T, self.residuals, rcond=None)[0]
-        # reconstruct signal
+        #coeffs = np.linalg.lstsq(basis2.T, self.residuals, rcond=None)[0]
+        #y_bestfit = np.dot(basis2.T, coeffs) # reconstruct signal
+        #perform the weighted least squares regression
+        res = sm.WLS(self.residuals, basis2.T, weights=1.0/self.dataerr**2).fit()
+        coeffs = res.params #retrieve the slope and intercept of the fit from res
         y_bestfit = np.dot(basis2.T, coeffs)
+
         # super sample fourier solution
         xnew = np.linspace(self.epochs.min(), self.epochs.max(), 1000)
         basis_new = np.ones((5, len(xnew)))

@@ -1358,8 +1358,8 @@ def realTimeReduce(i, target_name, info_dict, ax):
         if i == 0:
             firstImage = np.copy(imageData)
 
-        sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
-        log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+        sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
+        log.debug(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
         sys.stdout.flush()
 
         try:
@@ -1922,8 +1922,8 @@ def main():
                 if i == 0:
                     firstImage = np.copy(imageData)
 
-                sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
-                log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+                sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
+                log.debug(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
                 sys.stdout.flush()
 
                 try:

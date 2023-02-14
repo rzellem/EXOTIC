@@ -71,7 +71,12 @@ from astropy.wcs import WCS, FITSFixedWarning
 from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
 # UTC to BJD converter import
-from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
+try:  # light curve numerics
+    from .api.bcp.utc_tdb import JDUTC_to_BJDTDB
+except ImportError:  # package import
+    from api.bcp.utc_tdb import JDUTC_to_BJDTDB
+# TODO: remove above and uncomment below when fix verified in astropy/barycorrpy, see rzellem/EXOTIC#1155
+# from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 # julian conversion imports
 import dateutil.parser as dup
 from pathlib import Path

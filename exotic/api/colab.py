@@ -14,7 +14,7 @@
 #########################################################
 from IPython.display import display, HTML
 from astropy.time import Time
-from barycorrpy import utc_tdb
+#from barycorrpy import utc_tdb
 import numpy as np
 from io import BytesIO
 from astropy.io import fits

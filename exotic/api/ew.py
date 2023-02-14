@@ -144,7 +144,7 @@ def translate_keys(rdict):
         A dictionary with keys corresponding to exotic's lc format
     """
     lc_pars = dict(rdict)
-    translate_keys = {
+    conversion_keys = {
         'Tc':'tmid',
         'Am1': 'a1',
         'Am2': 'a2',
@@ -152,9 +152,9 @@ def translate_keys(rdict):
         'Rp/R*': 'rprs',
         'Period': 'per'
     }
-    for k in translate_keys:
+    for k in conversion_keys:
         if k in lc_pars:
-            lc_pars[translate_keys[k]] = lc_pars[k]
+            lc_pars[conversion_keys[k]] = lc_pars[k]
             del lc_pars[k]
     for k in lc_pars:
         if k.lower() == 'target':

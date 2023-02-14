@@ -46,7 +46,13 @@ class Inputs:
         }
 
     def complete_red(self, planet):
-        hdr = None
+        self.info_dict['images'] = self.params['images'](self.info_dict['images'])
+
+        extension = 0
+        hdr = fits.getheader(filename=self.info_dict['images'][0], ext=extension)
+        while hdr['NAXIS'] == 0:
+            extension += 1
+            hdr = fits.getheader(filename=self.info_dict['images'][0], ext=extension)
 
         for key, value in list(self.params.items()):
             if key == 'elev':
@@ -57,8 +63,7 @@ class Inputs:
             elif key == 'comp_stars':
                 self.info_dict[key] = self.params[key](self.info_dict[key], False)
             elif key == 'images':
-                self.info_dict[key] = self.params[key](self.info_dict[key])
-                hdr = fits.getheader(self.info_dict[key][0])
+                pass
             elif key in ('lat', 'long'):
                 self.info_dict[key] = self.params[key](self.info_dict[key], hdr)
             else:

@@ -259,7 +259,12 @@ def look_for_calibration(image_dir):
 def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_coords, comp_coords, obs, aavso_obs_code, sec_obs_code, sample_data):
   inits_file_path = output_dir+"inits.json"
   hdul = fits.open(first_image)
-  hdr = dict(hdul[0].header)
+
+  extension = 0
+  hdr = fits.getheader(filename=first_image, ext=extension)
+  while hdr['NAXIS'] == 0:
+    extension += 1
+    hdr = fits.getheader(filename=first_image, ext=extension)
 
   min, max = "null", "null"
   filter = find(hdr, ['FILTER', 'FILT'], obs)

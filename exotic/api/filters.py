@@ -41,6 +41,7 @@ fwhm = {
         # PanSTARRS
         "PanSTARRS z-short": {"name": "ZS", "desc": "PanSTARRS z-short", "fwhm": ("826.0", "920.0")},
         "PanSTARRS Y": {"name": "Y", "desc": "PanSTARRS Y", "fwhm": ("946.4", "1054.4")},
+        "PanSTARRS w": {"name": "N/A", "desc": "PanSTARRS w", "fwhm": ("404.2", "845.8")},
 
         # MObs Clear Filter; Source(s): Martin Fowler
         "MObs CV": {"name": "CV", "desc": "MObs CV", "fwhm": ("350.0", "850.0")},
@@ -70,6 +71,7 @@ fwhm_alias = {
 
         "LCO Pan-STARRS Y": "PanSTARRS Y",
         "LCO Pan-STARRS zs": "PanSTARRS z-short",
+        "LCO Pan-STARRS w": "PanSTARRS w",
 
         "Exop": "Astrodon ExoPlanet-BB",
 

@@ -74,6 +74,7 @@ from astroquery.gaia import Gaia
 from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 # julian conversion imports
 import dateutil.parser as dup
+import imreg_dft as ird
 from pathlib import Path
 import pyvo as vo
 import logging
@@ -874,7 +875,12 @@ def transformation(image_data, file_name, roi=1):
                     results = aa.find_transform(mask1, mask0)
                     return results[0]
                 except Exception:
-                    pass
+                    try:
+                        result1 = ird.similarity(image_data[1][roiy, roix], image_data[0][roiy, roix], numiter=3)
+                        return SimilarityTransform(scale=result1['scale'], rotation=np.radians(result1['angle']),
+                                                   translation=[-1 * result1['tvec'][1], -1 * result1['tvec'][0]])
+                    except Exception:
+                        pass
 
     log_info(f"Warning: Following image failed to align - {file_name}", warn=True)
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
@@ -1352,8 +1358,8 @@ def realTimeReduce(i, target_name, info_dict, ax):
         if i == 0:
             firstImage = np.copy(imageData)
 
-        sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
-        log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+        sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
+        log.debug(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
         sys.stdout.flush()
 
         try:
@@ -1916,8 +1922,8 @@ def main():
                 if i == 0:
                     firstImage = np.copy(imageData)
 
-                sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
-                log.debug(f"Finding transformation {i + 1} of {len(inputfiles)}\r")
+                sys.stdout.write(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
+                log.debug(f"Finding transformation {i + 1} of {len(inputfiles)} : {fileName}\n")
                 sys.stdout.flush()
 
                 try:

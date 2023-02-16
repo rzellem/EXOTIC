@@ -67,8 +67,12 @@ class ExoplanetWatchTarget():
             self.observations.append(
                 ExoplanetWatchObservation(self.name, result['observations'][i]))
 
-        self.ephemeris['ephemeris_url'] = os.path.join(base_uri,
-            self.ephemeris['files']['file_oc_png'][2:])
+        try:
+            self.ephemeris['ephemeris_url'] = os.path.join(base_uri,
+                self.ephemeris['files']['file_oc_png'][2:])
+        except:
+            # 'files' usually don't exist if there is no ephemeris data
+            pass
 
     def __str__(self) -> str:
         return f"{self.name}: {self.reduction_count} light curves"
@@ -97,8 +101,8 @@ class ExoplanetWatchObservation():
         self.obscode = observation['obscode']
         self.identifier = observation['identifier']
         self.secondary_obscodes = observation['secondary_obscodes']
-        self.errors = self.translate(check4floats(observation['errors']))
-        self.parameters = self.translate(check4floats(observation['parameters']))
+        self.errors = translate_keys(check4floats(observation['errors']))
+        self.parameters = translate_keys(check4floats(observation['parameters']))
         self.lightcurve_url = os.path.join(base_uri,self.files['file_lc_png'][2:])
         self.posterior_url = os.path.join(base_uri,self.files['file_po_png'][2:])
 
@@ -126,35 +130,40 @@ class ExoplanetWatchObservation():
         jdata = json.loads(r.read().decode(r.info().get_param('charset') or 'utf-8'))
         return np.array(jdata[1:],dtype=np.float).T
 
-    def translate(self,rdict):
-        """ Translates the keys to a compatible format for EXOTIC/ELCA
+def translate_keys(rdict):
+    """ Translates the keys to a compatible format for EXOTIC/ELCA
 
-        Parameters
-        ----------
-        rdict : dict
-            The dictionary of parameters
-        
-        Returns
-        -------
-        lc_pars : dict
-            A dictionary with keys corresponding to exotic's lc format
-        """
-        lc_pars = dict(rdict)
-        translate_keys = {
-            'Tc':'tmid',
-            'Am1': 'a1',
-            'Am2': 'a2',
-            'a/R*': 'ars',
-            'Rp/R*': 'rprs',
-            'Period': 'per'
-        }
-        for k in translate_keys:
-            if k in lc_pars:
-                lc_pars[translate_keys[k]] = lc_pars[k]
-                del lc_pars[k]
-        for k in lc_pars:
+    Parameters
+    ----------
+    rdict : dict
+        The dictionary of parameters
+    
+    Returns
+    -------
+    lc_pars : dict
+        A dictionary with keys corresponding to exotic's lc format
+    """
+    lc_pars = dict(rdict)
+    conversion_keys = {
+        'Tc':'tmid',
+        'Am1': 'a1',
+        'Am2': 'a2',
+        'a/R*': 'ars',
+        'Rp/R*': 'rprs',
+        'Period': 'per'
+    }
+    for k in conversion_keys:
+        if k in lc_pars:
+            lc_pars[conversion_keys[k]] = lc_pars[k]
+            del lc_pars[k]
+    for k in lc_pars:
+        if k.lower() == 'target':
+            continue
+        if isinstance(lc_pars[k],str):
             lc_pars[k] = float(lc_pars[k])
-        return lc_pars
+        elif lc_pars[k] is None:
+            lc_pars[k] = np.nan
+    return lc_pars
 
 if __name__ == "__main__":
 

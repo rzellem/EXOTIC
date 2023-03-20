@@ -284,20 +284,6 @@ class linear_fitter(object):
     def plot_periodogram(self):
         """ Search the residuals for periodic signals. """
 
-        # # find best fit signal with 1 period
-        # # construct basis vectors with sin and cos
-        # basis = np.ones((3, len(self.epochs)))
-        # basis[0] = np.sin(2*np.pi*self.epochs/per)
-        # basis[1] = np.cos(2*np.pi*self.epochs/per)
-        # # fit for the coefficients with ordinary least squares
-        # #coeffs = np.linalg.lstsq(basis.T, self.residuals, rcond=None)[0]
-        # #perform the weighted least squares regression
-        # res = sm.WLS(self.residuals, basis.T, weights=1.0/self.dataerr**2).fit()
-        # coeffs = res.params #retrieve the slope and intercept of the fit from res
-        # coeffs_single = res.params
-        # y_bestfit = np.dot(basis.T, coeffs) # reconstruct signal
-
-
         ########################################
         # create basis vectors for Tn = T0 + n*P
         basis = np.ones((2, len(self.epochs)))
@@ -347,9 +333,7 @@ class linear_fitter(object):
 
         ########################################
         # subtract first order solution from data and recompute periodogram
-
-        # TODO parameterize?
-        maxper = 50
+        maxper = 50 # constrain second order solution to be less than 50 days
 
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)

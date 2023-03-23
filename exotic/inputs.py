@@ -156,7 +156,7 @@ class Inputs:
         user_info = {
             'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
-            'demosaic_fmt': 'Demosaic format', 'demosaic_out': 'Demosaic output',
+            'demosaic_fmt': 'Demosaic Format', 'demosaic_out': 'Demosaic Output',
             'aavso_num': ('AAVSO Observer Code (N/A if none)', 'AAVSO Observer Code (blank if none)'),
             'second_obs': ('Secondary Observer Codes (N/A if none)', 'Secondary Observer Codes (blank if none)'),
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',

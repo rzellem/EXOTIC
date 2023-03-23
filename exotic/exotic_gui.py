@@ -370,7 +370,9 @@ def main():
                 "Directory with FITS files": FITS_dir.folder_path,
 
                 "Target Star X & Y Pixel": input_data['targetpos'],
-                "Comparison Star(s) X & Y Pixel": [input_data['comppos']]
+                "Comparison Star(s) X & Y Pixel": [input_data['comppos']],
+                "Demosaic Format": null, # TODO add GUI input for these
+                "Demosaic Output": null
             }
             new_inits['planetary_parameters'] = {
                 "Planet Name": input_data['pName'],

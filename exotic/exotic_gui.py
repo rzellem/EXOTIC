@@ -1418,8 +1418,8 @@ def main():
                         "Target Star X & Y Pixel": (input_data['targetpos']),
                         "Comparison Star(s) X & Y Pixel": (input_data['comppos']),
                         
-                        "Demosaic Format": (input_data["demosaic_fmt"]),
-                        "Demosaic Output": (input_data["demosaic_out"]),
+                        "Demosaic Format": null, # TODO add GUI input for these
+                        "Demosaic Output": null
                     }
 
                     if flats_dir.folder_path == 'null':

@@ -129,3 +129,5 @@ eaConf.json
 get-pip.py
 newfits.fits
 eaConf.json
+exotic.log.*
+pl_names.json

@@ -565,14 +565,10 @@ def corruption_check(files):
     valid_files = []
     for file in files:
         try:
-            hdul = fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
-            valid_files.append(file)
+            with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdui:
+                valid_files.append(file)
         except OSError as e:
             log_info(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}", warn=True)
-        finally:
-            if getattr(hdul, "close", None) and callable(hdul.close):
-                hdul.close()
-            del hdul
 
     return valid_files
 

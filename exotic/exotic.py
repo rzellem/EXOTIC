@@ -57,6 +57,7 @@ warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
 # standard imports
 import argparse
+import hashlib
 # Image alignment import
 import astroalign as aa
 aa.PIXEL_TOL = 1
@@ -1011,8 +1012,12 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
     # get sub field in image
     xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
     subarray = data[yv, xv]
-    init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
-
+    try:
+        init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
+    except ValueError as ve:
+        # Handle null subfield - cannot solve
+        log_info(f"Warning: empty subfield for fit_centroid at {np.round(pos, 2)}", warn=True)
+        return np.empty(7) * np.nan
     # compute flux weighted centroid in x and y
     wx = np.sum(xv[0]*subarray.sum(0))/subarray.sum(0).sum()
     wy = np.sum(yv[:,0]*subarray.sum(1))/subarray.sum(1).sum()
@@ -1042,7 +1047,7 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
 
 # Method calculates the flux of the star (uses the skybg_phot method to do background sub)
 def aperPhot(data, xc, yc, r=5, dr=5):
-    if dr > 0:
+    if dr > 0 and not np.isnan(xc) and not np.isnan(yc):
         bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r + 2, dr)
     else:
         bgflux, sigmabg, Nbg = 0, 0, 0
@@ -1686,6 +1691,13 @@ def main():
         else:
             pDict = userpDict
             CandidatePlanetBool = False
+        # Seed random number generator (for run to run consistency)
+        if exotic_infoDict['random_seed']:
+            log_info(f"Setting random number seed to {exotic_infoDict['random_seed']}")
+        else:
+            exotic_infoDict['random_seed'] = int.from_bytes(hashlib.sha256(f"{pDict['pName']}:{pDict['midT']}".encode()).digest()[0:4], byteorder='little')
+            log_info(f"Generated random number seed {exotic_infoDict['random_seed']}")
+        np.random.seed(exotic_infoDict['random_seed'])
 
         if fitsortext == 1:
             # Only do the dark correction if user selects this option
@@ -1826,7 +1838,10 @@ def main():
                 first_image = fits.getdata(ifile)
                 try:
                     get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
-                    break
+                    if np.isnan(get_first[0]):
+                        inc += 1
+                    else:
+                        break
                 except Exception:
                     inc += 1
                 finally:
@@ -1993,18 +2008,21 @@ def main():
 
                 for a, aper in enumerate(apers):
                     for an, annulus in enumerate(annuli):
-                        aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
-                                                                                                   psf_data['target'][i, 0],
-                                                                                                   psf_data['target'][i, 1],
-                                                                                                   aper, annulus)
-
+                        if not np.isnan(psf_data['target'][i, 0]):
+                            aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
+                                                                                                        psf_data['target'][i, 0],
+                                                                                                        psf_data['target'][i, 1],
+                                                                                                        aper, annulus)
+                        else:
+                            aper_data["target"][i][a][an] = np.nan
+                            aper_data["target_bg"][i][a][an] = np.nan
                         # loop through comp stars
                         for j in range(len(compStarList)):
                             ckey = f"comp{j + 1}"
                             if not np.isnan(psf_data[ckey][i][0]):
                                 aper_data[ckey][i][a][an], \
                                 aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData, psf_data[ckey][i, 0],
-                                                                             psf_data[ckey][i, 1], aper, annulus)
+                                                                            psf_data[ckey][i, 1], aper, annulus)
                             else:
                                 aper_data[ckey][i][a][an] = np.nan
                                 aper_data[f"{ckey}_bg"][i][a][an] = np.nan
@@ -2015,15 +2033,23 @@ def main():
             del imageData
 
             # filter bad images
-            badmask = (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
+            badmask = np.isnan(psf_data["target"][:, 0]) | (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
                 aper_data["target"][:, 0, 0])
-            if np.sum(~badmask) == 0:
+            goodmask = ~badmask
+            if np.sum(goodmask) == 0:
                 log_info("No images to fit...check reference image for alignment (first image of sequence)")
 
-            # convert to numpy arrays
-            times = times[~badmask]
-            airmass = np.array(airMassList)[~badmask]
-            psf_data["target"] = psf_data["target"][~badmask]
+            # convert to numpy arrays - strip all bad data
+            times = times[goodmask]
+            airmass = np.array(airMassList)[goodmask]
+            psf_data["target"] = psf_data["target"][goodmask]
+            aper_data["target"] = aper_data["target"][goodmask]
+            aper_data["target_bg"] = aper_data["target_bg"][goodmask]
+            for j in range(len(compStarList)):
+                ckey = f"comp{j + 1}"
+                psf_data[ckey] = psf_data[ckey][goodmask]
+                aper_data[ckey] = aper_data[ckey][goodmask]
+                aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
 
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
@@ -2037,7 +2063,6 @@ def main():
             # loop over comp stars
             for j in range(len(compStarList)):
                 ckey = f"comp{j + 1}"
-                psf_data[ckey] = psf_data[ckey][~badmask]
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
                 myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)

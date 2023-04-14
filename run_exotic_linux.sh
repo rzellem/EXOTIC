@@ -128,7 +128,18 @@ ${pip_runner} install --upgrade exotic
 echo "INFO: Launching EXOTIC user interface. ..."
 if ${pip_runner} freeze | grep -iq 'exotic' ;
 then
-    bash -c "exotic-gui"
+    if hash exotic-gui > /dev/null ;
+    then
+        bash -c "exotic-gui"
+    # Ubuntu doesn't put this on path...
+    else
+        if [ -x ~/.local/bin/exotic-gui ] ;
+        then
+            bash -c "~/.local/bin/exotic-gui"
+        else
+            echo "ERROR: cannot find exotic-gui"
+        fi
+    fi
 else
     echo "ERROR: Unable to launch EXOTIC, installation failed. Please verify installation"
     echo "       steps reported on screen or open a support ticket at: "

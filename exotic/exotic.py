@@ -58,6 +58,7 @@ warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 # standard imports
 import argparse
 import hashlib
+from time import sleep
 # Image alignment import
 import astroalign as aa
 aa.PIXEL_TOL = 1
@@ -565,13 +566,21 @@ def corruption_check(files):
     valid_files = []
     for file in files:
         try:
-            with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdui:
+            with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdu1:
                 valid_files.append(file)
         except OSError as e:
-            log_info(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}", warn=True)
+            # Since google collab can have problems with initial load of big data sets from google
+            # drive, lets pause and retry this once when we fail: if the file was corrupted the first time,
+            # nothing will get better...
+            log_info(f"Warning: retrying verify\n\t-File: {file}\n\t-Reason: {e}", warn=True)
+            sleep(5)
+            try: 
+                with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdu1:
+                    valid_files.append(file)
+            except OSError as e:
+                log_info(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}", warn=True)
 
     return valid_files
-
 
 def check_wcs(fits_file, save_directory, plate_opt, rt=False):
     wcs_file = None

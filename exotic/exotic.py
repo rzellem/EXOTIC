@@ -836,6 +836,7 @@ def check_comps(comp_stars, vsp_comp_stars, tol=10):
 
         if not inlist:
             comp_stars_list.append(vsp_comp)
+            log_info(f"Added Comparison Star #{len(comp_stars_list)} [{vsp_comp[0]},{vsp_comp[1]}] from AAVSO")
 
     return comp_stars_list, vsp_pix
 

@@ -1852,7 +1852,11 @@ def main():
                 finally:
                     del first_image
 
-            inputfiles = inputfiles[inc:]
+            if inc > 0:
+                inputfiles = inputfiles[inc:]
+                times = times[inc:]
+                jd_times = jd_times[inc:]
+
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
             compStarList = exotic_infoDict['comp_stars']

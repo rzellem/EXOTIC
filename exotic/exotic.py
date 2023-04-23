@@ -1853,6 +1853,7 @@ def main():
                     del first_image
 
             if inc > 0:
+                log_info(f"Skipping first {inc} files - Target star not found")
                 inputfiles = inputfiles[inc:]
                 times = times[inc:]
                 jd_times = jd_times[inc:]

@@ -1327,7 +1327,9 @@ def realTimeReduce(i, target_name, info_dict, ax):
         while header['NAXIS'] == 0:
             extension += 1
             header = fits.getheader(filename=ifile, ext=extension)
-        times.append(img_time(header))
+        obsTime = img_time(header)
+        times.append(obsTime)
+        plateStatus.setObsTime(obsTime)
 
     si = np.argsort(times)
     inputfiles = np.array(inputfiles)[si]
@@ -1832,7 +1834,9 @@ def main():
                 while header['NAXIS'] == 0:
                     extension += 1
                     header = fits.getheader(filename=file, ext=extension)
-                times.append(img_time(header))
+                obsTime = img_time(header)
+                times.append(obsTime)
+                plateStatus.setObsTime(obsTime)
                 jd_times.append(img_time(header, var=True))
 
             extension = 0

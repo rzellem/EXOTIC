@@ -2,7 +2,7 @@
 class PlateStatus:
     def __init__(self, logfunc):
         self.statusByFilename = dict()
-        self.filenameByIndex = []
+        self.filenameList = []
         self.filename = "N/A"
         self.errorcodes = set()
         self.logfunc = logfunc
@@ -13,7 +13,8 @@ class PlateStatus:
         self.errorcodes.add("alignment_error")
     # Initialze set of files, as well as ordered index
     def initializeFilenames(self, filenames: list[str]):
-        self.filenameByIndex = filenames.copy()
+        self.filenameList = filenames.copy()
+        self.filenameList.sort()
         for fneme in filenames:
             if fneme not in self.statusByFilename:
                 self.statusByFilename[fneme] = {}
@@ -71,6 +72,12 @@ class PlateStatus:
         self._logError("fits_error",
             f"Corrupted file {self.filename} ({e}) --removed from reduction")
     # Reort alignment error
+    def setObsTime(self, time):
+        if self.filename not in self.statusByFilename:
+            self.statusByFilename[self.filename] = {}
+        self.statusByFilename[self.filename]['time'] = time
+        return self
+    # Reort frame time
     def alignmentError(self):
         self._logError("alignment_error",
             f"File {self.filename} failed to align with first file")
@@ -79,10 +86,10 @@ class PlateStatus:
         with open(file, 'w') as f:
             cols = list(self.errorcodes)
             cols.sort()
-            f.write(f"# filename,{','.join(cols)}\n")
-            for file in self.filenameByIndex:
+            f.write(f"# filename,time,{','.join(cols)}\n")
+            for file in self.filenameList:
                 rec = self.statusByFilename[file]
-                line = '"' + file + '"';
+                line = f"\"{file}\",{rec['time'] if 'time' in rec else ''}"
                 for col in cols:
                     if col in rec:
                         line = f"{line},{rec[col]}"

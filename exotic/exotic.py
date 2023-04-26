@@ -2106,10 +2106,10 @@ def main():
                     # goodNormUnc = np.copy(myfit.dataerr)
                     nonBJDTimes = np.copy(myfit.time)
                     goodAirmasses = np.copy(myfit.airmass)
-                    goodTargets = tFlux
-                    goodReferences = cFlux
-                    goodTUnc = tFlux ** 0.5
-                    goodRUnc = cFlux ** 0.5
+                    goodTargets = tFlux1
+                    goodReferences = cFlux1
+                    goodTUnc = tFlux1 ** 0.5
+                    goodRUnc = cFlux1 ** 0.5
                     bestlmfit = myfit
 
                     finXTargCent = psf_data["target"][:, 0]
@@ -2158,10 +2158,10 @@ def main():
                         nonBJDTimes = np.copy(myfit.time)
                         # nonBJDPhases = np.copy(myfit.phase)
                         goodAirmasses = np.copy(myfit.airmass)
-                        goodTargets = tFlux
-                        goodReferences = cFlux
-                        goodTUnc = tFlux ** 0.5
-                        goodRUnc = cFlux ** 0.5
+                        goodTargets = tFlux1
+                        goodReferences = cFlux1
+                        goodTUnc = tFlux1 ** 0.5
+                        goodRUnc = cFlux1 ** 0.5
                         # goodResids = myfit.residuals
                         bestlmfit = myfit
 
@@ -2209,10 +2209,10 @@ def main():
                             nonBJDTimes = np.copy(myfit.time)
                             # nonBJDPhases = np.copy(myfit.phase)
                             goodAirmasses = np.copy(myfit.airmass)
-                            goodTargets = tFlux[aper_mask]
-                            goodReferences = cFlux
-                            goodTUnc = tFlux[aper_mask] ** 0.5
-                            goodRUnc = cFlux ** 0.5
+                            goodTargets = tFlux1
+                            goodReferences = cFlux1
+                            goodTUnc = tFlux1 ** 0.5
+                            goodRUnc = cFlux1 ** 0.5
                             # goodResids = myfit.residuals
                             bestlmfit = myfit
 

@@ -27,6 +27,7 @@ class PlateStatus:
             self.errorcodes.add(f"skybg_comp{i+1}")            
     # Sets current filename (for any reported errors) - sets starIndex=0 (target)
     def setCurrentFilename(self, filename: str):
+        filename = str(filename)
         if filename not in self.statusByFilename:
             self.statusByFilename[filename] = {}
         self.filename = filename

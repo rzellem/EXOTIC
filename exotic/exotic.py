@@ -1475,6 +1475,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
     if np.sum(~nanmask) <= 1:
         log_info('No data left after filtering', warn=True)
+        return None, None, None
     else:
         arrayFinalFlux = arrayFinalFlux[~nanmask]
         arrayNormUnc = arrayNormUnc[~nanmask]
@@ -2085,15 +2086,16 @@ def main():
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
                 myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
-                for k in myfit.bounds.keys():
-                    log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
+                if myfit is not None:
+                    for k in myfit.bounds.keys():
+                        log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
 
-                log.debug("The Residual Standard Deviation is: "
-                          f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
+                    log.debug("The Residual Standard Deviation is: "
+                            f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
+                    log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                resstd = myfit.residuals.std() / np.median(myfit.data)
-                if minSTD > resstd:  # If the standard deviation is less than the previous min
+                    resstd = myfit.residuals.std() / np.median(myfit.data)
+                if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
                     bestCompStar = j + 1
                     comp_coords = compStarList[j]
                     minSTD = resstd
@@ -2137,15 +2139,16 @@ def main():
                     # fit without a comparison star
                     myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
-                    for k in myfit.bounds.keys():
-                        log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
+                    if myfit is not None:
+                        for k in myfit.bounds.keys():
+                            log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
 
-                    log.debug("The Residual Standard Deviation is: "
-                              f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                    log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
+                        log.debug("The Residual Standard Deviation is: "
+                                f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
+                        log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                    resstd = myfit.residuals.std() / np.median(myfit.data)
-                    if minSTD > resstd:  # If the standard deviation is less than the previous min
+                        resstd = myfit.residuals.std() / np.median(myfit.data)
+                    if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
                         minSTD = resstd
                         minAperture = -aper
                         minAnnulus = annulus
@@ -2178,23 +2181,24 @@ def main():
 
                         myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
 
-                        if j in vsp_num:
-                            temp_ref_flux[j] = {
-                                'myfit': myfit,
-                                'tflux': tFlux1,
-                                'cflux': cFlux1,
-                                'xy': compStarList[j]
-                            }
+                        if myfit is not None:
+                            if j in vsp_num:
+                                temp_ref_flux[j] = {
+                                    'myfit': myfit,
+                                    'tflux': tFlux1,
+                                    'cflux': cFlux1,
+                                    'xy': compStarList[j]
+                                }
 
-                        for k in myfit.bounds.keys():
-                            log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
+                            for k in myfit.bounds.keys():
+                                log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
 
-                        log.debug("The Residual Standard Deviation is: "
-                                  f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                        log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
+                            log.debug("The Residual Standard Deviation is: "
+                                    f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
+                            log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                        resstd = myfit.residuals.std() / np.median(myfit.data)
-                        if minSTD > resstd:  # If the standard deviation is less than the previous min
+                            resstd = myfit.residuals.std() / np.median(myfit.data)
+                        if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
                             bestCompStar = j + 1
                             comp_coords = compStarList[j]
                             minSTD = resstd

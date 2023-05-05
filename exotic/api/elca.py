@@ -98,11 +98,28 @@ def get_phase(times, per, tmid):
 
 
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
+    """
+    Calculate the mean and standard deviation of airmass-detrended data using a Monte Carlo approach.
+    The airmass detrending function is given by:
+        A1 * exp( A2 * airmass )
+
+    Parameters:
+        m_a2 (float): mean value of A2 parameter.
+        sig_a2 (float): standard deviation of A2 parameter.
+        transit (array-like): transit model.
+        airmass (array-like): airmass values.
+        data (array-like): observed data.
+        n (int, optional): number of iterations in Monte Carlo. Default is 10000.
+
+    Returns:
+        tuple: a tuple containing:
+            - mean of median-detrended data using Monte Carlo.
+            - standard deviation of median-detrended data using Monte Carlo.
+    """
     a2 = np.random.normal(m_a2, sig_a2, n)
     model = transit * np.exp(np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass)
     detrend = data / model
     return np.mean(np.median(detrend, 0)), np.std(np.median(detrend, 0))
-
 
 def round_to_2(*args):
     x = args[0]
@@ -157,7 +174,7 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', verbose=True):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=100, mode='ns', verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -192,12 +209,15 @@ class lc_fitter(object):
             return ((self.data - model) / self.dataerr) ** 2
 
         def lc2min_airmass(pars):
+            # chi-squared
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= self.prior['a1'] * np.exp(self.prior['a2'] * self.airmass)
+            model *= np.exp(self.prior['a2'] * self.airmass)
+            detrend = self.data / model  # used to estimate a1
+            model *= np.median(detrend)
             return ((self.data - model) / self.dataerr) ** 2
-
+ 
         try:
             if np.ndim(self.airmass) == 2:
                 res = least_squares(lc2min_nneighbor, x0=[self.prior[k] for k in freekeys],
@@ -227,7 +247,10 @@ class lc_fitter(object):
 
         for i, k in enumerate(freekeys):
             self.parameters[k] = res.x[i]
-            self.errors[k] = 0
+            cov = res.jac.T @ res.jac
+            cov = np.linalg.inv(cov)
+            cov = cov * res.cost
+            self.errors[k] = np.sqrt(cov[i, i])
 
         self.create_fit_variables()
 
@@ -237,7 +260,7 @@ class lc_fitter(object):
         self.time_upsample = np.linspace(min(self.time), max(self.time), 1000)
         self.transit_upsample = transit(self.time_upsample, self.parameters)
         self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
-        if self.mode == "ns":
+        if self.mode == "ns" and np.ndim(self.airmass) == 1:
             self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters.get('a2', 0), self.errors.get('a2', 1e-6),
                                                              self.transit, self.airmass, self.data)
         if np.ndim(self.airmass) == 2:
@@ -253,7 +276,7 @@ class lc_fitter(object):
             self.detrendederr = self.dataerr / self.airmass_model
 
         self.residuals = self.data - self.model
-        self.res_stdev = np.std(self.residuals)/np.median(self.data)
+        self.res_stdev = np.std(self.residuals)/np.median(self.data) # relative stdev
         self.chi2 = np.sum(self.residuals ** 2 / self.dataerr ** 2)
         self.bic = len(self.bounds) * np.log(len(self.time)) - 2 * np.log(self.chi2)
 
@@ -290,7 +313,21 @@ class lc_fitter(object):
         self.quantiles = {}
         self.parameters = copy.deepcopy(self.prior)
 
-        def loglike(pars):
+        # trim data around predicted transit/eclipse time
+        if np.ndim(self.airmass) == 2:
+            print(f'Computing nearest neighbors and gaussian weights for {len(self.time)} npts...')
+            self.gw, self.nearest = gaussian_weights(self.airmass, neighbors=self.neighbors)
+
+        def loglike_nneighbor(pars):
+            for i in range(len(pars)):
+                self.prior[freekeys[i]] = pars[i]
+            lightcurve = transit(self.time, self.prior)
+            detrended = self.data / lightcurve
+            wf = weightedflux(detrended, self.gw, self.nearest)
+            model = lightcurve * wf
+            return -np.sum(((self.data - model) / self.dataerr) ** 2)
+
+        def loglike_airmass(pars):
             # chi-squared
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
@@ -298,7 +335,7 @@ class lc_fitter(object):
             model *= np.exp(self.prior['a2'] * self.airmass)
             detrend = self.data / model  # used to estimate a1
             model *= np.median(detrend)
-            return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
+            return -np.sum(((self.data - model) / self.dataerr) ** 2)
 
         def prior_transform(upars):
             # transform unit cube to prior volume
@@ -306,7 +343,10 @@ class lc_fitter(object):
 
         try:
             self.ns_type = 'ultranest'
-            test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+            if np.ndim(self.airmass) == 2:
+                test = ReactiveNestedSampler(freekeys, loglike_nneighbor, prior_transform)
+            else:
+                test = ReactiveNestedSampler(freekeys, loglike_airmass, prior_transform)
 
             noop = lambda *args, **kwargs: None
             if self.verbose is True:
@@ -322,9 +362,12 @@ class lc_fitter(object):
                     self.results['posterior']['errup'][i]]
         except NameError:
             self.ns_type = 'dynesty'
-            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform,
-                                                    ndim=len(freekeys), bound='multi', sample='unif'
-                                                    )
+            if np.ndim(self.airmass) == 2:
+                dsampler = dynesty.DynamicNestedSampler(loglike_nneighbor, prior_transform,
+                                                        ndim=len(freekeys), bound='multi', sample='unif')
+            else:
+                dsampler = dynesty.DynamicNestedSampler(loglike_airmass, prior_transform,
+                                                        ndim=len(freekeys), bound='multi', sample='unif')
             dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
                                 maxbatch=10, nlive_batch=100
                                 )
@@ -550,12 +593,15 @@ class glc_fitter(lc_fitter):
     # needed for lc_fitter
     ns_type = 'ultranest'
 
-    def __init__(self, input_data, global_bounds, local_bounds, individual_fit=False, stdev_cutoff=0.03, verbose=False):
+    def __init__(self, input_data, global_bounds, local_bounds, 
+                       individual_fit=False, stdev_cutoff=0.03, verbose=False):
+
         # keys for input_data: time, flux, ferr, airmass, priors all numpy arrays
         self.lc_data = copy.deepcopy(input_data)
         self.global_bounds = global_bounds
         self.local_bounds = local_bounds
         self.individual_fit = individual_fit
+
         self.stdev_cutoff = stdev_cutoff
         self.verbose = verbose
 
@@ -578,11 +624,11 @@ class glc_fitter(lc_fitter):
             lfreekeys.append(list(self.local_bounds[i].keys()))
             boundarray.extend([self.local_bounds[i][k] for k in lfreekeys[-1]])
         boundarray = np.array(boundarray)
-
+ 
         # fit individual light curves to constrain priors
         if self.individual_fit:
             for i in range(nobs):
-
+ 
                 print(f"Fitting individual light curve {i+1}/{nobs}")
                 try:
                     mybounds = dict(**self.local_bounds[i], **self.global_bounds)
@@ -624,14 +670,17 @@ class glc_fitter(lc_fitter):
                 self.lc_data[i]['quality'] = myfit.quality
 
                 ti = sum([len(self.local_bounds[k]) for k in range(i)])
+
                 # update local priors
                 for j, key in enumerate(self.local_bounds[i].keys()):
 
                     boundarray[j+ti+len(gfreekeys),0] = myfit.parameters[key] - 5*myfit.errors[key]
                     boundarray[j+ti+len(gfreekeys),1] = myfit.parameters[key] + 5*myfit.errors[key]
+                    self.local_bounds[i][key] = [myfit.parameters[key] - 5*myfit.errors[key], myfit.parameters[key] + 5*myfit.errors[key]]
 
                     if key == 'rprs':
                         boundarray[j+ti+len(gfreekeys),0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
+                        self.local_bounds[i][key][0] = max(0,myfit.parameters[key] - 5*myfit.errors[key])
 
                 # print name and stdev of residuals
                 mint = np.min(self.lc_data[i]['time'])
@@ -642,6 +691,8 @@ class glc_fitter(lc_fitter):
                     print(f"{self.lc_data[i]['name']} & {mint} & {maxt} & {np.std(myfit.residuals)} & {len(self.lc_data[i]['time'])}")
 
                 del(myfit)
+
+
 
         # transform unit cube to prior volume
         bounddiff = np.diff(boundarray,1).reshape(-1)
@@ -767,7 +818,7 @@ class glc_fitter(lc_fitter):
         plt.tight_layout()
         return fig
 
-    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, phase_limits='median'):
+    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, ylim_sigma=6, legend_loc='best', phase_limits='median'):
         f = plt.figure(figsize=(15,12))
         f.subplots_adjust(top=0.92,bottom=0.09,left=0.1,right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4,5), (0,0), colspan=5,rowspan=3)
@@ -869,10 +920,10 @@ class glc_fitter(lc_fitter):
 
         axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         axs[0].set_xlabel("Phase ", fontsize=14)
-        axs[0].set_ylim([1-self.parameters['rprs']**2-5*min_std, 1+5*min_std])
+        axs[0].set_ylim([1-self.parameters['rprs']**2-ylim_sigma*min_std, 1+ylim_sigma*min_std])
         axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         axs[1].set_xlabel("Phase", fontsize=14)
-        axs[1].set_ylim([-5*min_std*1e2, 5*min_std*1e2])
+        axs[1].set_ylim([-6*min_std*1e2, 6*min_std*1e2])
 
         # compute average min and max for all the data
         mins = []; maxs = []
@@ -902,7 +953,7 @@ class glc_fitter(lc_fitter):
             axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
 
         axs[0].get_xaxis().set_visible(False)
-        axs[0].legend(loc='best',ncol=len(self.lc_data)//7+1)
+        axs[0].legend(loc=legend_loc,ncol=len(self.lc_data)//7+1)
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
         axs[1].grid(True,ls='--',axis='y')
         return f,axs
@@ -1017,7 +1068,7 @@ if __name__ == "__main__":
     # add bounds for free parameters only
     mybounds = {
         'rprs': [0, 0.1],
-        'tmid': [prior['tmid'] - 0.01, prior['tmid'] + 0.01],
+        'tmid': [prior['tmid'] - 0.1, prior['tmid'] + 0.1],
         'ars': [13, 15],
         # 'a2': [0, 0.3] # uncomment if you want to fit for airmass
         # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
@@ -1036,3 +1087,5 @@ if __name__ == "__main__":
     fig = myfit.plot_triangle()
     plt.tight_layout()
     plt.show()
+
+    # TODO create unit test for wasp43b_priors/transit

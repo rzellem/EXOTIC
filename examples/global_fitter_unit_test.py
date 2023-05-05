@@ -43,7 +43,8 @@ if __name__ == "__main__":
             'flux':flux,
             'ferr':ferr,
             'airmass':airmass,
-            'priors':prior
+            'priors':prior,
+            'name':f"epoch_{i}"
         })
 
         # individual properties
@@ -58,13 +59,14 @@ if __name__ == "__main__":
 
     # shared properties between light curves
     global_bounds = {
-        'per':[3.5-0.0001,3.5+0.0001],
-        'tmid':[1-0.01,1+0.01],
-        'ars':[14,14.5],
+        'per':[prior['per']-0.001,prior['per']+0.001],
+        'tmid':[prior['tmid']-0.05,prior['tmid']+0.05],
+        'inc':[prior['inc']-1,prior['inc']+1],
     }
 
     print('epochs:',epochs)
-    myfit = glc_fitter(input_data, global_bounds, local_bounds, individual_fit=False, verbose=True)
+    myfit = glc_fitter(input_data, global_bounds, local_bounds, 
+                       individual_fit=True, verbose=True)
 
     myfit.plot_bestfit()
     plt.show()

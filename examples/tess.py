@@ -118,23 +118,11 @@ def check_std(time, flux, dt=0.5): # dt = [hr]
     sflux = savgol_filter(flux[si], 1+2*int(max(15,dt/24/tdt)), 2)
     return np.nanstd(flux - sflux)
 
-
+# compute stellar mass from logg and radius
 stellar_mass = lambda logg,rs: ((rs*u.R_sun)**2 * 10**logg*(u.cm/u.s**2) / const.G).to(u.M_sun).value
 
-# # keplerian semi-major axis (au)
+# keplerian semi-major axis (au)
 sa = lambda m,P : ((const.G*m*u.M_sun*P*u.day**2/(4*np.pi**2) )**(1./3)).to(u.AU).value
-
-# # approximate radial velocity semi-amplitude 
-# rv_semi = lambda M,m,a : (G*m*m/(M*a))**0.5
-
-# # rv_semi( 1.22, 90*mearth/msun, sa(1.22,2.155)) * au/(24*60*60)
-
-# # assume a relationship between stellar mass and radius from 
-# # (http://ads.harvard.edu/books/hsaa/toc.html)
-# mms = [40,18, 6.5,3.2,2.1,1.7,1.3,1.1 ,1,0.93,0.78,0.69,0.47,0.21,0.1]  # M/Msun
-# rrs = [18,7.4,3.8,2.5,1.7,1.3,1.2,1.05,1,0.93,0.85,0.74,0.63,0.32,0.13] # R/Rsun
-# m2r_star = interp1d(mms,rrs) # convert solar mass to solar radius
-
 
 if __name__ == "__main__":
     infoDict = {}
@@ -431,6 +419,7 @@ if __name__ == "__main__":
         sv['trend'].append(dtrend)
         sv['sector'].append(np.ones(len(time))*sector)
 
+        # create plot with trend that was removed
         fig,ax = plt.subplots(1,figsize=(10,6))
         ax.plot(time, flux,'k.')
         ax.plot(time, dtrend,'r--')
@@ -444,12 +433,14 @@ if __name__ == "__main__":
         plt.savefig( os.path.join(planetdir, planetname+f"_sector_{sector}_trend.png") )
         plt.close()
 
+    # combine all sectors
     time = np.concatenate(sv['time'])
     alls = np.concatenate(sv['sector'])
     flux = np.concatenate(sv['flux'])
     trend = np.concatenate(sv['trend'])
     flux_err = np.concatenate(sv['flux_err'])
 
+    # remove nans
     nanmask = np.isnan(flux) | np.isnan(flux_err)
     time = time[~nanmask]
     flux = flux[~nanmask]
@@ -471,12 +462,14 @@ if __name__ == "__main__":
 
     # sigma clip time series
     dt = np.median(np.diff(np.sort(time)))
-    ndt = int(15./(24*60*dt))*2+1
+    ndt = int(15./(24*60*dt))*2+1 # number of data points in 15 minutes
     try:
         flux[tmask], _ = sigma_clip( flux[tmask], max(7,ndt), iterations=2)
     except:
         pass
     std = np.std(flux[tmask])
+
+    # remove data points from sigma clip that are nan'ed and outliers
     nanmask = np.isnan(flux) | (flux > 1.03) | (flux < 0.94)
 
     flux = flux[~nanmask]
@@ -526,6 +519,7 @@ if __name__ == "__main__":
             # stupid numpy, can't check if str is nan
             pass
 
+    # create bounds for light curve fitting
     mybounds = {
         'rprs':[0,3*tpars['rprs']],
         #'per':[tpars['per']*0.999, tpars['per']*1.001],
@@ -534,14 +528,14 @@ if __name__ == "__main__":
     }
 
     if args.ars:
-        #mybounds['omega'] = [tpars['omega']-1, tpars['omega']+1]
         mybounds['ars'] = [tpars['ars']*0.01, tpars['ars']*3]
-        #mybounds['ars'] = [80,100]#[tpars['ars']*0.01, tpars['ars']*3]
+        # degenerate if fit with Rp/Rs and Inclination but could try anyways
 
     print('performing global fit...')
     airmass = np.zeros(len(time[tmask]))
     myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds, verbose=True)
 
+    # create plots
     myfit.plot_bestfit(title=f"{args.target} Global Fit")
     plt.savefig( os.path.join( planetdir, planetname+"_global_fit.png"))
     plt.close()
@@ -562,6 +556,7 @@ if __name__ == "__main__":
     except:
         pass
 
+    # update priors from best fit
     prior['pl_tranmid'] = myfit.parameters['tmid']
     prior['pl_tranmiderr1'] = myfit.errors['tmid']
     prior['pl_tranmiderr2'] = -myfit.errors['tmid']
@@ -590,6 +585,7 @@ if __name__ == "__main__":
     mask = (residuals < 1.01) & (residuals > 0.99)
 
     if args.tls:
+        # search for periodic signals in residuals while masking out transit in global fit
         model = transitleastsquares(time[mask], residuals[mask])
         results = model.power(R_star=0.5,M_star=0.5)
 
@@ -607,6 +603,7 @@ if __name__ == "__main__":
         plt.savefig( os.path.join( planetdir, planetname+"_periodogram.png"))
         plt.close()
 
+    # save global fit data if above certain SNR
     rprs2 = myfit.parameters['rprs']**2
     rprs2err = myfit.parameters['rprs']*2*myfit.errors['rprs']
     snr = rprs2/rprs2err
@@ -618,20 +615,10 @@ if __name__ == "__main__":
         pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
         raise(Exception(f"Skipping individual light curve fits b.c SNR = {snr:.2f}"))
 
-    # fit individual light curves
-    #lightcurvedir = os.path.join(planetdir,'lightcurves')
-    #if not os.path.exists(lightcurvedir):
-        #os.mkdir(lightcurvedir)
-
+    # prepare for individual fits
     period = myfit.parameters['per']
     tmid = prior['pl_tranmid']
     ars = prior['pl_ratdor']
-
-    # custom priors
-    #flux = residuals # search residuals
-    #period = 0.57817
-    #tmid = 2459700.74877
-    #ars = 2.3
 
     tphase = (time + 2457000.0 - tmid) / period
     pdur = 2*np.arctan(1/ars) / (2*np.pi)
@@ -644,7 +631,10 @@ if __name__ == "__main__":
         'residuals': np.copy(flux)
     }
 
+    # for each individual transit
     for e in events:
+
+        # mask data in phase
         tmask = (tphase > e - (2*pdur)) & (tphase < e + (2*pdur) )
 
         if tmask.sum() == 0:
@@ -654,6 +644,7 @@ if __name__ == "__main__":
         #if (time[tmask].max() - time[tmask].min()) < (0.5*(4*pdur)):
         #    continue
 
+        # update priors for fitting
         tpars['tmid'] = tmid + e*period
         tpars['per'] = period
         tpars['ars'] = ars
@@ -662,18 +653,11 @@ if __name__ == "__main__":
         mybounds = {
             'rprs':[0,3*tpars['rprs']],
             'tmid':[tpars['tmid']-0.25*pdur*tpars['per'], tpars['tmid']+0.25*pdur*tpars['per']],
-            #'inc':[tpars['inc']-5, tpars['inc']+5],
-            'ars':[tpars['ars']*0.9, tpars['ars']*2.1]
+            'inc':[tpars['inc']-5, min(90,tpars['inc']+5)],
+            #'ars':[tpars['ars']*0.9, tpars['ars']*2.1]
         }
-    
-        # # estimate uncertainties based on scatter
-        # dt = np.median(np.diff(time[tmask]))
-        # sflc = savgol_filter(flux[tmask], my1+2*int(0.75/24/dt), 2)
-        # res = flux[tmask] - sflc
-        # phot_std = np.std(res)
-        # tmask[tmask] = (np.abs(res) <3*phot_std)
 
-        # skip light curves with large gaps
+        # skip light curves with large gaps bigger than 35 minutes
         if np.sum(np.diff(np.sort(time[tmask]))*24*60 > 35):
             continue
 
@@ -682,6 +666,7 @@ if __name__ == "__main__":
             airmass = np.zeros(len(time[tmask]))
             myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds)
         except:
+            print(f"Failed to fit transit at phase: {e}")
             continue
 
         for k in myfit.bounds.keys():
@@ -693,12 +678,14 @@ if __name__ == "__main__":
 
         # don't add transits consistent with 0
         if (rprs2-3*rprs2err <= 0):
-           continue
+            print(f"Skipping transit at phase: {e} b.c. depth = {rprs2:.2e} +- {rprs2err:.2e}")
+            continue
 
         # remove partial transits
         if myfit.transit[0] < 1 or myfit.transit[-1] < 1:
            continue
 
+        # save results
         lcdata = {
             'time':myfit.time,
             'flux':myfit.data,
@@ -721,6 +708,7 @@ if __name__ == "__main__":
         # detrend timeseries
         sv['timeseries']['residuals'][tmask] /= myfit.transit
 
+        # create string for plot legend
         tmidstr = str(np.round(myfit.parameters['tmid'],2)).replace('.','_')
 
         # save bestfit
@@ -738,17 +726,15 @@ if __name__ == "__main__":
             'Relative Flux':myfit.data,
             'Relative Flux Error':myfit.dataerr,
         }
-        #NEED TO ALSO PRINT OUT AAVSO META DATA
+
+        # create AAVSO formatted csv
         csv_lk = OutputFiles(myfit, prior, infoDict, planetdir)
         try:
             csv_lk.aavso_csv(airmass,u0,u1,u2,u3,tmidstr)
             csv_lk.aavso(airmass,u0,u1,u2,u3, tmidstr)
         except:
-            print('csv not saved')
-            import pdb; pdb.set_trace()
+            print(f"Failed to create AAVSO csv for {args.target} - Sector {lcdata['sector']}")
 
-        #pd.DataFrame(csv_data).to_csv( os.path.join(planetdir, f"{tmidstr}_"+planetname+"_lightcurve.csv"), index=False )
-    
     # save sv pickle
     pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
         
@@ -766,3 +752,4 @@ if __name__ == "__main__":
     ratios = ratios[dmask]
 
     # TODO finish making O-C plot?
+    # use example from exotic.api.nested_linear_fitter

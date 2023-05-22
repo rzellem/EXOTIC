@@ -751,8 +751,6 @@ if __name__ == "__main__":
     
     # save sv pickle
     pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
-    
-    dude()
         
     # O-C plot
     tmids = np.array([lc['pars']['tmid'] for lc in sv['lightcurves']])
@@ -760,95 +758,11 @@ if __name__ == "__main__":
     sectors = np.array([lc['sector'] for lc in sv['lightcurves']])
     ratios = np.array([lc['partial_ratio'] for lc in sv['lightcurves']])
 
-    #duration mask
+    # mask out partial transits
     dmask = ratios > 0.75
     tmids = tmids[dmask]
     tmiderr = tmiderr[dmask]
     sectors = sectors[dmask]
     ratios = ratios[dmask]
 
-    pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
-
-    assert(len(tmids) > 1)
-
-    # linear fit to transit times
-    epochs = np.round((tmids - np.max(tmids)) / period)
-    A = np.vstack([np.ones(len(tmids)), epochs]).T
-    res = sm.WLS(tmids, A, weights=1 / tmiderr).fit()
-    ephem = res.params[0] + res.params[1] * epochs
-    oc = tmids - ephem
-
-    # 3 sigma clip
-    meddiff = np.median(np.abs(np.diff(oc)))
-    maxdiff = np.max(np.abs(np.diff(oc)))
-    mask = np.diff(oc) > (meddiff + 3* np.mean(tmiderr))
-    mask = ~np.concatenate([mask,[False]])
-
-    epochs = np.round((tmids[mask] - np.max(tmids[mask])) / period)
-    A = np.vstack([np.ones(len(tmids[mask])), epochs]).T
-    res = sm.WLS(tmids[mask], A, weights=1 / tmiderr[mask]).fit()
-    ephem = res.params[0] + res.params[1] * epochs
-    oc = tmids[mask] - ephem
-
-
-    bounds = {
-        # maintain the order: m,b
-        'm': [res.params[1]-5.*max(tmiderr), res.params[1]+5.*max(tmiderr)],
-        'b': [res.params[0]-5.*max(tmiderr), res.params[0]+5.*max(tmiderr)]
-    }
-    lf = linear_fitter(epochs, tmids[mask], tmiderr[mask], bounds)
-
-    sv['ephemeris'] = {
-        'tmids':list(tmids[mask]),
-        'epochs':list(epochs),
-        'tmids_err':list(tmiderr[mask]),
-        'tmid': lf.parameters['b'],
-        'tmid_err': lf.errors['b'],
-        'per': lf.parameters['m'],
-        'per_err': lf.errors['m'],
-        'residuals': list(lf.residuals),
-    }
-
-    # save to disk
-    json.dump(sv['ephemeris'], open(os.path.join(planetdir,planetname+"_ephemeris.json"),"w"), indent=4 )
-    #pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
-    #pickle.dump([sectors,mask,tmids, lf.time, lf.residuals, lf.dataerr, lf.parameters['m'], lf.errors['m'], lf.parameters['b'], lf.errors['b'], airmass, u0,u1,u2,u3, myfit, prior, infoDict], open(os.path.join(planetdir, planetname+"_extraPdata.pkl"),"wb"))
-    pickle.dump([mask,tmids,epochs,lf.residuals,lf.dataerr,], open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
-    # OC figure
-    fig, ax = plt.subplots(1, ncols=len(set(sectors)), figsize=(13,5))
-    plt.subplots_adjust(hspace=0,wspace=0,left=0.08,bottom=0.13,right=0.975)
-    for i, sector in enumerate(np.sort(list(set(sectors)))):
-        smask = sectors[mask] == sector
-
-        # dates for header
-        dmin = Time(tmids[mask][smask],format='jd').min().isot.split('T')[0]
-        dmax = Time(tmids[mask][smask],format='jd').max().isot.split('T')[0]
-        try:
-            ax[i].errorbar(lf.time[smask], lf.residuals[smask]*24*60, yerr=lf.dataerr[smask]*24*60, ls='none', marker='o',label='Data')
-            ax[i].axhline(0,ls='--',label="P: {:.5f}+-{:.5f}, Tmid: {:.5f}+-{:.5f}".format(lf.parameters['m'], lf.errors['m'], lf.parameters['b'], lf.errors['b']))
-            ax[i].set_ylim([min(lf.residuals*24*60)-1, max(lf.residuals*24*60)+1])
-            ax[i].grid(True, ls='--')
-            ax[i].set_title(f"S{sector}")
-            x_ticks = ax[i].xaxis.get_major_ticks()
-            x_ticks[0].label1.set_visible(False)
-            x_ticks[-1].label1.set_visible(False)
-            for tick in ax[i].get_xticklabels():
-                tick.set_rotation(45)
-            if i > 0:
-                ax[i].yaxis.set_ticklabels([])
-        except:
-            ax.errorbar(lf.time[smask], lf.residuals[smask]*24*60, yerr=lf.dataerr[smask]*24*60, ls='none', marker='o',label='Data')
-            ax.axhline(0,ls='--',label="P: {:.5f}+-{:.5f}, Tmid: {:.5f}+-{:.5f}".format(lf.parameters['m'], lf.errors['m'], lf.parameters['b'], lf.errors['b']))
-            ax.set_ylim([min(lf.residuals*24*60)-1, max(lf.residuals*24*60)+1])
-            ax.set_xlabel("Epoch")
-            ax.grid(True, ls='--')
-            ax.set_title(f"Sector {sector} ({dmin} - {dmax})")
-
-    try:
-        ax[0].set_ylabel("Observed - Calculated [min]")
-        ax[int(0.5*len(ax))].set_xlabel("Epoch")
-
-    except:
-        ax.set_ylabel("Observed - Calculated [min]")
-    plt.savefig(os.path.join(planetdir, planetname+"_ephemeris.png") )
-    plt.close()
+    # TODO finish making O-C plot?

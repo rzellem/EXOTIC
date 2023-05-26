@@ -217,6 +217,10 @@ def julian_date(hdr, time_unit, exp):
 
     return julian_time + offset
 
+def get_exp_time(hdr):
+    exp_list = [ "EXPTIME", "EXPOSURE", "EXP" ]
+    exp_time = next((exptime for exptime in exp_list if exptime in hdr), None)
+    return hdr[exp_time] if exp_time is not None else 0.0
 
 def img_time(hdr, var=False):
     """Converts time from the header file to the Julian Date (JD, if needed)
@@ -239,7 +243,7 @@ def img_time(hdr, var=False):
     if not var:
         time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
 
-    exp = hdr['EXPTIME'] if 'EXPTIME' in hdr else hdr['EXPOSURE']
+    exp = get_exp_time(hdr);
 
     hdr_time = next((time for time in time_list if time in hdr), None)
 
@@ -787,6 +791,9 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
     wcs_hdr = search_wcs(file)
     fov = (img_scale * max(axis)) / 60
     ra, dec = wcs_hdr.pixel_to_world_values(axis[0] // 2, axis[1] // 2)
+    # Respect limits from AAVSO API (as reported by API error messages)
+    if fov > 180 and maglimit > 12:
+        maglimit = 12
 
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
@@ -1937,7 +1944,7 @@ def main():
                 airMassList.append(air_mass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
                                             exotic_infoDict['elev'], jd_times[i]))
 
-                exptimes.append(image_header['EXPTIME'] if 'EXPTIME' in image_header else image_header['EXPOSURE'])
+                exptimes.append(get_exp_time(image_header))
 
                 # IMAGES
                 imageData = hdul[extension].data

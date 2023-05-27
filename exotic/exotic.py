@@ -242,9 +242,6 @@ def img_time_jd(hdr):
     """
     time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
 
-    if not var:
-        time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
-
     exp = get_exp_time(hdr);
     hdr_time = next((time for time in time_list if time in hdr), None)
 

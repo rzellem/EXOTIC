@@ -271,7 +271,7 @@ def img_time_bjd_tdb(hdr, p_dict, info_dict):
     """
     # Check for BDJ time first (preference)
     time_list = ['BJD_TDB', 'BJD_TBD', 'BJD']
-    exp = hdr['EXPTIME'] if 'EXPTIME' in hdr else hdr['EXPOSURE']
+    exp = get_exp_time(hdr)
 
     hdr_time = next((time for time in time_list if time in hdr), None)
     # Not found, get julian date

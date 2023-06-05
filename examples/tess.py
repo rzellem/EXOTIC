@@ -1,6 +1,16 @@
 # first create an environment with the proper dependencies + version
-# conda env create -f tess_environment.yml
+# git clone https://github.com/rzellem/EXOTIC.git
+# cd EXOTIC
+# git checkout tess
+# cd examples
+# conda create -n tess python=3.9
 # conda activate tess
+# pip install pandas scipy matplotlib astropy statsmodels cython
+# pip install wotan transitleastsquares pylightcurve lightkurve ultranest==3.5.6
+# cd ..
+# pip install .
+# cd examples
+# python tess.py -t "HAT-P-18 b"
 import os
 import copy
 import json

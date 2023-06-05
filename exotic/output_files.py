@@ -10,6 +10,10 @@ try:
     from version import __version__
 except ImportError:
     from .version import __version__
+try:
+    from plate_status import PlateStatus
+except ImportError:
+    from .plate_status import PlateStatus
 
 
 class OutputFiles:
@@ -130,7 +134,9 @@ class OutputFiles:
                 f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC], 7)},"
                         f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
                         f"{round(self.fit.airmass_model[aavsoC], 7)}\n")
-
+    def plate_status(self, plate_status: PlateStatus):
+        plate_status_file = self.dir / "temp" / f"PlateStatus_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
+        plate_status.writePlateStatus(plate_status_file)
 
 class VSPOutputFiles:
     def __init__(self, fit, p_dict, i_dict, vsp_params):

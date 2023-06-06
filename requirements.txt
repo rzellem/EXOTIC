@@ -20,5 +20,5 @@ pyvo~=1.2
 requests~=2.31
 scipy~=1.7
 scikit-image~=0.18
-tenacity~=8.2
-ultranest~=3.5.7;platform_system!='Windows'
+tenacity~=8.1
+ultranest~=3.5.6;platform_system!='Windows'

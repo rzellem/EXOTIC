@@ -12,7 +12,7 @@ class PlateStatus:
         self.errorcodes.add("fits_error")
         self.errorcodes.add("alignment_error")
     # Initialze set of files, as well as ordered index
-    def initializeFilenames(self, filenames: list[str]):
+    def initializeFilenames(self, filenames: list):
         self.filenameList = filenames.copy()
         self.filenameList.sort()
         for fneme in filenames:

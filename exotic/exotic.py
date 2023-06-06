@@ -96,9 +96,11 @@ from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
 from skimage.util import view_as_windows
 from skimage.transform import SimilarityTransform
+from skimage.color import rgb2gray
 # error handling for scraper
 from tenacity import retry, stop_after_delay
-
+# color, color_demosaicing
+from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
     from .api.elca import lc_fitter, binner, transit, get_phase
@@ -817,9 +819,39 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
             log_info("Flattening images.")
         gen_flat[gen_flat == 0] = 1
         image_data = image_data / gen_flat
-
     return image_data
 
+def calculate_demosaic_mult(demosaic_out): 
+    if not demosaic_out:
+        return None       
+    # Build vector to convert RBG pixels to single output
+    if isinstance(demosaic_out, list):
+        demosaic_mult = np.array(demosaic_out)
+    elif demosaic_out == 'red':
+        demosaic_mult = np.array([ 1.0, 0.0, 0.0 ])
+    elif demosaic_out == 'green':
+        demosaic_mult = np.array([ 0.0, 1.0, 0.0 ])
+    elif demosaic_out == 'blue':
+        demosaic_mult = np.array([ 0.0, 0.0, 1.0 ])
+    elif demosaic_out == 'gray':
+        demosaic_mult = np.array([ 0.299, 0.587, 0.114 ])   # Same as rbg2gray
+    elif demosaic_out == 'blueblock':
+        demosaic_mult = np.array([ 0.299, 0.587, 0.0 ]) # drop blue, same mix of red, green as gray
+    else:   # Green default
+        demosaic_mult = np.array([ 0.0, 1.0, 0.0 ])
+    # Normalize
+    demosaic_mult = demosaic_mult / (demosaic_mult[0]+demosaic_mult[1]+demosaic_mult[2])
+    return demosaic_mult
+
+# If demosaic requested, process
+def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
+    if demosaic_fmt:
+        if i == 0:
+            log_info(f"Demosaicing images (mapping {demosaic_fmt} to {demosaic_out})")
+        img_dtype = image_data.dtype    # Save data type
+        new_image_data = demosaicing_CFA_Bayer_bilinear(image_data, demosaic_fmt)
+        image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
+    return image_data
 
 def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
     stars_count = 0
@@ -1713,6 +1745,8 @@ def main():
 
         init_path, wcs_file, wcs_header, ra_file, dec_file, vsp_params = None, None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
+        demosaic_fmt = None
+        demosaic_out = None
 
         if isinstance(args.reduce, str):
             fitsortext = 1
@@ -1791,6 +1825,12 @@ def main():
                 # NORMALIZE
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
+
+            if exotic_infoDict['demosaic_fmt']:
+                demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
+            if exotic_infoDict['demosaic_out']:
+                demosaic_out = exotic_infoDict['demosaic_out']     
+            demosaic_mult = calculate_demosaic_mult(demosaic_out)   
 
         if file_cmd_opt == 2:
             if args.nasaexoarch:
@@ -2009,6 +2049,8 @@ def main():
 
                 # CALS
                 imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
+                # Demosaic, if needed
+                imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
 
                 if i == 0:
                     firstImage = np.copy(imageData)

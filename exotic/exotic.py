@@ -227,7 +227,7 @@ def get_exp_time(hdr):
     exp_time = next((exptime for exptime in exp_list if exptime in hdr), None)
     return hdr[exp_time] if exp_time is not None else 0.0
 
-def img_time(hdr, var=False):
+def img_time_jd(hdr):
     """Converts time from the header file to the Julian Date (JD, if needed)
     and adds an exposure offset (if needed)
 
@@ -235,9 +235,6 @@ def img_time(hdr, var=False):
     ----------
     hdr : astropy.io.fits.header.Header
         A header file that includes the time from when the image was taken
-    var : bool
-        Flag for if only JD is needed due to Stellar Variability code (ignore BJD)
-
     Returns
     -------
     float
@@ -245,11 +242,7 @@ def img_time(hdr, var=False):
     """
     time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
 
-    if not var:
-        time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
-
     exp = get_exp_time(hdr);
-
     hdr_time = next((time for time in time_list if time in hdr), None)
 
     if hdr_time == 'MJD_OBS':
@@ -259,6 +252,44 @@ def img_time(hdr, var=False):
         return ut_date(hdr, hdr_time, exp)
     return julian_date(hdr, hdr_time, exp)
 
+
+def img_time_bjd_tdb(hdr, p_dict, info_dict):
+    """Converts time from the header file to BJD-TDB time (if needed)
+    and adds an exposure offset (if needed)
+
+    Parameters
+    ----------
+    hdr : astropy.io.fits.header.Header
+        A header file that includes the time from when the image was taken
+    p_dict: planetary settings dictionary
+    info_dict: observatory settings dictionary
+
+    Returns
+    -------
+    float
+        Time of when the image was taken in BJD-TDB with exposure offset
+    """
+    # Check for BDJ time first (preference)
+    time_list = ['BJD_TDB', 'BJD_TBD', 'BJD']
+    exp = get_exp_time(hdr)
+
+    hdr_time = next((time for time in time_list if time in hdr), None)
+    # Not found, get julian date
+
+    if hdr_time is None:
+        time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
+        hdr_time = next((time for time in time_list if time in hdr), None)
+        if hdr_time == 'MJD_OBS':
+            hdr_time = hdr_time if "epoch" not in hdr.comments[hdr_time] else 'DATE-OBS'
+        if hdr_time in ['UT-OBS', 'DATE-OBS']:
+            jd_time = ut_date(hdr, hdr_time, exp)
+        else:
+            jd_time = julian_date(hdr, hdr_time, exp)
+        # And convert to BJD_TDB
+        bjd_time = jd_bjd([jd_time], p_dict, info_dict)[0]
+    else:   # Else, already BJD - convert and adjust for exposure
+        bjd_time = julian_date(hdr, hdr_time, exp)
+    return bjd_time
 
 def air_mass(hdr, ra, dec, lat, long, elevation, time):
     """Scrapes or calculates the airmass at the time of when the image was taken.
@@ -1150,7 +1181,7 @@ def jd_bjd(non_bjd, p_dict, info_dict):
         obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
         timesToConvert = Time(non_bjd, format='jd', scale='utc', location=obsloc)
         ltt_bary = timesToConvert.light_travel_time(targetloc)
-        time_barycentre = timesToConvert.tdb + ltt_bary
+        time_barycentre = timesToConvert.tdb  + ltt_bary
         goodTimes = time_barycentre.value
 
     return goodTimes
@@ -1313,7 +1344,7 @@ def save_comp_radec(wcs_file, ra_file, dec_file, comp_coords):
     return comp_star
 
 
-def realTimeReduce(i, target_name, info_dict, ax):
+def realTimeReduce(i, target_name, p_dict, info_dict, ax):
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
 
     plateStatus.initializeFilenames(info_dict['images'])
@@ -1327,7 +1358,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
         while header['NAXIS'] == 0:
             extension += 1
             header = fits.getheader(filename=ifile, ext=extension)
-        obsTime = img_time(header)
+        obsTime = img_time_bjd_tdb(header, p_dict, info_dict)
         times.append(obsTime)
         plateStatus.setObsTime(obsTime)
 
@@ -1383,7 +1414,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
             image_header = hdul[extension].header
 
         # TIME
-        timeVal = img_time(image_header)
+        timeVal = img_time_bjd_tdb(image_header, p_dict, info_dict)
         timeList.append(timeVal)
 
         # IMAGES
@@ -1671,7 +1702,7 @@ def main():
         ax.set_ylabel('Normalized Flux')
         ax.set_xlabel('Time (JD)')
 
-        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], exotic_infoDict, ax), interval=15000)
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], userpDict, exotic_infoDict, ax), interval=15000)
         plt.show()
 
     # ----USER INPUTS----------------------------------------------------------
@@ -1835,10 +1866,10 @@ def main():
                 while header['NAXIS'] == 0:
                     extension += 1
                     header = fits.getheader(filename=file, ext=extension)
-                obsTime = img_time(header)
+                obsTime = img_time_bjd_tdb(header, pDict, exotic_infoDict)
                 times.append(obsTime)
                 plateStatus.setObsTime(obsTime)
-                jd_times.append(img_time(header, var=True))
+                jd_times.append(img_time_jd(header))
 
             extension = 0
             plateStatus.setCurrentFilename(inputfiles[0])
@@ -2282,27 +2313,13 @@ def main():
                 bestaperture = str(abs(np.round(minAperture, 2)))
             log_info("*********************************************\n")
 
-            # Take the BJD times from the image headers
-            if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
-                goodTimes = nonBJDTimes
-
-                index_list = [i for i, time_ in enumerate(times) if time_ in nonBJDTimes]
-                good_jd_times = [jd_times[i] for i in index_list]
-                for key, val in ref_flux_dict.items():
-                    index_list = [i for i, time_ in enumerate(times) if time_ in ref_flux_dict[key]['myfit'].time]
-                    ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
-
-            # If not in there, then convert all the final times into BJD - using astropy alone
-            else:
-                log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
-                         "Converting all JDs to BJD_TDBs.")
-                log_info("Please be patient- this step can take a few minutes.")
-
-                animate_toggle(True)
-                goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
-                animate_toggle()
-
-                good_jd_times = nonBJDTimes
+            # times always BJD-TDB
+            goodTimes = nonBJDTimes
+            index_list = [i for i, time_ in enumerate(times) if time_ in nonBJDTimes]
+            good_jd_times = [jd_times[i] for i in index_list]
+            for key, val in ref_flux_dict.items():
+                index_list = [i for i, time_ in enumerate(times) if time_ in ref_flux_dict[key]['myfit'].time]
+                ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
 
             # sigma clip
             si = np.argsort(goodTimes)

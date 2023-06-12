@@ -203,7 +203,7 @@ class linear_fitter(object):
                             max(np.percentile(diff_p,99,axis=0)*24*60)])
             elif ylim == 'average':
                 ax.set_ylim([ 0.5*(min(np.percentile(diff,1,axis=0)*24*60) + min(np.percentile(diff_p,1,axis=0)*24*60)),
-                            0.5*(max(np.percentile(diff,99,axis=0)*24*60) + max(np.percentile(diff_p,99,axis=0)*24*60))])
+                              0.5*(max(np.percentile(diff,99,axis=0)*24*60) + max(np.percentile(diff_p,99,axis=0)*24*60))])
 
         ax.axhline(0,color='black',alpha=0.5,ls='--',
                    label="Period: {:.7f}+-{:.7f} days\nT_mid: {:.7f}+-{:.7f} BJD".format(self.parameters['m'], self.errors['m'], self.parameters['b'], self.errors['b']))
@@ -338,6 +338,7 @@ class linear_fitter(object):
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)
         freq2,power2 = ls.autopower(maximum_frequency=1./(1.01*per), minimum_frequency=1./maxper, nyquist_factor=2)
+        # freq2,power2 = ls.autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
 
         # find max period
         mi2 = np.argmax(power2)
@@ -369,12 +370,16 @@ class linear_fitter(object):
         ax[0].axvline(per,color='red',label=f'Period: {per:.2f}',alpha=0.75, zorder=10)
         ax[0].axvline(per2,color='cyan', alpha=0.5, label=f'Period: {per2:.2f}', zorder=10)
         ax[0].set_title("Lomb-Scargle Periodogram")
-        ax[0].set_ylim([0,0.5*(self.power.max()+np.percentile(self.power,99))])
         ax[0].set_xlim([minper,maxper])
 
         # plot false alarm probability on lomb-scargle periodogram
         fp = ls.false_alarm_probability(power.max(), method='bootstrap')
         fp_levels = ls.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
+
+        # set upper y-limit on plot
+        upper_lim = 0.5*(self.power.max()+np.percentile(self.power,99))
+        upper_lim = max(upper_lim, fp_levels[0]*1.01)
+        ax[0].set_ylim([0, upper_lim])
 
         # plot as horizontal line
         ax[0].axhline(fp_levels[0], color='red', ls='--', label='99% FAP')

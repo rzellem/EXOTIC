@@ -112,7 +112,6 @@ class OutputFiles:
                     f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
                     f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
                     f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
-                    f",a/R*={round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- {round_to_2(self.fit.errors['ars'])}"
                     f",Am1=0"
                     f",Am2=0\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
@@ -171,7 +170,6 @@ class OutputFiles:
                         f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
                         f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
                         f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
-                        f",a/R*={round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- {round_to_2(self.fit.errors['ars'])}"
                         f",Am1=0"
                         f",Am2=0\n"
                         f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
@@ -249,10 +247,6 @@ def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
             'value': str(round_to_2(fit.parameters['rprs'], fit.errors['rprs'])),
             'uncertainty': str(round_to_2(fit.errors['rprs']))
         },
-        'a/R*': {
-            'value': str(round_to_2(fit.parameters['ars'], fit.errors['ars'])),
-            'uncertainty': str(round_to_2(fit.errors['ars'])),
-        },
         'Am1': {
             'value': 0,
             'uncertainty': None
@@ -267,5 +261,20 @@ def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
             'units': "days"
         }
     }
+
+    # try to add a/Rs if it exists
+    if 'ars' in fit.errors:
+        results['a/R*'] = {
+            'value': str(round_to_2(fit.parameters['ars'], fit.errors['ars'])),
+            'uncertainty': str(round_to_2(fit.errors['ars'])),
+        }
+
+    # check for inclination
+    if 'inc' in fit.errors:
+        results['inc'] = {
+            'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
+            'uncertainty': str(round_to_2(fit.errors['inc'])),
+            'units': "degrees"
+        }
 
     return priors, filter_type, results

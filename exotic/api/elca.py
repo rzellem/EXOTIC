@@ -719,8 +719,16 @@ class glc_fitter(lc_fitter):
             # phase
             self.lc_data[n]['phase'] = get_phase(self.lc_data[n]['time'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
 
+            # upscale model for plotting
+            self.lc_data[n]['time_upsample'] = np.linspace(min(self.lc_data[n]['time']), max(self.lc_data[n]['time']), 1000)
+            self.lc_data[n]['transit_upsample'] = transit(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors'])
+
     def plot_bestfits(self):
         nrows = len(self.lc_data)//4+1
+        # make sure there isn't an extra row
+        if len(self.lc_data)%4 == 0:
+            nrows -= 1
+
         fig,ax = plt.subplots(nrows, 4, figsize=(5+5*nrows, 5*nrows))
 
         # turn off all axes
@@ -750,16 +758,17 @@ class glc_fitter(lc_fitter):
             if ax.ndim == 1:
                 ax[i].axis('on')
                 ax[i].errorbar(self.lc_data[i]['time'], self.lc_data[i]['flux']/airmass/detrend.mean(), yerr=self.lc_data[i]['ferr']/airmass/detrend.mean(), 
-                                ls='none', marker=nmarker, color=ncolor, alpha=0.5)
-                ax[i].plot(self.lc_data[i]['time'], model, 'r-', zorder=2)
+                                ls='none', marker=nmarker, color=ncolor, alpha=0.5, zorder=1)
+                
+                ax[i].plot(self.lc_data[i]['time_upsample'], self.lc_data[i]['transit_upsample'], 'r-', zorder=2)
                 ax[i].set_xlabel("Time [BJD]", fontsize=14)
                 ax[i].set_ylabel("Relative Flux", fontsize=14)
                 ax[i].set_title(f"{self.lc_data[i].get('name','')}", fontsize=16)
             else:
                 ax[ri,ci].axis('on')
                 ax[ri,ci].errorbar(self.lc_data[i]['time'], self.lc_data[i]['flux']/airmass/detrend.mean(), yerr=self.lc_data[i]['ferr']/airmass/detrend.mean(), 
-                                   ls='none', marker=nmarker, color=ncolor, alpha=0.5)
-                ax[ri,ci].plot(self.lc_data[i]['time'], model, 'r-', zorder=2)
+                                   ls='none', marker=nmarker, color=ncolor, alpha=0.5, zorder=1)
+                ax[ri,ci].plot(self.lc_data[i]['time_upsample'], self.lc_data[i]['transit_upsample'], 'r-', zorder=2)
                 ax[ri,ci].set_xlabel("Time[BJD]", fontsize=14)
                 ax[ri,ci].set_ylabel("Relative Flux", fontsize=14)
                 ax[ri,ci].set_title(f"{self.lc_data[i].get('name','')}", fontsize=16)
@@ -767,14 +776,14 @@ class glc_fitter(lc_fitter):
         plt.tight_layout()
         return fig
 
-    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, phase_limits='median'):
+    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, ylim_sigma=5, phase_limits='median', show_legend=True):
         f = plt.figure(figsize=(15,12))
         f.subplots_adjust(top=0.92,bottom=0.09,left=0.1,right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4,5), (0,0), colspan=5,rowspan=3)
         ax_res = plt.subplot2grid((4,5), (3,0), colspan=5, rowspan=1)
         axs = [ax_lc, ax_res]
 
-        axs[0].set_title(title)
+        axs[0].set_title(title, fontsize=18)
         axs[0].set_ylabel("Relative Flux", fontsize=14)
         axs[0].grid(True,ls='--')
 
@@ -867,9 +876,10 @@ class glc_fitter(lc_fitter):
         sii = np.argsort(self.phase_upsample)
         axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel, lw=3)
 
+        # set up axes limits
         axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         axs[0].set_xlabel("Phase ", fontsize=14)
-        axs[0].set_ylim([1-self.parameters['rprs']**2-5*min_std, 1+5*min_std])
+        axs[0].set_ylim([1-self.parameters['rprs']**2-ylim_sigma*min_std, 1+ylim_sigma*min_std])
         axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         axs[1].set_xlabel("Phase", fontsize=14)
         axs[1].set_ylim([-5*min_std*1e2, 5*min_std*1e2])
@@ -902,9 +912,12 @@ class glc_fitter(lc_fitter):
             axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
 
         axs[0].get_xaxis().set_visible(False)
-        axs[0].legend(loc='best',ncol=len(self.lc_data)//7+1)
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
         axs[1].grid(True,ls='--',axis='y')
+    
+        if show_legend:
+            axs[0].legend(loc='best',ncol=len(self.lc_data)//7+1)
+    
         return f,axs
 
     def plot_stack(self, title="", bin_dt=30./(60*24), dy=0.02):

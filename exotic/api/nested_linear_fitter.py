@@ -118,7 +118,7 @@ class linear_fitter(object):
         self.model = self.epochs * self.parameters['m'] + self.parameters['b']
         self.residuals = self.data - self.model
 
-    def plot_oc(self, savefile=None, ylim='none', show_2sigma=False):
+    def plot_oc(self, savefile=None, ylim='none', show_2sigma=False, prior_name="Prior"):
         """ Plot the data in the form of residuals vs. time
 
         Parameters
@@ -193,17 +193,17 @@ class linear_fitter(object):
             #ax.plot(epochs, (model-prior)*24*60, ls='--', color='r')
 
             if show_2sigma:
-                ax.fill_between(epochs, np.percentile(diff_p,2,axis=0)*24*60, np.percentile(diff_p,98,axis=0)*24*60, alpha=0.1, color='r', label=r'Prior ($\pm$ 2$\sigma$)')
+                ax.fill_between(epochs, np.percentile(diff_p,2,axis=0)*24*60, np.percentile(diff_p,98,axis=0)*24*60, alpha=0.1, color='r', label=rf'{prior_name} ($\pm$ 2$\sigma$)')
             else:
                 # show ~1 sigma
-                ax.fill_between(epochs, np.percentile(diff_p,36,axis=0)*24*60, np.percentile(diff_p,64,axis=0)*24*60, alpha=0.1, color='r', label=r'Prior ($\pm$ 1$\sigma$)')
+                ax.fill_between(epochs, np.percentile(diff_p,36,axis=0)*24*60, np.percentile(diff_p,64,axis=0)*24*60, alpha=0.1, color='r', label=rf'{prior_name} ($\pm$ 1$\sigma$)')
 
             if ylim == 'prior':
                 ax.set_ylim([ min(np.percentile(diff_p,1,axis=0)*24*60),
                             max(np.percentile(diff_p,99,axis=0)*24*60)])
             elif ylim == 'average':
                 ax.set_ylim([ 0.5*(min(np.percentile(diff,1,axis=0)*24*60) + min(np.percentile(diff_p,1,axis=0)*24*60)),
-                            0.5*(max(np.percentile(diff,99,axis=0)*24*60) + max(np.percentile(diff_p,99,axis=0)*24*60))])
+                              0.5*(max(np.percentile(diff,99,axis=0)*24*60) + max(np.percentile(diff_p,99,axis=0)*24*60))])
 
         ax.axhline(0,color='black',alpha=0.5,ls='--',
                    label="Period: {:.7f}+-{:.7f} days\nT_mid: {:.7f}+-{:.7f} BJD".format(self.parameters['m'], self.errors['m'], self.parameters['b'], self.errors['b']))
@@ -338,6 +338,7 @@ class linear_fitter(object):
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)
         freq2,power2 = ls.autopower(maximum_frequency=1./(1.01*per), minimum_frequency=1./maxper, nyquist_factor=2)
+        # freq2,power2 = ls.autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
 
         # find max period
         mi2 = np.argmax(power2)
@@ -357,6 +358,10 @@ class linear_fitter(object):
         y_bestfit_second_order = np.dot(basis.T, coeffs_second_order) # reconstruct signal
         ########################################
 
+        # find the best bic
+        bics = [res_linear.bic, res_first_order.bic, res_second_order.bic]
+        best_bic = np.argmin(bics)
+
 
         ########################################
         # create plot
@@ -366,28 +371,44 @@ class linear_fitter(object):
         ax[0].semilogx(self.periods,self.power,'k-',label='Data', zorder=5)
         ax[0].set_xlabel("Period [epoch]",fontsize=14)
         ax[0].set_ylabel('Power',fontsize=14)
-        ax[0].axvline(per,color='red',label=f'Period: {per:.2f}',alpha=0.75, zorder=10)
-        ax[0].axvline(per2,color='cyan', alpha=0.5, label=f'Period: {per2:.2f}', zorder=10)
-        ax[0].set_title("Lomb-Scargle Periodogram")
-        ax[0].set_ylim([0,0.5*(self.power.max()+np.percentile(self.power,99))])
+        ax[0].axvline(per,color='red',label=f'Period: {per:.2f} epochs',alpha=0.75, zorder=10)
+        # find power at closest period
+        idx = np.argmin(np.abs(self.periods-per))
+        per_power1 = self.power[idx]
+
+        ax[0].axvline(per2,color='cyan', alpha=0.5, label=f'Period: {per2:.2f} epochs', zorder=10)
+        # find power at closest period
+        idx = np.argmin(np.abs(self.periods-per2))
+        per_power2 = self.power[idx]
+
+        ax[0].set_title("Lomb-Scargle Periodogram", fontsize=18)
         ax[0].set_xlim([minper,maxper])
 
         # plot false alarm probability on lomb-scargle periodogram
         fp = ls.false_alarm_probability(power.max(), method='bootstrap')
         fp_levels = ls.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
 
+        # set upper y-limit on plot
+        upper_lim = 0.5*(self.power.max()+np.percentile(self.power,99))
+        #upper_lim = max(upper_lim, fp_levels[0]*1.01)
+        ax[0].set_ylim([0, upper_lim])
+
         # plot as horizontal line
-        ax[0].axhline(fp_levels[0], color='red', ls='--', label='99% FAP')
+        ax[0].axhline(fp_levels[0], color='red', ls='--', label=f'99% FAP (Power = {fp_levels[0]:.1f})')
+        # if peaks are below FAP, then say no signal found
 
         # plot lomb-scargle for detrended data
         ax[0].semilogx(1./freq2,power2*0.99,'g-',alpha=0.5,label='Detrended Data', zorder=7)
 
         # plot false alarm probability on lomb-scargle periodogram
         fp = ls2.false_alarm_probability(power2.max(), method='bootstrap')
-        fp_levels = ls2.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
+        fp_levels2 = ls2.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
 
         # add horizontal dotted line at zero
-        ax[1].axhline(0, color='black', ls='--', label=f"Linear Fit (BIC: {res_linear.bic:.2f})")
+        linear_label = f"Linear Fit (BIC: {res_linear.bic:.2f})"
+        if best_bic == 0:
+            linear_label += " best"
+        ax[1].axhline(0, color='black', ls='--', label=linear_label)
 
         # super sample fourier solution for first order
         xnew = np.linspace(self.epochs.min(), self.epochs.max(), 1000)
@@ -397,7 +418,10 @@ class linear_fitter(object):
         y_bestfit_new = np.dot(basis_new.T, coeffs_first_order[2:]) # reconstruct signal
 
         # plot first order fourier solution
-        ax[1].plot(xnew, y_bestfit_new*24*60, 'r-', label=f'Fourier Fit 1st (BIC: {res_first_order.bic:.2f})', alpha=0.75)
+        fourier1_label = f'Fourier Fit 1st (BIC: {res_first_order.bic:.2f})'
+        if per_power1 < fp_levels[0]:
+            fourier1_label += " below 99% FAP"
+        ax[1].plot(xnew, y_bestfit_new*24*60, 'r-', label=fourier1_label, alpha=0.75)
 
         # set up ax labels
         ax[1].set_xlabel(f"Epochs",fontsize=14)
@@ -422,7 +446,10 @@ class linear_fitter(object):
         y_bestfit_new2 = np.dot(basis_new.T, coeffs_second_order[2:]) # reconstruct signal
 
         # plot first order fourier solution
-        ax[1].plot(xnew, y_bestfit_new2*24*60, 'c-', label=f'Fourier Fit 2nd (BIC: {res_second_order.bic:.2f})', alpha=0.75)
+        fourier2_label = f'Fourier Fit 2nd (BIC: {res_second_order.bic:.2f})'
+        if per_power2 < fp_levels[0]: # should be fp_levels2?
+            fourier2_label += " below 99% FAP"
+        ax[1].plot(xnew, y_bestfit_new2*24*60, 'c-', label=fourier2_label, alpha=0.75)
 
         # set up ax labels
         ax[1].set_xlabel(f"Epochs",fontsize=14)

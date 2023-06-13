@@ -96,9 +96,11 @@ from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion
 from skimage.util import view_as_windows
 from skimage.transform import SimilarityTransform
+from skimage.color import rgb2gray
 # error handling for scraper
 from tenacity import retry, stop_after_delay
-
+# color, color_demosaicing
+from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
     from .api.elca import lc_fitter, binner, transit, get_phase
@@ -124,6 +126,10 @@ try:  # output files
     from output_files import OutputFiles, VSPOutputFiles
 except ImportError:  # package import
     from .output_files import OutputFiles, VSPOutputFiles
+try:
+    from plate_status import PlateStatus
+except ImportError:
+    from .plate_status import PlateStatus
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
         plot_stellar_variability, plot_variable_residuals
@@ -151,7 +157,6 @@ plt.style.use(astropy_mpl_style)
 # logging -- https://docs.python.org/3/library/logging.html
 log = logging.getLogger(__name__)
 
-
 def log_info(string, warn=False, error=False):
     if error:
         print(f"\033[31m {string}\033[0m")
@@ -162,11 +167,13 @@ def log_info(string, warn=False, error=False):
     log.debug(string)
     return True
 
+# Initialze plate status log
+plateStatus = PlateStatus(log_info)
 
 def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     nanmask = np.isnan(ogdata)
 
-    if po < dt <= len(ogdata):
+    if po < dt <= len(ogdata[~nanmask]):
         mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
         # mdata = median_filter(ogdata[~nanmask], dt)
         res = ogdata[~nanmask] - mdata
@@ -217,8 +224,12 @@ def julian_date(hdr, time_unit, exp):
 
     return julian_time + offset
 
+def get_exp_time(hdr):
+    exp_list = [ "EXPTIME", "EXPOSURE", "EXP" ]
+    exp_time = next((exptime for exptime in exp_list if exptime in hdr), None)
+    return hdr[exp_time] if exp_time is not None else 0.0
 
-def img_time(hdr, var=False):
+def img_time_jd(hdr):
     """Converts time from the header file to the Julian Date (JD, if needed)
     and adds an exposure offset (if needed)
 
@@ -226,9 +237,6 @@ def img_time(hdr, var=False):
     ----------
     hdr : astropy.io.fits.header.Header
         A header file that includes the time from when the image was taken
-    var : bool
-        Flag for if only JD is needed due to Stellar Variability code (ignore BJD)
-
     Returns
     -------
     float
@@ -236,11 +244,7 @@ def img_time(hdr, var=False):
     """
     time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
 
-    if not var:
-        time_list = ['BJD_TDB', 'BJD_TBD', 'BJD'] + time_list
-
-    exp = hdr['EXPTIME'] if 'EXPTIME' in hdr else hdr['EXPOSURE']
-
+    exp = get_exp_time(hdr);
     hdr_time = next((time for time in time_list if time in hdr), None)
 
     if hdr_time == 'MJD_OBS':
@@ -250,6 +254,44 @@ def img_time(hdr, var=False):
         return ut_date(hdr, hdr_time, exp)
     return julian_date(hdr, hdr_time, exp)
 
+
+def img_time_bjd_tdb(hdr, p_dict, info_dict):
+    """Converts time from the header file to BJD-TDB time (if needed)
+    and adds an exposure offset (if needed)
+
+    Parameters
+    ----------
+    hdr : astropy.io.fits.header.Header
+        A header file that includes the time from when the image was taken
+    p_dict: planetary settings dictionary
+    info_dict: observatory settings dictionary
+
+    Returns
+    -------
+    float
+        Time of when the image was taken in BJD-TDB with exposure offset
+    """
+    # Check for BDJ time first (preference)
+    time_list = ['BJD_TDB', 'BJD_TBD', 'BJD']
+    exp = get_exp_time(hdr)
+
+    hdr_time = next((time for time in time_list if time in hdr), None)
+    # Not found, get julian date
+
+    if hdr_time is None:
+        time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
+        hdr_time = next((time for time in time_list if time in hdr), None)
+        if hdr_time == 'MJD_OBS':
+            hdr_time = hdr_time if "epoch" not in hdr.comments[hdr_time] else 'DATE-OBS'
+        if hdr_time in ['UT-OBS', 'DATE-OBS']:
+            jd_time = ut_date(hdr, hdr_time, exp)
+        else:
+            jd_time = julian_date(hdr, hdr_time, exp)
+        # And convert to BJD_TDB
+        bjd_time = jd_bjd([jd_time], p_dict, info_dict)[0]
+    else:   # Else, already BJD - convert and adjust for exposure
+        bjd_time = julian_date(hdr, hdr_time, exp)
+    return bjd_time
 
 def air_mass(hdr, ra, dec, lat, long, elevation, time):
     """Scrapes or calculates the airmass at the time of when the image was taken.
@@ -565,6 +607,7 @@ def nonlinear_ld(ld, filter_):
 def corruption_check(files):
     valid_files = []
     for file in files:
+        plateStatus.setCurrentFilename(file)
         try:
             with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdu1:
                 valid_files.append(file)
@@ -578,8 +621,8 @@ def corruption_check(files):
                 with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdu1:
                     valid_files.append(file)
             except OSError as e:
-                log_info(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}", warn=True)
-
+                log.debug(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}")
+                plateStatus.fitsFormatError(e)
     return valid_files
 
 def check_wcs(fits_file, save_directory, plate_opt, rt=False):
@@ -776,9 +819,39 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
             log_info("Flattening images.")
         gen_flat[gen_flat == 0] = 1
         image_data = image_data / gen_flat
-
     return image_data
 
+def calculate_demosaic_mult(demosaic_out): 
+    if not demosaic_out:
+        return None       
+    # Build vector to convert RBG pixels to single output
+    if isinstance(demosaic_out, list):
+        demosaic_mult = np.array(demosaic_out)
+    elif demosaic_out == 'red':
+        demosaic_mult = np.array([ 1.0, 0.0, 0.0 ])
+    elif demosaic_out == 'green':
+        demosaic_mult = np.array([ 0.0, 1.0, 0.0 ])
+    elif demosaic_out == 'blue':
+        demosaic_mult = np.array([ 0.0, 0.0, 1.0 ])
+    elif demosaic_out == 'gray':
+        demosaic_mult = np.array([ 0.299, 0.587, 0.114 ])   # Same as rbg2gray
+    elif demosaic_out == 'blueblock':
+        demosaic_mult = np.array([ 0.299, 0.587, 0.0 ]) # drop blue, same mix of red, green as gray
+    else:   # Green default
+        demosaic_mult = np.array([ 0.0, 1.0, 0.0 ])
+    # Normalize
+    demosaic_mult = demosaic_mult / (demosaic_mult[0]+demosaic_mult[1]+demosaic_mult[2])
+    return demosaic_mult
+
+# If demosaic requested, process
+def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
+    if demosaic_fmt:
+        if i == 0:
+            log_info(f"Demosaicing images (mapping {demosaic_fmt} to {demosaic_out})")
+        img_dtype = image_data.dtype    # Save data type
+        new_image_data = demosaicing_CFA_Bayer_bilinear(image_data, demosaic_fmt)
+        image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
+    return image_data
 
 def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
     stars_count = 0
@@ -787,6 +860,9 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14):
     wcs_hdr = search_wcs(file)
     fov = (img_scale * max(axis)) / 60
     ra, dec = wcs_hdr.pixel_to_world_values(axis[0] // 2, axis[1] // 2)
+    # Respect limits from AAVSO API (as reported by API error messages)
+    if fov > 180 and maglimit > 12:
+        maglimit = 12
 
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
     result = requests.get(url)
@@ -836,6 +912,7 @@ def check_comps(comp_stars, vsp_comp_stars, tol=10):
 
         if not inlist:
             comp_stars_list.append(vsp_comp)
+            log_info(f"Added Comparison Star #{len(comp_stars_list)} [{vsp_comp[0]},{vsp_comp[1]}] from AAVSO")
 
     return comp_stars_list, vsp_pix
 
@@ -888,7 +965,8 @@ def transformation(image_data, file_name, roi=1):
                     except Exception:
                         pass
 
-    log_info(f"Warning: Following image failed to align - {file_name}", warn=True)
+    log.debug(f"Warning: Following image failed to align - {file_name}")
+    plateStatus.alignmentError()
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
 
@@ -1013,7 +1091,7 @@ def mesh_box(pos, box, maxx=0, maxy=0):
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=True):
+def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weightedcenter=True):
     # get sub field in image
     xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
     subarray = data[yv, xv]
@@ -1021,7 +1099,8 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
         init = [np.nanmax(subarray) - np.nanmin(subarray), 1, 1, 0, np.nanmin(subarray)]
     except ValueError as ve:
         # Handle null subfield - cannot solve
-        log_info(f"Warning: empty subfield for fit_centroid at {np.round(pos, 2)}", warn=True)
+        plateStatus.outOfFrameWarning(starIndex)
+        log.debug(f"Warning: empty subfield for fit_centroid at {np.round(pos, 2)}")
         return np.empty(7) * np.nan
     # compute flux weighted centroid in x and y
     wx = np.sum(xv[0]*subarray.sum(0))/subarray.sum(0).sum()
@@ -1038,7 +1117,9 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
     try:
         res = least_squares(fcn2min, x0=[*pos, *init], bounds=[lo, up], jac='3-point', xtol=None, method='trf')
     except:
-        log_info(f"Warning: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?", warn=True)
+        # Report low flux warning 
+        plateStatus.lowFluxAmplitudeWarning(starIndex, pos[0], pos[1])
+        log.debug(f"Warning: Measured flux amplitude is really low---are you sure there is a star at {np.round(pos, 2)}?")
 
         res = least_squares(fcn2min, x0=[*pos, *init], jac='3-point', xtol=None, method='lm')
 
@@ -1051,9 +1132,9 @@ def fit_centroid(data, pos, psf_function=gaussian_psf, box=15, weightedcenter=Tr
 
 
 # Method calculates the flux of the star (uses the skybg_phot method to do background sub)
-def aperPhot(data, xc, yc, r=5, dr=5):
+def aperPhot(data, starIndex, xc, yc, r=5, dr=5):
     if dr > 0 and not np.isnan(xc) and not np.isnan(yc):
-        bgflux, sigmabg, Nbg = skybg_phot(data, xc, yc, r + 2, dr)
+        bgflux, sigmabg, Nbg = skybg_phot(data, starIndex, xc, yc, r + 2, dr)
     else:
         bgflux, sigmabg, Nbg = 0, 0, 0
 
@@ -1065,7 +1146,7 @@ def aperPhot(data, xc, yc, r=5, dr=5):
     return aperture_sum, bgflux
 
 
-def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
+def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
     # create a crude annulus to mask out bright background pixels
     xv, yv = mesh_box([xc, yc], np.round(r + dr))
     rv = ((xv - xc) ** 2 + (yv - yc) ** 2) ** 0.5
@@ -1073,8 +1154,9 @@ def skybg_phot(data, xc, yc, r=10, dr=5, ptol=99, debug=False):
     try:
         cutoff = np.nanpercentile(data[yv, xv][mask], ptol)
     except IndexError:
-        log_info(f"Warning: IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}."
-                 f"\nCheck if star is present or close to border.", warn=True)
+        plateStatus.skyBackgroundWarning(starIndex, xc, yc)
+        log.debug(f"Warning: IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}."
+                 f"\nCheck if star is present or close to border.")
 
         # create pixel wise mask on entire image
         x = np.arange(data.shape[1])
@@ -1131,7 +1213,7 @@ def jd_bjd(non_bjd, p_dict, info_dict):
         obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
         timesToConvert = Time(non_bjd, format='jd', scale='utc', location=obsloc)
         ltt_bary = timesToConvert.light_travel_time(targetloc)
-        time_barycentre = timesToConvert.tdb + ltt_bary
+        time_barycentre = timesToConvert.tdb  + ltt_bary
         goodTimes = time_barycentre.value
 
     return goodTimes
@@ -1294,26 +1376,30 @@ def save_comp_radec(wcs_file, ra_file, dec_file, comp_coords):
     return comp_star
 
 
-def realTimeReduce(i, target_name, info_dict, ax):
+def realTimeReduce(i, target_name, p_dict, info_dict, ax):
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
 
+    plateStatus.initializeFilenames(info_dict['images'])
     inputfiles = corruption_check(info_dict['images'])
-
     # time sort images
     times = []
     for ifile in inputfiles:
+        plateStatus.setCurrentFilename(ifile)
         extension = 0
         header = fits.getheader(filename=ifile, ext=extension)
         while header['NAXIS'] == 0:
             extension += 1
             header = fits.getheader(filename=ifile, ext=extension)
-        times.append(img_time(header))
+        obsTime = img_time_bjd_tdb(header, p_dict, info_dict)
+        times.append(obsTime)
+        plateStatus.setObsTime(obsTime)
 
     si = np.argsort(times)
     inputfiles = np.array(inputfiles)[si]
     exotic_UIprevTPX = info_dict['tar_coords'][0]
     exotic_UIprevTPY = info_dict['tar_coords'][1]
 
+    plateStatus.setCurrentFilename(inputfiles[0])
     wcs_file = check_wcs(inputfiles[0], info_dict['save'], info_dict['plate_opt'], rt=True)
     comp_star = info_dict['comp_stars']
     tar_radec, comp_radec = None, []
@@ -1331,7 +1417,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
         comp_radec.append((ra, dec))
 
     first_image = fits.getdata(inputfiles[0])
-    targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])[3:5]
+    targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)[3:5]
 
     # aperture size in stdev (sigma) of PSF
     aper = 3 * max(targ_sig_xy)
@@ -1349,6 +1435,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
 
     # open files, calibrate, align, photometry
     for i, fileName in enumerate(inputfiles):
+        plateStatus.setCurrentFilename(fileName)
         hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                          ignore_missing_end=True)
 
@@ -1359,7 +1446,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
             image_header = hdul[extension].header
 
         # TIME
-        timeVal = img_time(image_header)
+        timeVal = img_time_bjd_tdb(image_header, p_dict, info_dict)
         timeList.append(timeVal)
 
         # IMAGES
@@ -1383,7 +1470,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
                 pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
                 tx, ty = pix_coords[0].take(0), pix_coords[1].take(0)
 
-            psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
+            psf_data['target'][i] = fit_centroid(imageData, [tx, ty], 0)
 
             if i != 0 and np.abs((psf_data['target'][i][2] - psf_data['target'][i - 1][2])
                                  / psf_data['target'][i - 1][2]) > 0.5:
@@ -1391,7 +1478,7 @@ def realTimeReduce(i, target_name, info_dict, ax):
 
             pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[0][0], comp_radec[0][1])
             cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy])
+            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy], 1)
 
             if i != 0:
                 if not (tar_comp_dist['comp'][0] - 1 <= abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist['comp'][0] + 1 and
@@ -1408,10 +1495,10 @@ def realTimeReduce(i, target_name, info_dict, ax):
                 tform = transformation(np.array([imageData, firstImage]), fileName)
 
             tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
-            psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
+            psf_data['target'][i] = fit_centroid(imageData, [tx, ty], 0)
 
             cx, cy = tform(comp_star)[0]
-            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy])
+            psf_data['comp'][i] = fit_centroid(imageData, [cx, cy], 1)
 
             if i == 0:
                 tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
@@ -1423,14 +1510,15 @@ def realTimeReduce(i, target_name, info_dict, ax):
             aper *= sigma
             annulus *= sigma
 
-        tFlux = aperPhot(imageData, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0]
-        cFlux = aperPhot(imageData, psf_data['comp'][i, 0], psf_data['comp'][i, 1], aper, annulus)[0]
+        tFlux = aperPhot(imageData, 0, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus)[0]
+        cFlux = aperPhot(imageData, 1, psf_data['comp'][i, 0], psf_data['comp'][i, 1], aper, annulus)[0]
         norm_flux.append(tFlux / cFlux)
 
         # close file + delete from memory
         hdul.close()
         del hdul
-    del imageData
+        # Replaced each loop, so clean up
+        del imageData
 
     ax.clear()
     ax.set_title(target_name)
@@ -1467,6 +1555,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
     if np.sum(~nanmask) <= 1:
         log_info('No data left after filtering', warn=True)
+        return None, None, None
     else:
         arrayFinalFlux = arrayFinalFlux[~nanmask]
         arrayNormUnc = arrayNormUnc[~nanmask]
@@ -1645,7 +1734,7 @@ def main():
         ax.set_ylabel('Normalized Flux')
         ax.set_xlabel('Time (JD)')
 
-        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], exotic_infoDict, ax), interval=15000)
+        anim = FuncAnimation(fig, realTimeReduce, fargs=(userpDict['pName'], userpDict, exotic_infoDict, ax), interval=15000)
         plt.show()
 
     # ----USER INPUTS----------------------------------------------------------
@@ -1656,6 +1745,8 @@ def main():
 
         init_path, wcs_file, wcs_header, ra_file, dec_file, vsp_params = None, None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
+        demosaic_fmt = None
+        demosaic_out = None
 
         if isinstance(args.reduce, str):
             fitsortext = 1
@@ -1735,6 +1826,12 @@ def main():
                 medi = np.median(notNormFlat)
                 generalFlat = notNormFlat / medi
 
+            if exotic_infoDict['demosaic_fmt']:
+                demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
+            if exotic_infoDict['demosaic_out']:
+                demosaic_out = exotic_infoDict['demosaic_out']     
+            demosaic_mult = calculate_demosaic_mult(demosaic_out)   
+
         if file_cmd_opt == 2:
             if args.nasaexoarch:
                 pass
@@ -1798,20 +1895,24 @@ def main():
 
             airMassList, exptimes = [], []
 
+            plateStatus.initializeFilenames(exotic_infoDict['images'])
             inputfiles = corruption_check(exotic_infoDict['images'])
-
             # time sort images
             times, jd_times = [], []
             for file in inputfiles:
                 extension = 0
+                plateStatus.setCurrentFilename(file)
                 header = fits.getheader(filename=file, ext=extension)
                 while header['NAXIS'] == 0:
                     extension += 1
                     header = fits.getheader(filename=file, ext=extension)
-                times.append(img_time(header))
-                jd_times.append(img_time(header, var=True))
+                obsTime = img_time_bjd_tdb(header, pDict, exotic_infoDict)
+                times.append(obsTime)
+                plateStatus.setObsTime(obsTime)
+                jd_times.append(img_time_jd(header))
 
             extension = 0
+            plateStatus.setCurrentFilename(inputfiles[0])
             header = fits.getheader(filename=inputfiles[0], ext=extension)
             while header['NAXIS'] == 0:
                 extension += 1
@@ -1832,17 +1933,18 @@ def main():
             si = np.argsort(times)
             times = np.array(times)[si]
             jd_times = np.array(jd_times)[si]
-
             inputfiles = np.array(inputfiles)[si]
+            
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
             for ifile in inputfiles:
+                plateStatus.setCurrentFilename(ifile)
                 first_image = fits.getdata(ifile)
                 try:
-                    get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY])
+                    get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
                     if np.isnan(get_first[0]):
                         inc += 1
                     else:
@@ -1852,10 +1954,17 @@ def main():
                 finally:
                     del first_image
 
-            inputfiles = inputfiles[inc:]
+            if inc > 0:
+                log_info(f"Skipping first {inc} files - Target star not found")
+                inputfiles = inputfiles[inc:]
+                times = times[inc:]
+                jd_times = jd_times[inc:]
+            plateStatus.setCurrentFilename(inputfiles[0])
+
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
             compStarList = exotic_infoDict['comp_stars']
+            plateStatus.initializeComparisonStarCount(len(compStarList))
             tar_radec, comp_radec = None, []
             vsp_list = []
             chart_id, vsp_comp_stars = None, None
@@ -1891,6 +2000,7 @@ def main():
                     exotic_infoDict['comp_stars'], vsp_list = check_comps(exotic_infoDict['comp_stars'], vsp_comp_stars)
 
                 compStarList = exotic_infoDict['comp_stars']
+                plateStatus.initializeComparisonStarCount(len(compStarList))
 
             # aperture sizes in stdev (sigma) of PSF
             apers = np.linspace(1.5, 6, 20)
@@ -1919,6 +2029,7 @@ def main():
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
+                plateStatus.setCurrentFilename(fileName)
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                                  ignore_missing_end=True)
 
@@ -1931,13 +2042,15 @@ def main():
                 airMassList.append(air_mass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
                                             exotic_infoDict['elev'], jd_times[i]))
 
-                exptimes.append(image_header['EXPTIME'] if 'EXPTIME' in image_header else image_header['EXPOSURE'])
+                exptimes.append(get_exp_time(image_header))
 
                 # IMAGES
                 imageData = hdul[extension].data
 
                 # CALS
                 imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
+                # Demosaic, if needed
+                imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
 
                 if i == 0:
                     firstImage = np.copy(imageData)
@@ -1957,7 +2070,7 @@ def main():
                         pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
                         tx, ty = pix_coords[0].take(0), pix_coords[1].take(0)
 
-                    psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
+                    psf_data['target'][i] = fit_centroid(imageData, [tx, ty], 0)
 
                     # TODO: Add check for flux on target/comp stars relative to others in the field
                     # in case of cloudy data, large changes, etc.
@@ -1970,10 +2083,7 @@ def main():
 
                         pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
                         cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
-                        if cx > 0 and cy > 0:
-                            psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
-                        else:
-                            psf_data[ckey][i] = np.empty(7) * np.nan
+                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy], j+1)
 
                         if i != 0:
                             if not (tar_comp_dist[ckey][0] - 1 <= abs(int(psf_data[ckey][i][0]) - int(psf_data['target'][i][0])) <= tar_comp_dist[ckey][0] + 1 and
@@ -1990,16 +2100,13 @@ def main():
                         tform = transformation(np.array([imageData, firstImage]), fileName)
 
                     tx, ty = tform([exotic_UIprevTPX, exotic_UIprevTPY])[0]
-                    psf_data['target'][i] = fit_centroid(imageData, [tx, ty])
+                    psf_data['target'][i] = fit_centroid(imageData, [tx, ty], 0)
 
                     for j, coord in enumerate(compStarList):
                         ckey = f"comp{j + 1}"
 
                         cx, cy = tform(coord)[0]
-                        if cx > 0 and cy > 0:
-                            psf_data[ckey][i] = fit_centroid(imageData, [cx, cy])
-                        else:
-                            psf_data[ckey][i] = np.empty(7) * np.nan
+                        psf_data[ckey][i] = fit_centroid(imageData, [cx, cy], j+1)
 
                         if i == 0:
                             tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
@@ -2014,7 +2121,7 @@ def main():
                 for a, aper in enumerate(apers):
                     for an, annulus in enumerate(annuli):
                         if not np.isnan(psf_data['target'][i, 0]):
-                            aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData,
+                            aper_data["target"][i][a][an], aper_data["target_bg"][i][a][an] = aperPhot(imageData, 0,
                                                                                                         psf_data['target'][i, 0],
                                                                                                         psf_data['target'][i, 1],
                                                                                                         aper, annulus)
@@ -2026,7 +2133,7 @@ def main():
                             ckey = f"comp{j + 1}"
                             if not np.isnan(psf_data[ckey][i][0]):
                                 aper_data[ckey][i][a][an], \
-                                aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData, psf_data[ckey][i, 0],
+                                aper_data[f"{ckey}_bg"][i][a][an] = aperPhot(imageData, j + 1, psf_data[ckey][i, 0],
                                                                             psf_data[ckey][i, 1], aper, annulus)
                             else:
                                 aper_data[ckey][i][a][an] = np.nan
@@ -2035,7 +2142,7 @@ def main():
                 # close file + delete from memory
                 hdul.close()
                 del hdul
-            del imageData
+                del imageData
 
             # filter bad images
             badmask = np.isnan(psf_data["target"][:, 0]) | (psf_data["target"][:, 0] == 0) | (aper_data["target"][:, 0, 0] == 0) | np.isnan(
@@ -2072,15 +2179,16 @@ def main():
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
                 myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
 
-                for k in myfit.bounds.keys():
-                    log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
+                if myfit is not None:
+                    for k in myfit.bounds.keys():
+                        log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
 
-                log.debug("The Residual Standard Deviation is: "
-                          f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
+                    log.debug("The Residual Standard Deviation is: "
+                            f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
+                    log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                resstd = myfit.residuals.std() / np.median(myfit.data)
-                if minSTD > resstd:  # If the standard deviation is less than the previous min
+                    resstd = myfit.residuals.std() / np.median(myfit.data)
+                if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
                     bestCompStar = j + 1
                     comp_coords = compStarList[j]
                     minSTD = resstd
@@ -2093,10 +2201,10 @@ def main():
                     # goodNormUnc = np.copy(myfit.dataerr)
                     nonBJDTimes = np.copy(myfit.time)
                     goodAirmasses = np.copy(myfit.airmass)
-                    goodTargets = tFlux
-                    goodReferences = cFlux
-                    goodTUnc = tFlux ** 0.5
-                    goodRUnc = cFlux ** 0.5
+                    goodTargets = tFlux1
+                    goodReferences = cFlux1
+                    goodTUnc = tFlux1 ** 0.5
+                    goodRUnc = cFlux1 ** 0.5
                     bestlmfit = myfit
 
                     finXTargCent = psf_data["target"][:, 0]
@@ -2124,15 +2232,16 @@ def main():
                     # fit without a comparison star
                     myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
-                    for k in myfit.bounds.keys():
-                        log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
+                    if myfit is not None:
+                        for k in myfit.bounds.keys():
+                            log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
 
-                    log.debug("The Residual Standard Deviation is: "
-                              f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                    log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
+                        log.debug("The Residual Standard Deviation is: "
+                                f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
+                        log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                    resstd = myfit.residuals.std() / np.median(myfit.data)
-                    if minSTD > resstd:  # If the standard deviation is less than the previous min
+                        resstd = myfit.residuals.std() / np.median(myfit.data)
+                    if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
                         minSTD = resstd
                         minAperture = -aper
                         minAnnulus = annulus
@@ -2145,10 +2254,10 @@ def main():
                         nonBJDTimes = np.copy(myfit.time)
                         # nonBJDPhases = np.copy(myfit.phase)
                         goodAirmasses = np.copy(myfit.airmass)
-                        goodTargets = tFlux
-                        goodReferences = cFlux
-                        goodTUnc = tFlux ** 0.5
-                        goodRUnc = cFlux ** 0.5
+                        goodTargets = tFlux1
+                        goodReferences = cFlux1
+                        goodTUnc = tFlux1 ** 0.5
+                        goodRUnc = cFlux1 ** 0.5
                         # goodResids = myfit.residuals
                         bestlmfit = myfit
 
@@ -2165,23 +2274,24 @@ def main():
 
                         myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
 
-                        if j in vsp_num:
-                            temp_ref_flux[j] = {
-                                'myfit': myfit,
-                                'tflux': tFlux1,
-                                'cflux': cFlux1,
-                                'xy': compStarList[j]
-                            }
+                        if myfit is not None:
+                            if j in vsp_num:
+                                temp_ref_flux[j] = {
+                                    'myfit': myfit,
+                                    'tflux': tFlux1,
+                                    'cflux': cFlux1,
+                                    'xy': compStarList[j]
+                                }
 
-                        for k in myfit.bounds.keys():
-                            log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
+                            for k in myfit.bounds.keys():
+                                log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
 
-                        log.debug("The Residual Standard Deviation is: "
-                                  f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                        log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
+                            log.debug("The Residual Standard Deviation is: "
+                                    f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
+                            log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                        resstd = myfit.residuals.std() / np.median(myfit.data)
-                        if minSTD > resstd:  # If the standard deviation is less than the previous min
+                            resstd = myfit.residuals.std() / np.median(myfit.data)
+                        if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
                             bestCompStar = j + 1
                             comp_coords = compStarList[j]
                             minSTD = resstd
@@ -2196,10 +2306,10 @@ def main():
                             nonBJDTimes = np.copy(myfit.time)
                             # nonBJDPhases = np.copy(myfit.phase)
                             goodAirmasses = np.copy(myfit.airmass)
-                            goodTargets = tFlux[aper_mask]
-                            goodReferences = cFlux
-                            goodTUnc = tFlux[aper_mask] ** 0.5
-                            goodRUnc = cFlux ** 0.5
+                            goodTargets = tFlux1
+                            goodReferences = cFlux1
+                            goodTUnc = tFlux1 ** 0.5
+                            goodRUnc = cFlux1 ** 0.5
                             # goodResids = myfit.residuals
                             bestlmfit = myfit
 
@@ -2245,27 +2355,13 @@ def main():
                 bestaperture = str(abs(np.round(minAperture, 2)))
             log_info("*********************************************\n")
 
-            # Take the BJD times from the image headers
-            if "BJD_TDB" in image_header or "BJD" in image_header or "BJD_TBD" in image_header:
-                goodTimes = nonBJDTimes
-
-                index_list = [i for i, time_ in enumerate(times) if time_ in nonBJDTimes]
-                good_jd_times = [jd_times[i] for i in index_list]
-                for key, val in ref_flux_dict.items():
-                    index_list = [i for i, time_ in enumerate(times) if time_ in ref_flux_dict[key]['myfit'].time]
-                    ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
-
-            # If not in there, then convert all the final times into BJD - using astropy alone
-            else:
-                log_info("No Barycentric Julian Dates (BJDs) in Image Headers for standardizing time format. "
-                         "Converting all JDs to BJD_TDBs.")
-                log_info("Please be patient- this step can take a few minutes.")
-
-                animate_toggle(True)
-                goodTimes = jd_bjd(nonBJDTimes, pDict, exotic_infoDict)
-                animate_toggle()
-
-                good_jd_times = nonBJDTimes
+            # times always BJD-TDB
+            goodTimes = nonBJDTimes
+            index_list = [i for i, time_ in enumerate(times) if time_ in nonBJDTimes]
+            good_jd_times = [jd_times[i] for i in index_list]
+            for key, val in ref_flux_dict.items():
+                index_list = [i for i, time_ in enumerate(times) if time_ in ref_flux_dict[key]['myfit'].time]
+                ref_flux_dict[key]['time'] = [jd_times[i] for i in index_list]
 
             # sigma clip
             si = np.argsort(goodTimes)
@@ -2509,6 +2605,10 @@ def main():
                 VSPoutput_files.aavso(goodAirmasses)
         except Exception as e:
             log_info(f"\nError: Could not create vspAAVSO.txt. {error_txt}\n\t{e}", error=True)
+        try:
+            output_files.plate_status(plateStatus)
+        except Exception as e:
+            log_info(f"\nError: Could not create plate_status.csv. {error_txt}\n\t{e}", error=True)
 
         log_info("Output Files Saved")
 

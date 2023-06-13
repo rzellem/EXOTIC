@@ -361,6 +361,8 @@ def main():
                 "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info.",
                 "Target Star RA": "Must be in HH:MM:SS sexagesimal format.",
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
+                "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
+                "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -368,7 +370,9 @@ def main():
                 "Directory with FITS files": FITS_dir.folder_path,
 
                 "Target Star X & Y Pixel": input_data['targetpos'],
-                "Comparison Star(s) X & Y Pixel": [input_data['comppos']]
+                "Comparison Star(s) X & Y Pixel": [input_data['comppos']],
+                "Demosaic Format": null, # TODO add GUI input for these
+                "Demosaic Output": null
             }
             new_inits['planetary_parameters'] = {
                 "Planet Name": input_data['pName'],
@@ -1381,6 +1385,8 @@ def main():
                 "Custom Filter": "To use a custom filter, enter in the FWHM in optional_info.",
                 "Target Star RA": "Must be in HH:MM:SS sexagesimal format.",
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
+                "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
+                "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -1412,7 +1418,10 @@ def main():
                         "Add Comparison Stars from AAVSO? (y/n)": input_data['aavso_comp'],
 
                         "Target Star X & Y Pixel": (input_data['targetpos']),
-                        "Comparison Star(s) X & Y Pixel": (input_data['comppos'])
+                        "Comparison Star(s) X & Y Pixel": (input_data['comppos']),
+                        
+                        "Demosaic Format": null, # TODO add GUI input for these
+                        "Demosaic Output": null
                     }
 
                     if flats_dir.folder_path == 'null':

@@ -173,7 +173,7 @@ plateStatus = PlateStatus(log_info)
 def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     nanmask = np.isnan(ogdata)
 
-    if po < dt <= len(ogdata):
+    if po < dt <= len(ogdata[~nanmask]):
         mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
         # mdata = median_filter(ogdata[~nanmask], dt)
         res = ogdata[~nanmask] - mdata

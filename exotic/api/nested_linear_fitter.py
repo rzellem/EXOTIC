@@ -281,7 +281,7 @@ class linear_fitter(object):
         )
         return fig
 
-    def plot_periodogram(self):
+    def plot_periodogram(self, minper=0, maxper=0, maxper2=50):
         """ Search the residuals for periodic signals. """
 
         ########################################
@@ -297,8 +297,11 @@ class linear_fitter(object):
 
         # compute a period range based on nyquist frequency
         si = np.argsort(self.epochs)
-        minper = max(2,2 * np.diff(self.epochs[si]).min())
-        maxper = (np.max(self.epochs) - np.min(self.epochs))*3.
+
+        if minper == 0:
+            minper = max(2,2 * np.diff(self.epochs[si]).min())
+        if maxper == 0:
+            maxper = (np.max(self.epochs) - np.min(self.epochs))*3.
 
         # recompute on new grid
         ls = LombScargle(self.epochs, residuals, dy=self.dataerr)
@@ -333,12 +336,12 @@ class linear_fitter(object):
 
         ########################################
         # subtract first order solution from data and recompute periodogram
-        maxper = 50 # constrain second order solution to be less than 50 days
+        maxper = maxper2 # constrain second order solution to be less than 50 days
 
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)
-        freq2,power2 = ls.autopower(maximum_frequency=1./(1.01*per), minimum_frequency=1./maxper, nyquist_factor=2)
-        # freq2,power2 = ls.autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
+        #freq2,power2 = ls.autopower(maximum_frequency=1./(1.01*per), minimum_frequency=1./maxper, nyquist_factor=2)
+        freq2,power2 = ls.autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
 
         # find max period
         mi2 = np.argmax(power2)
@@ -362,7 +365,6 @@ class linear_fitter(object):
         bics = [res_linear.bic, res_first_order.bic, res_second_order.bic]
         best_bic = np.argmin(bics)
 
-
         ########################################
         # create plot
         fig, ax = plt.subplots(4, figsize=(10,14))
@@ -376,33 +378,33 @@ class linear_fitter(object):
         idx = np.argmin(np.abs(self.periods-per))
         per_power1 = self.power[idx]
 
-        ax[0].axvline(per2,color='cyan', alpha=0.5, label=f'Period: {per2:.2f} epochs', zorder=10)
         # find power at closest period
         idx = np.argmin(np.abs(self.periods-per2))
         per_power2 = self.power[idx]
 
         ax[0].set_title("Lomb-Scargle Periodogram", fontsize=18)
-        ax[0].set_xlim([minper,maxper])
+        ax[0].set_xlim([minper, (np.max(self.epochs) - np.min(self.epochs))*3.])
 
         # plot false alarm probability on lomb-scargle periodogram
-        fp = ls.false_alarm_probability(power.max(), method='bootstrap')
-        fp_levels = ls.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
+        fp = ls.false_alarm_probability(power.max(), method='davies')
+        fp_levels = ls.false_alarm_level([0.01, 0.05, 0.1], method='davies')
 
         # set upper y-limit on plot
-        upper_lim = 0.5*(self.power.max()+np.percentile(self.power,99))
-        #upper_lim = max(upper_lim, fp_levels[0]*1.01)
-        ax[0].set_ylim([0, upper_lim])
+        ax[0].set_ylim([0, self.power.max()])
 
         # plot as horizontal line
         ax[0].axhline(fp_levels[0], color='red', ls='--', label=f'99% FAP (Power = {fp_levels[0]:.1f})')
-        # if peaks are below FAP, then say no signal found
 
         # plot lomb-scargle for detrended data
-        ax[0].semilogx(1./freq2,power2*0.99,'g-',alpha=0.5,label='Detrended Data', zorder=7)
+        ax[0].semilogx(1./freq2,power2*0.99,'g-',alpha=0.5,label='Data - Fourier Fit 1', zorder=7)
 
         # plot false alarm probability on lomb-scargle periodogram
-        fp = ls2.false_alarm_probability(power2.max(), method='bootstrap')
-        fp_levels2 = ls2.false_alarm_level([0.01, 0.05, 0.1], method='bootstrap')
+        fp = ls2.false_alarm_probability(power2.max(), method='davies')
+        fp_levels2 = ls2.false_alarm_level([0.01, 0.05, 0.1], method='davies')
+
+        # best period + false alarm for second order solution
+        ax[0].axvline(per2,color='cyan', alpha=0.5, label=f'Period: {per2:.2f} epochs', zorder=10)
+        ax[0].axhline(fp_levels2[0], color='cyan', ls='--', label=f'99% FAP (Power = {fp_levels2[0]:.1f})')
 
         # add horizontal dotted line at zero
         linear_label = f"Linear Fit (BIC: {res_linear.bic:.2f})"
@@ -447,7 +449,7 @@ class linear_fitter(object):
 
         # plot first order fourier solution
         fourier2_label = f'Fourier Fit 2nd (BIC: {res_second_order.bic:.2f})'
-        if per_power2 < fp_levels[0]: # should be fp_levels2?
+        if per_power2 < fp_levels2[0]: # should be fp_levels2?
             fourier2_label += " below 99% FAP"
         ax[1].plot(xnew, y_bestfit_new2*24*60, 'c-', label=fourier2_label, alpha=0.75)
 
@@ -569,20 +571,32 @@ class linear_fitter(object):
 
 def main():
     Tc = np.array([ # measured mid-transit times
-    2456588.69897499, 2456593.73645465, 2456646.65419785,
-       2456923.85589088, 2456971.73409754, 2458042.70521614,
-       2458047.75761158, 2458095.62091434, 2458100.66454441,
-       2453912.51471333, 2454461.86099   , 2455215.32701,
-       2455530.3197    , 2456543.33866   , 2459854.549103  
-    ])
+        2459150.837905, 2459524.851045,
+        2459546.613126, 2459565.643663, 2459584.690470, 2459584.686476,
+        2459909.739104, 2459957.337739, 2459169.880602, 2458416.424861,
+        2458428.664794, 2459145.400124, 2458430.025044, 2459164.440695,
+        2458415.064846, 2458435.465269, 2458412.344658, 2459150.840070,
+        2459160.360691, 2458431.384897, 2459146.760284, 2459154.920516,
+        2458417.784945, 2459161.720466, 2459167.160761, 2458427.304939,
+        2458413.705181, 2459163.080605, 2459153.560229, 2459168.520861,
+        2458425.945068, 2459148.120269, 2458434.105274, 2458432.745423,
+        2459152.200558, 2459165.800918, 2459159.000645, 2459149.480289,
+        2455870.450027, 2456663.347570, 2457420.884390, 2457658.888900])
 
     Tc_error = np.array([
-    0.00237294, 0.00290445, 0.00647494, 0.00445833, 0.00477952,
-       0.00310127, 0.00209248, 0.00099052, 0.00563974, 0.00054,
-       0.00024   , 0.00015   , 0.00016   , 0.00028   , 0.000382 
-    ])
+        0.001674, 0.000715,
+        0.000758, 0.001560, 0.000371, 0.001651,
+        0.000955, 0.000176, 0.000154, 0.000357,
+        0.000381, 0.000141, 0.000362, 0.000149,
+        0.000336, 0.000368, 0.000379, 0.000153,
+        0.000153, 0.000349, 0.000149, 0.000146,
+        0.000385, 0.000146, 0.000153, 0.000360,
+        0.000356, 0.000147, 0.000147, 0.000146,
+        0.000363, 0.000142, 0.000357, 0.000368,
+        0.000160, 0.000160, 0.000151, 0.000160,
+        0.000140, 0.000120, 0.000800, 0.000140 ])
 
-    P = 2.5199412024  # orbital period for your target
+    P = 1.360029  # orbital period for your target
 
     Tc_norm = Tc - Tc.min()  #normalize the data to the first observation
     #print(Tc_norm)

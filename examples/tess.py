@@ -744,19 +744,3 @@ if __name__ == "__main__":
 
     # save sv pickle
     pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
-        
-    # O-C plot
-    tmids = np.array([lc['pars']['tmid'] for lc in sv['lightcurves']])
-    tmiderr = np.array([lc['errors']['tmid'] for lc in sv['lightcurves']])
-    sectors = np.array([lc['sector'] for lc in sv['lightcurves']])
-    ratios = np.array([lc['partial_ratio'] for lc in sv['lightcurves']])
-
-    # mask out partial transits
-    dmask = ratios > 0.75
-    tmids = tmids[dmask]
-    tmiderr = tmiderr[dmask]
-    sectors = sectors[dmask]
-    ratios = ratios[dmask]
-
-    # TODO finish making O-C plot?
-    # use example from exotic.api.nested_linear_fitter

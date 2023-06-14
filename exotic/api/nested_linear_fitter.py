@@ -294,12 +294,11 @@ class linear_fitter(object):
         residuals = self.data - y_bestfit_linear
         ########################################
 
-
         # compute a period range based on nyquist frequency
         si = np.argsort(self.epochs)
 
         if minper == 0:
-            minper = max(2,2 * np.diff(self.epochs[si]).min())
+            minper = max(3,2 * np.diff(self.epochs[si]).min())
         if maxper == 0:
             maxper = (np.max(self.epochs) - np.min(self.epochs))*3.
 
@@ -341,7 +340,7 @@ class linear_fitter(object):
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)
         #freq2,power2 = ls.autopower(maximum_frequency=1./(1.01*per), minimum_frequency=1./maxper, nyquist_factor=2)
-        freq2,power2 = ls.autopower(maximum_frequency=1./minper, minimum_frequency=1./maxper, nyquist_factor=2)
+        freq2,power2 = ls.autopower(maximum_frequency=1./(1+minper), minimum_frequency=1./maxper, nyquist_factor=2)
 
         # find max period
         mi2 = np.argmax(power2)

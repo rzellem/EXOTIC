@@ -638,11 +638,6 @@ def main():
         'b':[intercept, intercept_std_dev]  # value from WLS (replace with literature value)
     }
 
-    prior = {
-        'm':[2.5199412024020322, 2.59214970054424e-06],
-        'b':[2459854.54339036, 0.0024412]
-    }
-
     lf = linear_fitter( Tc, Tc_error, bounds, prior=prior )
 
     lf.plot_triangle()

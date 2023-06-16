@@ -335,7 +335,7 @@ class linear_fitter(object):
 
         ########################################
         # subtract first order solution from data and recompute periodogram
-        maxper = maxper2 # constrain second order solution to be less than 50 days
+        maxper = maxper2
 
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)

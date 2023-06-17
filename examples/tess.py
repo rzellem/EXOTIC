@@ -6,7 +6,7 @@
 # conda create -n tess python=3.9
 # conda activate tess
 # pip install pandas scipy matplotlib astropy statsmodels cython
-# pip install wotan transitleastsquares pylightcurve lightkurve ultranest==3.5.6
+# pip install wotan transitleastsquares pylightcurve lightkurve==2.0.6 ultranest==3.5.6
 # cd ..
 # pip install .
 # cd examples
@@ -739,27 +739,8 @@ if __name__ == "__main__":
 
         # create AAVSO formatted csv
         csv_lk = OutputFiles(myfit, prior, infoDict, planetdir)
-        try:
-            csv_lk.aavso_csv(airmass,u0,u1,u2,u3,tmidstr)
-            csv_lk.aavso(airmass,u0,u1,u2,u3, tmidstr)
-        except:
-            print(f"Failed to create AAVSO csv for {args.target} - Sector {lcdata['sector']}")
+        csv_lk.aavso_csv(airmass,u0,u1,u2,u3,tmidstr)
+        csv_lk.aavso(airmass,u0,u1,u2,u3, tmidstr)
 
     # save sv pickle
     pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
-        
-    # O-C plot
-    tmids = np.array([lc['pars']['tmid'] for lc in sv['lightcurves']])
-    tmiderr = np.array([lc['errors']['tmid'] for lc in sv['lightcurves']])
-    sectors = np.array([lc['sector'] for lc in sv['lightcurves']])
-    ratios = np.array([lc['partial_ratio'] for lc in sv['lightcurves']])
-
-    # mask out partial transits
-    dmask = ratios > 0.75
-    tmids = tmids[dmask]
-    tmiderr = tmiderr[dmask]
-    sectors = sectors[dmask]
-    ratios = ratios[dmask]
-
-    # TODO finish making O-C plot?
-    # use example from exotic.api.nested_linear_fitter

@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "cython~=0.29.32;platform_system!='Windows'",
+    "Cython;platform_system!='Windows'",
     "importlib-metadata>=3.6;python_version<='3.7'",
     "oldest-supported-numpy",
     "setuptools>=62.6",

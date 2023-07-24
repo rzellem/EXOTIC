@@ -1,11 +1,11 @@
 [build-system]
 requires = [
-    "cython~=0.29.32;platform_system!='Windows'",
+    "Cython~=3.0;platform_system!='Windows'",
     "importlib-metadata>=3.6;python_version<='3.7'",
     "oldest-supported-numpy",
-    "setuptools>=62.6",
-    "setuptools_scm[toml]>=6.4.2",
-    "wheel>=0.37.1",
+    "setuptools",
+    "setuptools_scm[toml]",
+    "wheel",
 ]
 build-backend = "setuptools.build_meta"
 

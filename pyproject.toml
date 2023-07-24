@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "Cython;platform_system!='Windows'",
+    "Cython~=3.0;platform_system!='Windows'",
     "importlib-metadata>=3.6;python_version<='3.7'",
     "oldest-supported-numpy",
     "setuptools",

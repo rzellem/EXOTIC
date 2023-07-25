@@ -86,7 +86,7 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 import numpy as np
 # photometry
-from photutils import CircularAperture
+from photutils.aperture import CircularAperture
 import pandas as pd
 import requests
 # scipy imports
@@ -173,7 +173,7 @@ plateStatus = PlateStatus(log_info)
 def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     nanmask = np.isnan(ogdata)
 
-    if po < dt <= len(ogdata):
+    if po < dt <= len(ogdata[~nanmask]):
         mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
         # mdata = median_filter(ogdata[~nanmask], dt)
         res = ogdata[~nanmask] - mdata
@@ -1175,8 +1175,8 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
         nanmask = np.nan * np.zeros(mask.shape)
         nanmask[mask] = 1
         bgsky = data[yv, xv] * nanmask
-        cmode = mode(dat.flatten(), nan_policy='omit').mode[0]
-        amode = mode(bgsky.flatten(), nan_policy='omit').mode[0]
+        cmode = mode(dat.flatten(), nan_policy='omit', keepdims=True).mode[0]
+        amode = mode(bgsky.flatten(), nan_policy='omit', keepdims=True).mode[0]
 
         fig, ax = plt.subplots(2, 2, figsize=(9, 9))
         im = ax[0, 0].imshow(data[yv, xv], vmin=minb, vmax=maxb, cmap='inferno')
@@ -1201,7 +1201,7 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
         ax[0, 1].set_title("Sky Annulus")
         plt.tight_layout()
         plt.show()
-    return mode(dat.flatten(), nan_policy='omit').mode[0], np.nanstd(dat.flatten()), np.sum(mask)
+    return mode(dat.flatten(), nan_policy='omit', keepdims=True).mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
 def jd_bjd(non_bjd, p_dict, info_dict):

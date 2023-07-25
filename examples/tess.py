@@ -2,13 +2,14 @@
 # git clone https://github.com/rzellem/EXOTIC.git
 # cd EXOTIC
 # git checkout tess
-# conda create -n tess python=3.9
-# conda activate tess
-# pip install pandas scipy matplotlib astropy statsmodels cython numpy==1.21.6
-# pip install wotan transitleastsquares pylightcurve lightkurve==2.0.6 ultranest==3.5.6
+# conda create -n tess_exotic python=3.9
+# conda activate tess_exotic
 # pip install .
-# cd examples
+# pip install lightkurve==2.0.6 statsmodels wotan transitleastsquares
+# pip install numpy==1.21.6
+# cd examples/
 # python tess.py -t "HAT-P-18 b"
+
 import os
 import copy
 import json

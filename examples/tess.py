@@ -544,7 +544,9 @@ if __name__ == "__main__":
     myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds, verbose=True)
 
     # create plots
-    myfit.plot_bestfit(title=f"{args.target} Global Fit")
+    fig,ax = myfit.plot_bestfit(title=f"{args.target} Global Fit")
+    # set y_limit between 1 and 99 percentile
+    ax[0].set_ylim([np.percentile(flux, 1)*0.99, np.percentile(flux,99)*1.01])
     plt.savefig( os.path.join( planetdir, planetname+"_global_fit.png"))
     plt.close()
 

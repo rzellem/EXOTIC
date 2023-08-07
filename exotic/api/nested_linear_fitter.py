@@ -55,7 +55,7 @@ from astropy.timeseries import LombScargle
 
 class linear_fitter(object):
 
-    def __init__(self, data, dataerr, bounds=None, prior=None):
+    def __init__(self, data, dataerr, bounds=None, prior=None, labels=None):
         """
         Fit a linear model to data using nested sampling.
 
@@ -73,6 +73,7 @@ class linear_fitter(object):
         self.data = data
         self.dataerr = dataerr
         self.bounds = bounds
+        self.labels = np.array(labels)
         self.prior = prior.copy() # dict {'m':(0.1,0.5), 'b':(0,1)}
         if bounds is None:
             # use +- 3 sigma prior as bounds
@@ -134,8 +135,25 @@ class linear_fitter(object):
         # set up the figure        
         fig,ax = plt.subplots(1, figsize=(9,6))
 
-        # plot the data/residuals
-        ax.errorbar(self.epochs, self.residuals*24*60, yerr=self.dataerr*24*60, ls='none', marker='o',color='black')
+        # check if labels are not None
+        if self.labels is not None:
+            # find unique set of labels
+            ulabels = np.unique(self.labels)
+            # set up a color/marker cycle
+            markers = cycle(['o','v','^','<','>','s','*','h','H','D','d','P','X'])
+            colors = cycle(['black','blue','green','orange','purple','grey','magenta','cyan','lime'])
+
+            # plot each label separately
+            for i, ulabel in enumerate(ulabels):
+                # find where the label matches
+                mask = self.labels == ulabel
+                # plot the data/residuals
+                ax.errorbar(self.epochs[mask], self.residuals[mask]*24*60, yerr=self.dataerr[mask]*24*60, 
+                            ls='none', marker=next(markers),color=next(colors), label=ulabel)
+        else:
+            # plot the data/residuals
+            ax.errorbar(self.epochs, self.residuals*24*60, yerr=self.dataerr*24*60, ls='none', marker='o',color='black')
+
         ylower = (self.residuals.mean()-3*np.std(self.residuals))*24*60
         yupper = (self.residuals.mean()+3*np.std(self.residuals))*24*60
 
@@ -595,6 +613,19 @@ def main():
         0.000160, 0.000160, 0.000151, 0.000160,
         0.000140, 0.000120, 0.000800, 0.000140 ])
 
+    # labels for a legend
+    labels = np.array([ 'TESS', 'TESS',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar',
+        'TESS', 'EpW', 'ExoClock', 'Unistellar'])
+
     P = 1.360029  # orbital period for your target
 
     Tc_norm = Tc - Tc.min()  #normalize the data to the first observation
@@ -617,6 +648,14 @@ def main():
     intercept = params[0]
     intercept_std_dev = std_dev[0]
 
+    # 3 sigma clip based on residuals
+    calculated = orbit*slope + intercept
+    residuals = (Tc - calculated)/Tc_error
+    mask = np.abs(residuals) < 3
+    Tc = Tc[mask]
+    Tc_error = Tc_error[mask]
+    labels = labels[mask]
+
     #print(res.summary())
     #print("Params =",params)
     #print("Error matrix =",res.normalized_cov_params)
@@ -638,7 +677,7 @@ def main():
         'b':[intercept, intercept_std_dev]  # value from WLS (replace with literature value)
     }
 
-    lf = linear_fitter( Tc, Tc_error, bounds, prior=prior )
+    lf = linear_fitter( Tc, Tc_error, bounds, prior=prior, labels=labels )
 
     lf.plot_triangle()
     plt.subplots_adjust(top=0.9,hspace=0.2,wspace=0.2)

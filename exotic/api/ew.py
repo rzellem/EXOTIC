@@ -128,7 +128,7 @@ class ExoplanetWatchObservation():
         r = urllib.request.urlopen(
             os.path.join(base_uri,self.files['file_data_json'][2:]))
         jdata = json.loads(r.read().decode(r.info().get_param('charset') or 'utf-8'))
-        return np.array(jdata[1:],dtype=np.float).T
+        return np.array(jdata[1:],dtype=float).T
 
 def translate_keys(rdict):
     """ Translates the keys to a compatible format for EXOTIC/ELCA

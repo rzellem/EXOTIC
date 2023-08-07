@@ -60,7 +60,26 @@ class LimbDarkening:
                   f"\n\t-FWHM: ({val['fwhm'][0]}-{val['fwhm'][1]}) nm")
         return
 
-    def check_standard(self, filter_: dict = None):
+    def check_standard(self, filter_: dict = None) -> bool:
+        """
+        Utility method to detect filter from full or partial values and to inject
+            results into LimbDarkening object. Detection algorithm is loose and
+            finds alias from unique partial matches on the `filter` key. The input
+            dict must contain one or more of the required keys to facilitate
+            matching.
+        Order of matching operations proceeds as follows:
+            1 - 'filter': loose match against name (irrespective of spacing, caps, punct)
+            2 - Both supplied min/max wavelength values: precise match
+            3 - 'filter': if it precisely matches any filter key (same as 'desc')
+            4 - Abbrev. name if it is in the 'filter' or 'name' fields: precise match
+            5 - Any portion of filter name that is unique to one filter
+        @param filter_: A dictionary containing any combination of ('filter', 'name',
+            'wl_min', 'wl_max') keys implying a certain visibility filter used
+             during telescope observations.
+        @type filter_: dict
+        @return: True if filter parameters match known aliases and false if any do not.
+        @rtype: bool
+        """
         filter_alias = filter_matcher = None
         try:
             if not isinstance(filter_, dict):  # set sane failure
@@ -115,6 +134,45 @@ class LimbDarkening:
         except BaseException as be:
             log.error(f"Filter matching failed -- {be}")
         return filter_alias is not None
+
+    @staticmethod
+    def check_fwhm(filter_: dict = None) -> bool:
+        """
+        Validates wavelength values in a filter dict to verify they are in the correct
+            order (e.g. min, max properly ordered) and are not out of bounds, between
+            numeric values of 300nm and 4000nm. This mutates min/max value strings to
+            ensure they end with '.0' and are ordered. NOTE: ASSUMES NANOMETER INPUTS.
+        @param filter_: A dictionary containing full-width, half-maximum (fwhm)
+            wavelength values ('wl_min' and 'wl_max') keys implying a certain visibility
+            filter used during telescope observations.
+        @type filter_: dict
+        @return: True if wavelength parameters meet requirements and false if they do not.
+            Note that the input dict is modified to correct malformed values, including
+            popping detected bad keys.
+        @rtype: bool
+        """
+        fwhm_tuple = None
+        try:
+            if not isinstance(filter_, dict):  # set sane failure
+                log.error("Filter not defined according to spec (dict required) -- parsing failure.")
+                return False
+            for k in ('wl_min', 'wl_max'):  # clean inputs
+                filter_[k] = filter_.get(k)
+                filter_[k] = ''.join(str(filter_[k]).strip().split()) if filter_[k] else filter_[k]
+                if not 200. <= float(filter_[k]) <= 4000.:  # also fails if nan
+                    raise ValueError(f"FWHM '{k}' is outside of bounds (200., 4000.). ...")
+                else:  # add .0 to end of str to aid literal matching
+                    if not filter_[k].count('.'):
+                        filter_[k] += '.0'
+            if float(filter_['wl_min']) > float(filter_['wl_max']):  # reorder if min > max
+                fwhm_tuple = (filter_['wl_max'], filter_['wl_min'])
+                filter_['wl_min'] = fwhm_tuple[0]
+                filter_['wl_max'] = fwhm_tuple[1]
+            else:
+                fwhm_tuple = (filter_['wl_min'], filter_['wl_max'])
+        except BaseException as be:
+            log.error(f"FWHM matching failed [{filter_.get('wl_min')},{filter_.get('wl_max')}]-- {be}")
+        return fwhm_tuple is not None
 
     def set_filter(self, filter_name, filter_desc, wl_min, wl_max):
         self.filter_name = filter_name
@@ -204,7 +262,7 @@ if __name__ == "__main__":  # tests
     # Test given only FWHM
     filter_info3 = {
         'filter': None,
-        'wl_min': "350.0",
+        'wl_min': "350",
         'wl_max': "850.0",
         'u0': {"value": None, "uncertainty": None},
         'u1': {"value": None, "uncertainty": None},
@@ -238,6 +296,8 @@ if __name__ == "__main__":  # tests
 
     ld_obj.check_standard(filter_info5)
 
+    LimbDarkening.check_fwhm(filter_info5)
+    LimbDarkening.check_fwhm(filter_info3)
     test_ld(ld_obj, filter_info1)
     # test_ld(ld_obj, filter_info2)
     # test_ld(ld_obj, filter_info3)

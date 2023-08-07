@@ -526,7 +526,7 @@ def radec_hours_to_degree(ra, dec):
 
 def standard_filter(ld, filter_):
     if not filter_['filter']:
-        ld.standard_list()
+        LimbDarkening.standard_list()
 
     while True:
         if not filter_['filter']:
@@ -1856,7 +1856,7 @@ def main():
         ld_obj = LimbDarkening(pDict)
         nonlinear_ld(ld_obj, exotic_infoDict)
 
-        exotic_infoDict['filter'] = ld_obj.filter_type
+        exotic_infoDict['filter'] = ld_obj.filter_name
         exotic_infoDict['filter_desc'] = ld_obj.filter_desc
         exotic_infoDict['wl_min'] = ld_obj.wl_min
         exotic_infoDict['wl_max'] = ld_obj.wl_max

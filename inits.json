@@ -25,8 +25,8 @@
             "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
     },
     "user_info": {
-            "Directory with FITS files": "/Users/rzellem/Documents/EXOTIC/sample-data/HatP32Dec202017",
-            "Directory to Save Plots": "/Users/rzellem/Documents/EXOTIC/sample-data/",
+            "Directory with FITS files": "/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/sample-data/HatP32Dec202017",
+            "Directory to Save Plots": "/Users/abdullahfatahi/Documents/ExoplanetWatch/EXOTIC/sample-data",
             "Directory of Flats": null,
             "Directory of Darks": null,
             "Directory of Biases": null,
@@ -55,8 +55,8 @@
     "planetary_parameters": {
             "Target Star RA": "02:04:10",
             "Target Star Dec": "+46:41:23",
-            "Planet Name": "HAT-P-32 b",
-            "Host Star Name": "HAT-P-32",
+            "Planet Name": "WASP-1 b",
+            "Host Star Name": "WASP-1",
             "Orbital Period (days)": 2.1500082,
             "Orbital Period Uncertainty": 1.3e-07,
             "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
@@ -84,8 +84,8 @@
             "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
             "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",
 
-            "Filter Minimum Wavelength (nm)": null,
-            "Filter Maximum Wavelength (nm)": null,
+            "Filter Minimum Wavelength (nm)": 300.0,
+            "Filter Maximum Wavelength (nm)": 800.0,
 
             "Image Scale (Ex: 5.21 arcsecs/pixel)": null,
 

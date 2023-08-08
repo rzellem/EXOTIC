@@ -24,9 +24,9 @@ class LimbDarkening:
     fwhm_alias = fwhm_alias
 
     # lookup table: fwhm_map references filters irrespective of spacing and punctuation
-    # 1 - join optimized str lookups in lookup table
-    fwhm_lookup = {''.join(k.strip().lower().split()): k for k in fwhm.keys()}
-    fwhm_lookup.update({''.join(k.strip().lower().split()): v for k, v in fwhm_alias.items()})
+    # 1 - combine optimized str lookups in lookup table
+    fwhm_lookup = {k.strip().replace(' ', '').lower(): k for k in fwhm.keys()}
+    fwhm_lookup.update({k.strip().replace(' ', '').lower(): v for k, v in fwhm_alias.items()})
     # 2 - ignore punctuation in lookup table
     fwhm_lookup = {re.sub(ld_re_punct_p, '', k): v for k, v in fwhm_lookup.items()}
 
@@ -169,7 +169,7 @@ class LimbDarkening:
                 return False
             for k in ('wl_min', 'wl_max'):  # clean inputs
                 filter_[k] = filter_.get(k)
-                filter_[k] = ''.join(str(filter_[k]).strip().split()).rstrip('.') if filter_[k] else filter_[k]
+                filter_[k] = str(filter_[k]).strip().replace(' ', '').rstrip('.') if filter_[k] else filter_[k]
                 if not 200. <= float(filter_[k]) <= 4000.:  # also fails if nan
                     raise ValueError(f"FWHM '{k}' is outside of bounds (200., 4000.). ...")
                 else:  # add .0 to end of str to aid literal matching
@@ -209,7 +209,7 @@ class LimbDarkening:
 
     def __str__(self):
         return (f"\nFilter Name: {self.filter_name}"
-                f"\nFilter Abbreviation: {self.filter_desc}"
+                f"\nFilter Description: {self.filter_desc}"
                 f"\nMinimum Wavelength (nm): {self.wl_min}"
                 f"\nMaxiumum Wavelength (nm):: {self.wl_max}"
                 "\nEXOTIC-calculated nonlinear limb-darkening coefficients: "

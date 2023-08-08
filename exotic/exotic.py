@@ -1920,6 +1920,10 @@ def main():
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
                     exotic_infoDict['filter'] = "MObs CV"
+                    exotic_infoDict['elev'] = 1268
+                    exotic_infoDict['lat'] = 31.675467
+                    exotic_infoDict['long'] = -110.951376
+                    exotic_infoDict['pixel_bin'] = "2x2"
 
             ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
 

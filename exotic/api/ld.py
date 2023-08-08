@@ -17,7 +17,8 @@ ld_re_punct_p = re.compile(ld_re_punct)
 
 
 class LimbDarkening:
-    filter_nonspecific_ids = ('N/A',)  # used to prevent identification of generic values
+    filter_nonspecific_ids = ('CR', 'CBB', 'CV', 'TB', 'TG', 'TR', )  # prevent misidentification of generic values
+    filter_generic_ids = ('N/A', 'NA', 'NONE', )  # imply custom filter, always
     # include filter maps as references from this class
     fwhm = fwhm
     fwhm_alias = fwhm_alias
@@ -60,7 +61,7 @@ class LimbDarkening:
                   f"\n\t-FWHM: ({val['fwhm'][0]}-{val['fwhm'][1]}) nm")
         return
 
-    def check_standard(self, filter_: dict = None) -> bool:
+    def check_standard(self, filter_: dict = None, loose: bool = False, loose_len: int = 5) -> bool:
         """
         Utility method to detect filter from full or partial values and to inject
             results into LimbDarkening object. Detection algorithm is loose and
@@ -77,6 +78,10 @@ class LimbDarkening:
             'wl_min', 'wl_max') keys implying a certain visibility filter used
              during telescope observations.
         @type filter_: dict
+        @param loose: (default False) Flag to use loose failover matching, if all else fails.
+        @type loose: bool
+        @param loose_len: (default 5) Length of optimized matcher to use for loose matches.
+        @type loose_len: int
         @return: True if filter parameters match known aliases and false if any do not.
         @rtype: bool
         """
@@ -92,12 +97,14 @@ class LimbDarkening:
                     filter_[k] = filter_[k].strip()
                     if k == 'name' and filter_[k]:  # format 'name' (if exists) to uppercase, no spaces
                         filter_[k] = ''.join(filter_[k].upper().split())
-            if filter_['filter']:  # remove spaces, remove punctuation and lowercase
+            if filter_['filter']:  # make matcher by removing spaces, remove punctuation and lowercase
                 filter_matcher = ''.join(filter_['filter'].lower().split())
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
             # identify defined filters via optimized lookup table
             if filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup:
                 filter_['filter'] = LimbDarkening.fwhm_lookup[filter_matcher]  # sets to actual filter reference key
+            # add always disabled alias values
+            filter_nonspecific_names = LimbDarkening.filter_nonspecific_ids + LimbDarkening.filter_generic_ids
             for f in LimbDarkening.fwhm.values():
                 # match to wavelength values (strict)
                 if (filter_['wl_min'] and filter_['wl_min'] == f['fwhm'][0] and
@@ -111,12 +118,16 @@ class LimbDarkening:
                 # match 'name' or 'filter' (strict) to actual name abbreviation, e.g. 'name'
                 elif filter_['name'] == f['name'].strip().upper() or \
                         (filter_['filter'] and filter_['filter'][:5].upper() == f['name'].strip().upper()):
-                    if filter_['name'] in LimbDarkening.filter_nonspecific_ids:  # exclude unknown vals for 'name'
+                    # exclude unknown vals for 'name'
+                    if filter_['name'] in filter_nonspecific_names or \
+                            (filter_['filter'] and filter_['filter'][:5].upper() in filter_nonspecific_names):
                         pass
-                    filter_alias = f
-                    break
+                    else:
+                        filter_alias = f
+                        break
             # match 'filter' (loose) to any portion of actual reference key, e.g. 'desc' -- if possible
-            if filter_matcher and not filter_alias:  # filter not identified so try another algorithm
+            if loose and (filter_matcher and len(filter_matcher) > loose_len) \
+                    and not filter_alias:  # filter not identified so try another algorithm
                 f_count = 0
                 for f in LimbDarkening.fwhm_lookup:
                     if filter_matcher in f:
@@ -158,7 +169,7 @@ class LimbDarkening:
                 return False
             for k in ('wl_min', 'wl_max'):  # clean inputs
                 filter_[k] = filter_.get(k)
-                filter_[k] = ''.join(str(filter_[k]).strip().split()) if filter_[k] else filter_[k]
+                filter_[k] = ''.join(str(filter_[k]).strip().split()).rstrip('.') if filter_[k] else filter_[k]
                 if not 200. <= float(filter_[k]) <= 4000.:  # also fails if nan
                     raise ValueError(f"FWHM '{k}' is outside of bounds (200., 4000.). ...")
                 else:  # add .0 to end of str to aid literal matching
@@ -171,7 +182,7 @@ class LimbDarkening:
             else:
                 fwhm_tuple = (filter_['wl_min'], filter_['wl_max'])
         except BaseException as be:
-            log.error(f"FWHM matching failed [{filter_.get('wl_min')},{filter_.get('wl_max')}]-- {be}")
+            log.error(f"FWHM matching failed [{filter_.get('wl_min')}, {filter_.get('wl_max')}]-- {be}")
         return fwhm_tuple is not None
 
     def set_filter(self, filter_name, filter_desc, wl_min, wl_max):
@@ -282,9 +293,9 @@ if __name__ == "__main__":  # tests
     }
 
     filter_info5 = {
-        'filter': 'g\'',
-        'wl_min': None,
-        'wl_max': None,
+        'filter': 'N/A',
+        'wl_min': 351.2,
+        'wl_max': 3999.,
         'u0': {"value": 2.118, "uncertainty": 0.051},
         'u1': {"value": -3.88, "uncertainty": 0.21},
         'u2': {"value": 4.39, "uncertainty": 0.27},
@@ -294,7 +305,13 @@ if __name__ == "__main__":  # tests
     ld_obj = LimbDarkening(stellar_params)
     LimbDarkening.standard_list()
 
-    ld_obj.check_standard(filter_info5)
+    print(ld_obj.check_fwhm(filter_info5))
+    print(ld_obj.check_standard(filter_info5, True, 4))
+    print(ld_obj.check_standard(filter_info5))
+    print(str(filter_info5))
+    test_ld(ld_obj, filter_info5)
+    print(str(filter_info5))
+    print(f"{ld_obj.filter_desc}, {ld_obj.filter_name}, {ld_obj.wl_min}, {ld_obj.wl_max}")
 
     LimbDarkening.check_fwhm(filter_info5)
     LimbDarkening.check_fwhm(filter_info3)

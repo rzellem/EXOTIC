@@ -98,7 +98,7 @@ class LimbDarkening:
                     if k == 'name' and filter_[k]:  # format 'name' (if exists) to uppercase, no spaces
                         filter_[k] = filter_[k].upper().replace(' ', '')
             if filter_['filter']:  # make matcher by removing spaces, remove punctuation and lowercase
-                filter_matcher = filter_['filter'].upper().replace(' ', '')
+                filter_matcher = filter_['filter'].lower().replace(' ', '')
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
             # identify defined filters via optimized lookup table
             if filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup:

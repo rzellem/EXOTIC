@@ -317,7 +317,7 @@ def main():
             root.title(f"EXOTIC v{__version__}")
 
             window_label = tk.Label(root,
-                                    text="To make analyzing these data in the future more easy, EXOTIC will create an initialization file for you.",
+                                    text="To make analyzing these data in the future easier, EXOTIC will create an initialization file for you.",
                                     font="Helvetica 14 bold",
                                     justify=tk.LEFT,
                                     padx=20)  # .pack()
@@ -1337,7 +1337,7 @@ def main():
             initparams = tk.IntVar()
 
             window_label = tk.Label(root,
-                                    text="To make analyzing these data in the future more easy, EXOTIC will create an initialization file for you.",
+                                    text="To make analyzing these data in the future easier, EXOTIC will create an initialization file for you.",
                                     font="Helvetica 14 bold",
                                     justify=tk.LEFT,
                                     padx=20)  # .pack()

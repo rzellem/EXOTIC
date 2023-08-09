@@ -225,7 +225,7 @@ def julian_date(hdr, time_unit, exp):
     return julian_time + offset
 
 def get_exp_time(hdr):
-    exp_list = [ "EXPTIME", "EXPOSURE", "EXP" ]
+    exp_list = ["EXPTIME", "EXPOSURE", "EXP"]
     exp_time = next((exptime for exptime in exp_list if exptime in hdr), None)
     return hdr[exp_time] if exp_time is not None else 0.0
 

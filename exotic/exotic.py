@@ -546,7 +546,8 @@ def custom_range(ld, observed_filter):
             observed_filter['wl_min'] = user_input(f"FWHM minimum wavelength (nm):", type_=str)
             observed_filter['wl_max'] = user_input(f"FWHM maximum wavelength (nm):", type_=str)
 
-    ld.set_filter('N/A', "Custom", observed_filter['wl_min'], observed_filter['wl_max'])
+    if not ld.check_standard(observed_filter):
+        ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
 
 
 def user_entered_ld(ld, filter_):
@@ -1919,7 +1920,7 @@ def main():
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
-                    exotic_infoDict['filter'] = "MObs CV"
+                    # exotic_infoDict['filter'] = "MObs CV"
                     exotic_infoDict['elev'] = 1268
                     exotic_infoDict['lat'] = 31.675467
                     exotic_infoDict['long'] = -110.951376

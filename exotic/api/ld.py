@@ -17,11 +17,12 @@ ld_re_punct_p = re.compile(ld_re_punct)
 
 
 class LimbDarkening:
-    filter_nonspecific_ids = ('CR', 'CBB', 'CV', 'TB', 'TG', 'TR', )  # prevent misidentification of generic values
+    filter_nonspecific_ids = ('CR', 'CBB', 'CV', 'TB', 'TG', 'TR', )  # Allowed AAVSO differing FWHM
     filter_generic_ids = ('N/A', 'NA', 'NONE', )  # imply custom filter, always
     # include filter maps as references from this class
     fwhm = fwhm
     fwhm_alias = fwhm_alias
+    # fwhm_dealias = {v: k for k, v in fwhm_alias.items()}
 
     # lookup table: fwhm_map references filters irrespective of spacing and punctuation
     # 1 - combine optimized str lookups in lookup table
@@ -103,6 +104,8 @@ class LimbDarkening:
             # identify defined filters via optimized lookup table
             if filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup:
                 filter_['filter'] = LimbDarkening.fwhm_lookup[filter_matcher]  # sets to actual filter reference key
+            # add always disabled alias values
+            filter_nonspecific_names = LimbDarkening.filter_nonspecific_ids + LimbDarkening.filter_generic_ids
             for f in LimbDarkening.fwhm.values():
                 # match to wavelength values (strict)
                 if (filter_['wl_min'] and filter_['wl_min'] == f['fwhm'][0] and
@@ -116,15 +119,9 @@ class LimbDarkening:
                 # match 'name' or 'filter' (strict) to actual name abbreviation, e.g. 'name'
                 elif filter_['name'] == f['name'].strip().upper() or \
                         (filter_['filter'] and filter_['filter'][:5].upper() == f['name'].strip().upper()):
-                    if filter_['name'] in LimbDarkening.filter_nonspecific_ids or \
-                            (filter_['filter'] and filter_['filter'][:5].upper() in LimbDarkening.filter_nonspecific_ids):
-                        if filter_['wl_min'] and filter_['wl_max'] and LimbDarkening.check_fwhm(filter_):
-                            filter_alias = f
-                            filter_alias['fwhm'] = (filter_['wl_min'], filter_['wl_max'])
-                            break
                     # exclude unknown vals for 'name'
-                    elif filter_['name'] in LimbDarkening.filter_generic_ids or \
-                            (filter_['filter'] and filter_['filter'][:5].upper() in LimbDarkening.filter_generic_ids):
+                    if filter_['name'] in filter_nonspecific_names or \
+                            (filter_['filter'] and filter_['filter'][:5].upper() in filter_nonspecific_names):
                         pass
                     else:
                         filter_alias = f

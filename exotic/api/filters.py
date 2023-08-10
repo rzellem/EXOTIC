@@ -43,9 +43,6 @@ __fwhm = {
         "PanSTARRS Y": {"name": "Y", "fwhm": ("946.4", "1054.4")},
         "PanSTARRS w": {"name": "N/A", "fwhm": ("404.2", "845.8")},
 
-        "Clear (unfiltered) reduced to V sequence": {"name": "CV", "fwhm": (None, None)},
-        "Clear with blue-blocking": {"name": "CBB", "fwhm": (None, None)},
-
         # MObs Clear Filter; Source(s): Martin Fowler
         "MObs CV": {"name": "CV", "fwhm": ("350.0", "850.0")},
 
@@ -75,5 +72,9 @@ fwhm_alias = {
         "LCO Pan-STARRS Y": "PanSTARRS Y",
         "LCO Pan-STARRS w": "PanSTARRS w",
 
+        "Clear (unfiltered) reduced to V sequence": "MObs CV",
+        "Clear (unfiltered) reduced to R sequence": "Cousins R",
+
+        "Clear with blue-blocking": "Astrodon ExoPlanet-BB",
         "Exop": "Astrodon ExoPlanet-BB",
 }

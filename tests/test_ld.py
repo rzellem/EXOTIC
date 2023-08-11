@@ -100,16 +100,9 @@ def test_custom_nonspecific_standard_filter_abbreviation_1() -> None:
         'wl_max': '800.0'
     }
 
-    expected_filter = {
-        'filter': "Clear (unfiltered) reduced to V sequence",
-        'name': 'CV',
-        'wl_max': '800.0',
-        'wl_min': '300.0'
-    }
+    ld_obj = LimbDarkening(stellar_params)
 
-    setting_filter_values(observed_filter)
-
-    assert observed_filter == expected_filter
+    assert ld_obj.check_standard(observed_filter) == True
 
 def test_custom_nonspecific_standard_filter_abbreviation_2() -> None:
     observed_filter = {

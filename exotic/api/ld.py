@@ -17,12 +17,21 @@ ld_re_punct_p = re.compile(ld_re_punct)
 
 
 class LimbDarkening:
-    filter_nonspecific_ids = ('CR', 'CBB', 'CV', 'TB', 'TG', 'TR', )  # Allowed AAVSO differing FWHM
-    filter_generic_ids = ('N/A', 'NA', 'NONE', )  # imply custom filter, always
+    # standard filters w/o precisely defined FWHM values
+    filter_nonspecific = {
+        'CR': "Clear (unfiltered) reduced to R sequence",
+        'CBB': "Clear with blue-blocking",
+        'CV': "Clear (unfiltered) reduced to V sequence",
+        'TB': "DSLR Blue",
+        'TG': "DSLR Green",
+        'TR': "DSLR Red",
+    }
+    # implies custom filter, always
+    filter_generic_names = ('N/A', 'NA', 'NONE',)
+
     # include filter maps as references from this class
     fwhm = fwhm
     fwhm_alias = fwhm_alias
-    # fwhm_dealias = {v: k for k, v in fwhm_alias.items()}
 
     # lookup table: fwhm_map references filters irrespective of spacing and punctuation
     # 1 - combine optimized str lookups in lookup table
@@ -101,11 +110,14 @@ class LimbDarkening:
             if filter_['filter']:  # make matcher by removing spaces, remove punctuation and lowercase
                 filter_matcher = filter_['filter'].lower().replace(' ', '')
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
+            filter_nonspecific_desc = [re.sub(ld_re_punct_p, '', f.lower().replace(' ', ''))
+                                       for f in LimbDarkening.filter_nonspecific.values()]
             # identify defined filters via optimized lookup table
-            if filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup:
+            if (filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup and
+                    filter_matcher not in filter_nonspecific_desc):
                 filter_['filter'] = LimbDarkening.fwhm_lookup[filter_matcher]  # sets to actual filter reference key
             # add always disabled alias values
-            filter_nonspecific_names = LimbDarkening.filter_nonspecific_ids + LimbDarkening.filter_generic_ids
+            filter_nonspecific_names = tuple(LimbDarkening.filter_nonspecific.keys()) + LimbDarkening.filter_generic_names
             for f in LimbDarkening.fwhm.values():
                 # match to wavelength values (strict)
                 if (filter_['wl_min'] and filter_['wl_min'] == f['fwhm'][0] and

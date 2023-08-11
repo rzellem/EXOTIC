@@ -88,6 +88,7 @@ import numpy as np
 # photometry
 from photutils.aperture import CircularAperture
 import pandas as pd
+import re
 import requests
 # scipy imports
 from scipy.optimize import least_squares
@@ -111,9 +112,9 @@ try:  # output files
 except ImportError:  # package import
     from .inputs import Inputs
 try:  # ld
-    from .api.ld import LimbDarkening
+    from .api.ld import LimbDarkening, ld_re_punct_p
 except ImportError:  # package import
-    from api.ld import LimbDarkening
+    from api.ld import LimbDarkening, ld_re_punct_p
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
@@ -524,18 +525,19 @@ def radec_hours_to_degree(ra, dec):
             dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
 
-def standard_filter(ld, filter_):
-    LimbDarkening.standard_list()
+def check_all_standard_filters(ld, observed_filter):
+    standard_filter_abbreviations = {filter_type['name'].lower(): filter_type['name'] for filter_type in
+                                     list(LimbDarkening.fwhm.values()) if filter_type['name'] != 'N/A'}
+    standard_filter_names = LimbDarkening.fwhm_lookup
+    filter_name = observed_filter['filter'].lower().replace(' ', '')
+    filter_name = re.sub(ld_re_punct_p, '', filter_name)
 
-    while True:
-        if not filter_['filter']:
-            filter_['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
-                                           "(EX: Johnson V, V, STB, RJ): ", type_=str)
-        if ld.check_standard(filter_):
-            break
-        else:
-            log_info("\nError: The entered filter is not in the provided list of standard filters.", warn=True)
-            filter_['filter'] = None
+    if ld.check_standard(observed_filter):
+        return True
+    else:
+        if filter_name in standard_filter_names:
+            standard_filter_abbreviations.get(filter_name)
+        return False
 
 
 def custom_range(ld, observed_filter):
@@ -546,18 +548,29 @@ def custom_range(ld, observed_filter):
             observed_filter['wl_min'] = user_input(f"FWHM minimum wavelength (nm):", type_=str)
             observed_filter['wl_max'] = user_input(f"FWHM maximum wavelength (nm):", type_=str)
 
-    if not ld.check_standard(observed_filter):
-        ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
+
+def standard_filter(ld, observed_filter):
+    LimbDarkening.standard_list()
+
+    while True:
+        if not observed_filter['filter']:
+            observed_filter['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
+                                           "(EX: Johnson V, V, STB, RJ): ", type_=str)
+        if ld.check_standard(observed_filter):
+            break
+        else:
+            log_info("\nError: The entered filter is not in the provided list of standard filters.", warn=True)
+            observed_filter['filter'] = None
 
 
-def user_entered_ld(ld, filter_):
+def user_entered_ld(ld, observed_filter):
     order = ['first', 'second', 'third', 'fourth']
 
     input_list = [(f"\nEnter in your {order[i]} nonlinear term:",
                    f"\nEnter in your {order[i]} nonlinear term uncertainty:") for i in range(len(order))]
     ld_ = [(user_input(input_[0], type_=float), user_input(input_[1], type_=float)) for input_ in input_list]
 
-    custom_range(ld, filter_)
+    custom_range(ld, observed_filter)
     ld.set_ld(ld_[0], ld_[1], ld_[2], ld_[3])
 
 
@@ -570,11 +583,13 @@ def nonlinear_ld(ld, info_dict):
         'wl_max': info_dict['wl_max']
     }
     ld.check_fwhm(observed_filter)
+    check_all_standard_filters(ld, observed_filter)
 
     if ld.check_standard(observed_filter):
         pass
     elif observed_filter['wl_min'] or observed_filter['wl_max']:
         custom_range(ld, observed_filter)
+        ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
     else:
         opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
                          "with uncertainties? (y/n):", type_=str, values=['y', 'n'])

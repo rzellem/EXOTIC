@@ -526,24 +526,38 @@ def radec_hours_to_degree(ra, dec):
 
 
 def check_all_standard_filters(ld, observed_filter):
-    standard_filter_abbreviations = {filter_type['name'].lower(): filter_type['name'] for filter_type in
-                                     list(LimbDarkening.fwhm.values()) if filter_type['name'] != 'N/A'}
-    standard_filter_names = LimbDarkening.fwhm_lookup
-    filter_name = observed_filter['filter'].lower().replace(' ', '')
-    filter_name = re.sub(ld_re_punct_p, '', filter_name)
-
     if ld.check_standard(observed_filter):
         return True
-    else:
-        if filter_name in standard_filter_names:
-            standard_filter_abbreviations.get(filter_name)
-        return False
+    elif observed_filter['filter']:
+        filter_name = observed_filter['filter'].lower().replace(' ', '')
+        filter_name = re.sub(ld_re_punct_p, '', filter_name)
+        filter_abbreviation = next((filter_abbr for filter_abbr in LimbDarkening.filter_nonspecific.keys()
+                                    if filter_name == filter_abbr.lower()), None)
+        filter_desc = next((filter_desc for filter_desc in LimbDarkening.filter_nonspecific.values()
+                            if filter_name == re.sub(ld_re_punct_p, '', filter_desc.lower().replace(' ', ''))),
+                           None)
+
+        if filter_abbreviation:
+            observed_filter['filter'] = LimbDarkening.filter_nonspecific.get(filter_abbreviation)
+            observed_filter['name'] = filter_abbreviation
+            custom_range(ld, observed_filter)
+            return True
+
+        if filter_desc:
+            observed_filter['filter'] = filter_desc
+            observed_filter['name'] = next((k for k, v in LimbDarkening.filter_nonspecific.items() if v == filter_desc))
+            custom_range(ld, observed_filter)
+            return True
+
+    return False
 
 
 def custom_range(ld, observed_filter):
     while True:
         if ld.check_fwhm(observed_filter):
-            break
+            ld.set_filter(observed_filter['name'], observed_filter['filter'],
+                          float(observed_filter['wl_min']), float(observed_filter['wl_max']))
+            return
         else:
             observed_filter['wl_min'] = user_input(f"FWHM minimum wavelength (nm):", type_=str)
             observed_filter['wl_max'] = user_input(f"FWHM maximum wavelength (nm):", type_=str)
@@ -556,8 +570,9 @@ def standard_filter(ld, observed_filter):
         if not observed_filter['filter']:
             observed_filter['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
                                            "(EX: Johnson V, V, STB, RJ): ", type_=str)
-        if ld.check_standard(observed_filter):
-            break
+
+        if check_all_standard_filters(ld, observed_filter):
+            return
         else:
             log_info("\nError: The entered filter is not in the provided list of standard filters.", warn=True)
             observed_filter['filter'] = None
@@ -583,11 +598,10 @@ def nonlinear_ld(ld, info_dict):
         'wl_max': info_dict['wl_max']
     }
     ld.check_fwhm(observed_filter)
-    check_all_standard_filters(ld, observed_filter)
 
-    if ld.check_standard(observed_filter):
+    if check_all_standard_filters(ld, observed_filter):
         pass
-    elif observed_filter['wl_min'] or observed_filter['wl_max']:
+    elif observed_filter['wl_min'] and observed_filter['wl_max']:
         custom_range(ld, observed_filter)
         ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
     else:
@@ -602,6 +616,7 @@ def nonlinear_ld(ld, info_dict):
                 standard_filter(ld, observed_filter)
             elif opt == 2:
                 custom_range(ld, observed_filter)
+                ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
         else:
             user_entered_ld(ld, observed_filter)
             user_entered = True
@@ -1935,7 +1950,7 @@ def main():
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
-                    # exotic_infoDict['filter'] = "MObs CV"
+                    exotic_infoDict['filter'] = "MObs CV"
                     exotic_infoDict['elev'] = 1268
                     exotic_infoDict['lat'] = 31.675467
                     exotic_infoDict['long'] = -110.951376

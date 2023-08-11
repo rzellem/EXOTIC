@@ -102,7 +102,7 @@ def test_custom_nonspecific_standard_filter_abbreviation_1() -> None:
 
     ld_obj = LimbDarkening(stellar_params)
 
-    assert ld_obj.check_standard(observed_filter) == True
+    assert ld_obj.check_standard(observed_filter) == False
 
 def test_custom_nonspecific_standard_filter_abbreviation_2() -> None:
     observed_filter = {

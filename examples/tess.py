@@ -1,15 +1,21 @@
-# first create an environment with the proper dependencies + version
-# git clone https://github.com/rzellem/EXOTIC.git
-# cd EXOTIC
-# git checkout tess
-# conda create -n tess_exotic python=3.9
-# conda activate tess_exotic
-# pip install .
-# pip install lightkurve==2.0.6 statsmodels wotan transitleastsquares
-# pip install numpy==1.21.6
-# cd examples/
-# python tess.py -t "HAT-P-18 b"
+"""
+A custom pipeline for processing TESS data using EXOTIC
 
+Run the code online:
+https://colab.research.google.com/drive/1xP5wa1gzbcL-OOOp3lyDAEuC535TEPSe?usp=sharing
+
+Locally:
+git clone https://github.com/rzellem/EXOTIC.git
+cd EXOTIC
+git checkout tess
+conda create -n tess_exotic python=3.9
+conda activate tess_exotic
+pip install .
+pip install lightkurve==2.0.6 statsmodels wotan transitleastsquares
+pip install numpy==1.21.6
+cd examples/
+python tess.py -t "HAT-P-18 b"
+"""
 import os
 import copy
 import json
@@ -150,7 +156,7 @@ if __name__ == "__main__":
     
     planetname = args.target.lower().replace(' ','')
     
-    search_result = lk.search_targetpixelfile(args.target[:-1], mission='TESS')
+    search_result = lk.search_targetpixelfile(args.target[:-1].split('.')[0], mission='TESS')
     print(search_result)
 
     if len(search_result) == 0:
@@ -216,8 +222,8 @@ if __name__ == "__main__":
                 "st_tefferr1": float(row['Stellar Eff Temp (K) err']),
                 "st_tefferr2": float(-row['Stellar Eff Temp (K) err']),
                 "st_met": float(row['Stellar Metallicity']),
-                "st_meterr1": float(row[' Stellar Metallicity err']),
-                "st_meterr2": float(-row[' Stellar Metallicity err']),
+                "st_meterr1": 0.01, # float(row[' Stellar Metallicity err']),
+                "st_meterr2":  0.01, #float(-row[' Stellar Metallicity err']),
                 "st_logg": float(row['Stellar log(g) (cm/s^2)']),
                 "st_loggerr1": float(row['Stellar log(g) (cm/s^2) err']),
                 "st_loggerr2": float(-row['Stellar log(g) (cm/s^2) err']),
@@ -542,7 +548,7 @@ if __name__ == "__main__":
 
     print('performing global fit...')
     airmass = np.zeros(len(time[tmask]))
-    myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds, verbose=True)
+    myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds, verbose=False)
 
     # create plots
     fig,ax = myfit.plot_bestfit(title=f"{args.target} Global Fit")
@@ -675,7 +681,7 @@ if __name__ == "__main__":
         # fit data
         try:
             airmass = np.zeros(len(time[tmask]))
-            myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds)
+            myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds, verbose=False)
         except:
             print(f"Failed to fit transit at phase: {e}")
             continue

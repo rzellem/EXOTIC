@@ -648,6 +648,14 @@ if __name__ == "__main__":
         'residuals': np.copy(flux)
     }
 
+    # remove the old keys for less confusion
+    del sv['time']
+    del sv['flux']
+    del sv['flux_err']
+    del sv['trend']
+    del sv['sector']
+    del sv['sectors']
+
     # for each individual transit
     for e in events:
 

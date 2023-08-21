@@ -73,7 +73,10 @@ class linear_fitter(object):
         self.data = data
         self.dataerr = dataerr
         self.bounds = bounds
-        self.labels = np.array(labels)
+        if labels is not None:
+            self.labels = np.array(labels)
+        else:
+            self.labels = None
         self.prior = prior.copy() # dict {'m':(0.1,0.5), 'b':(0,1)}
         if bounds is None:
             # use +- 3 sigma prior as bounds

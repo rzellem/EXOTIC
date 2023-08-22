@@ -531,21 +531,21 @@ def check_all_standard_filters(ld, observed_filter):
     elif observed_filter['filter']:
         filter_name = observed_filter['filter'].lower().replace(' ', '')
         filter_name = re.sub(ld_re_punct_p, '', filter_name)
-        filter_abbreviation = next((filter_abbr for filter_abbr in LimbDarkening.filter_nonspecific.keys()
+        filter_abbreviation = next((filter_abbr for filter_abbr in LimbDarkening.fwhm_names_nonspecific.keys()
                                     if filter_name == filter_abbr.lower()), None)
-        filter_desc = next((filter_desc for filter_desc in LimbDarkening.filter_nonspecific.values()
+        filter_desc = next((filter_desc for filter_desc in LimbDarkening.fwhm_names_nonspecific.values()
                             if filter_name == re.sub(ld_re_punct_p, '', filter_desc.lower().replace(' ', ''))),
                            None)
 
         if filter_abbreviation:
-            observed_filter['filter'] = LimbDarkening.filter_nonspecific.get(filter_abbreviation)
+            observed_filter['filter'] = LimbDarkening.fwhm_names_nonspecific.get(filter_abbreviation)
             observed_filter['name'] = filter_abbreviation
             custom_range(ld, observed_filter)
             return True
 
         if filter_desc:
             observed_filter['filter'] = filter_desc
-            observed_filter['name'] = next((k for k, v in LimbDarkening.filter_nonspecific.items() if v == filter_desc))
+            observed_filter['name'] = next((k for k, v in LimbDarkening.fwhm_names_nonspecific.items() if v == filter_desc))
             custom_range(ld, observed_filter)
             return True
 

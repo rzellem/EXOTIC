@@ -73,6 +73,18 @@ fwhm_alias = {
         "LCO Pan-STARRS w": "PanSTARRS w",
 
         "Clear (unfiltered) reduced to V sequence": "MObs CV",
+        "Clear (unfiltered) reduced to R sequence": "Cousins R",
 
+        "Clear with blue-blocking": "Astrodon ExoPlanet-BB",
         "Exop": "Astrodon ExoPlanet-BB",
+}
+
+# standard filters w/o precisely defined FWHM values
+fwhm_names_nonspecific = {
+        'CR': "Clear (unfiltered) reduced to R sequence",
+        'CBB': "Clear with blue-blocking",
+        'CV': "Clear (unfiltered) reduced to V sequence",
+        'TB': "DSLR Blue",
+        'TG': "DSLR Green",
+        'TR': "DSLR Red",
 }

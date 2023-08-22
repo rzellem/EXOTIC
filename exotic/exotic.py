@@ -88,6 +88,7 @@ import numpy as np
 # photometry
 from photutils.aperture import CircularAperture
 import pandas as pd
+import re
 import requests
 # scipy imports
 from scipy.optimize import least_squares
@@ -111,9 +112,9 @@ try:  # output files
 except ImportError:  # package import
     from .inputs import Inputs
 try:  # ld
-    from .api.ld import LimbDarkening
+    from .api.ld import LimbDarkening, ld_re_punct_p
 except ImportError:  # package import
-    from api.ld import LimbDarkening
+    from api.ld import LimbDarkening, ld_re_punct_p
 try:  # plate solution
     from .api.plate_solution import PlateSolution
 except ImportError:  # package import
@@ -225,7 +226,7 @@ def julian_date(hdr, time_unit, exp):
     return julian_time + offset
 
 def get_exp_time(hdr):
-    exp_list = [ "EXPTIME", "EXPOSURE", "EXP" ]
+    exp_list = ["EXPTIME", "EXPOSURE", "EXP"]
     exp_time = next((exptime for exptime in exp_list if exptime in hdr), None)
     return hdr[exp_time] if exp_time is not None else 0.0
 
@@ -524,66 +525,85 @@ def radec_hours_to_degree(ra, dec):
             dec = input("Input the Declination of target (<sign>DD:MM:SS): ")
 
 
-def standard_filter(ld, filter_):
-    if not filter_['filter']:
-        LimbDarkening.standard_list()
+def check_all_standard_filters(ld, observed_filter):
+    if ld.check_standard(observed_filter):
+        return True
+    elif observed_filter['filter']:
+        filter_name = observed_filter['filter'].lower().replace(' ', '')
+        filter_name = re.sub(ld_re_punct_p, '', filter_name)
+        filter_abbreviation = next((filter_abbr for filter_abbr in LimbDarkening.fwhm_names_nonspecific.keys()
+                                    if filter_name == filter_abbr.lower()), None)
+        filter_desc = next((filter_desc for filter_desc in LimbDarkening.fwhm_names_nonspecific.values()
+                            if filter_name == re.sub(ld_re_punct_p, '', filter_desc.lower().replace(' ', ''))),
+                           None)
+
+        if filter_abbreviation:
+            observed_filter['filter'] = LimbDarkening.fwhm_names_nonspecific.get(filter_abbreviation)
+            observed_filter['name'] = filter_abbreviation
+            custom_range(ld, observed_filter)
+            return True
+
+        if filter_desc:
+            observed_filter['filter'] = filter_desc
+            observed_filter['name'] = next((k for k, v in LimbDarkening.fwhm_names_nonspecific.items() if v == filter_desc))
+            custom_range(ld, observed_filter)
+            return True
+
+    return False
+
+
+def custom_range(ld, observed_filter):
+    while True:
+        if ld.check_fwhm(observed_filter):
+            ld.set_filter(observed_filter['name'], observed_filter['filter'],
+                          float(observed_filter['wl_min']), float(observed_filter['wl_max']))
+            return
+        else:
+            observed_filter['wl_min'] = user_input(f"FWHM minimum wavelength (nm):", type_=str)
+            observed_filter['wl_max'] = user_input(f"FWHM maximum wavelength (nm):", type_=str)
+
+
+def standard_filter(ld, observed_filter):
+    LimbDarkening.standard_list()
 
     while True:
-        if not filter_['filter']:
-            filter_['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
+        if not observed_filter['filter']:
+            observed_filter['filter'] = user_input("\nPlease enter in the Filter Name or Abbreviation "
                                            "(EX: Johnson V, V, STB, RJ): ", type_=str)
-        if ld.check_standard(filter_):
-            break
+
+        if check_all_standard_filters(ld, observed_filter):
+            return
         else:
             log_info("\nError: The entered filter is not in the provided list of standard filters.", warn=True)
-            filter_['filter'] = None
+            observed_filter['filter'] = None
 
 
-def check_fwhm(wl, type_):
-    if not isinstance(wl, float):
-        try:
-            wl = float(wl)
-        except (ValueError, TypeError):
-            wl = user_input(f"FWHM {type_} wavelength (nm):", type_=float)
-
-    return wl
-
-
-def custom_range(ld, filter_):
-    filter_['filter'] = "Custom"
-
-    while True:
-        filter_['wl_min'] = check_fwhm(filter_['wl_min'], 'Minimum')
-        filter_['wl_max'] = check_fwhm(filter_['wl_max'], 'Maximum')
-
-        if filter_['wl_max'] < filter_['wl_min']:
-            log_info("\nError: The entered FWHM upper value is less than the lower value. Please try again.", warn=True)
-            filter_['wl_min'] = filter_['wl_max'] = None
-        else:
-            break
-
-    ld.set_filter('N/A', filter_['filter'], filter_['wl_min'], filter_['wl_max'])
-
-
-def user_entered_ld(ld, filter_):
+def user_entered_ld(ld, observed_filter):
     order = ['first', 'second', 'third', 'fourth']
 
     input_list = [(f"\nEnter in your {order[i]} nonlinear term:",
                    f"\nEnter in your {order[i]} nonlinear term uncertainty:") for i in range(len(order))]
     ld_ = [(user_input(input_[0], type_=float), user_input(input_[1], type_=float)) for input_ in input_list]
 
-    custom_range(ld, filter_)
+    custom_range(ld, observed_filter)
     ld.set_ld(ld_[0], ld_[1], ld_[2], ld_[3])
 
 
-def nonlinear_ld(ld, filter_):
-    u_e = False
+def nonlinear_ld(ld, info_dict):
+    user_entered = False
+    observed_filter = {
+        'filter': info_dict['filter'],
+        'name': None,
+        'wl_min': info_dict['wl_min'],
+        'wl_max': info_dict['wl_max']
+    }
+    ld.check_fwhm(observed_filter)
 
-    if (filter_['filter'] and filter_['filter'].upper() != 'N/A' and ld.check_standard(filter_)) and \
-            not (filter_['wl_min'] or filter_['wl_max']):
+    if check_all_standard_filters(ld, observed_filter):
         pass
-    elif filter_['wl_min'] or filter_['wl_max']:
-        custom_range(ld, filter_)
+    elif observed_filter['wl_min'] and observed_filter['wl_max']:
+        custom_range(ld, observed_filter)
+        ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
     else:
         opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
                          "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
@@ -592,16 +612,35 @@ def nonlinear_ld(ld, filter_):
             opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
                              type_=int, values=[1, 2])
             if opt == 1:
-                filter_['filter'] = None
-                standard_filter(ld, filter_)
+                observed_filter['filter'] = None
+                standard_filter(ld, observed_filter)
             elif opt == 2:
-                custom_range(ld, filter_)
+                custom_range(ld, observed_filter)
+                ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
         else:
-            user_entered_ld(ld, filter_)
-            u_e = True
+            user_entered_ld(ld, observed_filter)
+            user_entered = True
 
-    if not u_e:
+    if not user_entered:
         ld.calculate_ld()
+
+    info_dict['filter'] = ld.filter_name
+    info_dict['filter_desc'] = ld.filter_desc
+    info_dict['wl_min'] = ld.wl_min
+    info_dict['wl_max'] = ld.wl_max
+
+
+def get_ld_values(planet_dict, info_dict):
+    ld_obj = LimbDarkening(planet_dict)
+    nonlinear_ld(ld_obj, info_dict)
+
+    ld0 = ld_obj.ld0
+    ld1 = ld_obj.ld1
+    ld2 = ld_obj.ld2
+    ld3 = ld_obj.ld3
+    ld = [ld0[0], ld1[0], ld2[0], ld3[0]]
+
+    return ld, ld0, ld1, ld2, ld3
 
 
 def corruption_check(files):
@@ -1853,20 +1892,6 @@ def main():
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
 
-        ld_obj = LimbDarkening(pDict)
-        nonlinear_ld(ld_obj, exotic_infoDict)
-
-        exotic_infoDict['filter'] = ld_obj.filter_name
-        exotic_infoDict['filter_desc'] = ld_obj.filter_desc
-        exotic_infoDict['wl_min'] = ld_obj.wl_min
-        exotic_infoDict['wl_max'] = ld_obj.wl_max
-
-        ld0 = ld_obj.ld0
-        ld1 = ld_obj.ld1
-        ld2 = ld_obj.ld2
-        ld3 = ld_obj.ld3
-        ld = [ld0[0], ld1[0], ld2[0], ld3[0]]
-
         # check for Nans + Zeros
         for k in pDict:
             if k == 'rprs' and (pDict[k] == 0 or np.isnan(pDict[k])):
@@ -1925,6 +1950,13 @@ def main():
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
+                    exotic_infoDict['filter'] = "MObs CV"
+                    exotic_infoDict['elev'] = 1268
+                    exotic_infoDict['lat'] = 31.675467
+                    exotic_infoDict['long'] = -110.951376
+                    exotic_infoDict['pixel_bin'] = "2x2"
+
+            ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
 
             # check for EPW_MD5 checksum
             if 'EPW_MD5' in header:
@@ -2433,6 +2465,7 @@ def main():
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar, comp_coords = None, None
+            ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
 
             with exotic_infoDict['prered_file'].open('r') as f:
                 for processed_data in f:

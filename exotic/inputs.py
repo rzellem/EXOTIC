@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from astropy.io import fits
 import re
-import numpy as np
 
 try:
     from utils import user_input, init_params, typecast_check, \
@@ -315,9 +314,9 @@ def demosaic_settings(demosaic_fmt, demosaic_out, init):
         if not demosaic_out:
             demosaic_out = user_input(f"\nWhat color channel should be processed? (gray, red, green, blue, blueblock, custom): ", type_=str, values=['gray', 'red', 'green', 'blue', 'blueblock', 'custom'])
         if demosaic_out == 'custom':
-            demosaic_red = user_input("\nWhat weight for red channel (0.0-1.0)?", type=float)
-            demosaic_green = user_input("\nWhat weight for green channel (0.0-1.0)?", type=float)
-            demosaic_blue = user_input("\nWhat weight for blue channel (0.0-1.0)?", type=float)
+            demosaic_red = user_input("\nWhat weight for red channel (0.0-1.0)?", type_=float)
+            demosaic_green = user_input("\nWhat weight for green channel (0.0-1.0)?", type_=float)
+            demosaic_blue = user_input("\nWhat weight for blue channel (0.0-1.0)?", type_=float)
             demosaic_out = [ demosaic_red, demosaic_green, demosaic_blue ]
 
     return demosaic_fmt, demosaic_out

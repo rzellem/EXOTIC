@@ -7,9 +7,9 @@ try:
 except ImportError:
     from gael_ld import createldgrid
 try:
-    from .filters import fwhm, fwhm_alias
+    from .filters import fwhm, fwhm_alias, fwhm_names_nonspecific
 except ImportError:
-    from filters import fwhm, fwhm_alias
+    from filters import fwhm, fwhm_alias, fwhm_names_nonspecific
 
 log = logging.getLogger(__name__)
 ld_re_punct = r'[\W]'
@@ -17,22 +17,30 @@ ld_re_punct_p = re.compile(ld_re_punct)
 
 
 class LimbDarkening:
-    filter_nonspecific_ids = ('CR', 'CBB', 'CV', 'TB', 'TG', 'TR', )  # prevent misidentification of generic values
-    filter_generic_ids = ('N/A', 'NA', 'NONE', )  # imply custom filter, always
+    # implies custom filter, always
+    filter_names_undefined = {'N/A', 'NA', 'NONE', }
+
     # include filter maps as references from this class
     fwhm = fwhm
     fwhm_alias = fwhm_alias
+    fwhm_names_nonspecific = fwhm_names_nonspecific
 
-    # lookup table: fwhm_map references filters irrespective of spacing and punctuation
-    # 1 - join optimized str lookups in lookup table
-    fwhm_lookup = {''.join(k.strip().lower().split()): k for k in fwhm.keys()}
-    fwhm_lookup.update({''.join(k.strip().lower().split()): v for k, v in fwhm_alias.items()})
+    # lookup table: fwhm_lookup references filters irrespective of spacing and punctuation
+    # 1 - combine optimized str lookups in lookup table
+    fwhm_lookup = {k.strip().replace(' ', '').lower(): k for k in fwhm.keys()}
+    fwhm_lookup.update({k.strip().replace(' ', '').lower(): v for k, v in fwhm_alias.items()})
     # 2 - ignore punctuation in lookup table
     fwhm_lookup = {re.sub(ld_re_punct_p, '', k): v for k, v in fwhm_lookup.items()}
+    # lookup set: filter_desc_nonspecific_lookup_set references descriptions that do not represent a specific filter
+    #     irrespective of spacing and punctuation
+    # 1 - combine optimized str lookups in lookup set
+    # 2 - ignore punctuation in lookup set
+    filter_desc_nonspecific_lookup_set = tuple([re.sub(ld_re_punct_p, '', k.strip().replace(' ', '')).lower()
+                                                for k in fwhm_names_nonspecific.values()])
 
     def __init__(self, stellar):
         self.filter_name = self.filter_desc = None
-        self.ld0 = self.ld1 = self.ld2 = self.ld3 = None
+        self.ld0 = self.ld1 = self.ld2 = self.ld3 = [0, 0]
         self.priors = {
             'T*': stellar.get('teff'),
             'T*_uperr': stellar.get('teffUncPos'),
@@ -96,15 +104,17 @@ class LimbDarkening:
                     # eliminate errant spaces on edges
                     filter_[k] = filter_[k].strip()
                     if k == 'name' and filter_[k]:  # format 'name' (if exists) to uppercase, no spaces
-                        filter_[k] = ''.join(filter_[k].upper().split())
+                        filter_[k] = filter_[k].upper().replace(' ', '')
             if filter_['filter']:  # make matcher by removing spaces, remove punctuation and lowercase
-                filter_matcher = ''.join(filter_['filter'].lower().split())
+                filter_matcher = filter_['filter'].lower().replace(' ', '')
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
+            # names that do not represent a specific filter combined into one tuple
+            filter_names_nonspecific = set(LimbDarkening.fwhm_names_nonspecific.keys()).update(
+                LimbDarkening.filter_names_undefined)
             # identify defined filters via optimized lookup table
-            if filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup:
+            if (filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup and
+                    filter_matcher not in LimbDarkening.filter_desc_nonspecific_lookup_set):
                 filter_['filter'] = LimbDarkening.fwhm_lookup[filter_matcher]  # sets to actual filter reference key
-            # add always disabled alias values
-            filter_nonspecific_names = LimbDarkening.filter_nonspecific_ids + LimbDarkening.filter_generic_ids
             for f in LimbDarkening.fwhm.values():
                 # match to wavelength values (strict)
                 if (filter_['wl_min'] and filter_['wl_min'] == f['fwhm'][0] and
@@ -119,8 +129,8 @@ class LimbDarkening:
                 elif filter_['name'] == f['name'].strip().upper() or \
                         (filter_['filter'] and filter_['filter'][:5].upper() == f['name'].strip().upper()):
                     # exclude unknown vals for 'name'
-                    if filter_['name'] in filter_nonspecific_names or \
-                            (filter_['filter'] and filter_['filter'][:5].upper() in filter_nonspecific_names):
+                    if filter_['name'] in filter_names_nonspecific or \
+                            (filter_['filter'] and filter_['filter'][:5].upper() in filter_names_nonspecific):
                         pass
                     else:
                         filter_alias = f
@@ -169,7 +179,7 @@ class LimbDarkening:
                 return False
             for k in ('wl_min', 'wl_max'):  # clean inputs
                 filter_[k] = filter_.get(k)
-                filter_[k] = ''.join(str(filter_[k]).strip().split()).rstrip('.') if filter_[k] else filter_[k]
+                filter_[k] = str(filter_[k]).strip().replace(' ', '').rstrip('.') if filter_[k] else filter_[k]
                 if not 200. <= float(filter_[k]) <= 4000.:  # also fails if nan
                     raise ValueError(f"FWHM '{k}' is outside of bounds (200., 4000.). ...")
                 else:  # add .0 to end of str to aid literal matching
@@ -207,119 +217,13 @@ class LimbDarkening:
         self.ld3 = ld3
         return
 
-    def output_ld(self):
-        print("\nEXOTIC-calculated nonlinear limb-darkening coefficients: ")
-        print(f"{self.ld0[0]:5f} +/- + {self.ld0[1]:5f}")
-        print(f"{self.ld1[0]:5f} +/- + {self.ld1[1]:5f}")
-        print(f"{self.ld2[0]:5f} +/- + {self.ld2[1]:5f}")
-        print(f"{self.ld3[0]:5f} +/- + {self.ld3[1]:5f}")
-        return
-
-
-def test_ld(ld_obj_, filter_):
-    try:
-        ld_obj_.check_standard(filter_)
-        ld_obj_.calculate_ld()
-    except BaseException as be:
-        log.exception(be)
-        log.error("Continuing with default operations. ...")
-        filter_['filter'] = "Custom"
-        if filter_['wl_min'] and filter_['wl_max']:
-            ld_obj_.set_filter('N/A', filter_['filter'], float(filter_['wl_min']), float(filter_['wl_max']))
-            ld_obj_.calculate_ld()
-        else:
-            ld_ = [(filter_[key]["value"], filter_[key]["uncertainty"]) for key in filter_.keys()
-                   if key in ['u0', 'u1', 'u2', 'u3']]
-            ld_obj_.set_filter('N/A', filter_['filter'], filter_['wl_min'], filter_['wl_max'])
-            ld_obj_.set_ld(ld_[0], ld_[1], ld_[2], ld_[3])
-    return
-
-
-if __name__ == "__main__":  # tests
-    stellar_params = {
-        'teff': 6001.0,
-        'teffUncPos': 88.0,
-        'teffUncNeg': -88.0,
-        'met': -0.16,
-        'metUncPos': 0.08,
-        'metUncNeg': -0.08,
-        'logg': 4.22,
-        'loggUncPos': 0.04,
-        'loggUncNeg': -0.04
-    }
-
-    # Test existing filter
-    filter_info1 = {
-        'filter': "CV",
-        'wl_min': None,
-        'wl_max': None,
-        'u0': {"value": None, "uncertainty": None},
-        'u1': {"value": None, "uncertainty": None},
-        'u2': {"value": None, "uncertainty": None},
-        'u3': {"value": None, "uncertainty": None}
-    }
-
-    # Test alias filter
-    filter_info2 = {
-        'filter': "LCO SDSS u'",
-        'wl_min': None,
-        'wl_max': None,
-        'u0': {"value": None, "uncertainty": None},
-        'u1': {"value": None, "uncertainty": None},
-        'u2': {"value": None, "uncertainty": None},
-        'u3': {"value": None, "uncertainty": None}
-    }
-
-    # Test given only FWHM
-    filter_info3 = {
-        'filter': None,
-        'wl_min': "350",
-        'wl_max': "850.0",
-        'u0': {"value": None, "uncertainty": None},
-        'u1': {"value": None, "uncertainty": None},
-        'u2': {"value": None, "uncertainty": None},
-        'u3': {"value": None, "uncertainty": None}
-    }
-
-    # Test custom-entered ld coefficients
-    filter_info4 = {
-        'filter': None,
-        'wl_min': None,
-        'wl_max': None,
-        'u0': {"value": 2.118, "uncertainty": 0.051},
-        'u1': {"value": -3.88, "uncertainty": 0.21},
-        'u2': {"value": 4.39, "uncertainty": 0.27},
-        'u3': {"value": -1.63, "uncertainty": 0.12}
-    }
-
-    filter_info5 = {
-        'filter': 'N/A',
-        'wl_min': 351.2,
-        'wl_max': 3999.,
-        'u0': {"value": 2.118, "uncertainty": 0.051},
-        'u1': {"value": -3.88, "uncertainty": 0.21},
-        'u2': {"value": 4.39, "uncertainty": 0.27},
-        'u3': {"value": -1.63, "uncertainty": 0.12}
-    }
-
-    ld_obj = LimbDarkening(stellar_params)
-    LimbDarkening.standard_list()
-
-    print(ld_obj.check_fwhm(filter_info5))
-    print(ld_obj.check_standard(filter_info5, True, 4))
-    print(ld_obj.check_standard(filter_info5))
-    print(str(filter_info5))
-    test_ld(ld_obj, filter_info5)
-    print(str(filter_info5))
-    print(f"{ld_obj.filter_desc}, {ld_obj.filter_name}, {ld_obj.wl_min}, {ld_obj.wl_max}")
-
-    LimbDarkening.check_fwhm(filter_info5)
-    LimbDarkening.check_fwhm(filter_info3)
-    test_ld(ld_obj, filter_info1)
-    # test_ld(ld_obj, filter_info2)
-    # test_ld(ld_obj, filter_info3)
-    # test_ld(ld_obj, filter_info4)
-
-    ld = [ld_obj.ld0[0], ld_obj.ld1[0], ld_obj.ld2[0], ld_obj.ld3[0]]
-    ld_unc = [ld_obj.ld0[1], ld_obj.ld1[1], ld_obj.ld2[1], ld_obj.ld3[1]]
-    ld_obj.output_ld()
+    def __str__(self):
+        return (f"\nFilter Name: {self.filter_name}"
+                f"\nFilter Description: {self.filter_desc}"
+                f"\nMinimum Wavelength (nm): {self.wl_min}"
+                f"\nMaxiumum Wavelength (nm):: {self.wl_max}"
+                "\nEXOTIC-calculated nonlinear limb-darkening coefficients: "
+                f"\n\t- {self.ld0[0]:5f} +/- + {self.ld0[1]:5f}"
+                f"\n\t- {self.ld1[0]:5f} +/- + {self.ld1[1]:5f}"
+                f"\n\t- {self.ld2[0]:5f} +/- + {self.ld2[1]:5f}"
+                f"\n\t- {self.ld3[0]:5f} +/- + {self.ld3[1]:5f}")

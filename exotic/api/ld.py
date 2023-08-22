@@ -7,9 +7,9 @@ try:
 except ImportError:
     from gael_ld import createldgrid
 try:
-    from .filters import fwhm, fwhm_alias
+    from .filters import fwhm, fwhm_alias, fwhm_names_nonspecific
 except ImportError:
-    from filters import fwhm, fwhm_alias
+    from filters import fwhm, fwhm_alias, fwhm_names_nonspecific
 
 log = logging.getLogger(__name__)
 ld_re_punct = r'[\W]'
@@ -17,28 +17,26 @@ ld_re_punct_p = re.compile(ld_re_punct)
 
 
 class LimbDarkening:
-    # standard filters w/o precisely defined FWHM values
-    filter_nonspecific = {
-        'CR': "Clear (unfiltered) reduced to R sequence",
-        'CBB': "Clear with blue-blocking",
-        'CV': "Clear (unfiltered) reduced to V sequence",
-        'TB': "DSLR Blue",
-        'TG': "DSLR Green",
-        'TR': "DSLR Red",
-    }
     # implies custom filter, always
-    filter_generic_names = ('N/A', 'NA', 'NONE',)
+    filter_names_undefined = {'N/A', 'NA', 'NONE', }
 
     # include filter maps as references from this class
     fwhm = fwhm
     fwhm_alias = fwhm_alias
+    fwhm_names_nonspecific = fwhm_names_nonspecific
 
-    # lookup table: fwhm_map references filters irrespective of spacing and punctuation
+    # lookup table: fwhm_lookup references filters irrespective of spacing and punctuation
     # 1 - combine optimized str lookups in lookup table
     fwhm_lookup = {k.strip().replace(' ', '').lower(): k for k in fwhm.keys()}
     fwhm_lookup.update({k.strip().replace(' ', '').lower(): v for k, v in fwhm_alias.items()})
     # 2 - ignore punctuation in lookup table
     fwhm_lookup = {re.sub(ld_re_punct_p, '', k): v for k, v in fwhm_lookup.items()}
+    # lookup set: filter_desc_nonspecific_lookup_set references descriptions that do not represent a specific filter
+    #     irrespective of spacing and punctuation
+    # 1 - combine optimized str lookups in lookup set
+    # 2 - ignore punctuation in lookup set
+    filter_desc_nonspecific_lookup_set = tuple([re.sub(ld_re_punct_p, '', k.strip().replace(' ', '')).lower()
+                                                for k in fwhm_names_nonspecific.values()])
 
     def __init__(self, stellar):
         self.filter_name = self.filter_desc = None
@@ -110,14 +108,13 @@ class LimbDarkening:
             if filter_['filter']:  # make matcher by removing spaces, remove punctuation and lowercase
                 filter_matcher = filter_['filter'].lower().replace(' ', '')
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
-            filter_nonspecific_desc = [re.sub(ld_re_punct_p, '', f.lower().replace(' ', ''))
-                                       for f in LimbDarkening.filter_nonspecific.values()]
+            # names that do not represent a specific filter combined into one tuple
+            filter_names_nonspecific = set(LimbDarkening.fwhm_names_nonspecific.keys()).update(
+                LimbDarkening.filter_names_undefined)
             # identify defined filters via optimized lookup table
             if (filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup and
-                    filter_matcher not in filter_nonspecific_desc):
+                    filter_matcher not in LimbDarkening.filter_desc_nonspecific_lookup_set):
                 filter_['filter'] = LimbDarkening.fwhm_lookup[filter_matcher]  # sets to actual filter reference key
-            # add always disabled alias values
-            filter_nonspecific_names = tuple(LimbDarkening.filter_nonspecific.keys()) + LimbDarkening.filter_generic_names
             for f in LimbDarkening.fwhm.values():
                 # match to wavelength values (strict)
                 if (filter_['wl_min'] and filter_['wl_min'] == f['fwhm'][0] and
@@ -132,8 +129,8 @@ class LimbDarkening:
                 elif filter_['name'] == f['name'].strip().upper() or \
                         (filter_['filter'] and filter_['filter'][:5].upper() == f['name'].strip().upper()):
                     # exclude unknown vals for 'name'
-                    if filter_['name'] in filter_nonspecific_names or \
-                            (filter_['filter'] and filter_['filter'][:5].upper() in filter_nonspecific_names):
+                    if filter_['name'] in filter_names_nonspecific or \
+                            (filter_['filter'] and filter_['filter'][:5].upper() in filter_names_nonspecific):
                         pass
                     else:
                         filter_alias = f

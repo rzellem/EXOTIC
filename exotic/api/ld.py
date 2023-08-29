@@ -109,8 +109,8 @@ class LimbDarkening:
                 filter_matcher = filter_['filter'].lower().replace(' ', '')
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
             # names that do not represent a specific filter combined into one tuple
-            filter_names_nonspecific = set(LimbDarkening.fwhm_names_nonspecific.keys()).update(
-                LimbDarkening.filter_names_undefined)
+            filter_names_nonspecific = set(LimbDarkening.fwhm_names_nonspecific.keys())
+            filter_names_nonspecific.update(LimbDarkening.filter_names_undefined)
             # identify defined filters via optimized lookup table
             if (filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup and
                     filter_matcher not in LimbDarkening.filter_desc_nonspecific_lookup_set):

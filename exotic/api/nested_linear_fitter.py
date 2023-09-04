@@ -53,7 +53,7 @@ from astropy.timeseries import LombScargle
 
 class linear_fitter(object):
 
-    def __init__(self, data, dataerr, bounds=None, prior=None, labels=None):
+    def __init__(self, data, dataerr, bounds=None, prior=None, labels=None, verbose=True):
         """
         Fit a linear model to data using nested sampling.
 
@@ -73,12 +73,14 @@ class linear_fitter(object):
         self.bounds = bounds
         self.labels = np.array(labels)
         self.prior = prior.copy()  # dict {'m':(0.1,0.5), 'b':(0,1)}
+        self.verbose = verbose
         if bounds is None:
             # use +- 3 sigma prior as bounds
             self.bounds = {
                 'm': [prior['m'][0] - 3 * prior['m'][1], prior['m'][0] + 3 * prior['m'][1]],
                 'b': [prior['b'][0] - 3 * prior['b'][1], prior['b'][0] + 3 * prior['b'][1]]
             }
+        self.results = None
         self.fit_nested()
 
     def fit_nested(self):
@@ -99,10 +101,16 @@ class linear_fitter(object):
             return (boundarray[:, 0] + bounddiff * upars)
 
         # estimate slope and intercept
-        self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
-                                                                                     min_num_live_points=420,
-                                                                                     show_status=False)
-
+        noop = lambda *args, **kwargs: None
+        if self.verbose:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
+                                                                                         min_num_live_points=420,
+                                                                                         show_status=True)
+        else:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
+                                                                                         min_num_live_points=420,
+                                                                                         show_status=False,
+                                                                                         viz_callback=noop)
         # alloc data for best fit + error
         self.errors = {}
         self.quantiles = {}

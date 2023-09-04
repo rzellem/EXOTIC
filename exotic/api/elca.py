@@ -41,13 +41,14 @@
 # Fit an exoplanet transit model to time series data.
 # ########################################################################### #
 
+from astropy.time import Time
 import copy
-import numpy as np
 from itertools import cycle
 import matplotlib.pyplot as plt
+import numpy as np
+from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
-from scipy import spatial
 
 try:
     from ultranest import ReactiveNestedSampler
@@ -168,6 +169,7 @@ class lc_fitter(object):
         self.verbose = verbose
         self.mode = mode
         self.neighbors = neighbors
+        self.results = None
         if self.mode == "lm":
             self.fit_LM()
         elif self.mode == "ns":
@@ -322,12 +324,10 @@ class lc_fitter(object):
                     self.results['posterior']['errup'][i]]
         except NameError:
             self.ns_type = 'dynesty'
-            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform,
-                                                    ndim=len(freekeys), bound='multi', sample='unif'
-                                                    )
+            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(freekeys),
+                                                    bound='multi', sample='unif')
             dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
-                                maxbatch=10, nlive_batch=100
-                                )
+                                maxbatch=10, nlive_batch=100, print_progressbool=self.verbose)
             self.results = dsampler.results
 
             tests = [copy.deepcopy(self.prior) for i in range(5)]
@@ -558,7 +558,7 @@ class glc_fitter(lc_fitter):
         self.individual_fit = individual_fit
         self.stdev_cutoff = stdev_cutoff
         self.verbose = verbose
-
+        self.results = None
         self.fit_nested()
 
     def fit_nested(self):
@@ -680,10 +680,11 @@ class glc_fitter(lc_fitter):
                 #clean_name = self.lc_data[n].get('name', n).replace(' ','_').replace('(','').replace(')','').replace('[','').replace(']','').replace('-','_').split('-')[0]
                 freekeys.append(f"local_{k}_{n}")
 
+        noop = lambda *args, **kwargs: None
         if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e6)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e6, show_status=True)
         else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e6, show_status=self.verbose, viz_callback=self.verbose)
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e6, show_status=False, viz_callback=noop)
 
         self.quantiles = {}
         self.errors = {}

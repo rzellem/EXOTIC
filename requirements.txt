@@ -21,5 +21,6 @@ pyvo~=1.4
 requests~=2.31
 scipy~=1.11.1
 scikit-image~=0.21
+statsmodels~=0.14.0
 tenacity~=8.2
 ultranest~=3.6.2;platform_system!='Windows'

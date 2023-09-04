@@ -41,13 +41,14 @@
 # Fit an exoplanet transit model to time series data.
 # ########################################################################### #
 
+from astropy.time import Time
 import copy
-import numpy as np
 from itertools import cycle
 import matplotlib.pyplot as plt
+import numpy as np
+from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
-from scipy import spatial
 
 try:
     from ultranest import ReactiveNestedSampler

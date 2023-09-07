@@ -286,7 +286,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
   date_obs = date_obs.replace("/", "_")
   longitude = find(hdr,['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'],obs)
   latitude = find(hdr,['LATITUDE', 'LAT', 'SITELAT'],obs)
-  height = int(find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'], obs))
+  height = float(find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'], obs))
   obs_notes = "N/A"
 
   mobs_data = False

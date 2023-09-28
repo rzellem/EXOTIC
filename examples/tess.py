@@ -4,8 +4,8 @@
 # git checkout tess
 # conda create -n tess_exotic python=3.9
 # conda activate tess_exotic
-# pip install .
-# pip install lightkurve==2.0.6 statsmodels wotan transitleastsquares
+# pip install -e .
+# pip install lightkurve==2.0.6 statsmodels numba==0.57.1 wotan==1.10 transitleastsquares==1.0.31
 # pip install numpy==1.21.6
 # cd examples/
 # python tess.py -t "HAT-P-18 b"
@@ -105,7 +105,7 @@ def parse_args():
     parser.add_argument("-t", "--target", help=help_, type=str, default="WASP-18 b")
 
     help_ = "Directory for saving results"
-    parser.add_argument("-o", "--output", help=help_, default="output/", type=str)
+    parser.add_argument("-o", "--output", help=help_, default="tess_output/", type=str)
 
     help_ = "Sectors (0 = all)"
     parser.add_argument("-s", "--sector", help=help_, default=0, type=int)
@@ -150,11 +150,20 @@ if __name__ == "__main__":
     
     planetname = args.target.lower().replace(' ','')
     
-    search_result = lk.search_targetpixelfile(args.target[:-1], mission='TESS')
+    # search for data
+    if "TOI" in args.target and "." in args.target:
+        name = args.target.split(".")[0]
+        search_result = lk.search_lightcurvefile(name, mission='TESS')
+    else:
+        search_result = lk.search_targetpixelfile(args.target[:-1].strip(), mission='TESS')
+
     print(search_result)
 
     if len(search_result) == 0:
+        if "TOI" in args.target:
+            print("Try to format TOI name differently (e.g. 'TOI 1234 b')")
         raise(Exception(f"no data for: {args.target}"))
+
         # https://exo.mast.stsci.edu/
     # load prior from disk or download
     if os.path.exists(os.path.join(planetdir,planetname+"_prior.json")):
@@ -162,24 +171,34 @@ if __name__ == "__main__":
     else:
         # download prior from web
         if "TOI" in args.target:
-            tdf = read_csv("toi_table.csv")
+            if os.path.exists("toi_table.csv"):
+                tdf = read_csv("toi_table.csv")
+            else:
+                # download and save from url
+                toi_url = "https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=csv"
+                tdf = read_csv(toi_url)
+                tdf.to_csv("toi_table.csv")
             try:
+                # try to parse the name to match the spreadsheet
                 if '-' in args.target:
                     num = float(args.target.split("-")[1])
                 else:
                     num = float(args.target.split(" ")[1])
-                    
+
+                planet = args.target[-1]
+
             except:
                 num = float(args.target.split("-")[1][:-2])
                 planet = args.target.split("-")[1][-1]
-                if planet == 'b':
-                    num += 0.01
-                elif planet == 'c':
-                    num += 0.02
-                elif planet == 'd':
-                    num += 0.03
-                elif planet == 'e':
-                    num += 0.04
+
+            if planet == 'b':
+                num += 0.01
+            elif planet == 'c':
+                num += 0.02
+            elif planet == 'd':
+                num += 0.03
+            elif planet == 'e':
+                num += 0.04
 
             ti = np.argwhere(tdf.TOI.values == num)[0][0]
             row = tdf.iloc[ti]
@@ -216,11 +235,11 @@ if __name__ == "__main__":
                 "st_tefferr1": float(row['Stellar Eff Temp (K) err']),
                 "st_tefferr2": float(-row['Stellar Eff Temp (K) err']),
                 "st_met": float(row['Stellar Metallicity']),
-                "st_meterr1": float(row[' Stellar Metallicity err']),
-                "st_meterr2": float(-row[' Stellar Metallicity err']),
+                #"st_meterr1": float(row[' Stellar Metallicity err']),
+                #"st_meterr2": float(-row[' Stellar Metallicity err']),
                 "st_logg": float(row['Stellar log(g) (cm/s^2)']),
-                "st_loggerr1": float(row['Stellar log(g) (cm/s^2) err']),
-                "st_loggerr2": float(-row['Stellar log(g) (cm/s^2) err']),
+                #"st_loggerr1": float(row['Stellar log(g) (cm/s^2) err']),
+                #"st_loggerr2": float(-row['Stellar log(g) (cm/s^2) err']),
                 "st_mass": float(stellar_mass( row['Stellar log(g) (cm/s^2)'],row['Stellar Radius (R_Sun)'])),
                 "st_rad": float(row['Stellar Radius (R_Sun)']),
                 "st_raderr1": float(row['Stellar Radius (R_Sun) err'])
@@ -266,11 +285,15 @@ if __name__ == "__main__":
             prior = {} # convert to dict
             for key in nea_df.keys():
                 prior[key] = nea_df[key][0]
+
         prior["pl_name"] = planetname.replace('-','')
+        
+        # a/Rs prior
         if np.isnan(prior['pl_ratdor']):
             prior['pl_ratdor'] = np.round(((prior['pl_orbsmax']*u.AU)/(prior['st_rad']*u.R_sun)).to(u.AU/u.AU).value,2)
             prior['pl_ratdorerr1'] = prior['pl_ratdor']*0.1
             prior['pl_ratdorerr2'] = -prior['pl_ratdor']*0.1
+        
         # make directories
         if not os.path.exists(args.output):
             os.mkdir(args.output)
@@ -294,13 +317,13 @@ if __name__ == "__main__":
             raise(Exception(f"no data for sector: {args.sector}"))
     
     #if np.isnan(prior['pl_orbpererr1']):
-            #prior['pl_orbpererr1'] = 0.
-            #prior['pl_orbpererr2'] = 0. 
+        #prior['pl_orbpererr1'] = 0.
+        #prior['pl_orbpererr2'] = 0. 
 
-    # compute limb darkening
-    if np.isnan(prior['st_meterr1']):
-        prior['st_meterr1'] = prior['st_met']*0.1
-        prior['st_meterr2'] = -prior['st_met']*0.1
+    # # compute limb darkening
+    # if np.isnan(prior['st_meterr1']):
+    #     prior['st_meterr1'] = prior['st_met']*0.1
+    #     prior['st_meterr2'] = -prior['st_met']*0.1
 
     u0,u1,u2,u3 = exotethys(prior['st_logg'], prior['st_teff'], prior['st_met'], 'TESS', method='claret', stellar_model='phoenix')
 
@@ -429,13 +452,18 @@ if __name__ == "__main__":
         sv['sector'].append(np.ones(len(time))*sector)
 
         # create plot with trend that was removed
-        fig,ax = plt.subplots(1,figsize=(10,6))
-        ax.plot(time, flux,'k.')
-        ax.plot(time, dtrend,'r--')
-        ax.set_title(f"{args.target} - Sector {sector}")
-        ax.set_ylabel("PDC Flux")
-        ax.set_xlabel("Time [TBJD]")
-        ax.set_ylim([np.percentile(flux, 0.1), np.percentile(flux,99.9)])
+        fig,ax = plt.subplots(2,figsize=(10,8))
+        ax[0].plot(time, flux,'k.')
+        ax[0].plot(time, dtrend,'r--')
+        ax[0].set_title(f"{args.target} - Sector {sector}")
+        ax[0].set_ylabel("PDC Flux")
+        ax[0].set_xlabel("Time [TBJD]")
+        ax[0].set_ylim([np.percentile(flux, 0.1), np.percentile(flux,99.9)])
+        # plot detrended timeseries on bottom
+        ax[1].plot(time, flux/dtrend,'k.')
+        ax[1].set_ylabel("Detrended PDC Flux")
+        ax[1].set_xlabel("Time [TBJD]")
+        ax[1].set_ylim([np.percentile(flux/dtrend, 0.1), np.percentile(flux/dtrend,99.9)])
         plt.tight_layout()
         #if not os.path.exists(os.path.join(planetdir, "lightcurves")):
             #os.makedirs(os.path.join(planetdir, "lightcurves"))
@@ -613,6 +641,15 @@ if __name__ == "__main__":
         plt.xlim(0, max(results.periods))
         plt.savefig( os.path.join( planetdir, planetname+"_periodogram.png"))
         plt.close()
+
+        sv['tls'] = {
+            'period':results.period,
+            'power':results.power,
+            'periods':results.periods,
+            'sde':results.SDE,
+            'depth':results.depth,
+            'duration':results.duration
+        }
 
     # save global fit data if above certain SNR
     rprs2 = myfit.parameters['rprs']**2

@@ -706,6 +706,7 @@ class glc_fitter(lc_fitter):
                 self.lc_data[n]['priors'][k] = self.parameters[pkey]
                 self.lc_data[n]['errors'][k] = self.errors[pkey]
 
+                # update key for final bestfit plot if needed
                 if k == 'rprs' and 'rprs' not in freekeys:
                     self.parameters[k] = self.lc_data[n]['priors'][k]
                     self.errors[k] = self.lc_data[n]['errors'][k]
@@ -777,7 +778,33 @@ class glc_fitter(lc_fitter):
         plt.tight_layout()
         return fig
 
-    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, ylim_sigma=5, phase_limits='median', show_legend=True):
+    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, ylim_sigma=5, phase_limits='median', show_legend=True, limit_legend=False):
+        """
+        Plot the best fit model and residuals
+
+        Parameters
+        ----------
+        title : str
+            Title for the plot
+
+        bin_dt : float
+            Bin size for plotting the residuals
+
+        alpha : float
+            Alpha value for plotting the data
+
+        ylim_sigma : float
+            Number of sigma to plot the residuals
+
+        phase_limits : str
+            'median' or 'all' to set the phase limits
+
+        show_legend : bool
+            Show the legend
+
+        limit_legend : bool
+            Limit the legend to 3 entries
+        """
         f = plt.figure(figsize=(15,12))
         f.subplots_adjust(top=0.92,bottom=0.09,left=0.1,right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4,5), (0,0), colspan=5,rowspan=3)
@@ -872,7 +899,7 @@ class glc_fitter(lc_fitter):
         # best fit model
         self.time_upsample = np.linspace(minp*self.parameters['per']+self.parameters['tmid'], 
                                          maxp*self.parameters['per']+self.parameters['tmid'], 10000)
-        self.transit_upsample = transit(self.time_upsample, self.lc_data[0]['priors'])
+        self.transit_upsample = transit(self.time_upsample, self.parameters)
         self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
         sii = np.argsort(self.phase_upsample)
         axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel, lw=3)

@@ -1,5 +1,6 @@
 import numpy as np
 from scipy import stats
+from copy import deepcopy
 from itertools import cycle
 import matplotlib.pyplot as plt
 from astropy import units as u
@@ -7,7 +8,7 @@ from astropy import constants as const
 from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit_flux_drop
 from ultranest import ReactiveNestedSampler
 
-from exotic.api.elca import lc_fitter
+from exotic.api.elca import glc_fitter, lc_fitter
 
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value
@@ -133,7 +134,7 @@ def rv_model(time, params, dt=0.0001):
 
 
 # simultaneously fit multiple data sets with global and local parameters
-class grv_fitter(glc_fitter):
+class joint_fitter(glc_fitter):
     ns_type = 'ultranest'
 
     def __init__(self, lc_data, local_lc_bounds, rv_data, local_rv_bounds, global_bounds, ephemeris, individual_fit=True, verbose=False):
@@ -378,7 +379,11 @@ class grv_fitter(glc_fitter):
         else:
             self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=2e5, show_status=self.verbose, viz_callback=self.verbose)
 
-        self.parameters = {}
+        try:
+            self.parameters = deepcopy(self.lc_data[0]['priors'])
+        except:
+            self.parameters = deepcopy(self.rv_data[0]['priors'])
+
         self.parameters_median = {}
         self.quantiles = {}
         self.errors = {}
@@ -501,8 +506,12 @@ class grv_fitter(glc_fitter):
         # monte carlo over posteriors to derive offsets and a/Rs
         for n in range(1000):
             
+            # TODO fix error on omega to reduce OC uncertainty for e-mid
+
             # randomize each parameter
             for i, key in enumerate(self.errors.keys()):
+                #if key == 'omega':
+                #    continue
                 try:
                     prior[key] = np.random.normal(self.parameters_median[key], self.errors[key])
                 except:

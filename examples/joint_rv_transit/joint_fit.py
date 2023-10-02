@@ -1,9 +1,11 @@
+import pickle
 import numpy as np
 from pandas import read_csv
 from astropy import units as u
 from astropy import constants as const
 import matplotlib.pyplot as plt
 from exotic.api.rv_fitter import rv_fitter
+from exotic.api.joint_fitter import joint_fitter
 from pylightcurve.models.exoplanet_lc import eclipse_mid_time
 
 Mjup = const.M_jup.to(u.kg).value
@@ -77,13 +79,13 @@ if __name__ == "__main__":
                 default[k] = np.random.normal(ephemeris['prior'][k][0], ephemeris['prior'][k][1])
             default['ars'] = default['a'] * AU / (default['rstar'] * Rsun)
             emid = eclipse_mid_time(default['per'], default['ars'], default['ecc'], default['inc'], default['omega'], default['tmid'])
-            #emids.append(emid+default['per']*41)
             emids.append(emid-default['per'])
         ephemeris['prior']['emid'] = [np.mean(emids), np.std(emids)]
         print(ephemeris['prior']['emid'])
 
     # add a constant noise term to reduce influence
     ephemeris['noise'] = ephemeris['tmid'][:,1].mean()/2
+    # my personal belief is that some of tmid values on NEA are underestimated, this helps to reduce their influence
 
     # compute some ratios
     prior['mu'] = prior['mplanet']*Mjup / (prior['mstar']*Msun)
@@ -206,7 +208,7 @@ if __name__ == "__main__":
     # inflate uncertainties for each data set such that the average error is similar to the stdev of residuals
     for i, data in enumerate(rv_data):
         diff = max(0, rvfit.data[i]['residuals'].std() - rvfit.data[i]['velerr'].mean())
-        rv_data[i]['velerr'] = rvfit.data[i]['velerr'] + 0.1*diff # should really be 0.5
+        rv_data[i]['velerr'] = rvfit.data[i]['velerr'] + 0.25*diff # should really be 0.5
         print(f"Inflated RV uncertainties for {rv_data[i]['name']} by {diff:2f} m/s")
         rv_data[i]['diff'] = diff
 
@@ -221,7 +223,7 @@ if __name__ == "__main__":
             rv['priors'][key] = rvfit.parameters[key]
 
     # run global fit
-    myfit = grv_fitter(lc_data, local_lc_bounds, rv_data, local_rv_bounds, 
+    myfit = joint_fitter(lc_data, local_lc_bounds, rv_data, local_rv_bounds, 
                         global_bounds, ephemeris,
                         verbose=True, individual_fit=True)
 

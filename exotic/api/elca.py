@@ -669,6 +669,7 @@ class glc_fitter(lc_fitter):
                 detrend = self.lc_data[i]['flux']/model
                 model *= np.mean(detrend)
 
+                # add to chi2
                 chi2 += np.sum( ((self.lc_data[i]['flux']-model)/self.lc_data[i]['ferr'])**2 )
 
             # maximization metric for nested sampling
@@ -692,24 +693,46 @@ class glc_fitter(lc_fitter):
 
         for i, key in enumerate(freekeys):
             self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+            #self.errors[key] = self.results['posterior']['median'][i]
+
             self.errors[key] = self.results['posterior']['stdev'][i]
             self.quantiles[key] = [
                 self.results['posterior']['errlo'][i],
                 self.results['posterior']['errup'][i]]
 
+        # create an average Rp/Rs if it is not in global keys
+        # check if 'rprs' is in lfreekeys
+        rprs_in_local = False
+        for i in range(nobs):
+            if 'rprs' in lfreekeys[i]:
+                rprs_in_local = True
+                break
+
+        if rprs_in_local:
+            local_rprs = [] # used for creating an average value
+            local_rprs_err = []
+
+        # loop over observations
         for n in range(nobs):
             self.lc_data[n]['errors'] = {}
+            
+            # copy global parameters
+            self.lc_data[n]['priors'] = copy.deepcopy(self.parameters)
+
+            # loop over local keys and save best fit values
             for k in lfreekeys[n]:
-                #clean_name = self.lc_data[n].get('name', n).replace(' ','_').replace('(','').replace(')','').replace('[','').replace(']','').replace('-','_').split('-')[0]
+
+                # create key to get results
                 pkey = f"local_{k}_{n}"
                 
+                # overwrite priors with best fit value
                 self.lc_data[n]['priors'][k] = self.parameters[pkey]
                 self.lc_data[n]['errors'][k] = self.errors[pkey]
 
                 # update key for final bestfit plot if needed
-                if k == 'rprs' and 'rprs' not in freekeys:
-                    self.parameters[k] = self.lc_data[n]['priors'][k]
-                    self.errors[k] = self.lc_data[n]['errors'][k]
+                if k == 'rprs':
+                    local_rprs.append(self.lc_data[n]['priors'][k])
+                    local_rprs_err.append(self.lc_data[n]['errors'][k])
 
             # solve for a1
             model = transit(self.lc_data[n]['time'], self.lc_data[n]['priors'])
@@ -718,12 +741,19 @@ class glc_fitter(lc_fitter):
             self.lc_data[n]['priors']['a1'] = np.mean(detrend)
             self.lc_data[n]['residuals'] = self.lc_data[n]['flux'] - model*airmass*self.lc_data[n]['priors']['a1']
             self.lc_data[n]['detrend'] = self.lc_data[n]['flux']/(airmass*self.lc_data[n]['priors']['a1'])
+
             # phase
             self.lc_data[n]['phase'] = get_phase(self.lc_data[n]['time'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
-
-            # upscale model for plotting
             self.lc_data[n]['time_upsample'] = np.linspace(min(self.lc_data[n]['time']), max(self.lc_data[n]['time']), 1000)
+            self.lc_data[n]['phase_upsample'] = get_phase(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
             self.lc_data[n]['transit_upsample'] = transit(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors'])
+
+        # create an average value from all the local fits
+        if rprs_in_local:
+            self.parameters['rprs'] = np.mean(local_rprs)
+            self.errors['rprs'] = np.std(local_rprs)
+
+        #import pdb; pdb.set_trace()
 
     def plot_bestfits(self):
         nrows = len(self.lc_data)//4+1
@@ -778,7 +808,7 @@ class glc_fitter(lc_fitter):
         plt.tight_layout()
         return fig
 
-    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, ylim_sigma=5, phase_limits='median', show_legend=True, limit_legend=False):
+    def plot_bestfit(self, title="", bin_dt=30./(60*24), alpha=0.05, ylim_sigma=5, phase_limits='median', show_legend=True, limit_legend=False, show_individual_fits=False):
         """
         Plot the best fit model and residuals
 
@@ -872,13 +902,21 @@ class glc_fitter(lc_fitter):
 
             # plot binned data
             bt2, bf2, bs = time_bin(phase[si]*self.lc_data[n]['priors']['per'], self.lc_data[n]['detrend'][si], bin_dt)
-            axs[0].errorbar(bt2/self.lc_data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=ncolor,ls='none',marker=nmarker,
-                            label=r'{}: {:.2f} %'.format(self.lc_data[n].get('name',''),np.std(self.lc_data[n]['residuals']/np.median(self.lc_data[n]['flux'])*1e2)))
+
+            if limit_legend:
+                axs[0].errorbar(bt2/self.lc_data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=ncolor,ls='none',marker=nmarker)
+            else:
+                axs[0].errorbar(bt2/self.lc_data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=ncolor,ls='none',marker=nmarker,
+                                label=r'{}: {:.2f} %'.format(self.lc_data[n].get('name',''),np.std(self.lc_data[n]['residuals']/np.median(self.lc_data[n]['flux'])*1e2)))
 
             # replace min and max for upsampled lc model
             minp = min(minp, min(phase))
             maxp = max(maxp, max(phase))
             min_std = min(min_std, np.std(self.lc_data[n]['residuals']/np.median(self.lc_data[n]['flux'])))
+
+            # plot individual best fit models
+            if show_individual_fits:
+                axs[0].plot(self.lc_data[n]['phase_upsample'], self.lc_data[n]['transit_upsample'], color=ncolor, zorder=3, alpha=0.5)
 
         # create binned plot for all the data
         for k in alldata.keys():

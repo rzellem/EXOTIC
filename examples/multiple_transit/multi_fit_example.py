@@ -6,7 +6,7 @@ from exotic.api.elca import transit, glc_fitter
 if __name__ == "__main__":
 
     # simulate input data
-    epochs = np.random.choice(np.arange(100), 10, replace=False)
+    epochs = np.random.choice(np.arange(100), 6, replace=False)
     input_data = []
     local_bounds = []
 
@@ -16,7 +16,7 @@ if __name__ == "__main__":
         phase = np.linspace(-0.02-0.01*np.random.random(), 0.02+0.01*np.random.random(), nobs)
         
         prior = {
-            'rprs':0.1, # Rp/Rs
+            'rprs':0.1,         # Rp/Rs
             'ars':14.25,        # a/Rs
             'per':3.5,          # Period [day]
             'inc':np.random.random()+87.5,         # Inclination [deg]
@@ -48,9 +48,9 @@ if __name__ == "__main__":
 
         # individual properties
         local_bounds.append({
-            'rprs':[0,0.2],
+            #'rprs':[0,0.2], # will overwrite global bounds if included
             # a2 is used for individual airmass detrending using: a1*exp(airmass*a2)
-            'a2':[-0.5,0] 
+            'a2':[-0.75,0.25] 
             # a1 is solved for automatically using mean(data/model) and does not need
             # to be included as a free parameter. A monte carlo process is used after
             # fitting to derive uncertainties on it. It acts like a normalization factor.
@@ -62,7 +62,9 @@ if __name__ == "__main__":
 
     # shared properties between light curves
     global_bounds = {
-        'per':[3.5-0.0001,3.5+0.0001],
+        'rprs':[0,0.2],
+
+        'per':[3.5-0.001,3.5+0.001],
         'tmid':[1-0.01,1+0.01],
         'inc':[87,90],
     }
@@ -73,14 +75,17 @@ if __name__ == "__main__":
     myfit.plot_bestfit()
     plt.tight_layout()
     plt.savefig('glc_fit.png')
-    plt.show()
+    plt.close()
+    #plt.show()
 
     myfit.plot_triangle()
     plt.tight_layout()
     plt.savefig('glc_triangle.png')
-    plt.show()
+    plt.close()
+    #plt.show()
 
     myfit.plot_bestfits()
     plt.tight_layout()
     plt.savefig('glc_mosaic.png')
     plt.show()
+    plt.close()

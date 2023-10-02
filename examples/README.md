@@ -25,7 +25,7 @@ The notebooks above are also compatible with TESS data! Just don't include an `a
 
 ## [TESS light curve generation](tess.py)
 
-![](figures/2458415_06_wasp-77ab_lightcurve.png)
+![](tess/2458415_06_wasp-77ab_lightcurve.png)
 
 ## [Ephemeris fitting](ephemeris/fit_ephemeris.py)
 - Observed - Calculated plot with colors coded to data source
@@ -49,14 +49,15 @@ The notebooks above are also compatible with TESS data! Just don't include an `a
 ![](radial_velocity/RV_bestfit.png)
 
 
-- [Joint Fit of Transit Photometry, Radial Velocity, and Ephemeris data (mid-transit/eclipse times)](joint_rv_transit/joint_fit.py)
+## [Joint Fit of Transit Photometry, Radial Velocity, and Ephemeris data (mid-transit/eclipse times)](joint_rv_transit/joint_fit.py)
 
+![](joint_rv_transit/joint_posterior.png)
 
 ## [Programmatic Access to Exoplanet Watch Results](Exoplanet_Watch_API.ipynb) 
 
 Download parameters that are derived from photometric data and light curves for a given target. Over 350 targets and 5000 publicly available light curves from ground-based and space-based telescopes.
 
-![](figures/epw_results.png)
+![](epw_results.png)
 
 ## Acknowledgements
 

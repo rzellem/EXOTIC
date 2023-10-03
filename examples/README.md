@@ -41,15 +41,16 @@ The notebooks above are also compatible with TESS data! Just don't include an `a
 
 ![](ephemeris/periodogram.png)
 
-- [N-body interpretation of periodogram](https://github.com/pearsonkyle/Nbody-ai)
+## [N-body interpretation of periodogram](nbody/README.md)
 
+![](nbody/report.png)
 
 ## [Radial Velocity](radial_velocity/rv_example.py)
 
 ![](radial_velocity/RV_bestfit.png)
 
 
-## [Joint Fit of Transit Photometry, Radial Velocity, and Ephemeris data (mid-transit/eclipse times)](joint_rv_transit/joint_fit.py)
+## [Joint Fit of Transit Photometry, Radial Velocity, and Ephemeris data (transit/eclipse times)](joint_rv_transit/joint_fit.py)
 
 ![](joint_rv_transit/joint_posterior.png)
 

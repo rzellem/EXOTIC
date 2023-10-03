@@ -6,7 +6,7 @@ from exotic.api.elca import transit, glc_fitter
 if __name__ == "__main__":
 
     # simulate input data
-    epochs = np.random.choice(np.arange(100), 6, replace=False)
+    epochs = np.random.choice(np.arange(100), 8, replace=False)
     input_data = []
     local_bounds = []
 

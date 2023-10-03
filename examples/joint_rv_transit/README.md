@@ -1,12 +1,12 @@
 # Simultaneously Fit Radial Velocity and Transit Photometry Data
 
-![](RV_bestfit.png)
+![](joint_rv_fit.png)
 
 Fitting transit photometry, radial velocities, and transit/eclipse timing (mid-points) in a joint analysis enables better estimates on the system parameters. The transit photometry constrains the inclination and impact parameter, while the radial velocities constrain the eccentricity and argument of periastron. The transit/eclipse timing constrains the orbital period and eccentricity. This method requires a combined likelihood function. The physical model for each dataset uses common system parameters to enforce consistency. The likelihood includes chi-square terms comparing the data to models for the transit light curve, RV curve, and linear ephemeris. Joint modeling leverages the complementary constraints from each technique - transit durations and impact parameter, Doppler shifts over the orbit, precise transit times - to fully determine the orbital and planetary properties. Inflated RV uncertainties via jitter terms prevent underestimation. The joint analysis enhances precision and accuracy over individual models, capturing the complete system dynamics.
 
 The underlying optimization code uses [Ultranest](), a Bayesian inference package that can be used to fit the radial velocity curve to observations. Since it estimates the Bayesian evidence during the sampling process it can be used for simultaneous model selection and posterior estimation.
 
-![](RV_triangle.png)
+![](joint_posterior.png)
 
 The data points in each correlation plot are color coded to the likelihood with darker colors representing higher likelihoods. The contours represent the N-sigma boundary using the uncertainty reported in each column's title.
 
@@ -15,9 +15,6 @@ The data points in each correlation plot are color coded to the likelihood with 
 
 The archival and new radial velocity measurements were analyzed using a joint fit between the TESS light curve and historical mid-transit/eclipse data to constrain a consistent 20-year orbital solution. The radial velocity model uses the same Keplerian orbital equations as the transit model ([PyLightcurve](https://github.com/ucl-exoplanets/pylightcurve); Tsiaras et al. 2016). The planet's orbit is projected onto a Cartesian grid for the transit geometry. The star's velocity is estimated by scaling the planet's orbit, assuming a two-body system where gravity balances centripetal acceleration. The velocity vector is projected along the line of sight to produce the RV signal. The velocity is estimated by evaluating the orbit equation twice to compute a numerical derivative. The planet's orbit is scaled by the mass ratio to mimic stellar motion and by stellar radius to acquire velocity units. One can also impose a Gaussian prior on stellar radius to reflect literature values and accounts for a degeneracy with inclination.
 
-You can also plot the acceleration of the star which is useful for planning observations
-
-![](RV_acceleration.png)
 
 ## Citation 
 

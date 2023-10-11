@@ -41,16 +41,31 @@
 # a periodogram analysis.
 # 
 # ########################################################################### #
-
-import numpy as np
-from itertools import cycle
-import statsmodels.api as sm
-import matplotlib.pyplot as plt
-from exotic.api.plotting import corner
-from ultranest import ReactiveNestedSampler
 from astropy.timeseries import LombScargle
 from astropy import units as u
 import copy
+from itertools import cycle
+import matplotlib.pyplot as plt
+import numpy as np
+import rebound
+import statsmodels.api as sm
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    import dynesty
+    import dynesty.plotting
+    from dynesty.utils import resample_equal
+    from scipy.stats import gaussian_kde
+
+try:
+    from nested_linear_fitter import linear_fitter, non_linear_fitter
+except ImportError:
+    from .nested_linear_fitter import linear_fitter, non_linear_fitter
+try:
+    from plotting import corner
+except ImportError:
+    from .plotting import corner
+
 
 class ephemeris_fitter(object):
 
@@ -1369,6 +1384,7 @@ if __name__ == "__main__":
 
     # TODO extend plot, BIC Values
 
+    # should this be here?
     dude()
     # mearth = u.M_earth.to(u.kg).value
     msun = u.M_sun.to(u.kg)

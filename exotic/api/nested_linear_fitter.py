@@ -35,25 +35,33 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-# ########################################################################### #
-# Various functions for fitting a linear model to data, including nested 
+# Various functions for fitting a linear model to data, including nested
 # sampling, linear least squares. Includes residual plotting, posteriors and 
 # a periodogram analysis.
 # 
 # ########################################################################### #
-
-import numpy as np
-from itertools import cycle
-import statsmodels.api as sm
-import matplotlib.pyplot as plt
-from exotic.api.plotting import corner
-from ultranest import ReactiveNestedSampler
+from astropy import constants as const
 from astropy.timeseries import LombScargle
 from astropy import units as u
-from astropy import constants as const
 from collections import OrderedDict
-import rebound
 import copy
+from itertools import cycle
+import matplotlib.pyplot as plt
+import numpy as np
+import rebound
+import statsmodels.api as sm
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    import dynesty
+    import dynesty.plotting
+    from dynesty.utils import resample_equal
+    from scipy.stats import gaussian_kde
+
+try:
+    from plotting import corner
+except ImportError:
+    from .plotting import corner
 
 class linear_fitter(object):
 
@@ -1364,6 +1372,7 @@ if __name__ == "__main__":
 
     # TODO extend plot, BIC Values
 
+    # should this be here?
     dude()
     # mearth = u.M_earth.to(u.kg).value
     msun = u.M_sun.to(u.kg)

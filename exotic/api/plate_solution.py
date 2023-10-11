@@ -35,11 +35,10 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-
-import requests
+from astropy.io.fits import PrimaryHDU, getdata, getheader
 from json import dumps
 from pathlib import Path
-from astropy.io.fits import PrimaryHDU, getdata, getheader
+import requests
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 

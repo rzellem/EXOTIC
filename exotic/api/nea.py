@@ -35,7 +35,9 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-
+import astropy.constants as const
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 from io import StringIO
 import json
 import numpy as np
@@ -43,9 +45,6 @@ import os
 import pandas
 import requests
 import time
-import astropy.units as u
-import astropy.constants as const
-from astropy.coordinates import SkyCoord
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
 

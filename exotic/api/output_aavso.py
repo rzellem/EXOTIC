@@ -1,19 +1,57 @@
-#:-)
-from json import dump, dumps
-from tkinter import NONE
-from numpy import mean, median, std
-from pathlib import Path
-import os
-import re
-try:
-    from utils import round_to_2
-except ImportError:
-    from .utils import round_to_2
-try:
-    from version import __version__
-except ImportError:
-    from .version import __version__
+# ########################################################################### #
+#    Copyright (c) 2019-2020, California Institute of Technology.
+#    All rights reserved.  Based on Government Sponsored Research under
+#    contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
+#
+#    Redistribution and use in source and binary forms, with or without
+#    modification, are permitted provided that the following conditions
+#    are met:
+#      1. Redistributions of source code must retain the above copyright
+#         notice, this list of conditions and the following disclaimer.
+#      2. Redistributions in binary form must reproduce the above copyright
+#         notice, this list of conditions and the following disclaimer in
+#         the documentation and/or other materials provided with the
+#         distribution.
+#      3. Neither the name of the California Institute of
+#         Technology (Caltech), its operating division the Jet Propulsion
+#         Laboratory (JPL), the National Aeronautics and Space
+#         Administration (NASA), nor the names of its contributors may be
+#         used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE CALIFORNIA
+#    INSTITUTE OF TECHNOLOGY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+#    TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#    PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# ########################################################################### #
+#    EXOplanet Transit Interpretation Code (EXOTIC)
+#    # NOTE: See companion file version.py for version info.
+# ########################################################################### #
 import hashlib
+from json import dump, dumps
+from numpy import mean, median, std
+import os
+from pathlib import Path
+import re
+from tkinter import NONE
+
+try:
+    from .utils import round_to_2
+except ImportError:
+    from utils import round_to_2
+try:
+    from .version import __version__
+except ImportError:
+    from version import __version__
+
 
 class OutputFiles:
     def __init__(self, fit, p_dict, i_dict, planetdir):
@@ -133,8 +171,7 @@ class OutputFiles:
                         f"{round(self.fit.dataerr[aavsoC], 7)},{0.0},"
                         f"{1.000}\n")
 
-#*********** FOR CSV ************
-
+# *********** FOR CSV ************
     def aavso_csv(self, airmasses, ld0, ld1, ld2, ld3,tmidstr):
             priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                                 ld0, ld1, ld2, ld3)
@@ -190,7 +227,6 @@ class OutputFiles:
                     f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC], 7)},"
                             f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
                             f"{round(self.fit.airmass_model[aavsoC], 7)}\n")
-
 
 
 def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):

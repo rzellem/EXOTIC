@@ -18,6 +18,7 @@ pylightcurve~=4.0.1
 python_dateutil~=2.8
 python_version
 pyvo~=1.4
+rebound~=3.28.3
 requests~=2.31
 scipy~=1.11.1
 scikit-image~=0.21

@@ -1,7 +1,15 @@
+# N-body Retrievals 
+
 Coming soon to EXOTIC...
 
-In the meantime checkout: https://github.com/pearsonkyle/Nbody-ai
+## Prior estimate
 
-Match your Lomb-Scargle periodicity to this chart to determine the mass and period of a potential outer planet. A digitized version of this plot is coming soon... Occasionally, the O-C perturbation will experience an additional periodicity with only a single perturber, it is suspected to be due to precession of the inner planet's orbit. For now, just worry about the 1st order solution when matching to your observations.
+The lomb-scargle periodogram from our ephemeris fitting code can be used to estimate a prior for an N-body retrieval. Transit timing variations (TTV) alone are not sufficient to uniquely constrain a single solution, instead multiple modes can exist which give the same amplitude/periodicity of perturbation. The distinguishing factor will rely on radial velocity measurements but none the less this approach can help limit the search space for potential planets. Below is a figure highlighting results from a grid of N-body simulations where we construct a mask based on the amplitude and periodicity found in the O-C diagram. The mask is used to constrain the N-body retrieval (i.e. search space) which significantly reduces the number of simulations needed to find a solution.
 
-![](grid_100_50.png)
+![](ttv_prior.png)
+
+The example code has recently been refactored from [Nbody-AI](https://github.com/pearsonkyle/Nbody-ai) and is still in development. Some retrievals may not work entirely... please be paitent and report any issues to our slack.
+
+If you make use of this code please cite:
+
+https://ui.adsabs.harvard.edu/abs/2019AJ....158..243P/abstract

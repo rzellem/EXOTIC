@@ -139,5 +139,5 @@ nbody_bounds = [
 # run the fitter
 nfit = nbody_fitter(data, nbody_prior, nbody_bounds)
 
-print(nfit.parameters)
-print(nfit.errors)
+# print(nfit.parameters)
+# print(nfit.errors)

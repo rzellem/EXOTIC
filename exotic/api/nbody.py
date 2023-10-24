@@ -50,7 +50,6 @@ from exotic.api.plotting import corner
 from ultranest import ReactiveNestedSampler
 from astropy.io import fits
 from astropy import units as u
-from astropy import constants as c
 from scipy.interpolate import interp1d
 from astropy.timeseries import LombScargle
 from scipy.signal import find_peaks
@@ -609,7 +608,8 @@ viz_callback=self.verbose)
         self.quantiles = {}
         self.parameters = copy.deepcopy(self.prior)
 
-        # TODO finish
+        # TODO finish saving final results + posteriors
+
         #for i, key in enumerate(freekeys):
         #    self.parameters[key] = self.results['maximum_likelihood']['point'][i]
         #    self.errors[key] = self.results['posterior']['stdev'][i]
@@ -750,5 +750,5 @@ if __name__ == '__main__':
     # run the fitter
     nfit = nbody_fitter(data, nbody_prior, nbody_bounds)
 
-    print(nfit.parameters)
-    print(nfit.errors)
+    # print(nfit.parameters)
+    # print(nfit.errors)

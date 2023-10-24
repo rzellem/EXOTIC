@@ -41,15 +41,21 @@
 # a periodogram analysis.
 # 
 # ########################################################################### #
-
 import numpy as np
 from itertools import cycle
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-from exotic.api.plotting import corner
-from ultranest import ReactiveNestedSampler
 from astropy.timeseries import LombScargle
-from astropy import units as u
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    print("Warning: ultranest not installed. Nested sampling will not work.")
+
+try:
+    from plotting import corner
+except ImportError:
+    from .plotting import corner
+
 
 class ephemeris_fitter(object):
 
@@ -378,11 +384,14 @@ class ephemeris_fitter(object):
 
         ########################################
         # subtract first order solution from data and recompute periodogram
-
         if minper2 == 0:
             minper2 = per*2.1
         if maxper2 == 0:
-            maxper2 = (np.max(self.epochs) - np.min(self.epochs)) * 3.
+            maxper2 = (np.max(self.epochs) - np.min(self.epochs)) * 2.
+
+        # reset minper2 if it is greater than maxper2
+        if minper2 > maxper2:
+            minper2 = 3.1
 
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)
@@ -394,7 +403,11 @@ class ephemeris_fitter(object):
         # TODO do a better job defining period grid, ignoring harmonics of first order solution +- 0.25 day
 
         # find max period
-        mi2 = np.argmax(power2)
+        try:
+            mi2 = np.argmax(power2)
+        except:
+            import pdb; pdb.set_trace()
+
         per2 = 1. / freq2[mi2]
 
         # create basis vectors for second order solution
@@ -1028,7 +1041,7 @@ if __name__ == "__main__":
         0.000780,0.000610,0.001330,0.000770,0.000610,0.000520,0.001130,0.001130,0.000530,0.000780,
         0.000420,0.001250,0.000380,0.000720,0.000860,0.000470,0.000950,0.000540])
 
-    labels = np.full(len(Tc), 'EpW')
+    labels = np.full(len(Tc), 'Data')
 
     P = 1.0914203  # orbital period for your target
 
@@ -1099,7 +1112,6 @@ if __name__ == "__main__":
     plt.savefig("periodogram.png")
     plt.close()
     print("image saved to: periodogram.png")
-
 
     # min and max values to search between for fitting
     bounds = {

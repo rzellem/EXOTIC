@@ -35,14 +35,12 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-
-import logging
-import numpy as np
-import lmfit as lm
-import matplotlib.pyplot as plt
 import ldtk
-from ldtk import LDPSetCreator, BoxcarFilter
 from ldtk.ldmodel import LinearModel, QuadraticModel, NonlinearModel
+import lmfit as lm
+import logging
+import matplotlib.pyplot as plt
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -92,9 +90,9 @@ def createldgrid(minmu, maxmu, orbp,
         munm = 1e3*np.array(avmu[loweri:upperi])
         munmmin = 1e3*np.array(minmu[loweri:upperi])
         munmmax = 1e3*np.array(maxmu[loweri:upperi])
-        filters = [BoxcarFilter(str(mue), mun, mux)
+        filters = [ldtk.BoxcarFilter(str(mue), mun, mux)
                    for mue, mun, mux in zip(munm, munmmin, munmmax)]
-        sc = LDPSetCreator(teff=(tstar, terr), logg=(loggstar, loggerr),
+        sc = ldtk.LDPSetCreator(teff=(tstar, terr), logg=(loggstar, loggerr),
                            z=(fehstar, feherr), filters=filters)
         ps = sc.create_profiles(nsamples=int(1e4))
         itpfail = False
@@ -105,7 +103,7 @@ def createldgrid(minmu, maxmu, orbp,
         nfail = 1e0
         while itpfail:
             nfail *= 2
-            sc = LDPSetCreator(teff=(tstar, nfail*terr), logg=(loggstar, loggerr),
+            sc = ldtk.LDPSetCreator(teff=(tstar, nfail*terr), logg=(loggstar, loggerr),
                                z=(fehstar, feherr), filters=filters)
             ps = sc.create_profiles(nsamples=int(1e4))
             itpfail = False
@@ -254,4 +252,3 @@ def nl_ldx(params, x, data=None, weights=None):
     if weights is None:
         return data - model
     return (data - model)/weights
-

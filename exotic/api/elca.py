@@ -35,21 +35,19 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-# ########################################################################### #
 # Exoplanet light curve analysis
 #
 # Fit an exoplanet transit model to time series data.
 # ########################################################################### #
-
 from astropy.time import Time
 import copy
 from itertools import cycle
 import matplotlib.pyplot as plt
 import numpy as np
+from pylightcurve.models.exoplanet_lc import transit as pytransit
 from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
-
 try:
     from ultranest import ReactiveNestedSampler
 except ImportError:
@@ -57,12 +55,11 @@ except ImportError:
     import dynesty.plotting
     from dynesty.utils import resample_equal
     from scipy.stats import gaussian_kde
+
 try:
     from plotting import corner
-except:
+except ImportError:
     from .plotting import corner
-
-from pylightcurve.models.exoplanet_lc import transit as pytransit
 
 
 def weightedflux(flux, gw, nearest):

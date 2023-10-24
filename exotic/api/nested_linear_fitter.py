@@ -35,25 +35,25 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-# ########################################################################### #
-# Various functions for fitting a linear model to data, including nested 
+# Various functions for fitting a linear model to data, including nested
 # sampling, linear least squares. Includes residual plotting, posteriors and 
 # a periodogram analysis.
 # 
 # ########################################################################### #
-
 import numpy as np
 from itertools import cycle
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-from exotic.api.plotting import corner
-from ultranest import ReactiveNestedSampler
 from astropy.timeseries import LombScargle
-from astropy import units as u
-from astropy import constants as const
-from collections import OrderedDict
-import rebound
-import copy
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    print("Warning: ultranest not installed. Nested sampling will not work.")
+
+try:
+    from plotting import corner
+except ImportError:
+    from .plotting import corner
 
 class linear_fitter(object):
 

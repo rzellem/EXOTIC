@@ -1,14 +1,60 @@
-import numpy as np
-from scipy import stats
+# ########################################################################### #
+#    Copyright (c) 2019-2020, California Institute of Technology.
+#    All rights reserved.  Based on Government Sponsored Research under
+#    contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
+#
+#    Redistribution and use in source and binary forms, with or without
+#    modification, are permitted provided that the following conditions
+#    are met:
+#      1. Redistributions of source code must retain the above copyright
+#         notice, this list of conditions and the following disclaimer.
+#      2. Redistributions in binary form must reproduce the above copyright
+#         notice, this list of conditions and the following disclaimer in
+#         the documentation and/or other materials provided with the
+#         distribution.
+#      3. Neither the name of the California Institute of
+#         Technology (Caltech), its operating division the Jet Propulsion
+#         Laboratory (JPL), the National Aeronautics and Space
+#         Administration (NASA), nor the names of its contributors may be
+#         used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE CALIFORNIA
+#    INSTITUTE OF TECHNOLOGY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+#    TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#    PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# ########################################################################### #
+#    EXOplanet Transit Interpretation Code (EXOTIC)
+#    # NOTE: See companion file version.py for version info.
+# ########################################################################### #
+from astropy import constants as const
+from astropy import units as u
 from copy import deepcopy
 from itertools import cycle
 import matplotlib.pyplot as plt
-from astropy import units as u
-from astropy import constants as const
+import numpy as np
 from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit_flux_drop
-from ultranest import ReactiveNestedSampler
+from scipy import stats
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    import dynesty
+    import dynesty.plotting
+    from dynesty.utils import resample_equal
+    from scipy.stats import gaussian_kde
 
-from exotic.api.elca import glc_fitter, lc_fitter
+try:
+    from elca import glc_fitter, lc_fitter
+except ImportError:
+    from .elca import glc_fitter, lc_fitter
 
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value
@@ -16,8 +62,9 @@ Msun = const.M_sun.to(u.kg).value
 Rsun = const.R_sun.to(u.m).value
 Grav = const.G.to(u.m**3/u.kg/u.day**2).value
 
+
 def planet_orbit(period, sma_over_rs, eccentricity, inclination, periastron, mid_time, time_array, ww=0, mu=1, W=0):
-    # please see original: https://github.com/ucl-exoplanets/pylightcurve/blob/master/pylightcurve/models/exoplanet_lc.py
+    # see original @ https://github.com/ucl-exoplanets/pylightcurve/blob/master/pylightcurve/models/exoplanet_lc.py
     inclination = inclination * np.pi / 180.0
     periastron = periastron * np.pi / 180.0
     ww = ww * np.pi / 180.0
@@ -107,7 +154,7 @@ def phasecurve(times, values):
                     values['ecc'], values['inc'], values['omega'],
                     values['tmid'], times, method='quad', precision=3)
     c0 = edepth - values['c1'] - values['c3']
-    brightness = 1 + c0 + values['c1']*np.cos(2*pi*(times-tme)/values['per']) + values['c2']*np.sin(2*pi*(times-tme)/values['per']) + values['c3']*np.cos(4*pi*(times-tme)/values['per']) + values['c4']*np.sin(4*pi*(times-tme)/values['per'])
+    brightness = 1 + c0 + values['c1']*np.cos(2*np.pi*(times-tme)/values['per']) + values['c2']*np.sin(2*np.pi*(times-tme)/values['per']) + values['c3']*np.cos(4*np.pi*(times-tme)/values['per']) + values['c4']*np.sin(4*np.pi*(times-tme)/values['per'])
     emask = np.floor(emodel)
     return (brightness*(emask) + (edepth+emodel)*(1-emask))*tmodel
 

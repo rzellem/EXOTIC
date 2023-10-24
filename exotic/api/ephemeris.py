@@ -71,7 +71,10 @@ class ephemeris_fitter(object):
         self.data = data
         self.dataerr = dataerr
         self.bounds = bounds
-        self.labels = np.array(labels)
+        if labels is not None:
+            self.labels = np.array(labels)
+        else:
+            self.labels = np.array(["Data"]*len(data))
         self.prior = prior.copy()  # dict {'P':(0.1,0.5), 'T0':(0,1), (value, uncertainty)}
         self.verbose = verbose
 
@@ -157,7 +160,6 @@ class ephemeris_fitter(object):
             for i, ulabel in enumerate(ulabels):
                 # find where the label matches
                 mask = self.labels == ulabel
-                # plot the data/residuals
                 ax.errorbar(self.epochs[mask], self.residuals[mask] * 24 * 60, yerr=self.dataerr[mask] * 24 * 60,
                             ls='none', marker=next(markers), color=next(colors), label=ulabel)
         else:
@@ -324,7 +326,7 @@ class ephemeris_fitter(object):
                      )
         return fig
 
-    def plot_periodogram(self, minper=0, maxper=0, minper2=1, maxper2=9):
+    def plot_periodogram(self, minper=0, maxper=0, minper2=0, maxper2=0):
         """ Search the residuals for periodic signals. """
 
         ########################################
@@ -376,14 +378,18 @@ class ephemeris_fitter(object):
 
         ########################################
         # subtract first order solution from data and recompute periodogram
-        maxper = maxper2
+
+        if minper2 == 0:
+            minper2 = per*2.1
+        if maxper2 == 0:
+            maxper2 = (np.max(self.epochs) - np.min(self.epochs)) * 3.
 
         # recompute on new grid
         ls2 = LombScargle(self.epochs, residuals_linear, dy=self.dataerr)
 
         # search for periods greater than first order
         freq2,power2 = ls.autopower(maximum_frequency=1./(minper2+1),
-                                    minimum_frequency=1./maxper, nyquist_factor=2)
+                                    minimum_frequency=1./maxper2, nyquist_factor=2)
 
         # TODO do a better job defining period grid, ignoring harmonics of first order solution +- 0.25 day
 
@@ -558,6 +564,7 @@ class ephemeris_fitter(object):
         # perform the weighted least squares regression to find second order fourier solution
         res = sm.WLS(residuals_first_order, basis2.T, weights=1.0 / self.dataerr ** 2).fit()
         coeffs = res.params  # retrieve the slope and intercept of the fit from res
+        self.coeffs = res.params
         y_bestfit = np.dot(basis2.T, coeffs)
 
         # super sample fourier solution
@@ -620,6 +627,11 @@ class ephemeris_fitter(object):
 
         ax[3].legend(loc='best')
 
+        self.best_periods = np.array([per, per2])
+        coeff1 = np.sqrt(coeffs[1]**2 + coeffs[1]**2)
+        coeff2 = np.sqrt(coeffs[3]**2 + coeffs[4]**2)
+        self.amplitudes = np.array([coeff1, coeff2])
+
         return fig, ax
 
 class decay_fitter(object):
@@ -643,7 +655,10 @@ class decay_fitter(object):
         self.data = data
         self.dataerr = dataerr
         self.bounds = bounds
-        self.labels = np.array(labels)
+        if labels is not None:
+            self.labels = np.array(labels)
+        else:
+            self.labels = ["Data"]*len(data)
         self.prior = prior.copy()  # dict {'m':(0.1,0.5), 'b':(0,1)}
         self.verbose = verbose
         if bounds is None:

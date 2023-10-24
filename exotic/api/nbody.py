@@ -203,7 +203,6 @@ def lomb_scargle(t,y,dy=None, min_freq=None, max_freq=None, npeaks=0, peaktol=0.
     peak_periods = 1./freq[peaks]
     return freq,power,peak_periods
 
-
 def report(data, savefile=None):
 
     # set up simulation summary report 
@@ -578,18 +577,19 @@ class nbody_fitter():
                         #ttv1,m1,b1 = TTV(self.orbit, self.data[i]['Tc'])
                         # could be unstable orbit or not enough data
                         # switch to average error and clip by max epoch?
-                        print(self.prior)
+                        # print(self.prior)
                         chi2 += -1e6
                         continue
 
-                    Tc_sim += residual.mean()
+                    import pdb; pdb.set_trace
+                    Tc_sim += residual.mean() # why?
 
                     # take difference between data and simulation
                     try:
                         chi2 += -0.5*np.sum(((self.data[i]['Tc'] - Tc_sim[self.orbit])/self.data[i]['Tc_err'])**2)
                     except:
                         chi2 += -1e6
-                        print(self.prior)
+                        # print(self.prior)
                         # usually unstable orbit
 
             return chi2
@@ -729,6 +729,7 @@ if __name__ == '__main__':
         {}                             # data for outer planet (e.g. Mid-transit times)
     ]
 
+    # TODO break P,m modes into individual runs
 
     # set up where to look for a solution
     nbody_bounds = [

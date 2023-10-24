@@ -8,7 +8,7 @@ The lomb-scargle periodogram from our ephemeris fitting code can be used to esti
 
 ![](ttv_prior.png)
 
-The example code has recently been refactored from [Nbody-AI](https://github.com/pearsonkyle/Nbody-ai) and is still in development. Some retrievals not work entirely... please be paitent and report any issues to our slack.
+The example code has recently been refactored from [Nbody-AI](https://github.com/pearsonkyle/Nbody-ai) and is still in development. Some retrievals may not work entirely... please be paitent and report any issues to our slack.
 
 If you make use of this code please cite:
 

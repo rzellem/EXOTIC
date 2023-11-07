@@ -35,21 +35,25 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-# ########################################################################### #
-# Various functions for fitting a linear model to data, including nested 
+# Various functions for fitting a linear model to data, including nested
 # sampling, linear least squares. Includes residual plotting, posteriors and 
 # a periodogram analysis.
 # 
 # ########################################################################### #
-
 import numpy as np
 from itertools import cycle
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-from exotic.api.plotting import corner
-from ultranest import ReactiveNestedSampler
 from astropy.timeseries import LombScargle
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    print("Warning: ultranest not installed. Nested sampling will not work.")
 
+try:
+    from plotting import corner
+except ImportError:
+    from .plotting import corner
 
 class linear_fitter(object):
 
@@ -618,119 +622,285 @@ class linear_fitter(object):
 
         return fig, ax
 
+class non_linear_fitter(object):
 
-def main():
-    Tc = np.array([  # measured mid-transit times
-        2459150.837905, 2459524.851045,
-        2459546.613126, 2459565.643663, 2459584.690470, 2459584.686476,
-        2459909.739104, 2459957.337739, 2459169.880602, 2458416.424861,
-        2458428.664794, 2459145.400124, 2458430.025044, 2459164.440695,
-        2458415.064846, 2458435.465269, 2458412.344658, 2459150.840070,
-        2459160.360691, 2458431.384897, 2459146.760284, 2459154.920516,
-        2458417.784945, 2459161.720466, 2459167.160761, 2458427.304939,
-        2458413.705181, 2459163.080605, 2459153.560229, 2459168.520861,
-        2458425.945068, 2459148.120269, 2458434.105274, 2458432.745423,
-        2459152.200558, 2459165.800918, 2459159.000645, 2459149.480289,
-        2455870.450027, 2456663.347570, 2457420.884390, 2457658.888900])
+    def __init__(self, data, dataerr, bounds=None, prior=None, labels=None, verbose=True):
+        """
+        Fit a Non-linear model to data using nested sampling.
+        https://arxiv.org/pdf/2211.05646.pdf eq. 3
 
-    Tc_error = np.array([
-        0.001674, 0.000715,
-        0.000758, 0.001560, 0.000371, 0.001651,
-        0.000955, 0.000176, 0.000154, 0.000357,
-        0.000381, 0.000141, 0.000362, 0.000149,
-        0.000336, 0.000368, 0.000379, 0.000153,
-        0.000153, 0.000349, 0.000149, 0.000146,
-        0.000385, 0.000146, 0.000153, 0.000360,
-        0.000356, 0.000147, 0.000147, 0.000146,
-        0.000363, 0.000142, 0.000357, 0.000368,
-        0.000160, 0.000160, 0.000151, 0.000160,
-        0.000140, 0.000120, 0.000800, 0.000140])
+        Parameters
+        ----------
+        data : array
+            Data to fit.
+        dataerr : array
+            Error on data.
+        bounds : dict, optional
+            Bounds on parameters. Dictionary of tuples/list
+        prior : dict, optional
+            Prior on parameters for slope and intercept. Dictionary of tuples/list
+        """
+        self.data = data
+        self.dataerr = dataerr
+        self.bounds = bounds
+        self.labels = np.array(labels)
+        self.prior = prior.copy()  # dict {'m':(0.1,0.5), 'b':(0,1)}
+        self.verbose = verbose
+        if bounds is None:
+            # use +- 3 sigma prior as bounds
+            # prior is list of tuples (mean, std)
+            self.bounds = {
+                'P': [prior['P'][0] - 3 * prior['P'][1], prior['P'][0] + 3 * prior['P'][1]],
+                't0': [prior['t0'][0] - 3 * prior['t0'][1], prior['t0'][0] + 3 * prior['t0'][1]],
+                'dPdN': [prior['dPdN'][0] - 3 * prior['dPdN'][1], prior['dPdN'][0] + 3 * prior['dPdN'][1]]
+            }
+        self.results = None
+        self.fit_nested()
 
-    # labels for a legend
-    labels = np.array(['TESS', 'TESS',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar',
-                       'TESS', 'EpW', 'ExoClock', 'Unistellar'])
+    def fit_nested(self):
+        """ Fit a linear model to data using nested sampling. """
 
-    P = 1.360029  # orbital period for your target
+        freekeys = list(self.bounds.keys())
+        boundarray = np.array([self.bounds[k] for k in freekeys])
+        bounddiff = np.diff(boundarray, 1).reshape(-1)
 
-    Tc_norm = Tc - Tc.min()  # normalize the data to the first observation
-    # print(Tc_norm)
-    orbit = np.rint(Tc_norm / P)  # number of orbits since first observation (rounded to nearest integer)
-    # print(orbit)
+        # orbital epochs (N)
+        self.epochs = np.round((self.data - np.mean(self.bounds['t0'])) / np.mean(self.bounds['P']))
 
-    # make a n x 2 matrix with 1's in the first column and values of orbit in the second
-    A = np.vstack([np.ones(len(Tc)), orbit]).T
+        def loglike(pars):
+            # chi-squared
+            # tmid = t0 + N*P + 0.5*dPdN*N**2 (eq 3 from paper)
+            model = pars[0] * self.epochs + pars[1] + 0.5 * pars[2] * self.epochs ** 2
+            return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
 
-    # perform the weighted least squares regression
-    res = sm.WLS(Tc, A, weights=1.0 / Tc_error ** 2).fit()
-    # use sm.WLS for weighted LS, sm.OLS for ordinary LS, or sm.GLS for general LS
+        def prior_transform(upars):
+            # transform unit cube to prior volume
+            return (boundarray[:, 0] + bounddiff * upars)
 
-    params = res.params  # retrieve the slope and intercept of the fit from res
-    std_dev = np.sqrt(np.diagonal(res.normalized_cov_params))
+        # estimate slope and intercept
+        noop = lambda *args, **kwargs: None
+        if self.verbose:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
+                                                                                         min_num_live_points=420,
+                                                                                         show_status=True)
+        else:
+            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
+                                                                                         min_num_live_points=420,
+                                                                                         show_status=False,
+                                                                                         viz_callback=noop)
+        # alloc data for best fit + error
+        self.errors = {}
+        self.quantiles = {}
+        self.parameters = {}
 
-    slope = params[1]
-    slope_std_dev = std_dev[1]
-    intercept = params[0]
-    intercept_std_dev = std_dev[0]
+        for i, key in enumerate(freekeys):
+            self.parameters[key] = self.results['maximum_likelihood']['point'][i]
+            self.errors[key] = self.results['posterior']['stdev'][i]
+            self.quantiles[key] = [
+                self.results['posterior']['errlo'][i],
+                self.results['posterior']['errup'][i]]
 
-    # 3 sigma clip based on residuals
-    calculated = orbit * slope + intercept
-    residuals = (Tc - calculated) / Tc_error
-    mask = np.abs(residuals) < 3
-    Tc = Tc[mask]
-    Tc_error = Tc_error[mask]
-    labels = labels[mask]
+        # final model
+        self.model = self.parameters['t0'] + self.epochs * self.parameters['P'] #+ 0.5 * self.parameters['dPdN'] * self.epochs ** 2
+        self.residuals = self.data - self.model
 
-    # print(res.summary())
-    # print("Params =",params)
-    # print("Error matrix =",res.normalized_cov_params)
-    # print("Standard Deviations =",std_dev)
+    def plot_oc(self, savefile=None, ylim='none', show_2sigma=False, prior_name="Prior"):
+        """ Plot the data in the form of residuals vs. time
 
-    print("Weighted Linear Least Squares Solution")
-    print("T0 =", intercept, "+-", intercept_std_dev)
-    print("P =", slope, "+-", slope_std_dev)
+        Parameters
+        ----------
+        savefile : str, optional
+            Save the figure to a file.
+        ylim : str, optional
+            Set the y-axis limits. Default is 'none'. Can be prior, average, or none.
+        show_2sigma : bool, optional
+            Show a fill between using the 2 sigma limits. Default is False (aka 1 sigma)
+        """
 
-    # min and max values to search between for fitting
-    bounds = {
-        'm': [P - 0.1, P + 0.1],  # orbital period
-        'b': [intercept - 0.1, intercept + 0.1]  # mid-transit time
-    }
+        # set up the figure        
+        fig, ax = plt.subplots(1, figsize=(9, 6))
 
-    # used to plot red overlay in O-C figure
-    prior = {
-        'm': [slope, slope_std_dev],  # value from WLS (replace with literature value)
-        'b': [intercept, intercept_std_dev]  # value from WLS (replace with literature value)
-    }
+        # check if labels are not None
+        if self.labels is not None:
+            # find unique set of labels
+            ulabels = np.unique(self.labels)
+            # set up a color/marker cycle
+            markers = cycle(['o', 'v', '^', '<', '>', 's', '*', 'h', 'H', 'D', 'd', 'P', 'X'])
+            colors = cycle(['black', 'blue', 'green', 'orange', 'purple', 'grey', 'magenta', 'cyan', 'lime'])
 
-    lf = linear_fitter(Tc, Tc_error, bounds, prior=prior, labels=labels)
+            # plot each label separately
+            for i, ulabel in enumerate(ulabels):
+                # find where the label matches
+                mask = self.labels == ulabel
+                # plot the data/residuals
+                ax.errorbar(self.epochs[mask], self.residuals[mask] * 24 * 60, yerr=self.dataerr[mask] * 24 * 60,
+                            ls='none', marker=next(markers), color=next(colors), label=ulabel)
+        else:
+            # plot the data/residuals
+            ax.errorbar(self.epochs, self.residuals * 24 * 60, yerr=self.dataerr * 24 * 60,
+                        ls='none', marker='o', color='black')
 
-    lf.plot_triangle()
-    plt.subplots_adjust(top=0.9, hspace=0.2, wspace=0.2)
-    plt.savefig("posterior.png")
-    plt.close()
-    print("image saved to: posterior.png")
+        ylower = (self.residuals.mean() - 3 * np.std(self.residuals)) * 24 * 60
+        yupper = (self.residuals.mean() + 3 * np.std(self.residuals)) * 24 * 60
 
-    fig, ax = lf.plot_oc()
-    plt.tight_layout()
-    plt.savefig("oc.png")
-    plt.show()
-    plt.close()
-    print("image saved to: oc.png")
+        # upsample data
+        epochs = (np.linspace(self.data.min() - 7, self.data.max() + 365*5, 1000) -
+                  self.parameters['t0']) / self.parameters['P']
 
-    fig, ax = lf.plot_periodogram()
-    plt.tight_layout()
-    plt.savefig("periodogram.png")
-    plt.close()
-    print("image saved to: periodogram.png")
+        # set the y-axis limits
+        depoch = self.epochs.max() - self.epochs.min()
+        #ax.set_xlim([self.epochs.min() - depoch * 0.01, self.epochs.max() + depoch * 0.01])
+
+        # best fit solution
+        model = epochs * self.parameters['P'] + self.parameters['t0']
+        # nl_model = epochs * self.parameters['P'] + self.parameters['t0'] + 0.5 * self.parameters['dPdN'] * epochs ** 2
+
+        # MonteCarlo the new ephemeris for uncertainty
+        mc_m = np.random.normal(self.parameters['P'], self.errors['P'], size=10000)
+        mc_b = np.random.normal(self.parameters['t0'], self.errors['t0'], size=10000)
+        mc_dPdN = np.random.normal(self.parameters['dPdN'], self.errors['dPdN'], size=10000)
+        mc_model = np.expand_dims(epochs, -1) * mc_m + mc_b + 0.5 * mc_dPdN * np.expand_dims(epochs, -1) ** 2
+
+        # create a fill between area for uncertainty of new ephemeris
+        diff = mc_model.T - model
+
+        if show_2sigma:
+            ax.fill_between(epochs, np.percentile(diff, 2, axis=0) * 24 * 60, np.percentile(diff, 98, axis=0) * 24 * 60,
+                            alpha=0.2, color='k', label=r'Uncertainty ($\pm$ 2$\sigma$)')
+        else:
+            # show 1 sigma
+            ax.fill_between(epochs, np.percentile(diff, 36, axis=0) * 24 * 60,
+                            np.percentile(diff, 64, axis=0) * 24 * 60, alpha=0.2, color='k',
+                            label=r'Uncertainty ($\pm$ 1$\sigma$)')
+
+        # duplicate axis and plot days since mid-transit
+        ax2 = ax.twiny()
+        ax2.set_xlabel(f"Time [BJD - {self.parameters['t0']:.1f}]", fontsize=14)
+        ax2.set_xlim(ax.get_xlim())
+        xticks = ax.get_xticks()
+        dt = np.round(xticks * self.parameters['P'], 1)
+        # ax2.set_xticks(dt)
+        ax2.set_xticklabels(dt)
+
+        if ylim == 'diff':
+            ax.set_ylim([min(np.percentile(diff, 1, axis=0) * 24 * 60),
+                         max(np.percentile(diff, 99, axis=0) * 24 * 60)])
+
+        # overlay the prior ephemeris
+        if self.prior is not None:
+            # create fill between area for uncertainty of old/prior ephemeris
+            epochs_p = (np.linspace(self.data.min() - 7, self.data.max() + 365*5, 1000) -
+                        self.prior['t0'][0]) / self.prior['P'][0]
+            prior = epochs_p * self.prior['P'][0] + self.prior['t0'][0]
+            mc_m_p = np.random.normal(self.prior['P'][0], self.prior['P'][1], size=10000)
+            mc_b_p = np.random.normal(self.prior['t0'][0], self.prior['t0'][1], size=10000)
+            #mc_dPdN_p = np.random.normal(self.prior['dPdN'][0], self.prior['dPdN'][1], size=10000)
+            mc_model_p = np.expand_dims(epochs_p, -1) * mc_m_p + mc_b_p #+ 0.5 * mc_dPdN_p * np.expand_dims(epochs_p, -1) ** 2
+            diff_p = mc_model_p.T - model
+
+            # plot an invisible line so the 2nd axes are happy
+            ax2.plot(epochs, (model - prior) * 24 * 60, ls='--', color='r', alpha=0)
+
+            # why is this so small!?!?!? consistent to within machine precision?
+            # ax.plot(epochs, (model-prior)*24*60, ls='--', color='r')
+
+            if show_2sigma:
+                ax.fill_between(epochs, np.percentile(diff_p, 2, axis=0) * 24 * 60,
+                                np.percentile(diff_p, 98, axis=0) * 24 * 60, alpha=0.1, color='r',
+                                label=rf'{prior_name} ($\pm$ 2$\sigma$)')
+            else:
+                # show ~1 sigma
+                ax.fill_between(epochs, np.percentile(diff_p, 36, axis=0) * 24 * 60,
+                                np.percentile(diff_p, 64, axis=0) * 24 * 60, alpha=0.1, color='r',
+                                label=rf'{prior_name} ($\pm$ 1$\sigma$)')
+
+            if ylim == 'prior':
+                ax.set_ylim([min(np.percentile(diff_p, 1, axis=0) * 24 * 60),
+                             max(np.percentile(diff_p, 99, axis=0) * 24 * 60)])
+            elif ylim == 'average':
+                ax.set_ylim([0.5 * (min(np.percentile(diff, 1, axis=0) * 24 * 60) +
+                                    min(np.percentile(diff_p, 1, axis=0) * 24 * 60)),
+                             0.5 * (max(np.percentile(diff, 99, axis=0) * 24 * 60) +
+                                    max(np.percentile(diff_p, 99, axis=0) * 24 * 60))])
+
+        
+        # constant period model
+        ax.axhline(0, color='black', alpha=0.5, ls='--',
+                   label="Period: {:.7f}+-{:.7f} days\nT_mid: {:.7f}+-{:.7f} BJD".format(self.parameters['P'],
+                                                                                         self.errors['P'],
+                                                                                         self.parameters['t0'],
+                                                                                         self.errors['t0']))
+        
+        # dPdN model
+        model_diff = 0.5 * self.parameters['dPdN'] * epochs ** 2
+        ax.plot(epochs, model_diff * 24 * 60, color='cyan', alpha=0.5, ls='--',
+                label="dPdN: {:.2e}+-{:.2e} days/epoch".format(self.parameters['dPdN'], self.errors['dPdN']))
 
 
-if __name__ == "__main__":
-    main()
+        ax.legend(loc='best')
+        ax.set_xlabel("Epoch [number]", fontsize=14)
+        ax.set_ylabel("Residuals [min]", fontsize=14)
+        ax.grid(True, ls='--')
+        return fig, ax
+
+    def plot_triangle(self):
+        """ Create a posterior triangle plot of the results. """
+        ranges = []
+        mask1 = np.ones(len(self.results['weighted_samples']['logl']), dtype=bool)
+        mask2 = np.ones(len(self.results['weighted_samples']['logl']), dtype=bool)
+        mask3 = np.ones(len(self.results['weighted_samples']['logl']), dtype=bool)
+        titles = []
+        labels = []
+        flabels = {
+            'P': 'Period [day]',
+            't0': 'T_mid [JD]',
+            'dPdN': 'dPdN [day/epoch]'
+        }
+        for i, key in enumerate(self.quantiles):
+            labels.append(flabels.get(key, key))
+            titles.append(f"{self.parameters[key]:.7f} +-\n {self.errors[key]:.7f}")
+
+            # set the axes limits for the plots
+            ranges.append([
+                self.parameters[key] - 5 * self.errors[key],
+                self.parameters[key] + 5 * self.errors[key]
+            ])
+
+            if key == 'a2' or key == 'a1':
+                continue
+
+            # create masks for contouring on sigma bounds
+            mask3 = (mask3 &
+                     (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - 3 * self.errors[key])) &
+                     (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + 3 * self.errors[key])))
+
+            mask1 = (mask1 &
+                     (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - self.errors[key])) &
+                     (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + self.errors[key])))
+
+            mask2 = (mask2 &
+                     (self.results['weighted_samples']['points'][:, i] > ( self.parameters[key] - 2 * self.errors[key])) &
+                     (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + 2 * self.errors[key])))
+
+        chi2 = self.results['weighted_samples']['logl'] * -2
+        fig = corner(self.results['weighted_samples']['points'],
+                     labels=labels,
+                     bins=int(np.sqrt(self.results['samples'].shape[0])),
+                     range=ranges,
+                     figsize=(10, 10),
+                     # quantiles=(0.1, 0.84),
+                     plot_contours=True,
+                     levels=[np.percentile(chi2[mask1], 95), np.percentile(chi2[mask2], 95),
+                             np.percentile(chi2[mask3], 95)],
+                     plot_density=False,
+                     titles=titles,
+                     data_kwargs={
+                         'c': chi2,  # color code by chi2
+                         'vmin': np.percentile(chi2[mask3], 1),
+                         'vmax': np.percentile(chi2[mask3], 95),
+                         'cmap': 'viridis',
+                     },
+                     label_kwargs={'labelpad': 50, },
+                     hist_kwargs={'color': 'black', }
+                     )
+        return fig

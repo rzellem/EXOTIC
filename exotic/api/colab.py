@@ -1,39 +1,78 @@
-
-# If the user presses enter to run the sample data, download sample data if needed and
-# put it into a sample-data directory at the top level of the user's Gdrive.  Count
-# the .fits files (images) and .json files (inits files) in the directory entered 
-# by the user (or in the sample-data directory if the user pressed enter).  If 
-# there are at least 20 .fits files, assume this is a directory of images and display
-# the first one in the series.  If there is exactly one inits file in the directory, 
-# show the specified target and comp coords so that the user can check these against
-# the displayed image.  Otherwise, prompt for target / comp coords and make an inits 
-# file based  on those (save this new inits file in the folder with the output files 
-# so that the student can consult it later).  Finally, run EXOTIC with the newly-made 
+# ########################################################################### #
+#    Copyright (c) 2019-2020, California Institute of Technology.
+#    All rights reserved.  Based on Government Sponsored Research under
+#    contracts NNN12AA01C, NAS7-1407 and/or NAS7-03001.
+#
+#    Redistribution and use in source and binary forms, with or without
+#    modification, are permitted provided that the following conditions
+#    are met:
+#      1. Redistributions of source code must retain the above copyright
+#         notice, this list of conditions and the following disclaimer.
+#      2. Redistributions in binary form must reproduce the above copyright
+#         notice, this list of conditions and the following disclaimer in
+#         the documentation and/or other materials provided with the
+#         distribution.
+#      3. Neither the name of the California Institute of
+#         Technology (Caltech), its operating division the Jet Propulsion
+#         Laboratory (JPL), the National Aeronautics and Space
+#         Administration (NASA), nor the names of its contributors may be
+#         used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE CALIFORNIA
+#    INSTITUTE OF TECHNOLOGY BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+#    TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#    PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# ########################################################################### #
+#    EXOplanet Transit Interpretation Code (EXOTIC)
+#    # NOTE: See companion file version.py for version info.
+# ########################################################################### #
+# IMPORTANT RUNTIME INFORMATION ABOUT DATA ACCESS AND STORAGE
+#
+# If the user presses enter to run the sample data, download sample data if
+# needed and put it into a sample-data directory at the top level of the
+# user's Gdrive. Count the .fits files (images) and .json files (inits files)
+# in the directory entered by the user (or in the sample-data directory if the
+# user pressed enter).  If there are at least 20 .fits files, assume this is a
+# directory of images and display the first one in the series. If there is
+# exactly one inits file in the directory, show the specified target and comp
+# coords so that the user can check these against the displayed image.
+# Otherwise, prompt for target / comp coords and make an inits file based on
+# those (save this new inits file in the folder with the output files so that
+# the student can consult it later).  Finally, run EXOTIC with the newly-made
 # or pre-existing inits file, plus any other inits files in the directory.
-
+#
 #########################################################
-from IPython.display import display, HTML
+from astropy.io import fits
 from astropy.time import Time
 from barycorrpy import utc_tdb
-import numpy as np
-from io import BytesIO
-from astropy.io import fits
-from scipy.ndimage import label
-from bokeh.plotting import figure, output_file, show
+# import bokeh.io
+# from bokeh.io import output_notebook
 from bokeh.palettes import Viridis256
-from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
-from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PanTool,FreehandDrawTool
-#import bokeh.io
-#from bokeh.io import output_notebook
-from pprint import pprint
-#from IPython.display import Image
-#from ipywidgets import widgets, HBox
-from skimage.transform import rescale, resize, downscale_local_mean
-#import copy
-import os
-import re
+from bokeh.plotting import figure, output_file, show
+from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LinearColorMapper, LogColorMapper, \
+  LogTicker, PanTool, ResetTool, WheelZoomTool
+# import copy
+from io import BytesIO
+from IPython.display import display, HTML
+# from IPython.display import Image
+# from ipywidgets import widgets, HBox
 import json
-#import subprocess
+import numpy as np
+import os
+from pprint import pprint
+import re
+from scipy.ndimage import label
+from skimage.transform import rescale, resize, downscale_local_mean
+# import subprocess
 import time
 
 

@@ -496,8 +496,8 @@ def target_star_coords(coords, planet):
         coords = ' '.join(re.sub('\D', ' ', coords).split()).split(' ')
         coords = [int(i) for i in coords]
     else:
-        coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=float),
-                  user_input(f"\nPlease enter {planet}'s Y Pixel Coordinate: ", type_=float)]
+        coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=int),
+                  user_input(f"\nPlease enter {planet}'s Y Pixel Coordinate: ", type_=int)]
 
     return coords
 
@@ -524,8 +524,8 @@ def comparison_star_coords(comp_stars, rt_bool):
                 break
 
         for num in range(num_comp_stars):
-            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
-            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
+            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=int)
+            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=int)
             comp_stars.append([x_pix, y_pix])
 
     if rt_bool and isinstance(comp_stars[0], list):

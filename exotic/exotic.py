@@ -816,6 +816,10 @@ def vsx_variable(ra, dec, radius=0.01, maglimit=14):
         var = result.json()['VSXObjects']['VSXObject'][0]['Category']
 
         if var.lower() == "variable":
+            vname = result.json()['VSXObjects']['VSXObject'][0]['Name']
+            vdec = result.json()['VSXObjects']['VSXObject'][0]['Declination2000']
+            vra = result.json()['VSXObjects']['VSXObject'][0]['RA2000']
+            log.info("\nVSX variable check found " + vname + " at  RA " + vra + ", DEC " + vdec)
             return True
         return False
     except Exception:
@@ -2015,7 +2019,7 @@ def main():
 
                 auid = vsx_auid(tar_radec[0], tar_radec[1])
 
-                for compn, comp in enumerate(exotic_infoDict['comp_stars']):
+                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
                     ra = ra_file[int(comp[1])][int(comp[0])]
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
@@ -2023,7 +2027,6 @@ def main():
                     log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
                              f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
-                        log_info("\nCurrent comparison star is variable, proceeding to next star.", warn=True)
                         exotic_infoDict['comp_stars'].remove(comp)
 
                 if exotic_infoDict['aavso_comp'] == 'y':

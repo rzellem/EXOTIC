@@ -140,7 +140,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
 def plot_variable_residuals(save):
     plt.title("Stellar Variability Residuals")
     plt.ylabel("Residuals (flux)")
-    plt.xlabel("Time (BJD_TDB)")
+    plt.xlabel("Time (JD)")
     plt.legend()
     plt.savefig(Path(save) / "temp" / f"Variable_Residuals.png")
     plt.close()
@@ -152,7 +152,7 @@ def plot_stellar_variability(vsp_params, save, s_name, label):
 
     plt.title(f"{s_name} (Label: {label})")
     plt.ylabel("Vmag")
-    plt.xlabel("Time (BJD_TDB)")
+    plt.xlabel("Time (JD)")
     plt.savefig(Path(save) / "temp" / f"Stellar_Variability.png")
     plt.close()
 

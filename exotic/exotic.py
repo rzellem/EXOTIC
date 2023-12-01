@@ -2015,7 +2015,7 @@ def main():
 
                 auid = vsx_auid(tar_radec[0], tar_radec[1])
 
-                for compn, comp in enumerate(exotic_infoDict['comp_stars']):
+                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
                     ra = ra_file[int(comp[1])][int(comp[0])]
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))

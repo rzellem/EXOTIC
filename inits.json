@@ -57,6 +57,8 @@
             "Target Star Dec": "+46:41:23",
             "Planet Name": "HAT-P-32 b",
             "Host Star Name": "HAT-P-32",
+            "Host Star V (Johnson) Magnitude": 11.308,
+            "Host Star V (Johnson) Magnitude Uncertainty": 0.015,
             "Orbital Period (days)": 2.1500082,
             "Orbital Period Uncertainty": 1.3e-07,
             "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,

@@ -390,6 +390,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Target Star DEC in form: <sign>DD:MM:SS (ignore the decimal values and don't forget the '+' or '-' sign!)",
                      "Planet's Name",
                      "Host Star's Name",
+                     "Host Star V (Johnson) Magnitude",
+                     "Host Star V (Johnson) Magnitude Uncertainty",
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \n(Keep in mind that 1.2e-34 is the same as 1.2 x 10^-34)",
                      "Published Mid-Transit Time (BJD_UTC)",

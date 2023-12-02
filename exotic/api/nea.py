@@ -207,6 +207,7 @@ class NASAExoplanetArchive:
                       "pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
                       "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                       "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
+                      "sy_vmag,sy_vmagerr1,sy_vmagerr2,"
                       "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
                       "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,st_raderr2,ra,dec,pl_pubdate",
             "from": "ps",
@@ -314,6 +315,8 @@ class NASAExoplanetArchive:
         self.pl_dict = {
             'ra': data['ra'],
             'dec': data['dec'],
+            'vmag': data['sy_vmag'],
+            'vmag_unc': np.sqrt(np.abs(data['sy_vmagerr1'] * data['sy_vmagerr2'])),
             'pName': data['pl_name'],
             'sName': data['hostname'],
             'pPer': data['pl_orbper'],

@@ -168,6 +168,7 @@ class Inputs:
         }
         planet_params = {
             'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'pName': "Planet Name", 'sName': "Host Star Name",
+            'vmag': "Host Star V (Johnson) Magnitude", 'vmag_unc': "Host Star V (Johnson) Magnitude Uncertainty",
             'pPer': 'Orbital Period (days)', 'pPerUnc': 'Orbital Period Uncertainty',
             'midT': 'Published Mid-Transit Time (BJD-UTC)', 'midTUnc': 'Mid-Transit Time Uncertainty',
             'rprs': 'Ratio of Planet to Stellar Radius (Rp/Rs)',

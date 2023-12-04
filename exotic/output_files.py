@@ -147,7 +147,7 @@ class AIDOutputFiles:
         self.dir = Path(self.i_dict['save'])
         self.vsp_params = vsp_params
 
-    def aavso(self, airmasses):
+    def aavso(self):
         params_file = self.dir / f"AID_AAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
@@ -168,7 +168,7 @@ class AIDOutputFiles:
             for vsp_p in self.vsp_params:
                 f.write(f"{self.auid},"f"{round(vsp_p['time'], 5)}," f"{round(vsp_p['mag'], 5)}," f"{round(vsp_p['mag_err'], 5)},"
                         "V,NO,STD," f"{vsp_p['cname']}," f"{round(vsp_p['cmag'], 5)}," "na,na," 
-                        f"{round(median(airmasses[vsp_p['transit_section'][0]:vsp_p['transit_section'][1] + 1]), 7)}," "na," 
+                        f"{round(vsp_p['airmass'], 7)}," "na," 
                         f"{vsp_p['chart_id']}," "na\n")
 
 

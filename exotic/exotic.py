@@ -1384,7 +1384,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
 
         vsp_params.append({
             'time': np.mean(jd_times[transit_section[0]:transit_section[1]]),
-            'transit_section': transit_section,
+            'airmass': np.median(fit_comp['myfit'].airmasses[transit_section[0]:transit_section[1] + 1]),
             'mag': np.median(Mt),
             'mag_err': np.median(Mt_err),
             'cname': vsp_auid_comp,
@@ -2629,7 +2629,7 @@ def main():
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
         try:
             if vsp_params:
-                AIDoutput_files.aavso(goodAirmasses)
+                AIDoutput_files.aavso()
         except Exception as e:
             log_info(f"\nError: Could not create AID_AAVSO.txt. {error_txt}\n\t{e}", error=True)
         try:

@@ -1322,6 +1322,28 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
         'res': norm_flux_best - norm_flux_ref,
     }
 
+
+    Mc = 8.374
+    Mc_err = 0.0
+    initial = 0
+
+    for transit_section in transit_sections:
+        section = transit_section[1] - transit_section[0] + 1
+        OOT_scatter = np.std(
+            (np.array(fit_lc_ref.data) / np.array(fit_lc_ref.airmass_model))[mask_ref][initial:initial + section])
+        norm_flux_unc = OOT_scatter * np.array(fit_lc_ref.airmass_model)[mask_ref][initial:initial + section]
+        norm_flux_unc /= np.nanmedian(fit_lc_ref.data[mask_ref][initial:initial + section])
+
+        norm_flux_ref = np.array(fit_lc_ref.data)[mask_ref][initial:initial + section]
+
+        model = np.exp(fit_lc_ref.parameters['a2'] * fit_lc_ref.airmass_model[mask_ref][initial:initial + section])
+        detrended = norm_flux_ref / model
+        Mt = Mc - (2.5 * np.log10(detrended))
+        Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+
+        print(f"{np.median(Mt)} +/- {np.median(Mt_err)}")
+        initial += section
+
     return info_ref
 
 
@@ -1384,7 +1406,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
 
         vsp_params.append({
             'time': np.mean(jd_times[transit_section[0]:transit_section[1]]),
-            'airmass': np.median(fit_comp['myfit'].airmasses[transit_section[0]:transit_section[1] + 1]),
+            'airmass': np.median(fit_comp['myfit'].airmass[info_comp['mask_ref']][initial:initial + section]),
             'mag': np.median(Mt),
             'mag_err': np.median(Mt_err),
             'cname': vsp_auid_comp,
@@ -1392,6 +1414,8 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
             'chart_id': chart_id,
             'pos': comp_pos
         })
+
+        print(f"{np.median(Mt)} +/- {np.median(Mt_err)}")
 
         initial += section
 

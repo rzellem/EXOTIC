@@ -74,6 +74,7 @@ from astroquery.simbad import Simbad
 from astroquery.gaia import Gaia
 # UTC to BJD converter import
 from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
+import copy
 # julian conversion imports
 import dateutil.parser as dup
 import imreg_dft as ird
@@ -1306,53 +1307,26 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
     mask_ref = [True if time_ in intx_times else False for time_ in fit_lc_ref.time]
     mask_best = [True if time_ in intx_times else False for time_ in fit_lc_best.time]
 
-    oot_scatter = np.std((fit_lc_ref.data / fit_lc_ref.airmass_model)[mask_ref])
-    norm_flux_unc = oot_scatter * fit_lc_ref.airmass_model[mask_ref]
-    norm_flux_unc /= np.nanmedian(fit_lc_ref.data[mask_ref])
-
     norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data[mask_ref]))[mask_ref]
     norm_flux_best = (fit_lc_best.data / np.nanmedian(fit_lc_best.data[mask_best]))[mask_best]
 
     info_ref = {
+        'fit_lc': fit_lc_ref,
         'times': times_jd[mask_jd],
         'mask_ref': mask_ref,
-        'norm_flux': norm_flux_ref,
-        'norm_flux_unc': norm_flux_unc,
         'transit_sections': transit_sections,
         'res': norm_flux_best - norm_flux_ref,
     }
-
-
-    Mc = 8.374
-    Mc_err = 0.0
-    initial = 0
-
-    for transit_section in transit_sections:
-        section = transit_section[1] - transit_section[0] + 1
-        OOT_scatter = np.std(
-            (np.array(fit_lc_ref.data) / np.array(fit_lc_ref.airmass_model))[mask_ref][initial:initial + section])
-        norm_flux_unc = OOT_scatter * np.array(fit_lc_ref.airmass_model)[mask_ref][initial:initial + section]
-        norm_flux_unc /= np.nanmedian(fit_lc_ref.data[mask_ref][initial:initial + section])
-
-        norm_flux_ref = np.array(fit_lc_ref.data)[mask_ref][initial:initial + section]
-
-        model = np.exp(fit_lc_ref.parameters['a2'] * fit_lc_ref.airmass_model[mask_ref][initial:initial + section])
-        detrended = norm_flux_ref / model
-        Mt = Mc - (2.5 * np.log10(detrended))
-        Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
-
-        print(f"{np.median(Mt)} +/- {np.median(Mt_err)}")
-        initial += section
 
     return info_ref
 
 
 def choose_comp_star_variability(fit_lc_refs, fit_lc_best, jd_times, ref_comp, comp_stars, vsp_comp_stars, save):
-    labels = {tuple(value['pos']): key for key, value in vsp_comp_stars.items()}
-
-    markers = ['.', 'v', 's', 'D', '^']
     colors = ["firebrick", "darkorange", "olivedrab", "lightseagreen", "steelblue", "rebeccapurple", "mediumvioletred"]
+    markers = ['.', 'v', 's', 'D', '^']
     k = 0
+
+    labels = {tuple(value['pos']): key for key, value in vsp_comp_stars.items()}
 
     for i, ckey in enumerate(fit_lc_refs.keys()):
         if i >= len(colors):
@@ -1388,25 +1362,27 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
     Mc, Mc_err = comp_star['mag'], comp_star['error']
 
     info_comp = info_comps[comp_stars.index(comp_pos)]
-    fit_comp = fit_lc_refs[comp_stars.index(comp_pos)]
 
     initial = 0
 
     for transit_section in info_comp['transit_sections']:
         section = transit_section[1] - transit_section[0] + 1
 
-        norm_flux_unc = info_comp['norm_flux_unc'][initial:initial + section]
-        norm_flux = info_comp['norm_flux'][initial:initial + section]
+        oot_scatter = np.std((info_comp['fit_lc'].data / info_comp['fit_lc'].airmass_model)[info_comp['mask_ref']][initial:initial + section])
+        norm_flux_unc = oot_scatter * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][initial:initial + section]
 
-        model = np.exp(fit_comp['myfit'].parameters['a2'] * fit_comp['myfit'].airmass_model)
-        detrended = norm_flux / model[info_comp['mask_ref']][initial:initial + section]
+        flux = info_comp['fit_lc'].data[info_comp['mask_ref']][initial:initial + section]
+        norm_flux_unc /= np.nanmedian(flux)
+
+        model = np.exp(info_comp['fit_lc'].parameters['a2'] * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][initial:initial + section])
+        detrended = flux / model
 
         Mt = Mc - (2.5 * np.log10(detrended))
         Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
 
         vsp_params.append({
             'time': np.mean(jd_times[transit_section[0]:transit_section[1]]),
-            'airmass': np.median(fit_comp['myfit'].airmass[info_comp['mask_ref']][initial:initial + section]),
+            'airmass': np.median(info_comp['fit_lc'].airmass[info_comp['mask_ref']][initial:initial + section]),
             'mag': np.median(Mt),
             'mag_err': np.median(Mt_err),
             'cname': vsp_auid_comp,
@@ -1414,8 +1390,6 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
             'chart_id': chart_id,
             'pos': comp_pos
         })
-
-        print(f"{np.median(Mt)} +/- {np.median(Mt_err)}")
 
         initial += section
 
@@ -2232,9 +2206,9 @@ def main():
             # PSF flux
             tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
 
-            ref_flux_dict = {}
+            ref_flux = {}
             if vsp_list:
-                ref_flux_dict = {i: None for i in vsp_num}
+                ref_flux = {i: None for i in vsp_num}
 
             # loop over comp stars
             for j in range(len(exotic_infoDict['comp_stars'])):
@@ -2277,8 +2251,8 @@ def main():
                     finYRefCent = psf_data[ckey][:, 1]
 
                 if j in vsp_num:
-                    ref_flux_dict[j] = {
-                        'myfit': myfit,
+                    ref_flux[j] = {
+                        'myfit': copy.deepcopy(myfit),
                         'pos': exotic_infoDict['comp_stars'][j]
                     }
 
@@ -2339,7 +2313,7 @@ def main():
                         if myfit is not None:
                             if j in vsp_num:
                                 temp_ref_flux[j] = {
-                                    'myfit': myfit,
+                                    'myfit': copy.deepcopy(myfit),
                                     'pos': exotic_infoDict['comp_stars'][j]
                                 }
 
@@ -2380,15 +2354,15 @@ def main():
 
                         if ref_flux_opt or ref_flux_opt2:
                             if j in vsp_num:
-                                ref_flux_dict[j] = {
-                                    'myfit': myfit,
+                                ref_flux[j] = {
+                                    'myfit': copy.deepcopy(myfit),
                                     'pos': exotic_infoDict['comp_stars'][j]
                                 }
 
                             if backtrack:
                                 for i, value in enumerate(temp_ref_flux.values()):
                                     if value is not None and i != j:
-                                        ref_flux_dict[i] = value
+                                        ref_flux[i] = value
                                 backtrack = False
 
             # log best fit
@@ -2471,11 +2445,11 @@ def main():
 
             if vsp_comp_stars:
                 if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, jd_times, exotic_infoDict['comp_stars'], chart_id,
+                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'], chart_id,
                                                      vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'],
                                                      pDict['sName'])
                 else:
-                    vsp_params = stellar_variability(ref_flux_dict, bestlmfit, jd_times, exotic_infoDict['comp_stars'], chart_id,
+                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'], chart_id,
                                                      vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                      pDict['sName'])
 

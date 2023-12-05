@@ -1300,9 +1300,9 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
     intx_times = np.intersect1d(fit_lc_best.time[mask_oot_best], fit_lc_ref.time[mask_oot_ref])
 
     mask_jd = np.isin(fit_lc_best.time, intx_times)
-    transit_sections = [(group[0], group[-1])
-                        for group in (list(group)
-                                      for key, group in groupby(range(len(mask_jd)), key=mask_jd.__getitem__) if key)]
+    oot_transit_sections = [(group[0], group[-1])
+                            for group in (list(group)
+                                          for key, group in groupby(range(len(mask_jd)), key=mask_jd.__getitem__) if key)]
 
     mask_ref = [True if time_ in intx_times else False for time_ in fit_lc_ref.time]
     mask_best = [True if time_ in intx_times else False for time_ in fit_lc_best.time]
@@ -1314,7 +1314,7 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
         'fit_lc': fit_lc_ref,
         'times': times_jd[mask_jd],
         'mask_ref': mask_ref,
-        'transit_sections': transit_sections,
+        'oot_transit_sections': oot_transit_sections,
         'res': norm_flux_best - norm_flux_ref,
     }
 
@@ -1365,8 +1365,8 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
 
     initial = 0
 
-    for transit_section in info_comp['transit_sections']:
-        section = transit_section[1] - transit_section[0] + 1
+    for oot_transit_section in info_comp['oot_transit_sections']:
+        section = oot_transit_section[1] - oot_transit_section[0] + 1
 
         oot_scatter = np.std((info_comp['fit_lc'].data / info_comp['fit_lc'].airmass_model)[info_comp['mask_ref']][initial:initial + section])
         norm_flux_unc = oot_scatter * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][initial:initial + section]
@@ -1381,7 +1381,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
         Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
 
         vsp_params.append({
-            'time': np.mean(jd_times[transit_section[0]:transit_section[1]]),
+            'time': np.mean(jd_times[oot_transit_section[0]:oot_transit_section[1]]),
             'airmass': np.median(info_comp['fit_lc'].airmass[info_comp['mask_ref']][initial:initial + section]),
             'mag': np.median(Mt),
             'mag_err': np.median(Mt_err),

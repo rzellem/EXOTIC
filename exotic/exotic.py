@@ -917,6 +917,8 @@ def vsp_query(file, axis, obs_filter, img_scale, user_comp_stars, maglimit=14):
 
     if obs_filter == "CV":
         obs_filter = "V"
+    elif obs_filter == "R":
+        obs_filter = "Rc"
 
     if data['photometry']:
         for star in data['photometry']:
@@ -1725,11 +1727,7 @@ def main():
 
     # ---INITIALIZATION-------------------------------------------------------
 
-    xTargCent, yTargCent, xRefCent, yRefCent, finXTargCent, finYTargCent, finXRefCent, finYRefCent = ([] for m in range(8))
     epw_md5 = None
-
-    minSTD = 100000  # sets the initial minimum standard deviation absurdly high so it can be replaced immediately
-    # minChi2 = 100000
 
     userpDict = {'ra': None, 'dec': None, 'pName': None, 'sName': None, 'pPer': None, 'pPerUnc': None,
                  'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
@@ -2229,10 +2227,10 @@ def main():
             }
 
             photometry_info = {
-                "fit_lc": None,
+                "best_fit_lc": None,
                 "comp_star_num": None,
                 "comp_star_coords": None,
-                "min_std": None,
+                "min_std": 100000,
                 "min_aperture": None,
                 "min_annulus": None
             }
@@ -2252,30 +2250,18 @@ def main():
                             f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
                     log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                    resstd = myfit.residuals.std() / np.median(myfit.data)
-                if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
-                    bestCompStar = j + 1
-                    comp_coords = exotic_infoDict['comp_stars'][j]
-                    minSTD = resstd
-                    minAperture = 0
-                    minAnnulus = 15 * sigma
-                    # arrayNormUnc = myfit.dataerr
+                    res_std = myfit.residuals.std() / np.median(myfit.data)
 
-                    # sets the lists we want to print to correspond to the optimal aperature
-                    goodFluxes = np.copy(myfit.data)
-                    # goodNormUnc = np.copy(myfit.dataerr)
-                    goodTimes = np.copy(myfit.time)
-                    goodAirmasses = np.copy(myfit.airmass)
-                    goodTargets = tFlux1
-                    goodReferences = cFlux1
-                    goodTUnc = tFlux1 ** 0.5
-                    goodRUnc = cFlux1 ** 0.5
-                    bestlmfit = copy.deepcopy(myfit)
+                if photometry_info['min_std'] > res_std and myfit is not None:
+                    photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
+                                           comp_star_num=j + 1, comp_star_coords=exotic_infoDict['comp_stars'][j],
+                                           min_std=res_std, min_aperture=0, min_annulus=15 * sigma)
 
-                    finXTargCent = psf_data["target"][:, 0]
-                    finYTargCent = psf_data["target"][:, 1]
-                    finXRefCent = psf_data[ckey][:, 0]
-                    finYRefCent = psf_data[ckey][:, 1]
+                    flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
+                                       flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+
+                    centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
+                                              x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
 
                 if j in vsp_num:
                     ref_flux[j] = {
@@ -2303,31 +2289,20 @@ def main():
                                 f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
                         log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                        resstd = myfit.residuals.std() / np.median(myfit.data)
-                    if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
-                        minSTD = resstd
-                        minAperture = -aper
-                        minAnnulus = annulus
-                        # arrayNormUnc = tFlux ** 0.5
+                        res_std = myfit.residuals.std() / np.median(myfit.data)
+                    if photometry_info['min_std'] > res_std and myfit is not None:
                         ref_flux_opt = True
 
-                        # sets the lists we want to print to correspond to the optimal aperature
-                        goodFluxes = np.copy(myfit.data)
-                        # goodNormUnc = np.copy(myfit.dataerr)
-                        goodTimes = np.copy(myfit.time)
-                        # nonBJDPhases = np.copy(myfit.phase)
-                        goodAirmasses = np.copy(myfit.airmass)
-                        goodTargets = tFlux1
-                        goodReferences = cFlux1
-                        goodTUnc = tFlux1 ** 0.5
-                        goodRUnc = cFlux1 ** 0.5
-                        # goodResids = myfit.residuals
-                        bestlmfit = copy.deepcopy(myfit)
+                        photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
+                                               comp_star_num=None, comp_star_coords=None,
+                                               min_std=res_std, min_aperture=-aper, min_annulus=annulus)
 
-                        finXTargCent = psf_data["target"][:, 0]
-                        finYTargCent = psf_data["target"][:, 1]
-                        finXRefCent = psf_data[ckey][:, 0]
-                        finYRefCent = psf_data[ckey][:, 1]
+                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
+                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+
+                        # ckey doesn't exist, make possibly array of 0's?
+                        centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
+                                                  x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
 
                     # try to fit data with comp star
                     for j in range(len(exotic_infoDict['comp_stars'])):
@@ -2351,33 +2326,20 @@ def main():
                                     f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
                             log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
-                            resstd = myfit.residuals.std() / np.median(myfit.data)
-                        if minSTD > resstd and myfit is not None:  # If the standard deviation is less than the previous min
-                            bestCompStar = j + 1
-                            comp_coords = exotic_infoDict['comp_stars'][j]
-                            minSTD = resstd
-                            minAperture = aper
-                            minAnnulus = annulus
-                            # arrayNormUnc = arrayNormUnc
+                            res_std = myfit.residuals.std() / np.median(myfit.data)
+                        if photometry_info['min_std'] > res_std and myfit is not None:  # If the standard deviation is less than the previous min
                             ref_flux_opt2 = True
 
-                            # sets the lists we want to print to correspond to the optimal aperature
-                            goodFluxes = np.copy(myfit.data)
-                            # goodNormUnc = np.copy(myfit.dataerr)
-                            goodTimes = np.copy(myfit.time)
-                            # nonBJDPhases = np.copy(myfit.phase)
-                            goodAirmasses = np.copy(myfit.airmass)
-                            goodTargets = tFlux1
-                            goodReferences = cFlux1
-                            goodTUnc = tFlux1 ** 0.5
-                            goodRUnc = cFlux1 ** 0.5
-                            # goodResids = myfit.residuals
-                            bestlmfit = copy.deepcopy(myfit)
+                            photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
+                                                   comp_star_num=j + 1,
+                                                   comp_star_coords=exotic_infoDict['comp_stars'][j],
+                                                   min_std=res_std, min_aperture=aper, min_annulus=annulus)
 
-                            finXTargCent = psf_data["target"][aper_mask][:, 0]
-                            finYTargCent = psf_data["target"][aper_mask][:, 1]
-                            finXRefCent = psf_data[ckey][aper_mask][:, 0]
-                            finYRefCent = psf_data[ckey][aper_mask][:, 1]
+                            flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
+                                               flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+
+                            centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
+                                                      x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
 
                         if ref_flux_opt or ref_flux_opt2:
                             if j in vsp_num:
@@ -2392,26 +2354,21 @@ def main():
                                         ref_flux[i] = value
                                 backtrack = False
 
-            # log best fit
             log_info("\n\n*********************************************")
-            if minAperture == 0:  # psf
-                log_info(f"Best Comparison Star: #{bestCompStar}")
-                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
+            if photometry_info["min_aperture"] == 0:  # psf
+                log_info(f"Best Comparison Star: #{photometry_info["comp_star_num"]}")
+                log_info(f"Minimum Residual Scatter: {round(photometry_info["min_std"] * 100, 4)}%")
                 log_info("Optimal Method: PSF photometry")
-                bestaperture = "PSF photometry"
-            elif minAperture < 0:  # no comp star
+            elif photometry_info["min_aperture"] < 0:  # no comp star
                 log_info("Best Comparison Star: None")
-                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
-                log_info(f"Optimal Aperture: {abs(np.round(minAperture, 2))}")
-                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
-                bestCompStar, comp_coords = None, None
-                bestaperture = str(abs(np.round(minAperture, 2)))
+                log_info(f"Minimum Residual Scatter: {round(photometry_info["min_std"] * 100, 4)}%")
+                log_info(f"Optimal Aperture: {abs(np.round(photometry_info["min_aperture"], 2))}")
+                log_info(f"Optimal Annulus: {np.round(photometry_info["min_annulus"], 2)}")
             else:
-                log_info(f"Best Comparison Star: #{bestCompStar}")
-                log_info(f"Minimum Residual Scatter: {round(minSTD * 100, 4)}%")
-                log_info(f"Optimal Aperture: {np.round(minAperture, 2)}")
-                log_info(f"Optimal Annulus: {np.round(minAnnulus, 2)}")
-                bestaperture = str(abs(np.round(minAperture, 2)))
+                log_info(f"Best Comparison Star: #{photometry_info["comp_star_num"]}")
+                log_info(f"Minimum Residual Scatter: {round(photometry_info["min_std"] * 100, 4)}%")
+                log_info(f"Optimal Aperture: {np.round(photometry_info["min_aperture"], 2)}")
+                log_info(f"Optimal Annulus: {np.round(photometry_info["min_annulus"], 2)}")
             log_info("*********************************************\n")
 
             # sigma clip

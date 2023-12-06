@@ -1313,7 +1313,7 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, jd_times):
 
     if any(mask_ref) and any(mask_best):
         norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data[mask_ref]))[mask_ref]
-        norm_flux_best = fit_lc_best.data[mask_best]
+        norm_flux_best = (fit_lc_best.data / np.nanmedian(fit_lc_best.data[mask_best]))[mask_best]
 
         info_ref = {
             'fit_lc': fit_lc_ref,
@@ -1666,12 +1666,12 @@ def fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict):
 
     myfit = lc_fitter(
         arrayTimes,
-        arrayJDTimes,
         arrayFinalFlux,
         arrayNormUnc,
         arrayAirmass,
         prior,
         mybounds,
+        jd_times=arrayJDTimes,
         mode='lm'
     )
 
@@ -2390,12 +2390,12 @@ def main():
                 OOTscatter = np.std(best_fit_lc.residuals)
                 goodNormUnc = OOTscatter * best_fit_lc.airmass_model
                 goodNormUnc = goodNormUnc / np.nanmedian(best_fit_lc.data)
-                best_fit_lc.data /= np.nanmedian(best_fit_lc.data)
+                goodFluxes = best_fit_lc.data / np.nanmedian(best_fit_lc.data)
             else:
                 OOTscatter = np.std((best_fit_lc.data / best_fit_lc.airmass_model)[OOT])  # calculate the scatter in the data
                 goodNormUnc = OOTscatter * best_fit_lc.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
                 goodNormUnc = goodNormUnc / np.nanmedian(best_fit_lc.data[OOT])
-                best_fit_lc.data /= np.nanmedian(best_fit_lc.data[OOT])
+                goodFluxes = best_fit_lc.data / np.nanmedian(best_fit_lc.data[OOT])
 
             if np.isnan(best_fit_lc.data).all():
                 log_info("Error: No valid photometry data found.", error=True)
@@ -2403,12 +2403,12 @@ def main():
 
             best_fit_lc.time = best_fit_lc.time[si][gi]
             best_fit_lc.data = best_fit_lc.data[si][gi]
-            goodNormUnc = goodNormUnc[si][gi]
             best_fit_lc.airmass = best_fit_lc.airmass[si][gi]
             best_fit_lc.jd_times = best_fit_lc.jd_times[si][gi]
 
             goodTimes = best_fit_lc.time
-            goodFluxes = best_fit_lc.data
+            goodFluxes = goodFluxes[si][gi]
+            goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = best_fit_lc.airmass
 
             centroid_positions.update(x_targ=centroid_positions['x_targ'][si][gi],
@@ -2463,7 +2463,7 @@ def main():
 
             log_info("\n\nOutput File Saved")
         else:
-            goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
+            goodTimes, goodFluxes, goodNormUnc, goodAirmasses, jd_times = [], [], [], [], []
             bestCompStar, comp_coords = None, None
             ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
 
@@ -2548,7 +2548,7 @@ def main():
             return
 
         # final light curve fit
-        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')
+        myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, jd_times=jd_times, mode='ns')
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 

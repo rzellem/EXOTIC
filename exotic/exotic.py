@@ -291,7 +291,7 @@ def img_time_bjd_tdb(hdr, p_dict, info_dict):
         else:
             jd_time = julian_date(hdr, hdr_time, exp)
         # And convert to BJD_TDB
-        bjd_time = jd_bjd([jd_time], p_dict, info_dict)[0]
+        bjd_time = convert_jd_to_bjd([jd_time], p_dict, info_dict)[0]
     else:   # Else, already BJD - convert and adjust for exposure
         bjd_time = julian_date(hdr, hdr_time, exp)
     return bjd_time
@@ -1280,7 +1280,7 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
     return mode(dat.flatten(), nan_policy='omit', keepdims=True).mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
 
-def jd_bjd(non_bjd, p_dict, info_dict):
+def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
     try:
         goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
                                     longi=info_dict['long'], alt=info_dict['elev'])[0]
@@ -2404,6 +2404,7 @@ def main():
             best_fit_lc.time = best_fit_lc.time[si][gi]
             best_fit_lc.data = best_fit_lc.data[si][gi]
             best_fit_lc.airmass = best_fit_lc.airmass[si][gi]
+            best_fit_lc.transit = best_fit_lc.transit[si][gi]
             best_fit_lc.jd_times = best_fit_lc.jd_times[si][gi]
 
             goodTimes = best_fit_lc.time
@@ -2485,7 +2486,7 @@ def main():
 
             if exotic_infoDict['file_time'] != 'BJD_TDB':
                 time_offset = 2400000.5 if exotic_infoDict['file_time'] == 'MJD_UTC' else 0.0
-                goodTimes = jd_bjd([time_ + time_offset for time_ in goodTimes], pDict, exotic_infoDict)
+                goodTimes = convert_jd_to_bjd([time_ + time_offset for time_ in goodTimes], pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
                 print("check flux convert")

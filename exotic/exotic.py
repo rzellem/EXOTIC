@@ -821,7 +821,7 @@ def vsx_variable(ra, dec, radius=0.01, maglimit=14):
             vname = result.json()['VSXObjects']['VSXObject'][0]['Name']
             vdec = result.json()['VSXObjects']['VSXObject'][0]['Declination2000']
             vra = result.json()['VSXObjects']['VSXObject'][0]['RA2000']
-            log.info("\nVSX variable check found " + vname + " at  RA " + vra + ", DEC " + vdec)
+            log.info(f"\nVSX variable check found {vname} at RA {vra}, DEC {vdec}")
             return True
         return False
     except Exception:
@@ -2213,26 +2213,26 @@ def main():
                 ref_flux = {i: None for i in vsp_num}
 
             flux_values = {
-                "flux_tar": None,
-                "flux_ref": None,
-                "flux_unc_tar": None,
-                "flux_unc_ref": None
+                'flux_tar': None,
+                'flux_ref': None,
+                'flux_unc_tar': None,
+                'flux_unc_ref': None
             }
 
             centroid_positions = {
-                "x_targ": None,
-                "y_targ": None,
-                "x_ref": None,
-                "y_ref": None
+                'x_targ': None,
+                'y_targ': None,
+                'x_ref': None,
+                'y_ref': None
             }
 
             photometry_info = {
-                "best_fit_lc": None,
-                "comp_star_num": None,
-                "comp_star_coords": None,
-                "min_std": 100000,
-                "min_aperture": None,
-                "min_annulus": None
+                'best_fit_lc': None,
+                'comp_star_num': None,
+                'comp_star_coords': None,
+                'min_std': 100000,
+                'min_aperture': None,
+                'min_annulus': None
             }
 
             # loop over comp stars
@@ -2354,24 +2354,25 @@ def main():
                                 backtrack = False
 
             log_info("\n\n*********************************************")
-            if photometry_info["min_aperture"] == 0:  # psf
-                log_info(f"Best Comparison Star: #{photometry_info["comp_star_num"]}")
-                log_info(f"Minimum Residual Scatter: {round(photometry_info["min_std"] * 100, 4)}%")
+            if photometry_info['min_aperture'] == 0:  # psf
+                log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
+                log_info(f"Minimum Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
                 log_info("Optimal Method: PSF photometry")
-            elif photometry_info["min_aperture"] < 0:  # no comp star
+            elif photometry_info['min_aperture'] < 0:  # no comp star
                 log_info("Best Comparison Star: None")
-                log_info(f"Minimum Residual Scatter: {round(photometry_info["min_std"] * 100, 4)}%")
-                log_info(f"Optimal Aperture: {abs(np.round(photometry_info["min_aperture"], 2))}")
-                log_info(f"Optimal Annulus: {np.round(photometry_info["min_annulus"], 2)}")
+                log_info(f"Minimum Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
+                log_info(f"Optimal Aperture: {abs(np.round(photometry_info['min_aperture'], 2))}")
+                log_info(f"Optimal Annulus: {np.round(photometry_info['min_annulus'], 2)}")
             else:
-                log_info(f"Best Comparison Star: #{photometry_info["comp_star_num"]}")
-                log_info(f"Minimum Residual Scatter: {round(photometry_info["min_std"] * 100, 4)}%")
-                log_info(f"Optimal Aperture: {np.round(photometry_info["min_aperture"], 2)}")
-                log_info(f"Optimal Annulus: {np.round(photometry_info["min_annulus"], 2)}")
+                log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
+                log_info(f"Minimum Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
+                log_info(f"Optimal Aperture: {np.round(photometry_info['min_aperture'], 2)}")
+                log_info(f"Optimal Annulus: {np.round(photometry_info['min_annulus'], 2)}")
             log_info("*********************************************\n")
 
             best_fit_lc = photometry_info['best_fit_lc']
             bestCompStar = photometry_info['comp_star_num']
+            comp_coords = photometry_info['comp_star_coords']
 
             goodFluxes = best_fit_lc.data
             goodTimes = best_fit_lc.time
@@ -2405,6 +2406,7 @@ def main():
             goodFluxes = goodFluxes[si][gi]
             goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = goodAirmasses[si][gi]
+            jd_times = jd_times[si][gi]
 
             centroid_positions.update(x_targ=centroid_positions['x_targ'][si][gi],
                                       y_targ=centroid_positions['y_targ'][si][gi],

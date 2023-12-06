@@ -1294,6 +1294,8 @@ def jd_bjd(non_bjd, p_dict, info_dict):
 
 
 def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
+    info_ref = None
+
     mask_oot_ref = (fit_lc_ref.transit == 1)
     mask_oot_best = (fit_lc_best.transit == 1)
 
@@ -1307,16 +1309,17 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
     mask_ref = [True if time_ in intx_times else False for time_ in fit_lc_ref.time]
     mask_best = [True if time_ in intx_times else False for time_ in fit_lc_best.time]
 
-    norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data[mask_ref]))[mask_ref]
-    norm_flux_best = (fit_lc_best.data / np.nanmedian(fit_lc_best.data[mask_best]))[mask_best]
+    if any(mask_ref) and any(mask_best):
+        norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data[mask_ref]))[mask_ref]
+        norm_flux_best = (fit_lc_best.data / np.nanmedian(fit_lc_best.data[mask_best]))[mask_best]
 
-    info_ref = {
-        'fit_lc': fit_lc_ref,
-        'times': times_jd[mask_jd],
-        'mask_ref': mask_ref,
-        'oot_transit_sections': oot_transit_sections,
-        'res': norm_flux_best - norm_flux_ref,
-    }
+        info_ref = {
+            'fit_lc': fit_lc_ref,
+            'times': times_jd[mask_jd],
+            'mask_ref': mask_ref,
+            'oot_transit_sections': oot_transit_sections,
+            'res': norm_flux_best - norm_flux_ref,
+        }
 
     return info_ref
 
@@ -1334,8 +1337,10 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, jd_times, ref_comp, c
         if k >= len(markers):
             k = 0
         ref_comp[ckey] = calculate_variablility(fit_lc_refs[ckey]['myfit'], fit_lc_best, jd_times)
-        plt.errorbar(ref_comp[ckey]['times'], ref_comp[ckey]['res'], fmt=markers[k], color=colors[i],
-                     label=f"{labels[tuple(fit_lc_refs[ckey]['pos'])]}")
+
+        if ref_comp[ckey]:
+            plt.errorbar(ref_comp[ckey]['times'], ref_comp[ckey]['res'], fmt=markers[k], color=colors[i],
+                         label=f"{labels[tuple(fit_lc_refs[ckey]['pos'])]}")
         k += 1
 
     plot_variable_residuals(save)
@@ -1346,7 +1351,7 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, jd_times, ref_comp, c
     return comp_stars[min_std_dev]
 
 
-def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
+def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
     vsp_params = []
     info_comps = {}
 
@@ -1354,7 +1359,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
         comp_pos = choose_comp_star_variability(fit_lc_refs, fit_lc_best, jd_times, info_comps, comp_stars, vsp_comp_stars, save)
     else:
         comp_pos = comp_stars[best_comp]
-        info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp], fit_lc_best, jd_times)
+        info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best, jd_times)
 
     comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
     vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
@@ -1387,7 +1392,6 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, chart_id
             'mag_err': np.median(Mt_err),
             'cname': vsp_auid_comp,
             'cmag': Mc,
-            'chart_id': chart_id,
             'pos': comp_pos
         })
 
@@ -2210,6 +2214,29 @@ def main():
             if vsp_list:
                 ref_flux = {i: None for i in vsp_num}
 
+            flux_values = {
+                "flux_tar": None,
+                "flux_ref": None,
+                "flux_unc_tar": None,
+                "flux_unc_ref": None
+            }
+
+            centroid_positions = {
+                "x_targ": None,
+                "y_targ": None,
+                "x_ref": None,
+                "y_ref": None
+            }
+
+            photometry_info = {
+                "fit_lc": None,
+                "comp_star_num": None,
+                "comp_star_coords": None,
+                "min_std": None,
+                "min_aperture": None,
+                "min_annulus": None
+            }
+
             # loop over comp stars
             for j in range(len(exotic_infoDict['comp_stars'])):
                 ckey = f"comp{j + 1}"
@@ -2243,7 +2270,7 @@ def main():
                     goodReferences = cFlux1
                     goodTUnc = tFlux1 ** 0.5
                     goodRUnc = cFlux1 ** 0.5
-                    bestlmfit = myfit
+                    bestlmfit = copy.deepcopy(myfit)
 
                     finXTargCent = psf_data["target"][:, 0]
                     finYTargCent = psf_data["target"][:, 1]
@@ -2295,7 +2322,7 @@ def main():
                         goodTUnc = tFlux1 ** 0.5
                         goodRUnc = cFlux1 ** 0.5
                         # goodResids = myfit.residuals
-                        bestlmfit = myfit
+                        bestlmfit = copy.deepcopy(myfit)
 
                         finXTargCent = psf_data["target"][:, 0]
                         finYTargCent = psf_data["target"][:, 1]
@@ -2345,7 +2372,7 @@ def main():
                             goodTUnc = tFlux1 ** 0.5
                             goodRUnc = cFlux1 ** 0.5
                             # goodResids = myfit.residuals
-                            bestlmfit = myfit
+                            bestlmfit = copy.deepcopy(myfit)
 
                             finXTargCent = psf_data["target"][aper_mask][:, 0]
                             finYTargCent = psf_data["target"][aper_mask][:, 1]
@@ -2445,11 +2472,11 @@ def main():
 
             if vsp_comp_stars:
                 if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'], chart_id,
-                                                     vsp_comp_stars, vsp_num, bestCompStar, exotic_infoDict['save'],
+                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'],
+                                                     vsp_comp_stars, vsp_num, None, exotic_infoDict['save'],
                                                      pDict['sName'])
                 else:
-                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'], chart_id,
+                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'],
                                                      vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                      pDict['sName'])
 
@@ -2600,7 +2627,7 @@ def main():
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
         if vsp_params:
-            AIDoutput_files = AIDOutputFiles(myfit, pDict, exotic_infoDict, auid, vsp_params)
+            AIDoutput_files = AIDOutputFiles(myfit, pDict, exotic_infoDict, auid, chart_id, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 

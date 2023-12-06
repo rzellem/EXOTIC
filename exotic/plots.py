@@ -146,11 +146,11 @@ def plot_variable_residuals(save):
     plt.close()
 
 
-def plot_stellar_variability(vsp_params, save, s_name, label):
+def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     for vsp_p in vsp_params:
         plt.errorbar(vsp_p['time'], vsp_p['mag'], yerr=vsp_p['mag_err'], color="tomato", fmt='.')
 
-    plt.title(f"{s_name} (Label: {label})")
+    plt.title(f"{s_name} (Label: {vsp_auid_comp})")
     plt.ylabel("Vmag")
     plt.xlabel("Time (JD)")
     plt.savefig(Path(save) / "temp" / f"Stellar_Variability.png")

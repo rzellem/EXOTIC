@@ -139,9 +139,10 @@ class OutputFiles:
         plate_status.writePlateStatus(plate_status_file)
 
 class AIDOutputFiles:
-    def __init__(self, fit, p_dict, i_dict, auid, vsp_params):
+    def __init__(self, fit, p_dict, i_dict, auid, chart_id, vsp_params):
         self.fit = fit
         self.auid = auid
+        self.chart_id = chart_id
         self.p_dict = p_dict
         self.i_dict = i_dict
         self.dir = Path(self.i_dict['save'])
@@ -169,7 +170,7 @@ class AIDOutputFiles:
                 f.write(f"{self.auid},"f"{round(vsp_p['time'], 5)}," f"{round(vsp_p['mag'], 5)}," f"{round(vsp_p['mag_err'], 5)},"
                         "V,NO,STD," f"{vsp_p['cname']}," f"{round(vsp_p['cmag'], 5)}," "na,na," 
                         f"{round(vsp_p['airmass'], 7)}," "na," 
-                        f"{vsp_p['chart_id']}," "na\n")
+                        f"{self.chart_id}," "na\n")
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

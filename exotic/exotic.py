@@ -2300,7 +2300,6 @@ def main():
                         flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
                                            flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
 
-                        # ckey doesn't exist, make possibly array of 0's?
                         centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                                   x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
 
@@ -2371,6 +2370,13 @@ def main():
                 log_info(f"Optimal Annulus: {np.round(photometry_info["min_annulus"], 2)}")
             log_info("*********************************************\n")
 
+            best_fit_lc = photometry_info['best_fit_lc']
+            bestCompStar = photometry_info['comp_star_num']
+
+            goodFluxes = best_fit_lc.data
+            goodTimes = best_fit_lc.time
+            goodAirmasses = best_fit_lc.airmass
+
             # sigma clip
             si = np.argsort(goodTimes)
             dt = np.mean(np.diff(np.sort(goodTimes)))
@@ -2378,16 +2384,16 @@ def main():
             gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt)  # good indexs
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
-            OOT = (bestlmfit.transit == 1)  # find out-of-transit portion of the lightcurve
+            OOT = (best_fit_lc.transit == 1)  # find out-of-transit portion of the lightcurve
 
             if sum(OOT) <= 1:
-                OOTscatter = np.std(bestlmfit.residuals)
-                goodNormUnc = OOTscatter * bestlmfit.airmass_model
+                OOTscatter = np.std(best_fit_lc.residuals)
+                goodNormUnc = OOTscatter * best_fit_lc.airmass_model
                 goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes)
                 goodFluxes = goodFluxes / np.nanmedian(goodFluxes)
             else:
-                OOTscatter = np.std((bestlmfit.data / bestlmfit.airmass_model)[OOT])  # calculate the scatter in the data
-                goodNormUnc = OOTscatter * bestlmfit.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
+                OOTscatter = np.std((best_fit_lc.data / best_fit_lc.airmass_model)[OOT])  # calculate the scatter in the data
+                goodNormUnc = OOTscatter * best_fit_lc.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
                 goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes[OOT])
                 goodFluxes = goodFluxes / np.nanmedian(goodFluxes[OOT])
 
@@ -2400,12 +2406,29 @@ def main():
             goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = goodAirmasses[si][gi]
 
-            plot_fov(minAperture, minAnnulus, sigma, finXTargCent[0], finYTargCent[0], finXRefCent[0], finYRefCent[0],
+            centroid_positions.update(x_targ=centroid_positions['x_targ'][si][gi],
+                                      y_targ=centroid_positions['y_targ'][si][gi],
+                                      x_ref=centroid_positions['x_ref'][si][gi],
+                                      y_ref=centroid_positions['y_ref'][si][gi])
+
+            flux_values.update(flux_tar=flux_values['flux_tar'][si][gi],
+                               flux_ref=flux_values['flux_ref'][si][gi],
+                               flux_unc_tar=flux_values['flux_unc_tar'][si][gi],
+                               flux_unc_ref=flux_values['flux_unc_ref'][si][gi])
+
+            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma,
+                     centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
+                     centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
                      firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
-            # Centroid position plots
-            plot_centroids(finXTargCent[si][gi], finYTargCent[si][gi], finXRefCent[si][gi], finYRefCent[si][gi],
+            plot_centroids(centroid_positions['x_targ'], centroid_positions['y_targ'],
+                           centroid_positions['x_ref'], centroid_positions['y_ref'],
                            goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+
+            plot_flux(goodTimes, flux_values['flux_tar'], flux_values['flux_ref'],
+                      flux_values['flux_unc_tar'], flux_values['flux_unc_ref'],
+                      goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
+                      exotic_infoDict['date'])
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
@@ -2423,17 +2446,13 @@ def main():
             # Calculate the standard deviation of the normalized flux values
             # standardDev1 = np.std(goodFluxes)
 
-            plot_flux(goodTimes, goodTargets[si][gi], goodTUnc[si][gi], goodReferences[si][gi], goodRUnc[si][gi],
-                      goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
-                      exotic_infoDict['date'])
-
             if vsp_comp_stars:
                 if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'],
+                    vsp_params = stellar_variability(ref_flux, best_fit_lc, jd_times, exotic_infoDict['comp_stars'],
                                                      vsp_comp_stars, vsp_num, None, exotic_infoDict['save'],
                                                      pDict['sName'])
                 else:
-                    vsp_params = stellar_variability(ref_flux, bestlmfit, jd_times, exotic_infoDict['comp_stars'],
+                    vsp_params = stellar_variability(ref_flux, best_fit_lc, jd_times, exotic_infoDict['comp_stars'],
                                                      vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                      pDict['sName'])
 
@@ -2563,15 +2582,15 @@ def main():
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
         if fitsortext == 1:
-            if minAperture >= 0:
+            if photometry_info['min_aperture'] >= 0:
                 log_info(f"                Best Comparison Star: #{bestCompStar} - {comp_coords}")
             else:
                 log_info("                 Best Comparison Star: None")
-            if minAperture == 0:
+            if photometry_info['min_aperture'] == 0:
                 log_info("                       Optimal Method: PSF photometry")
             else:
-                log_info(f"                    Optimal Aperture: {abs(np.round(minAperture, 2))}")
-                log_info(f"                     Optimal Annulus: {np.round(minAnnulus, 2)}")
+                log_info(f"                    Optimal Aperture: {abs(np.round(photometry_info['min_aperture'], 2))}")
+                log_info(f"                     Optimal Annulus: {np.round(photometry_info['min_annulus'], 2)}")
         log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs), np.std(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
@@ -2597,8 +2616,8 @@ def main():
             if fitsortext == 1:
                 output_files.final_planetary_params(phot_opt=True, vsp_params=vsp_params,
                                                     comp_star=bestCompStar, comp_coords=comp_coords,
-                                                    min_aper=np.round(minAperture, 2),
-                                                    min_annul=np.round(minAnnulus, 2))
+                                                    min_aper=np.round(photometry_info['min_aperture'], 2),
+                                                    min_annul=np.round(photometry_info['min_annulus'], 2))
             else:
                 output_files.final_planetary_params(phot_opt=False, vsp_params=vsp_params)
         except Exception as e:

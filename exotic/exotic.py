@@ -1295,7 +1295,7 @@ def jd_bjd(non_bjd, p_dict, info_dict):
     return goodTimes
 
 
-def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
+def calculate_variablility(fit_lc_ref, fit_lc_best, jd_times):
     info_ref = None
 
     mask_oot_ref = (fit_lc_ref.transit == 1)
@@ -1313,11 +1313,11 @@ def calculate_variablility(fit_lc_ref, fit_lc_best, times_jd):
 
     if any(mask_ref) and any(mask_best):
         norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data[mask_ref]))[mask_ref]
-        norm_flux_best = (fit_lc_best.data / np.nanmedian(fit_lc_best.data[mask_best]))[mask_best]
+        norm_flux_best = fit_lc_best.data[mask_best]
 
         info_ref = {
             'fit_lc': fit_lc_ref,
-            'times': times_jd[mask_jd],
+            'times': jd_times[mask_jd],
             'mask_ref': mask_ref,
             'oot_transit_sections': oot_transit_sections,
             'res': norm_flux_best - norm_flux_ref,
@@ -1582,7 +1582,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax):
     ax.plot(timeList, norm_flux, 'bo')
 
 
-def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
+def fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict):
     # remove outliers
     si = np.argsort(times)
     dt = np.mean(np.diff(np.sort(times)))
@@ -1600,6 +1600,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
     else:
         arrayNormUnc = np.sqrt((sigf1 / f2) ** 2 + (sigf2 * f1 / f2 ** 2) ** 2)
     arrayTimes = times[si][~filtered_data]
+    arrayJDTimes = jd_times[si][~filtered_data]
     arrayAirmass = airmass[si][~filtered_data]
 
     # remove nans
@@ -1615,6 +1616,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         arrayFinalFlux = arrayFinalFlux[~nanmask]
         arrayNormUnc = arrayNormUnc[~nanmask]
         arrayTimes = arrayTimes[~nanmask]
+        arrayJDTimes = arrayJDTimes[~nanmask]
         arrayAirmass = arrayAirmass[~nanmask]
 
 
@@ -1664,6 +1666,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
 
     myfit = lc_fitter(
         arrayTimes,
+        arrayJDTimes,
         arrayFinalFlux,
         arrayNormUnc,
         arrayAirmass,
@@ -2240,7 +2243,7 @@ def main():
                 ckey = f"comp{j + 1}"
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict)
+                myfit, tFlux1, cFlux1 = fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict)
 
                 if myfit is not None:
                     for k in myfit.bounds.keys():
@@ -2279,7 +2282,7 @@ def main():
                     temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
+                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, jd_times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
 
                     if myfit is not None:
                         for k in myfit.bounds.keys():
@@ -2309,7 +2312,7 @@ def main():
                         aper_mask = np.isfinite(aper_data[ckey][:, a, an])
                         cFlux = aper_data[ckey][aper_mask][:, a, an]
 
-                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
+                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], jd_times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
 
                         if myfit is not None:
                             if j in vsp_num:
@@ -2374,15 +2377,11 @@ def main():
             bestCompStar = photometry_info['comp_star_num']
             comp_coords = photometry_info['comp_star_coords']
 
-            goodFluxes = best_fit_lc.data
-            goodTimes = best_fit_lc.time
-            goodAirmasses = best_fit_lc.airmass
-
             # sigma clip
-            si = np.argsort(goodTimes)
-            dt = np.mean(np.diff(np.sort(goodTimes)))
+            si = np.argsort(best_fit_lc.time)
+            dt = np.mean(np.diff(np.sort(best_fit_lc.time)))
             ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
-            gi = ~sigma_clip(goodFluxes[si], sigma=3, dt=ndt)  # good indexs
+            gi = ~sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt)  # good indexs
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (best_fit_lc.transit == 1)  # find out-of-transit portion of the lightcurve
@@ -2390,23 +2389,27 @@ def main():
             if sum(OOT) <= 1:
                 OOTscatter = np.std(best_fit_lc.residuals)
                 goodNormUnc = OOTscatter * best_fit_lc.airmass_model
-                goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes)
-                goodFluxes = goodFluxes / np.nanmedian(goodFluxes)
+                goodNormUnc = goodNormUnc / np.nanmedian(best_fit_lc.data)
+                best_fit_lc.data /= np.nanmedian(best_fit_lc.data)
             else:
                 OOTscatter = np.std((best_fit_lc.data / best_fit_lc.airmass_model)[OOT])  # calculate the scatter in the data
                 goodNormUnc = OOTscatter * best_fit_lc.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
-                goodNormUnc = goodNormUnc / np.nanmedian(goodFluxes[OOT])
-                goodFluxes = goodFluxes / np.nanmedian(goodFluxes[OOT])
+                goodNormUnc = goodNormUnc / np.nanmedian(best_fit_lc.data[OOT])
+                best_fit_lc.data /= np.nanmedian(best_fit_lc.data[OOT])
 
-            if np.isnan(goodFluxes).all():
+            if np.isnan(best_fit_lc.data).all():
                 log_info("Error: No valid photometry data found.", error=True)
                 return
 
-            goodTimes = goodTimes[si][gi]
-            goodFluxes = goodFluxes[si][gi]
+            best_fit_lc.time = best_fit_lc.time[si][gi]
+            best_fit_lc.data = best_fit_lc.data[si][gi]
             goodNormUnc = goodNormUnc[si][gi]
-            goodAirmasses = goodAirmasses[si][gi]
-            jd_times = jd_times[si][gi]
+            best_fit_lc.airmass = best_fit_lc.airmass[si][gi]
+            best_fit_lc.jd_times = best_fit_lc.jd_times[si][gi]
+
+            goodTimes = best_fit_lc.time
+            goodFluxes = best_fit_lc.data
+            goodAirmasses = best_fit_lc.airmass
 
             centroid_positions.update(x_targ=centroid_positions['x_targ'][si][gi],
                                       y_targ=centroid_positions['y_targ'][si][gi],

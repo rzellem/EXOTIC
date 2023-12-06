@@ -155,8 +155,9 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', verbose=True):
+    def __init__(self, time, jd_times, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', verbose=True):
         self.time = time
+        self.jd_times = jd_times
         self.data = data
         self.dataerr = dataerr
         self.airmass = airmass

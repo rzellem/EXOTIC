@@ -1309,25 +1309,25 @@ def calculate_variablility(fit_lc_ref, fit_lc_best):
 
     mask_remove_oot_data = [False if transit == 1 and not mask_ref[i] else True for i, transit in enumerate(fit_lc_ref.transit)]
 
-    if any(mask_remove_oot_data):
-        fit_lc_ref.data = fit_lc_ref.data[mask_remove_oot_data]
-        fit_lc_ref.airmass = fit_lc_ref.airmass[mask_remove_oot_data]
-        fit_lc_ref.airmass_model = fit_lc_ref.airmass_model[mask_remove_oot_data]
+    if not all(mask_remove_oot_data):
         fit_lc_ref.jd_times = fit_lc_ref.jd_times[mask_remove_oot_data]
-
         mask_ref = np.isin(fit_lc_ref.jd_times, intx_times)
+
+    fit_lc_ref.jd_times = fit_lc_ref.jd_times[mask_ref]
+    fit_lc_ref.data = fit_lc_ref.data[mask_remove_oot_data][mask_ref]
+    fit_lc_ref.airmass = fit_lc_ref.airmass[mask_remove_oot_data][mask_ref]
+    fit_lc_ref.airmass_model = fit_lc_ref.airmass_model[mask_remove_oot_data][mask_ref]
 
     oot_transit_sections = [(group[0], group[-1])
                             for group in (list(group)
                                           for key, group in groupby(range(len(mask_ref)), key=mask_ref.__getitem__) if key)]
 
     if any(mask_ref) and any(mask_best):
-        norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data[mask_ref]))[mask_ref]
+        norm_flux_ref = (fit_lc_ref.data / np.nanmedian(fit_lc_ref.data))
         norm_flux_best = (fit_lc_best.data / np.nanmedian(fit_lc_best.data[mask_best]))[mask_best]
 
         info_ref = {
             'fit_lc': fit_lc_ref,
-            'mask_ref': mask_ref,
             'oot_transit_sections': oot_transit_sections,
             'res': norm_flux_best - norm_flux_ref,
         }
@@ -1350,7 +1350,7 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
         ref_comp[ckey] = calculate_variablility(fit_lc_refs[ckey]['myfit'], fit_lc_best)
 
         if ref_comp[ckey]:
-            plt.errorbar(ref_comp[ckey]['fit_lc'].jd_times[ref_comp[ckey]['mask_ref']], ref_comp[ckey]['res'],
+            plt.errorbar(ref_comp[ckey]['fit_lc'].jd_times, ref_comp[ckey]['res'],
                          fmt=markers[k], color=colors[i], label=f"{labels[tuple(fit_lc_refs[ckey]['pos'])]}")
         k += 1
 
@@ -1379,28 +1379,27 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
 
     info_comp = info_comps[comp_stars.index(comp_pos)]
     lc_fit = info_comp['fit_lc']
-    mask_ref = info_comp['mask_ref']
     first = 0
 
     for oot_transit_section in info_comp['oot_transit_sections']:
         section = oot_transit_section[1] - oot_transit_section[0] + 1
         last = first + section
 
-        oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[mask_ref][first:last])
-        norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref][first:last]
+        oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[first:last])
+        norm_flux_unc = oot_scatter * lc_fit.airmass_model[first:last]
 
-        flux = lc_fit.data[mask_ref][first:last]
+        flux = lc_fit.data[first:last]
         norm_flux_unc /= np.nanmedian(flux)
 
-        model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[mask_ref][first:last])
+        model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[first:last])
         detrended = flux / model
 
         Mt = Mc - (2.5 * np.log10(detrended))
         Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
 
         vsp_params.append({
-            'time': np.mean(lc_fit.jd_times[oot_transit_section[0]:oot_transit_section[1]]),
-            'airmass': np.median(lc_fit.airmass[mask_ref][first:last]),
+            'time': np.mean(lc_fit.jd_times[first:last]),
+            'airmass': np.median(lc_fit.airmass[first:last]),
             'mag': np.median(Mt),
             'mag_err': np.median(Mt_err),
             'cname': vsp_auid_comp,

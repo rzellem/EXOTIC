@@ -1340,8 +1340,8 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
         ref_comp[ckey] = calculate_variablility(fit_lc_refs[ckey]['myfit'], fit_lc_best)
 
         if ref_comp[ckey]:
-            plt.errorbar(ref_comp[ckey]['times'], ref_comp[ckey]['res'], fmt=markers[k], color=colors[i],
-                         label=f"{labels[tuple(fit_lc_refs[ckey]['pos'])]}")
+            plt.errorbar(ref_comp[ckey]['fit_lc'].jd_times[ref_comp[ckey]['mask_ref']], ref_comp[ckey]['res'],
+                         fmt=markers[k], color=colors[i], label=f"{labels[tuple(fit_lc_refs[ckey]['pos'])]}")
         k += 1
 
     plot_variable_residuals(save)

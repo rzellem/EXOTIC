@@ -818,6 +818,10 @@ def vsx_variable(ra, dec, radius=0.01, maglimit=14):
         var = result.json()['VSXObjects']['VSXObject'][0]['Category']
 
         if var.lower() == "variable":
+            vname = result.json()['VSXObjects']['VSXObject'][0]['Name']
+            vdec = result.json()['VSXObjects']['VSXObject'][0]['Declination2000']
+            vra = result.json()['VSXObjects']['VSXObject'][0]['RA2000']
+            log.info("\nVSX variable check found " + vname + " at  RA " + vra + ", DEC " + vdec)
             return True
         return False
     except Exception:
@@ -1638,9 +1642,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict):
         log_info(f" tmid prior:{prior['tmid']}\n", warn=True)
 
     mybounds = {
-        'rprs': [0, pDict['rprs'] * 1.25],
+        'rprs': [0, prior['rprs'] * 1.25],
         'tmid': [lower, upper],
-        'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0.), pDict['aRs'] + 15 * pDict['aRsUnc']],
+        'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
         'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
         'a2': [-1, 1]
     }
@@ -2017,7 +2021,7 @@ def main():
 
                 auid = vsx_auid(tar_radec[0], tar_radec[1])
 
-                for compn, comp in enumerate(exotic_infoDict['comp_stars']):
+                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
                     ra = ra_file[int(comp[1])][int(comp[0])]
                     dec = dec_file[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
@@ -2025,7 +2029,6 @@ def main():
                     log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
                              f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
                     if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
-                        log_info("\nCurrent comparison star is variable, proceeding to next star.", warn=True)
                         exotic_infoDict['comp_stars'].remove(comp)
 
                 if exotic_infoDict['aavso_comp'] == 'y':
@@ -2539,9 +2542,9 @@ def main():
             log_info(f"prior:{prior['tmid']}", error=True)
 
         mybounds = {
-            'rprs': [0, pDict['rprs'] * 1.25],
+            'rprs': [0, prior['rprs'] * 1.25],
             'tmid': [lower, upper],
-            'ars': [max(pDict['aRs'] - 15 * pDict['aRsUnc'], 0.), pDict['aRs'] + 15 * pDict['aRsUnc']],
+            'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
             'a2': [-3, 3],
         }
 
@@ -2584,7 +2587,7 @@ def main():
         log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log_info(f"           Transit depth [(Rp/R*)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
-        log_info(f" Semi Major Axis/ Star Radius [a/Rs]: {round_to_2(myfit.parameters['ars'], myfit.errors['ars'])} +/- {round_to_2(myfit.errors['ars'])}")
+        log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
         log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
         log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")

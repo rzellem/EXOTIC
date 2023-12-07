@@ -2524,7 +2524,7 @@ def main():
             log_info(f"prior:{prior['tmid']}", error=True)
 
         mybounds = {
-            'rprs': [0, pDict['rprs'] * 1.25],
+            'rprs': [0, prior['rprs'] * 1.25],
             'tmid': [lower, upper],
             'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
             'a2': [-3, 3],

@@ -1307,6 +1307,16 @@ def calculate_variablility(fit_lc_ref, fit_lc_best):
     mask_ref = np.isin(fit_lc_ref.jd_times, intx_times)
     mask_best = np.isin(fit_lc_best.jd_times, intx_times)
 
+    mask_remove_oot_data = [False if transit == 1 and not mask_ref[i] else True for i, transit in enumerate(fit_lc_ref.transit)]
+
+    if any(mask_remove_oot_data):
+        fit_lc_ref.data = fit_lc_ref.data[mask_remove_oot_data]
+        fit_lc_ref.airmass = fit_lc_ref.airmass[mask_remove_oot_data]
+        fit_lc_ref.airmass_model = fit_lc_ref.airmass_model[mask_remove_oot_data]
+        fit_lc_ref.jd_times = fit_lc_ref.jd_times[mask_remove_oot_data]
+
+        mask_ref = np.isin(fit_lc_ref.jd_times, intx_times)
+
     oot_transit_sections = [(group[0], group[-1])
                             for group in (list(group)
                                           for key, group in groupby(range(len(mask_ref)), key=mask_ref.__getitem__) if key)]

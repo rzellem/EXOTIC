@@ -1347,7 +1347,7 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, jd_times, ref_comp, c
 
     plot_variable_residuals(save)
 
-    std_devs = {key: np.std(value['res']) for key, value in ref_comp.items()}
+    std_devs = {key: np.std(value['res']) for key, value in ref_comp.items() if value}
     min_std_dev = min(std_devs, key=lambda y: abs(std_devs[y]))
 
     return comp_stars[min_std_dev]
@@ -1370,18 +1370,19 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, vsp_comp
 
     info_comp = info_comps[comp_stars.index(comp_pos)]
 
-    initial = 0
+    first = 0
 
     for oot_transit_section in info_comp['oot_transit_sections']:
         section = oot_transit_section[1] - oot_transit_section[0] + 1
+        last = first + section
 
-        oot_scatter = np.std((info_comp['fit_lc'].data / info_comp['fit_lc'].airmass_model)[info_comp['mask_ref']][initial:initial + section])
-        norm_flux_unc = oot_scatter * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][initial:initial + section]
+        oot_scatter = np.std((info_comp['fit_lc'].data / info_comp['fit_lc'].airmass_model)[info_comp['mask_ref']][first:last])
+        norm_flux_unc = oot_scatter * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][first:last]
 
-        flux = info_comp['fit_lc'].data[info_comp['mask_ref']][initial:initial + section]
+        flux = info_comp['fit_lc'].data[info_comp['mask_ref']][first:last]
         norm_flux_unc /= np.nanmedian(flux)
 
-        model = np.exp(info_comp['fit_lc'].parameters['a2'] * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][initial:initial + section])
+        model = np.exp(info_comp['fit_lc'].parameters['a2'] * info_comp['fit_lc'].airmass_model[info_comp['mask_ref']][first:last])
         detrended = flux / model
 
         Mt = Mc - (2.5 * np.log10(detrended))
@@ -1389,7 +1390,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, vsp_comp
 
         vsp_params.append({
             'time': np.mean(jd_times[oot_transit_section[0]:oot_transit_section[1]]),
-            'airmass': np.median(info_comp['fit_lc'].airmass[info_comp['mask_ref']][initial:initial + section]),
+            'airmass': np.median(info_comp['fit_lc'].airmass[info_comp['mask_ref']][first:last]),
             'mag': np.median(Mt),
             'mag_err': np.median(Mt_err),
             'cname': vsp_auid_comp,
@@ -1397,7 +1398,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, jd_times, comp_stars, vsp_comp
             'pos': comp_pos
         })
 
-        initial += section
+        first += section
 
     plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
 

@@ -900,7 +900,6 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
 
 def vsp_query(file, axis, obs_filter, img_scale, user_comp_stars, maglimit=14):
     vsp_comp_stars_info = {}
-    all_vsp_star_coords = []
     vsp_star_count = 0
 
     wcs_hdr = search_wcs(file)
@@ -928,7 +927,6 @@ def vsp_query(file, axis, obs_filter, img_scale, user_comp_stars, maglimit=14):
             if (ra_pix < axis[0] and dec_pix < axis[1]) and (ra_pix > 1 and dec_pix > 1):
                 vsp_star = [int(ra_pix.min()), int(dec_pix.min())]
                 exist, vsp_star = check_comp_star_exists(user_comp_stars, vsp_star)
-                all_vsp_star_coords.append(vsp_star)
 
                 if obs_filter in [band['band'] for band in star['bands']]:
                     star_info = next(band for band in star['bands'] if band['band'] == obs_filter)
@@ -944,12 +942,6 @@ def vsp_query(file, axis, obs_filter, img_scale, user_comp_stars, maglimit=14):
 
             if len(vsp_comp_stars_info) > 1:
                 break
-        else:
-            for vsp_star in all_vsp_star_coords:
-                if vsp_star_count > 1:
-                    break
-                if vsp_star not in user_comp_stars:
-                    vsp_star_count = add_vsp_star(vsp_star_count, user_comp_stars, vsp_star)
 
     if not vsp_star_count:
         log_info("\nNo comparison stars were gathered from AAVSO.\n")
@@ -1400,7 +1392,7 @@ def nearestTransitTime(timeData, period, originalT):
     return nearT
 
 
-def save_comp_radec(wcs_file, ra_file, dec_file, comp_coords):
+def save_comp_ra_dec(wcs_file, ra_file, dec_file, comp_coords):
     comp_ra, comp_dec = None, None
 
     if wcs_file:
@@ -1783,7 +1775,7 @@ def main():
         log_info("Complete Reduction Routine")
         log_info("**************************")
 
-        init_path, wcs_file, wcs_header, ra_file, dec_file, vsp_params, auid = None, None, None, None, None, None, None
+        init_path, wcs_file, wcs_header, ra_wcs, dec_wcs, vsp_params, auid, v_mag = None, None, None, None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
         demosaic_fmt = None
         demosaic_out = None
@@ -2003,23 +1995,23 @@ def main():
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
                 wcs_header = fits.getheader(filename=wcs_file)
-                ra_file, dec_file = get_radec(wcs_header)
+                ra_wcs, dec_wcs = get_radec(wcs_header)
 
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                          pDict['ra'], pDict['dec'], ra_file, dec_file)
-                tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
-                             dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
+                                                                          pDict['ra'], pDict['dec'], ra_wcs, dec_wcs)
+                tar_radec = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
+                             dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
                 auid = vsx_auid(tar_radec[0], tar_radec[1])
 
                 for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
-                    ra = ra_file[int(comp[1])][int(comp[0])]
-                    dec = dec_file[int(comp[1])][int(comp[0])]
+                    ra = ra_wcs[int(comp[1])][int(comp[0])]
+                    dec = dec_wcs[int(comp[1])][int(comp[0])]
                     comp_radec.append((ra, dec))
 
                     log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
                              f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    if variableStarCheck(ra_file[int(comp[1])][int(comp[0])], dec_file[int(comp[1])][int(comp[0])]):
+                    if variableStarCheck(ra_wcs[int(comp[1])][int(comp[0])], dec_wcs[int(comp[1])][int(comp[0])]):
                         exotic_infoDict['comp_stars'].remove(comp)
 
                 if exotic_infoDict['aavso_comp'] == 'y':
@@ -2616,7 +2608,7 @@ def main():
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
             if bestCompStar:
-                exotic_infoDict['phot_comp_star'] = save_comp_radec(wcs_file, ra_file, dec_file, comp_coords)
+                exotic_infoDict['phot_comp_star'] = save_comp_ra_dec(wcs_file, ra_wcs, dec_wcs, comp_coords)
             output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3, epw_md5)
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)

@@ -78,7 +78,6 @@ import copy
 # julian conversion imports
 import dateutil.parser as dup
 import imreg_dft as ird
-from itertools import groupby
 from pathlib import Path
 import pyvo as vo
 import logging
@@ -110,9 +109,9 @@ try:  # light curve numerics
 except ImportError:  # package import
     from api.elca import lc_fitter, binner, transit, get_phase
 try:  # output files
-    from inputs import Inputs
+    from inputs import Inputs, comparison_star_coords
 except ImportError:  # package import
-    from .inputs import Inputs
+    from .inputs import Inputs, comparison_star_coords
 try:  # ld
     from .api.ld import LimbDarkening, ld_re_punct_p
 except ImportError:  # package import
@@ -701,7 +700,7 @@ def get_wcs(file, directory=""):
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
-def get_radec(header):
+def get_ra_dec(header):
     wcs_header = WCS(header)
     xaxis = np.arange(header['NAXIS1'])
     yaxis = np.arange(header['NAXIS2'])
@@ -754,7 +753,7 @@ def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
 
 
 # Checks if comparison star is variable via querying SIMBAD
-def variableStarCheck(ra, dec):
+def query_variable_star_apis(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
     return vsx_variable(sample.ra.deg, sample.dec.deg)
@@ -826,6 +825,19 @@ def vsx_variable(ra, dec, radius=0.01, maglimit=14):
         return False
     except Exception:
         return False
+
+
+def check_for_variable_stars(ra_wcs, dec_wcs, comp_ra_dec, comp_stars):
+    for i, comp_star in enumerate(comp_stars[:]):
+        ra = ra_wcs[int(comp_star[1])][int(comp_star[0])]
+        dec = dec_wcs[int(comp_star[1])][int(comp_star[0])]
+
+        log_info(f"\nChecking for variability in Comparison Star #{i + 1}:"
+                 f"\n\tPixel X: {comp_star[0]} Pixel Y: {comp_star[1]}")
+        if query_variable_star_apis(ra, dec):
+            comp_stars.remove(comp_star)
+        else:
+            comp_ra_dec.append([ra, dec])
 
 
 @retry(stop=stop_after_delay(30))
@@ -1440,7 +1452,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax):
     if wcs_file:
         wcs_header = fits.getheader(filename=wcs_file)
 
-        ra_file, dec_file = get_radec(wcs_header)
+        ra_file, dec_file = get_ra_dec(wcs_header)
         tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                      dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
@@ -1775,7 +1787,7 @@ def main():
         log_info("Complete Reduction Routine")
         log_info("**************************")
 
-        init_path, wcs_file, wcs_header, ra_wcs, dec_wcs, vsp_params, auid, v_mag = None, None, None, None, None, None, None, None
+        init_path, wcs_file, wcs_header, ra_wcs, dec_wcs, vsp_params, auid = None, None, None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
         demosaic_fmt = None
         demosaic_out = None
@@ -1989,36 +2001,34 @@ def main():
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'])
             img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
             plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
-            tar_radec, comp_radec = None, []
+            ra_dec_tar, ra_dec_wcs = None, []
             chart_id, vsp_comp_stars, vsp_list = None, None, []
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
                 wcs_header = fits.getheader(filename=wcs_file)
-                ra_wcs, dec_wcs = get_radec(wcs_header)
+                ra_wcs, dec_wcs = get_ra_dec(wcs_header)
 
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                           pDict['ra'], pDict['dec'], ra_wcs, dec_wcs)
-                tar_radec = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
+                ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                auid = vsx_auid(tar_radec[0], tar_radec[1])
+                auid = vsx_auid(ra_dec_tar[0], ra_dec_tar[1])
 
-                for compn, comp in enumerate(exotic_infoDict['comp_stars'][:]):
-                    ra = ra_wcs[int(comp[1])][int(comp[0])]
-                    dec = dec_wcs[int(comp[1])][int(comp[0])]
-                    comp_radec.append((ra, dec))
-
-                    log_info(f"\nChecking for variability in Comparison Star #{compn+1}:"
-                             f"\n\tPixel X: {comp[0]} Pixel Y: {comp[1]}")
-                    if variableStarCheck(ra_wcs[int(comp[1])][int(comp[0])], dec_wcs[int(comp[1])][int(comp[0])]):
-                        exotic_infoDict['comp_stars'].remove(comp)
+                check_for_variable_stars(ra_wcs, dec_wcs, ra_dec_wcs, exotic_infoDict['comp_stars'])
 
                 if exotic_infoDict['aavso_comp'] == 'y':
                     vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
                                                          exotic_infoDict['filter'], img_scale,
                                                          exotic_infoDict['comp_stars'])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
+
+                while not exotic_infoDict['comp_stars']:
+                    log_info("\nThere are no comparison stars left as all of them were indicated as variable stars."
+                             "\nPlease reenter new comparison star coordinates.")
+                    exotic_infoDict['comp_stars'] = comparison_star_coords(exotic_infoDict['comp_stars'], False)
+                    check_for_variable_stars(ra_wcs, dec_wcs, ra_dec_wcs, exotic_infoDict['comp_stars'])
 
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
 
@@ -2087,7 +2097,7 @@ def main():
                     if i == 0:
                         tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
                     else:
-                        pix_coords = wcs_hdr.world_to_pixel_values(tar_radec[0], tar_radec[1])
+                        pix_coords = wcs_hdr.world_to_pixel_values(ra_dec_tar[0], ra_dec_tar[1])
                         tx, ty = pix_coords[0].take(0), pix_coords[1].take(0)
 
                     psf_data['target'][i] = fit_centroid(imageData, [tx, ty], 0)
@@ -2101,7 +2111,7 @@ def main():
                     for j in range(len(exotic_infoDict['comp_stars'])):
                         ckey = f"comp{j + 1}"
 
-                        pix_coords = wcs_hdr.world_to_pixel_values(comp_radec[j][0], comp_radec[j][1])
+                        pix_coords = wcs_hdr.world_to_pixel_values(ra_dec_wcs[j][0], ra_dec_wcs[j][1])
                         cx, cy = pix_coords[0].take(0), pix_coords[1].take(0)
                         psf_data[ckey][i] = fit_centroid(imageData, [cx, cy], j+1)
 

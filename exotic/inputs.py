@@ -508,8 +508,8 @@ def comparison_star_coords(comp_stars, rt_bool):
         comp_stars = [star for star in comp_stars if star != []]
     elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
         comp_stars = re.findall(r"[-+]?(?:\d*\.*\d+)", comp_stars)
-        comp_stars = list(map(lambda coord: int(float(coord)), comp_stars))
-        comp_stars = [comp_stars[i:i+1] for i in range(0, len(comp_stars), 2)]
+        comp_stars = list(map(lambda comp_star: int(float(comp_star)), comp_stars))
+        comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
     else:
         comp_stars = []
 

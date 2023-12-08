@@ -373,7 +373,7 @@ def latitude(lat, hdr=None):
         if lat[0] == '+' or lat[0] == '-':
             # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                lat = float(lat.replace(' ', ''))
+                lat = float(lat.strip())
             except ValueError:
                 lat = float(process_lat_long(lat, 'latitude'))
 
@@ -403,7 +403,7 @@ def longitude(long, hdr=None):
         if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                long = float(long.replace(' ', ''))
+                long = float(long.strip())
             except ValueError:
                 long = float(process_lat_long(long, 'longitude'))
 

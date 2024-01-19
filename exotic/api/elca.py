@@ -295,6 +295,8 @@ class lc_fitter(object):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
             model *= np.exp(self.prior['a2'] * self.airmass)
+            # linear model
+            #model *= self.prior['a2'] * self.time
             detrend = self.data / model  # used to estimate a1
             model *= np.median(detrend)
             return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
@@ -1058,8 +1060,8 @@ if __name__ == "__main__":
         'ecc': 0.5,  # Eccentricity
         'omega': 120,  # Arg of periastron
         'tmid': 0.75,  # Time of mid transit [day],
-        'a1': 50,  # Airmass coefficients
-        'a2': 0.,  # trend = a1 * np.exp(a2 * airmass)
+        'a1': 0,  # Airmass coefficients
+        'a2': 0.,  # trend = a1 * np.exp(a2 * airmass) or a1 + a2 * airmass
 
         'teff': 5000,
         'tefferr': 50,
@@ -1082,8 +1084,8 @@ if __name__ == "__main__":
     # simulate extinction from airmass
     stime = time - time[0]
     alt = 90 * np.cos(4 * stime - np.pi / 6)
-    # airmass = 1./np.cos(np.deg2rad(90-alt))
-    airmass = np.zeros(time.shape[0])
+    airmass = 1./np.cos(np.deg2rad(90-alt))
+    #airmass = np.zeros(time.shape[0])
 
     # GENERATE NOISY DATA
     data = transit(time, prior) * prior['a1'] * np.exp(prior['a2'] * airmass)
@@ -1094,8 +1096,8 @@ if __name__ == "__main__":
     mybounds = {
         'rprs': [0, 0.1],
         'tmid': [prior['tmid'] - 0.01, prior['tmid'] + 0.01],
-        'ars': [13, 15],
-        # 'a2': [0, 0.3] # uncomment if you want to fit for airmass
+        'ars': [13, 15]
+        #'a2': [-0.1,0.1] # uncomment if you want to fit for airmass
         # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
         # and is solved for during the fit
     }

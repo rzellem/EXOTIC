@@ -26,7 +26,6 @@ if __name__ == "__main__":
         'tmid':2459556.6942,
         'a1':1, # transit airmass - not used
         'a2':0,
-        'fpfs':0.5, # F_p/F_s - for eclipse depth
         #'mu':((mplanet*const.M_jup) / (mplanet*const.M_jup + mstar*const.M_sun)).value,
         'rstar':1.066, # R_sun
         'mstar':1.05,  # M_Sun
@@ -100,3 +99,15 @@ if __name__ == "__main__":
     # plt.tight_layout()
     # plt.savefig('RV_timeseries_acceleration.png')
     # plt.show()
+
+    # # create some time projections
+    # from astropy.time import Time
+    # from exotic.api.rv_fitter import rv_model
+
+    # time1 = Time("2024-01-19").jd
+    # time2 = Time("2024-01-23").jd
+    # times = np.linspace(time1,time2, 1000)
+    # rv_planet = rv_model(times, myfit.data[0]['priors'])
+
+    # # save data numpy txt
+    # np.savetxt("hd80606_rv.txt", np.array([times, rv_planet]).T, fmt='%.7f')

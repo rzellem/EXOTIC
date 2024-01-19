@@ -53,6 +53,7 @@ from astropy import units as u
 from scipy.interpolate import interp1d
 from astropy.timeseries import LombScargle
 from scipy.signal import find_peaks
+from scipy.ndimage import label
 
 mearth = u.M_earth.to(u.kg)
 msun = u.M_sun.to(u.kg)
@@ -443,6 +444,18 @@ def estimate_prior( amplitude, periodicity, amp_lim=2, per_lim=4, file_name = os
         mask = (amplitude_grid > amplitude-amp_lim) & (amplitude_grid < amplitude+amp_lim) & \
                 (((periodicity1_grid > periodicity-per_lim) & (periodicity1_grid < periodicity+per_lim)) | \
                  ((periodicity2_grid > periodicity-per_lim) & (periodicity2_grid < periodicity+per_lim)))
+        
+        # loop over groups in mask and quantify modes
+        labels, num = label(mask)
+        mass_modes = np.zeros((num,2))
+        period_modes = np.zeros((num,2))
+        for i in range(1,num+1):
+            # find indices of mask
+            idx = np.where(labels == i)
+            # find mode of mass and period
+            mass_modes[i-1] = [np.min(mg[idx]), np.max(mg[idx])]
+            period_modes[i-1] = [np.min(pg[idx]), np.max(pg[idx])]
+    
         # plot mask
         im = ax[1,0].imshow(mask, origin='lower', extent=[mass_grid[0], mass_grid[-1],period_grid[0], period_grid[-1]], vmin=0,vmax=1, aspect='auto', cmap='binary_r', interpolation='none')
         ax[1,0].set_ylabel('Period Ratio')
@@ -475,7 +488,7 @@ def estimate_prior( amplitude, periodicity, amp_lim=2, per_lim=4, file_name = os
         ax[2,1].axes.yaxis.set_ticklabels([])
 
     # m_earth, days, m/s
-    return masses, periods, rvs, fig, ax
+    return mass_modes, period_modes, rvs, fig, ax
 
 def interp_distribution(values, nbins=50):
     value_grid = np.linspace(np.min(values), np.max(values), nbins)
@@ -509,8 +522,6 @@ class nbody_fitter():
         boundarray = []
         for i,planet in enumerate(self.bounds):
           for bound in planet:
-            if '_logl' in bound or '_fn' in bound:
-                continue
             freekeys.append(f"{i}_{bound}")
             boundarray.append(planet[bound])
 
@@ -541,18 +552,12 @@ class nbody_fitter():
                 # this dict goes to REBOUND and needs specific keys
                 self.prior[idx][key] = par
 
-            # prior likelihood function for P, m of outer planet
-            likelihood_m = self.bounds[2]['m_logl'](self.prior[2]['m'])
-            likelihood_P = self.bounds[2]['P_logl'](self.prior[2]['P'])
-            if likelihood_m <= 0 or likelihood_P <= 0:
-                return -1e6
-
             # take difference between data and simulation
             # run N-body simulation
             sim_data = generate(self.prior, sim_time, int(sim_time*24)) # uses linspace behind the scenes
 
-            # json structure with analytics of interest from the simulation
-            # ttv_data = analyze(sim_data) # slow
+            # show result
+            # ttv_data = analyze(sim_data); report(ttv_data)
 
             sim_shift = 0
             # loop over planets, check for data
@@ -560,37 +565,28 @@ class nbody_fitter():
                 if self.data[i]:
                     # compute transit times from N-body simulation
                     Tc_sim = transit_times( sim_data['pdata'][i-1]['x'], sim_data['star']['x'], sim_data['times'] )
-
-                    # derive an offset in time from the first planet
-                    if i-1==0:
-                        sim_shift = Tc_sim.min()
-
-                    # shift the first mid-transit in simulation to observation
-                    Tc_sim -= sim_shift # first orbit has tmid at 0
-
-                    # scale Tc_sim to data
-                    try:
-                        residual = self.data[i]['Tc'] - Tc_sim[self.orbit]
-                    except:
-                        #import pdb; pdb.set_trace
-                        #ttv,m,b = TTV(np.arange(Tc_sim.shape[0]), Tc_sim)
-                        #ttv1,m1,b1 = TTV(self.orbit, self.data[i]['Tc'])
-                        # could be unstable orbit or not enough data
-                        # switch to average error and clip by max epoch?
-                        # print(self.prior)
+    
+                    if len(Tc_sim) < self.orbit.max():
+                        # not enough transits to compare
                         chi2 += -1e6
+                        print(f"not enough transits for planet {i}")
                         continue
 
-                    import pdb; pdb.set_trace
-                    Tc_sim += residual.mean() # why?
+                    # estimate perturbation
+                    ttv,m,b = TTV(np.arange(Tc_sim.shape[0]), Tc_sim)
+
+                    # create new ephemeris model
+                    model = self.orbit*planet['P'] + ttv[self.orbit]
+
+                    # compare to data
+                    residual = self.data[i]['Tc'] - model
+                    residual -= residual.mean() # estimate for T0
 
                     # take difference between data and simulation
                     try:
-                        chi2 += -0.5*np.sum(((self.data[i]['Tc'] - Tc_sim[self.orbit])/self.data[i]['Tc_err'])**2)
+                        chi2 += -0.5*np.sum((residual/self.data[i]['Tc_err'])**2)
                     except:
                         chi2 += -1e6
-                        # print(self.prior)
-                        # usually unstable orbit
 
             return chi2
 
@@ -609,6 +605,8 @@ viz_callback=self.verbose)
         self.parameters = copy.deepcopy(self.prior)
 
         # TODO finish saving final results + posteriors
+        print("finished sampling")
+        import pdb; pdb.set_trace()
 
         #for i, key in enumerate(freekeys):
         #    self.parameters[key] = self.results['maximum_likelihood']['point'][i]
@@ -692,64 +690,64 @@ if __name__ == '__main__':
     per = lf.best_periods[0] # 1st order solution
 
     # estimate prior using periods from linear fit periodogram
-    masses, per_ratio, rvs, fig, ax = estimate_prior(amp, per)
-    masses *= mearth/msun
-    periods = per_ratio*lf.parameters['P']
-    prior_fn_mass = interp_distribution(masses)
-    prior_fn_per = interp_distribution(periods)
+    mass_modes, period_modes, rvs, fig, ax = estimate_prior(amp, per)
+    mass_modes *= mearth/msun
+    period_modes *= lf.parameters['P']
     plt.tight_layout()
     plt.savefig('ttv_prior.png')
     plt.show()
     plt.close()
 
-    # Parameters for N-body Retrieval
-    nbody_prior = [
-        # star
-        {'m':0.95},
+    for i in range(mass_modes.shape[0]):
+        print(f"Mass: {mass_modes[i,0]*msun/mearth:.2f} - {mass_modes[i,1]*msun/mearth:.2f} Mearth")
+        print(f"Period: {period_modes[i,0]:.2f} - {period_modes[i,1]:.2f} days")
 
-        # inner planet
-        {'m':1.169*mjup/msun,
-        'P':lf.parameters['P'],
-        'inc':3.14159/2,
-        'e':0,
-        'omega':0},
+        # Parameters for N-body Retrieval
+        nbody_prior = [
+            # star
+            {'m':0.95},
 
-        # outer planet
-        {'m':masses.mean(),
-        'P':periods.mean(),
-        'inc':3.14159/2,
-        'e':0,
-        'omega':0,},
-    ]
+            # inner planet
+            {'m':1.169*mjup/msun,
+            'P':lf.parameters['P'],
+            'inc':3.14159/2,
+            'e':0,
+            'omega':0},
 
-    # specify data to fit
-    data = [
-        {},                            # data for star (e.g. RV)
-        {'Tc':tmids, 'Tc_err':err},    # data for inner planet (e.g. Mid-transit times)
-        {}                             # data for outer planet (e.g. Mid-transit times)
-    ]
+            # outer planet
+            {'m':mass_modes[i].mean(),
+            'P':period_modes[i].mean(),
+            'inc':3.14159/2,
+            'e':0,
+            'omega':0,},
+        ]
 
-    # TODO break P,m modes into individual runs
+        # specify data to fit
+        data = [
+            {},                            # data for star (e.g. RV)
+            {'Tc':tmids, 'Tc_err':err},    # data for inner planet (e.g. Mid-transit times)
+            {}                             # data for outer planet (e.g. Mid-transit times)
+        ]
 
-    # set up where to look for a solution
-    nbody_bounds = [
-        {}, # no bounds on stellar parameters
+        # TODO break P,m modes into individual runs
 
-        {   # bounds for inner planet
-            'P': [nbody_prior[1]['P']-0.025, nbody_prior[1]['P']+0.025],  # based on solution from linear fit\
-            # 'T0': [None, None]  # mid-transit is automatically adjusted, no need to include in bounds
-        },
-        {  # bounds for outer planet
-            'P':[periods.min(), periods.max()], # period [day]
-            'P_logl': prior_fn_per,             # prior likelihood function
-            'm':[masses.min(), masses.max()],   # mass [msun
-            'm_logl': prior_fn_mass,            # prior likelihood function
-            'omega': [-np.pi, np.pi]            # argument of periastron [rad]
-        }
-    ]
+        # set up where to look for a solution
+        nbody_bounds = [
+            {}, # no bounds on stellar parameters
 
-    # run the fitter
-    nfit = nbody_fitter(data, nbody_prior, nbody_bounds)
+            {   # bounds for inner planet
+                'P': [nbody_prior[1]['P']-0.025, nbody_prior[1]['P']+0.025],  # based on solution from linear fit\
+                # 'T0': [None, None]  # mid-transit is automatically adjusted, no need to include in bounds
+            },
+            {  # bounds for outer planet
+                'P':period_modes[i],      # period [day]
+                'm':mass_modes[i],        # mass [msun
+                'omega': [-np.pi, np.pi]  # argument of periastron [rad]
+            }
+        ]
 
-    # print(nfit.parameters)
-    # print(nfit.errors)
+        # run the fitter
+        nfit = nbody_fitter(data, nbody_prior, nbody_bounds)
+
+        # print(nfit.parameters)
+        # print(nfit.errors)

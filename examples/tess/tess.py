@@ -426,7 +426,7 @@ if __name__ == "__main__":
         # remove stellar variability
         pdur = 2*np.arctan(1/prior['pl_ratdor']) / (2*np.pi)
         dt = np.median(np.diff(np.sort(time)))
-        wl = 2# float(prior['pl_orbper'])*0.75
+        wl = float(prior['pl_orbper'])*0.75
         #flc, tlc = flatten(time, flux, window_length=wl, return_trend=True, method='biweight', robust=True)
         dflux = np.copy(flux)
         dtrend = np.ones(len(time))
@@ -443,7 +443,15 @@ if __name__ == "__main__":
             flc, tlc = flatten(time[dmask], flux[dmask], window_length=wl, return_trend=True, method='biweight')
             dflux[dmask] = flc
             dtrend[dmask] = tlc
-        
+
+        # remove outliers again
+        # clip anything +- 0.05 around 1
+        mask = (dflux < 1.05) & (dflux > 0.95)
+        dflux = dflux[mask]
+        dtrend = dtrend[mask]
+        time = time[mask]
+        flux = flux[mask]
+
         # add to master list
         sv['time'].append(time)
         sv['flux'].append(dflux)
@@ -458,12 +466,12 @@ if __name__ == "__main__":
         ax[0].set_title(f"{args.target} - Sector {sector}")
         ax[0].set_ylabel("PDC Flux")
         ax[0].set_xlabel("Time [TBJD]")
-        ax[0].set_ylim([np.percentile(flux, 0.1), np.percentile(flux,99.9)])
+        ax[0].set_ylim([np.nanpercentile(flux, 0.1), np.nanpercentile(flux,99.9)])
         # plot detrended timeseries on bottom
         ax[1].plot(time, flux/dtrend,'k.')
         ax[1].set_ylabel("Detrended PDC Flux")
         ax[1].set_xlabel("Time [TBJD]")
-        ax[1].set_ylim([np.percentile(flux/dtrend, 0.1), np.percentile(flux/dtrend,99.9)])
+        #ax[1].set_ylim([np.nanpercentile(flux/dtrend, 0.1), np.nanpercentile(flux/dtrend,99.9)])
         plt.tight_layout()
         #if not os.path.exists(os.path.join(planetdir, "lightcurves")):
             #os.makedirs(os.path.join(planetdir, "lightcurves"))
@@ -486,8 +494,8 @@ if __name__ == "__main__":
     trend = trend[~nanmask]
 
     # create dataframe for entire light curve
-    df = pd.DataFrame({'time':time, 'flux':flux*trend, 'flux_err':flux_err*trend, 'sector':alls})
-    df.to_csv( os.path.join(planetdir, planetname+"_lightcurve.csv"), index=False)
+    #df = pd.DataFrame({'time':time, 'flux':flux, 'flux_err':flux_err, 'trend':trend, 'sector':alls})
+    #df.to_csv( os.path.join(planetdir, planetname+"_lightcurve.csv"), index=False)
 
     # fit transit for each epoch
     period = prior['pl_orbper']
@@ -685,17 +693,19 @@ if __name__ == "__main__":
         # mask data in phase
         tmask = (tphase > e - (2*pdur)) & (tphase < e + (2*pdur) )
 
-        if tmask.sum() == 0:
+        if tmask.sum() <= 10:
+            print(f"Skipping transit at phase: {e} b.c. not enough data")
+            time[tmask] = np.nan
+            flux[tmask] = np.nan
             continue
-
-        # incomplete transit
-        #if (time[tmask].max() - time[tmask].min()) < (0.5*(4*pdur)):
-        #    continue
 
         # update priors for fitting
         tpars['tmid'] = tmid + e*period
         tpars['per'] = period
         tpars['ars'] = ars
+
+        # print mid-transit times
+        print(f"Transit at phase: {e} - {tpars['tmid']}")
 
         # bounds for individual fits
         mybounds = {
@@ -706,7 +716,11 @@ if __name__ == "__main__":
         }
 
         # skip light curves with large gaps bigger than 35 minutes
-        if np.sum(np.diff(np.sort(time[tmask]))*24*60 > 35):
+        if np.sum(np.diff(np.sort(time[tmask]))*24*60 > 45):
+            print(f"Skipping transit at phase: {e} b.c. large gap")
+            # set tmask mask to nan?
+            time[tmask] = np.nan
+            flux[tmask] = np.nan
             continue
 
         # fit data
@@ -715,6 +729,9 @@ if __name__ == "__main__":
             myfit = lc_fitter(time[tmask]+2457000.0, flux[tmask], phot_std/flux[tmask], airmass, tpars, mybounds)
         except:
             print(f"Failed to fit transit at phase: {e}")
+            # set tmask mask to nan?
+            time[tmask] = np.nan
+            flux[tmask] = np.nan
             continue
 
         for k in myfit.bounds.keys():
@@ -782,3 +799,22 @@ if __name__ == "__main__":
 
     # save sv pickle
     pickle.dump(sv, open(os.path.join(planetdir, planetname+"_data.pkl"),"wb"))
+
+    # time = sv['timeseries']['time']
+    # res = sv['timeseries']['residuals']
+    # error = sv['timeseries']['flux_err']
+
+    # badmask = (time<1792) | ((time>1800) & (time<1806)) | (time>2909.5)
+    # time = time[~badmask]
+    # res = res[~badmask]
+    # error = error[~badmask]
+
+    # subdata = {
+    #     'time':time + 2457000.0,
+    #     'residuals':res,
+    #     'flux_err':error
+    # }
+
+    # # save as csv file
+    # df = pd.DataFrame(subdata)
+    # df.to_csv( os.path.join(planetdir, planetname+"_residuals.csv"), index=False)

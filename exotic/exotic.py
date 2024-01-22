@@ -2419,8 +2419,8 @@ def main():
                            centroid_positions['x_ref'], centroid_positions['y_ref'],
                            goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
-            plot_flux(goodTimes, flux_values['flux_tar'], flux_values['flux_ref'],
-                      flux_values['flux_unc_tar'], flux_values['flux_unc_ref'],
+            plot_flux(goodTimes, flux_values['flux_tar'], flux_values['flux_unc_tar'],
+                      flux_values['flux_ref'], flux_values['flux_unc_ref'],
                       goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
                       exotic_infoDict['date'])
 

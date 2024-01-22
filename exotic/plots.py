@@ -14,33 +14,33 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     fig, axs = plt.subplots(3, 2, figsize=(12, 10))
 
     axs[0, 0].set_title(f"{target_name} X Centroid Position {date}", fontsize=14)
-    axs[0, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[0, 0].set_xlabel(f"Time (BJD-{np.nanmin(times)})", fontsize=12)
     axs[0, 0].set_ylabel("X Pixel Position", fontsize=12)
     axs[0, 0].plot(times - np.nanmin(times), x_targ, '-bo')
 
     axs[0, 1].set_title(f"{target_name} Y Centroid Position {date}", fontsize=14)
-    axs[0, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[0, 1].set_xlabel(f"Time (BJD-{np.nanmin(times)})", fontsize=12)
     axs[0, 1].set_ylabel("Y Pixel Position", fontsize=12)
     axs[0, 1].plot(times - np.nanmin(times), y_targ, '-bo')
 
     axs[1, 0].set_title(f"Comp Star X Centroid Position {date}", fontsize=14)
-    axs[1, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[1, 0].set_xlabel(f"Time (BJD-{np.nanmin(times)})", fontsize=12)
     axs[1, 0].set_ylabel("X Pixel Position", fontsize=12)
     axs[1, 0].plot(times - np.nanmin(times), x_ref, '-ro')
 
     axs[1, 1].set_title(f"Comp Star Y Centroid Position {date}", fontsize=14)
-    axs[1, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[1, 1].set_xlabel(f"Time (BJD-{np.nanmin(times)})", fontsize=12)
     axs[1, 1].set_ylabel("Y Pixel Position", fontsize=12)
     axs[1, 1].plot(times - np.nanmin(times), y_ref, '-ro')
 
     axs[2, 0].set_title("Distance between Target and Comparison X position", fontsize=14)
-    axs[2, 0].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[2, 0].set_xlabel(f"Time (BJD-{np.nanmin(times)})", fontsize=12)
     axs[2, 0].set_ylabel("X Pixel Distance", fontsize=12)
     for e in range(len(x_targ)):
         axs[2, 0].plot(times[e] - np.nanmin(times), abs(x_targ[e] - x_ref[e]), 'bo')
 
     axs[2, 1].set_title("Distance between Target and Comparison Y position", fontsize=14)
-    axs[2, 1].set_xlabel(f"Time (JD-{np.nanmin(times)})", fontsize=12)
+    axs[2, 1].set_xlabel(f"Time (BJD-{np.nanmin(times)})", fontsize=12)
     axs[2, 1].set_ylabel("Y Pixel Distance", fontsize=12)
     for e in range(len(y_targ)):
         axs[2, 1].plot(times[e] - np.nanmin(times), abs(y_targ[e] - y_ref[e]), 'bo')

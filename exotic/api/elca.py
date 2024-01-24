@@ -98,6 +98,8 @@ def get_phase(times, per, tmid):
 def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
     a2 = np.random.normal(m_a2, sig_a2, n)
     model = transit * np.exp(np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass)
+    # change to linear model
+    #model = transit * np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass
     detrend = data / model
     return np.mean(np.median(detrend, 0)), np.std(np.median(detrend, 0))
 
@@ -296,7 +298,10 @@ class lc_fitter(object):
             model = transit(self.time, self.prior)
             model *= np.exp(self.prior['a2'] * self.airmass)
             # linear model
-            #model *= self.prior['a2'] * self.time
+            #model *= self.prior['a2'] * (self.time-min(self.time))
+            # check for all zeros
+            #if np.all(model == 0):
+            #    return -1e10
             detrend = self.data / model  # used to estimate a1
             model *= np.median(detrend)
             return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
@@ -1096,8 +1101,8 @@ if __name__ == "__main__":
     mybounds = {
         'rprs': [0, 0.1],
         'tmid': [prior['tmid'] - 0.01, prior['tmid'] + 0.01],
-        'ars': [13, 15]
-        #'a2': [-0.1,0.1] # uncomment if you want to fit for airmass
+        'ars': [13, 15],
+        'a2': [-0.1,0.1] # uncomment if you want to fit for airmass
         # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
         # and is solved for during the fit
     }

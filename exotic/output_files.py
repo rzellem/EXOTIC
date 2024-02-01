@@ -138,15 +138,17 @@ class OutputFiles:
         plate_status_file = self.dir / "temp" / f"PlateStatus_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
         plate_status.writePlateStatus(plate_status_file)
 
-class VSPOutputFiles:
-    def __init__(self, fit, p_dict, i_dict, vsp_params):
+class AIDOutputFiles:
+    def __init__(self, fit, p_dict, i_dict, auid, chart_id, vsp_params):
         self.fit = fit
+        self.auid = auid
+        self.chart_id = chart_id
         self.p_dict = p_dict
         self.i_dict = i_dict
         self.dir = Path(self.i_dict['save'])
         self.vsp_params = vsp_params
 
-    def aavso(self, airmasses):
+    def aavso(self):
         params_file = self.dir / f"AID_AAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
@@ -165,10 +167,9 @@ class VSPOutputFiles:
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:
-                f.write(f"{self.p_dict['sName']},"f"{round(vsp_p['time'], 5)}," f"{round(vsp_p['mag'], 5)}," f"{round(vsp_p['mag_err'], 5)},"
-                        "V,NO,STD," f"{vsp_p['cname']}," f"{round(vsp_p['cmag'], 5)}," "na,na," 
-                        f"{round(median(airmasses[vsp_p['idx'][0]:vsp_p['idx'][1]]), 7)}," "na," 
-                        f"{vsp_p['chart_id']}," "na\n")
+                f.write(f"{self.auid},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
+                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na," 
+                        f"{round(vsp_p['airmass'], 7)},na,{self.chart_id},na\n")
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

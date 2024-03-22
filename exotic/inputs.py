@@ -493,8 +493,8 @@ def target_star_coords(coords, planet):
     if isinstance(coords, list) and len(coords) == 2:
         pass
     elif isinstance(coords, str) and any(str.isdigit(x) for x in coords):
-        coords = re.findall(r"[-+]?(?:\d*\.*\d+)", coords)
-        coords = list(map(lambda coord: int(float(coord)), coords))
+        coords = re.findall(r"[-+]?(?:\d*.?\d+)", coords)
+        coords = [int(float(coord)) for coord in coords]
     else:
         coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=int),
                   user_input(f"\nPlease enter {planet}'s Y Pixel Coordinate: ", type_=int)]
@@ -507,8 +507,8 @@ def comparison_star_coords(comp_stars, rt_bool):
             all(isinstance(star, list) for star in comp_stars):
         comp_stars = [star for star in comp_stars if star != []]
     elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
-        comp_stars = re.findall(r"[-+]?(?:\d*\.*\d+)", comp_stars)
-        comp_stars = list(map(lambda comp_star: int(float(comp_star)), comp_stars))
+        comp_stars = re.findall(r"[-+]?(?:\d*.?\d+)", comp_stars)
+        comp_stars = [int(float(comp_star)) for comp_star in comp_stars]
         comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
     else:
         comp_stars = []

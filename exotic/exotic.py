@@ -910,7 +910,10 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
         image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
     return image_data
 
-def vsp_query(file, axis, obs_filter, img_scale, user_comp_stars, maglimit=14):
+def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None):
+    if user_comp_stars is None:
+        user_comp_stars = []
+
     vsp_comp_stars_info = {}
     vsp_star_count = 0
 
@@ -1572,7 +1575,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax):
     ax.plot(timeList, norm_flux, 'bo')
 
 
-def fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict):
+def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None):
     # remove outliers
     si = np.argsort(times)
     dt = np.mean(np.diff(np.sort(times)))
@@ -2021,7 +2024,7 @@ def main():
                 if exotic_infoDict['aavso_comp'] == 'y':
                     vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
                                                          exotic_infoDict['filter'], img_scale,
-                                                         exotic_infoDict['comp_stars'])
+                                                         user_comp_stars=exotic_infoDict['comp_stars'])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
 
                 while not exotic_infoDict['comp_stars']:
@@ -2231,7 +2234,7 @@ def main():
                 ckey = f"comp{j + 1}"
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit, tFlux1, cFlux1 = fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict)
+                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
 
                 if myfit is not None:
                     for k in myfit.bounds.keys():
@@ -2270,7 +2273,7 @@ def main():
                     temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, jd_times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
+                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict, jd_times)
 
                     if myfit is not None:
                         for k in myfit.bounds.keys():
@@ -2300,7 +2303,7 @@ def main():
                         aper_mask = np.isfinite(aper_data[ckey][:, a, an])
                         cFlux = aper_data[ckey][aper_mask][:, a, an]
 
-                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], jd_times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
+                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict, jd_times[aper_mask])
 
                         if myfit is not None:
                             if j in vsp_num:

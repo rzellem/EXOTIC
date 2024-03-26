@@ -1356,33 +1356,50 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
 def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
     info_comps = {}
 
-    if best_comp is None or (best_comp not in vsp_ind):
-        comp_pos = choose_comp_star_variability(fit_lc_refs, fit_lc_best, info_comps, comp_stars, vsp_comp_stars, save)
-    else:
-        comp_pos = comp_stars[best_comp]
-        info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+    try:
+        if best_comp is None or (best_comp not in vsp_ind):
+            comp_pos = choose_comp_star_variability(fit_lc_refs, fit_lc_best, info_comps, comp_stars, vsp_comp_stars,
+                                                    save)
+        else:
+            comp_pos = comp_stars[best_comp]
+            info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+    except Exception as e:
+        log_info(f"Error selecting or calculating variability for comparison star: {e}", warn=True)
+        return []
 
-    comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
-    vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
+    try:
+        comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
+        vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
+    except StopIteration:
+        log_info("Comparison star or VSP AUID not found.", warn=True)
+        return []
 
-    Mc, Mc_err = comp_star['mag'], comp_star['error']
+    try:
+        Mc, Mc_err = comp_star['mag'], comp_star['error']
 
-    info_comp = info_comps[comp_stars.index(comp_pos)]
-    lc_fit = info_comp['fit_lc']
-    mask_ref = info_comp['mask_ref']
+        info_comp = info_comps[comp_stars.index(comp_pos)]
+        lc_fit = info_comp['fit_lc']
+        mask_ref = info_comp['mask_ref']
 
-    oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[mask_ref])
-    norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref]
-    norm_flux_unc /= np.nanmedian(lc_fit.data[mask_ref])
+        oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[mask_ref])
+        norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref]
+        norm_flux_unc /= np.nanmedian(lc_fit.data[mask_ref])
 
-    model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[mask_ref])
-    flux = lc_fit.data[mask_ref]
-    detrended = flux / model
+        model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[mask_ref])
+        flux = lc_fit.data[mask_ref]
+        detrended = flux / model
 
-    Mt = Mc - (2.5 * np.log10(detrended))
-    Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+        Mt = Mc - (2.5 * np.log10(detrended))
+        Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+    except KeyError as e:
+        log_info(f"Key error in processing stellar variability: {e}", warn=True)
+        return []
+    except Exception as e:
+        log_info(f"Error in processing stellar variability: {e}", warn=True)
+        return []
 
-    vsp_params = [{
+    try:
+        vsp_params = [{
             'time': lc_fit.jd_times[mask_ref][i],
             'airmass': lc_fit.airmass[mask_ref][i],
             'mag': mt,
@@ -1392,7 +1409,10 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
             'pos': comp_pos
         } for i, mt in enumerate(Mt)]
 
-    plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
+        plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
+    except Exception as e:
+        log_info(f"Error in plotting or finalizing stellar variability data: {e}", warn=True)
+        return []
 
     return vsp_params
 

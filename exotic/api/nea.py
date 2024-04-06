@@ -72,6 +72,14 @@ class NASAExoplanetArchive:
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
 
+    # Ira Bell - Just for Testing - May Remove Below 2024-04-05 #
+    def __str__(self):
+        if self.pl_dict is not None:
+            return f"NASAExoplanetArchive object for planet {self.planet}, with data: {self.pl_dict}"
+        else:
+            return f"NASAExoplanetArchive object for planet {self.planet}, no data loaded"
+    # Ira Bell - Just for Testing - May Remove Above 2024-04-05 #
+    
     def planet_info(self, fancy=False):
         # fancy keys matching inits fil
         if fancy:

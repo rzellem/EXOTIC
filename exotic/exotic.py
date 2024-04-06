@@ -1823,6 +1823,13 @@ def main():
         if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+            # Ira Bell - Just for Testing - To Remove Below 2024-04-05 #
+            print(f'Below, we will print nea_obj hopefully populated by planet_info()...')
+            input('Press enter when ready')
+            print(f'\n{nea_obj}\n')
+            print(f'\nDone.')
+            input('Press enter when ready.')
+            # Ira Bell - Just for Testing - To Remove Above 2024-04-05 #
         else:
             pDict = userpDict
             CandidatePlanetBool = False

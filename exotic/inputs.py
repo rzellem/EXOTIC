@@ -323,9 +323,11 @@ def demosaic_settings(demosaic_fmt, demosaic_out, init):
 
 def planet_name(planet):
     if not planet:
-        planet = user_input("\nPlease enter Planet's name: ", type_=str)
+        print(f'\nExamples of a Planet Name and TIC ID:\n')
+        print(f"WASP-113 b  <-- Planet's Name")
+        print(f'231663901   <-- TIC ID')
+        planet = user_input("\nPlease enter the Planet's name or TIC : ", type_=str)
     return planet
-
 
 def obs_code(code):
     if code is None:

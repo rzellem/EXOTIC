@@ -44,7 +44,8 @@ import copy
 from itertools import cycle
 import matplotlib.pyplot as plt
 import numpy as np
-from pylightcurve.models.exoplanet_lc import transit as pytransit
+from pylightcurve.models.exoplanet_lc import transit as pytransit 
+from pylightcurve.models.exoplanet_lc import eclipse_mid_time
 from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
@@ -64,6 +65,59 @@ except ImportError:
 
 def weightedflux(flux, gw, nearest):
     return np.sum(flux[nearest] * gw, axis=-1)
+
+def phase_curve(times, values):
+    """
+    Computes the phase curve model for an exoplanet transit and eclipse event.
+
+    Args:
+        times (np.ndarray): Array of time values for the observations.
+        values (dict): Dictionary containing transit parameters.
+
+    Returns:
+        np.ndarray: The combined phase curve model with transit and eclipse components.
+
+    The required keys in the `values` dictionary are:
+        - 'u0', 'u1', 'u2', 'u3' (float): Limb darkening coefficients.
+        - 'rprs' (float): Planet-to-star radius ratio.
+        - 'per' (float): Orbital period of the planet.
+        - 'ars' (float): Semi-major axis of the planet's orbit.
+        - 'ecc' (float): Eccentricity of the planet's orbit.
+        - 'inc' (float): Inclination of the planet's orbit.
+        - 'omega' (float): Argument of periastron (in degrees).
+        - 'tmid' (float): Mid-transit time.
+        - 'A' (float): Amplitude of the sine component in the phase curve model.
+        - 'B' (float): Amplitude of the cosine component in the phase curve model.
+        - 'fpfs' (float): Ratio of the planet's flux to the star's flux.
+    """
+
+    # Compute transit model
+    transit_model_values = pytransit([values['u0'], values['u1'], values['u2'], values['u3']], values['rprs'], values['per'], values['ars'], values['ecc'], values['inc'], values['omega'], values['tmid'], times, method='claret', precision=3)
+
+    # Compute eclipse mid-time
+    tme = eclipse_mid_time(values['per'], values['ars'], values['ecc'], values['inc'], values['omega'], values['tmid'])
+
+    # Compute eclipse depth
+    eclipse_depth = (values['rprs'] ** 2) * values['fpfs']
+
+    # Compute eclipse model
+    eclipse_model_values = pytransit([0/values['u0'], 0/values['u1'], 0/values['u2'], 0/values['u3']], eclipse_depth ** 0.5, values['per'], values['ars'], values['ecc'], values['inc'], values['omega'] + 180, tme, times, method='claret', precision=3)
+
+    # Compute phase values
+    phases = np.mod((values['tmid'] - times) / values['per'], 1.0)
+    phase_tme = np.mod((values['tmid'] - tme) / values['per'], 1.0)
+
+    # Mask the in-eclipse data
+    eclipse_mask = eclipse_model_values < 1
+    phases[eclipse_mask] = phase_tme # Set the phases to 0.5 during eclipse
+
+    # Compute phase curve model
+    phase_curve_model = (values['A'] * np.cos(2 * np.pi * (times - tme) / values['per']) + values['B'] * np.sin(2 * np.pi * (times - tme) / values['per']))
+
+    # Combine transit phase curve and eclipse model and offset by eclipse depth
+    total_model = phase_curve_model + transit_model_values + eclipse_model_values - (1 - eclipse_depth + values['A'])
+
+    return total_model
 
 
 def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):

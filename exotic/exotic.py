@@ -910,7 +910,10 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
         image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
     return image_data
 
-def vsp_query(file, axis, obs_filter, img_scale, user_comp_stars, maglimit=14):
+def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None):
+    if user_comp_stars is None:
+        user_comp_stars = []
+
     vsp_comp_stars_info = {}
     vsp_star_count = 0
 
@@ -1353,33 +1356,50 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
 def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
     info_comps = {}
 
-    if best_comp is None or (best_comp not in vsp_ind):
-        comp_pos = choose_comp_star_variability(fit_lc_refs, fit_lc_best, info_comps, comp_stars, vsp_comp_stars, save)
-    else:
-        comp_pos = comp_stars[best_comp]
-        info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+    try:
+        if best_comp is None or (best_comp not in vsp_ind):
+            comp_pos = choose_comp_star_variability(fit_lc_refs, fit_lc_best, info_comps, comp_stars, vsp_comp_stars,
+                                                    save)
+        else:
+            comp_pos = comp_stars[best_comp]
+            info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+    except Exception as e:
+        log_info(f"Error selecting or calculating variability for comparison star: {e}", warn=True)
+        return []
 
-    comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
-    vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
+    try:
+        comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
+        vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
+    except StopIteration:
+        log_info("Comparison star or VSP AUID not found.", warn=True)
+        return []
 
-    Mc, Mc_err = comp_star['mag'], comp_star['error']
+    try:
+        Mc, Mc_err = comp_star['mag'], comp_star['error']
 
-    info_comp = info_comps[comp_stars.index(comp_pos)]
-    lc_fit = info_comp['fit_lc']
-    mask_ref = info_comp['mask_ref']
+        info_comp = info_comps[comp_stars.index(comp_pos)]
+        lc_fit = info_comp['fit_lc']
+        mask_ref = info_comp['mask_ref']
 
-    oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[mask_ref])
-    norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref]
-    norm_flux_unc /= np.nanmedian(lc_fit.data[mask_ref])
+        oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[mask_ref])
+        norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref]
+        norm_flux_unc /= np.nanmedian(lc_fit.data[mask_ref])
 
-    model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[mask_ref])
-    flux = lc_fit.data[mask_ref]
-    detrended = flux / model
+        model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[mask_ref])
+        flux = lc_fit.data[mask_ref]
+        detrended = flux / model
 
-    Mt = Mc - (2.5 * np.log10(detrended))
-    Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+        Mt = Mc - (2.5 * np.log10(detrended))
+        Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+    except KeyError as e:
+        log_info(f"Key error in processing stellar variability: {e}", warn=True)
+        return []
+    except Exception as e:
+        log_info(f"Error in processing stellar variability: {e}", warn=True)
+        return []
 
-    vsp_params = [{
+    try:
+        vsp_params = [{
             'time': lc_fit.jd_times[mask_ref][i],
             'airmass': lc_fit.airmass[mask_ref][i],
             'mag': mt,
@@ -1389,7 +1409,10 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
             'pos': comp_pos
         } for i, mt in enumerate(Mt)]
 
-    plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
+        plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
+    except Exception as e:
+        log_info(f"Error in plotting or finalizing stellar variability data: {e}", warn=True)
+        return []
 
     return vsp_params
 
@@ -1572,7 +1595,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax):
     ax.plot(timeList, norm_flux, 'bo')
 
 
-def fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict):
+def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None):
     # remove outliers
     si = np.argsort(times)
     dt = np.mean(np.diff(np.sort(times)))
@@ -2021,7 +2044,7 @@ def main():
                 if exotic_infoDict['aavso_comp'] == 'y':
                     vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
                                                          exotic_infoDict['filter'], img_scale,
-                                                         exotic_infoDict['comp_stars'])
+                                                         user_comp_stars=exotic_infoDict['comp_stars'])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
 
                 while not exotic_infoDict['comp_stars']:
@@ -2231,7 +2254,7 @@ def main():
                 ckey = f"comp{j + 1}"
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit, tFlux1, cFlux1 = fit_lightcurve(times, jd_times, tFlux, cFlux, airmass, ld, pDict)
+                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
 
                 if myfit is not None:
                     for k in myfit.bounds.keys():
@@ -2270,7 +2293,7 @@ def main():
                     temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, jd_times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict)
+                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict, jd_times)
 
                     if myfit is not None:
                         for k in myfit.bounds.keys():
@@ -2300,7 +2323,7 @@ def main():
                         aper_mask = np.isfinite(aper_data[ckey][:, a, an])
                         cFlux = aper_data[ckey][aper_mask][:, a, an]
 
-                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], jd_times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict)
+                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict, jd_times[aper_mask])
 
                         if myfit is not None:
                             if j in vsp_num:

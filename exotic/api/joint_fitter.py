@@ -674,8 +674,8 @@ class joint_fitter(glc_fitter):
         si = np.argsort(nphase)
         label = rf"$K$ = {self.parameters['K']:.2f} $\pm$ {self.errors['K']:.2f} m/s" + "\n" \
                 rf"$P$ = {self.parameters['per']:.5f} $\pm$ {self.errors['per']:.1e} day" + "\n" \
-                rf"$e$ = {self.parameters['ecc']:.5f} $\pm$ {self.errors['ecc']:.1e}" + "\n" \
-                rf"$\omega$ = {self.parameters['omega']:.3f} $\pm$ {self.errors['omega']:.3f} deg"   
+                rf"$e$ = {self.parameters.get('ecc',self.rv_data[0]['priors']['ecc']):.5f} $\pm$ {self.errors.get('ecc',0):.1e}" + "\n" \
+                rf"$\omega$ = {self.parameters.get('omega',self.rv_data[0]['priors']['ecc']):.3f} $\pm$ {self.errors.get('omega',0):.3f} deg"   
         ax[1].plot(nphase[si], self.rv_model[si], 'k-', label=label, alpha=0.75, zorder =2)
         ax[0].plot(self.rv_time-int(self.rv_time.min()), self.rv_model, 'k-', label='', alpha=0.75)
         ax[0].set_xlabel(f'BJD-{int(self.rv_time.min())}')

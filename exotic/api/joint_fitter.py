@@ -688,7 +688,7 @@ class joint_fitter(glc_fitter):
         ax[2].grid(ls='--')
         ax[0].legend(loc='upper right')
         ax[1].legend()
-        ax[2].legend(loc='upper left')
+        ax[2].legend()
         plt.tight_layout()
 
         return fig, ax

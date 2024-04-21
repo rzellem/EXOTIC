@@ -50,7 +50,7 @@ def main():
     try:
         data = exofop_instance.query_exofop()
         print("Raw JSON Data Retrieved:")
-        print(data)
+        print(json.dumps(data, indent=4)) 
 
         # Save raw data to a JSON file
         with open('tic-all.json', 'w') as file:
@@ -58,7 +58,7 @@ def main():
         
         formatted_data = exofop_instance.get_formatted_data()
         print("\nFormatted Data:")
-        print(formatted_data)
+        print(json.dumps(formatted_data, indent=4))
 
         # Save formatted data to a JSON file
         with open('tic-formatted.json', 'w') as file:
@@ -69,3 +69,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

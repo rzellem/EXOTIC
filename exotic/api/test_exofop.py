@@ -36,8 +36,8 @@
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
 
-
 from exofop import ExoFOP
+import json
 
 def main():
     # Prompt user to enter the TIC ID
@@ -51,10 +51,19 @@ def main():
         data = exofop_instance.query_exofop()
         print("Raw JSON Data Retrieved:")
         print(data)
+
+        # Save raw data to a JSON file
+        with open('tic-all.json', 'w') as file:
+            json.dump(data, file, indent=4)
         
         formatted_data = exofop_instance.get_formatted_data()
         print("\nFormatted Data:")
         print(formatted_data)
+
+        # Save formatted data to a JSON file
+        with open('tic-formatted.json', 'w') as file:
+            json.dump(formatted_data, file, indent=4)
+
     except Exception as e:
         print(f"An error occurred: {e}")
 

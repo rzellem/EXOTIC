@@ -45,8 +45,12 @@ import json
 # CALCULATED VALUES
 
 # class
-class ExoFOP:
+import requests
 
+import requests
+import json
+
+class ExoFOP:
     def __init__(self, tic_code=None):
         self.tic_code = tic_code
         self.base_url = "https://exofop.ipac.caltech.edu/tess/target.php"
@@ -56,10 +60,7 @@ class ExoFOP:
         """
         Queries the ExoFOP database for the TIC code and parses the JSON data.
         """
-        params = {
-            'id': self.tic_code,
-            'json': ''
-        }
+        params = {'id': self.tic_code, 'json': ''}
         response = requests.get(self.base_url, params=params)
         if response.status_code == 200:
             self.data = response.json()
@@ -69,20 +70,26 @@ class ExoFOP:
 
     def get_formatted_data(self):
         """
-        Optionally formats the JSON data into a dictionary (similar to NEA formatting for consistency)
+        Formats the JSON data into a dictionary and tries to extract the planet name from 'planet_parameters'.
         """
         if self.data is None:
             print("Data not loaded. Please run 'query_exofop()' first.")
             return None
-        
-        # Example of re-formatting the data; this would be customized based on how the data looks like
+
         formatted_data = {
             'TIC ID': self.tic_code,
-            'Planet Name': self.data.get('planet_name', 'N/A'),
-            'Host Star Name': self.data.get('host_star_name', 'N/A'),
-            'Discovery Method': self.data.get('discovery_method', 'N/A'),
-            # todo
+            'Planet Name': 'N/A',  # Default if no name is found
+            'Host Star Name': self.data.get('basic_info', {}).get('star_names', 'N/A'),
+            'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
+
+        # Attempt to extract the planet name from the 'planet_parameters' list
+        planet_params = self.data.get('planet_parameters', [])
+        for item in planet_params:
+            if 'name' in item and item['name']:
+                formatted_data['Planet Name'] = item['name']
+                break  # Exit after the first valid name is found
+
         return formatted_data
 
 # misc

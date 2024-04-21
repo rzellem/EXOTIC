@@ -73,12 +73,22 @@ class ExoFOP:
             return None
 
         formatted_data = {
+            'ra': 'N/A',
+            'dec': 'N/A',
             'TIC ID': self.tic_code,
             'Planet Name': 'N/A',  # Default if no name is found
             'Host Star Name': self.data.get('basic_info', {}).get('star_names', 'N/A'),
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
 
+        # Update RA if coordinates are available
+        if 'coordinates' in self.data:
+            formatted_data['ra'] = self.data['coordinates'].get('ra', 'N/A')
+
+        # Update DEC if coordinates are available
+        if 'coordinates' in self.data:
+            formatted_data['dec'] = self.data['coordinates'].get('dec', 'N/A')
+        
         # Attempt to extract the planet name from the 'planet_parameters' list
         planet_params = self.data.get('planet_parameters', [])
         for item in planet_params:

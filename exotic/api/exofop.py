@@ -75,9 +75,9 @@ class ExoFOP:
         formatted_data = {
             'ra': 'N/A',
             'dec': 'N/A',
+            'pName': 'N/A',
+            'sName': 'N/A',
             'TIC ID': self.tic_code,
-            'Planet Name': 'N/A',  # Default if no name is found
-            'Host Star Name': self.data.get('basic_info', {}).get('star_names', 'N/A'),
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
 
@@ -93,8 +93,13 @@ class ExoFOP:
         planet_params = self.data.get('planet_parameters', [])
         for item in planet_params:
             if 'name' in item and item['name']:
-                formatted_data['Planet Name'] = item['name']
+                formatted_data['pName'] = item['name']
                 break  # Exit after the first valid name is found
+
+        # Extract the first star name if available
+        star_names = self.data.get('basic_info', {}).get('star_names', '')
+        if star_names:
+            formatted_data['sName'] = star_names.split(',')[0].strip()
 
         return formatted_data
 
@@ -145,10 +150,10 @@ class ExoFOP:
 
 # Below is how each item is added to the pl_dict in the NASAExoplanetArchive class (nea.py)
 # self.pl_dict = {
-#             'ra': data['ra'],
-#             'dec': data['dec'],
-#             'pName': data['pl_name'],
-#             'sName': data['hostname'],
+# (DONE/)     'ra': data['ra'],
+# (DONE/)     'dec': data['dec'],
+# (DONE/)     'pName': data['pl_name'],
+# (DONE/)     'sName': data['hostname'],
 #             'pPer': data['pl_orbper'],
 #             'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
 

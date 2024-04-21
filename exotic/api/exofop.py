@@ -94,9 +94,9 @@ class ExoFOP:
         planet_params = self.data.get('planet_parameters', [])
         for item in planet_params:
             if 'name' in item and item['name']:
-                formatted_data['Planet Name'] = item['name']
+                formatted_data['pName'] = item['name']
             if 'per' in item and item['per']:
-                formatted_data['Orbital Period (days)'] = item['per']
+                formatted_data['pPer'] = item['per']
                 break  # Exit after the first valid orbital period is found
 
         # Extract the first star name if available

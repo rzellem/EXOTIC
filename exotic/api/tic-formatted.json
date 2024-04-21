@@ -2,10 +2,8 @@
     "TIC ID": "86396382",
     "ra": "97.636644999811907",
     "dec": "+29.672266247041001",
-    "pName": "N/A",
+    "pName": "WASP-12 b",
     "sName": "TIC 86396382",
-    "pPer": "N/A/",
-    "Discovery Method": "WASP-12 b",
-    "Planet Name": "WASP-12 b",
-    "Orbital Period (days)": "1.09142"
+    "pPer": "1.09142",
+    "Discovery Method": "WASP-12 b"
 }

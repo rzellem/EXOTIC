@@ -45,10 +45,6 @@ import json
 # CALCULATED VALUES
 
 # class
-import requests
-
-import requests
-import json
 
 class ExoFOP:
     def __init__(self, tic_code=None):
@@ -94,19 +90,50 @@ class ExoFOP:
 
 # misc
 
-# working notes
+# Fields requesed in the NEA ipac query of NASAExoplanetArchive class (nea.py)
 
-# these are the fields requesed in the NEA ipac query
-# "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,pl_radjerr2,"
-# "pl_ratdor,pl_ratdorerr1,pl_ratdorerr2,pl_orbincl,pl_orbinclerr1,pl_orbinclerr2,"
-# "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
-# "pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
-# "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
-# "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
-# "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
-# "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,st_raderr2,ra,dec,pl_pubdate"
+# General Parameters
 
-# this is how exotic handles each of the query results in the NEA ipac query
+#     pl_name: Planet Name - The designated name of the exoplanet.
+#     hostname: Host Star Name - The name of the star around which the exoplanet orbits.
+#     tran_flag: Transit Flag - Indicates whether the planet transits its host star (usually a boolean value).
+#     ra: Right Ascension - The right ascension of the star in celestial coordinates, analogous to longitude on Earth.
+#     dec: Declination - The declination of the star in celestial coordinates, analogous to latitude on Earth.
+#     pl_pubdate: Publication Date - The date when the data was published or last updated.
+
+# Planet-Specific Parameters
+
+#     pl_massj: Planet Mass [Jupiter mass] - The mass of the planet in units of Jupiter masses.
+#     pl_radj: Planet Radius [Jupiter radius] - The radius of the planet in units of Jupiter radii.
+#     pl_radjerr1, pl_radjerr2: Error in Planet Radius - Positive and negative errors for the planet radius.
+#     pl_ratdor: Planet-Star Distance over Star Radius (a/R_star) - This ratio helps in understanding the scale of the planetary system.
+#     pl_ratdorerr1, pl_ratdorerr2: Error in Planet-Star Distance over Star Radius.
+#     pl_orbincl: Orbital Inclination [degrees] - The angle of the planet's orbit relative to the line of sight from Earth.
+#     pl_orbinclerr1, pl_orbinclerr2: Error in Orbital Inclination.
+#     pl_orbper: Orbital Period [days] - The time it takes for the planet to complete one orbit around its star.
+#     pl_orbpererr1, pl_orbpererr2: Error in Orbital Period.
+#     pl_orbeccen: Orbital Eccentricity - A measure of the deviation of the orbit from circularity.
+#     pl_orblper: Longitude of Periastron [degrees] - The angular distance where the planet is closest to its star.
+#     pl_tranmid: Transit Midpoint [BJD] - The mid-point of when the planet transits across the star.
+#     pl_tranmiderr1, pl_tranmiderr2: Error in Transit Midpoint.
+#     pl_trandep: Transit Depth [parts per million] - The amount by which the star's light dims during a transit.
+#     pl_trandeperr1, pl_trandeperr2: Error in Transit Depth.
+#     pl_ratror: Planet to Star Radius Ratio - Ratio of the planet's radius to the star's radius.
+#     pl_ratrorerr1, pl_ratrorerr2: Error in Radius Ratio.
+
+# Star-Specific Parameters
+
+#     st_teff: Stellar Effective Temperature [Kelvin] - The surface temperature of the star.
+#     st_tefferr1, st_tefferr2: Error in Stellar Effective Temperature.
+#     st_met: Stellar Metallicity [dex] - The logarithmic measure of the star's metal content relative to the Sun.
+#     st_meterr1, st_meterr2: Error in Stellar Metallicity.
+#     st_logg: Stellar Surface Gravity [log10(cm/s^2)] - The logarithm of the star's surface gravity.
+#     st_loggerr1, st_loggerr2: Error in Surface Gravity.
+#     st_mass: Stellar Mass [Solar mass] - The mass of the star in units of solar masses.
+#     st_rad: Stellar Radius [Solar radius] - The radius of the star in units of solar radii.
+#     st_raderr1, st_raderr2: Error in Stellar Radius.
+
+# Below is how each item is added to the pl_dict in the NASAExoplanetArchive class (nea.py)
 # self.pl_dict = {
 #             'ra': data['ra'],
 #             'dec': data['dec'],

@@ -36,53 +36,27 @@
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
 
-# imports
-import requests
-import json
 
-# constants
+from exofop import ExoFOP
 
-# CALCULATED VALUES
-
-# class
-class ExoFOP:
-
-    def __init__(self, tic_code=None):
-        self.tic_code = tic_code
-        self.base_url = "https://exofop.ipac.caltech.edu/tess/target.php"
-        self.data = None
-
-    def query_exofop(self):
-        """
-        Queries the ExoFOP database for the TIC code and parses the JSON data.
-        """
-        params = {
-            'id': self.tic_code,
-            'json': ''
-        }
-        response = requests.get(self.base_url, params=params)
-        if response.status_code == 200:
-            self.data = response.json()
-            return self.data
-        else:
-            raise Exception(f"Failed to retrieve data: Status code {response.status_code}")
-
-    def get_formatted_data(self):
-        """
-        Optionally formats the JSON data into a dictionary (similar to NEA formatting for consistency)
-        """
-        if self.data is None:
-            print("Data not loaded. Please run 'query_exofop()' first.")
-            return None
+def main():
+    # Prompt user to enter the TIC ID
+    tic_id = input("Please enter the TIC ID to fetch data for: ")
+    
+    # Create an instance of the ExoFOP class
+    exofop_instance = ExoFOP(tic_code=tic_id)
+    
+    # Try to query ExoFOP and print the results
+    try:
+        data = exofop_instance.query_exofop()
+        print("Raw JSON Data Retrieved:")
+        print(data)
         
-        # Example of re-formatting the data; this would be customized based on how the data looks like
-        formatted_data = {
-            'TIC ID': self.tic_code,
-            'Planet Name': self.data.get('planet_name', 'N/A'),
-            'Host Star Name': self.data.get('host_star_name', 'N/A'),
-            'Discovery Method': self.data.get('discovery_method', 'N/A'),
-            # todo
-        }
-        return formatted_data
+        formatted_data = exofop_instance.get_formatted_data()
+        print("\nFormatted Data:")
+        print(formatted_data)
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
-# misc
+if __name__ == "__main__":
+    main()

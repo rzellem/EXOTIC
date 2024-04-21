@@ -93,3 +93,51 @@ class ExoFOP:
         return formatted_data
 
 # misc
+
+# working notes
+
+# these are the fields requesed in the NEA ipac query
+# "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,pl_radjerr2,"
+# "pl_ratdor,pl_ratdorerr1,pl_ratdorerr2,pl_orbincl,pl_orbinclerr1,pl_orbinclerr2,"
+# "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
+# "pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
+# "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
+# "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
+# "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
+# "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,st_raderr2,ra,dec,pl_pubdate"
+
+# this is how exotic handles each of the query results in the NEA ipac query
+# self.pl_dict = {
+#             'ra': data['ra'],
+#             'dec': data['dec'],
+#             'pName': data['pl_name'],
+#             'sName': data['hostname'],
+#             'pPer': data['pl_orbper'],
+#             'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
+
+#             'midT': data['pl_tranmid'],
+#             'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),
+#             'rprs': rprs,
+#             'rprsUnc': rprserr,
+#             'aRs': data['pl_ratdor'],
+#             'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
+#             'inc': data['pl_orbincl'],
+#             'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
+#             'omega': data.get('pl_orblper', 0),
+#             'ecc': data.get('pl_orbeccen', 0),
+#             'teff': data['st_teff'],
+#             'teffUncPos': data['st_tefferr1'],
+#             'teffUncNeg': data['st_tefferr2'],
+#             'met': data['st_met'],
+#             'metUncPos': max(0.01, data['st_meterr1']),
+#             'metUncNeg': min(-0.01, data['st_meterr2']),
+#             'logg': data['st_logg'],
+#             'loggUncPos': data['st_loggerr1'],
+#             'loggUncNeg': data['st_loggerr2']
+#         }
+
+#         if self.pl_dict['aRsUnc'] == 0:
+#             self.pl_dict['aRsUnc'] = 0.1
+
+#         if self.pl_dict['incUnc'] == 0:
+#             self.pl_dict['incUnc'] = 0.1

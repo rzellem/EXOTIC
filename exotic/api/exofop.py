@@ -73,10 +73,12 @@ class ExoFOP:
             return None
 
         formatted_data = {
+            'TIC ID': self.tic_code,
             'ra': 'N/A',
             'dec': 'N/A',
             'pName': 'N/A',
             'sName': 'N/A',
+            'pPer': 'N/A/',
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -88,13 +90,14 @@ class ExoFOP:
         # Update DEC if coordinates are available
         if 'coordinates' in self.data:
             formatted_data['dec'] = self.data['coordinates'].get('dec', 'N/A')
-        
-        # Attempt to extract the planet name from the 'planet_parameters' list
+
         planet_params = self.data.get('planet_parameters', [])
         for item in planet_params:
             if 'name' in item and item['name']:
-                formatted_data['pName'] = item['name']
-                break  # Exit after the first valid name is found
+                formatted_data['Planet Name'] = item['name']
+            if 'per' in item and item['per']:
+                formatted_data['Orbital Period (days)'] = item['per']
+                break  # Exit after the first valid orbital period is found
 
         # Extract the first star name if available
         star_names = self.data.get('basic_info', {}).get('star_names', '')

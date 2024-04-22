@@ -39,6 +39,7 @@
 # imports
 import requests
 import json
+import numpy as np
 
 # constants
 
@@ -79,6 +80,7 @@ class ExoFOP:
             'pName': 'N/A',
             'sName': 'N/A',
             'pPer': 'N/A/',
+            'pPerUnc': 'N/A',
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -97,7 +99,12 @@ class ExoFOP:
                 formatted_data['pName'] = item['name']
             if 'per' in item and item['per']:
                 formatted_data['pPer'] = item['per']
-                break  # Exit after the first valid orbital period is found
+            if 'per_e' in item and item['per_e']:
+                pl_orbpererr1 = float(item['per_e'])
+                pl_orbpererr2 = float(item['per_e'])
+                pPerUnc = np.sqrt(np.abs(pl_orbpererr1 * (pl_orbpererr2 * -1))) #  or just... abs(pl_orbpererr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
+                formatted_data['pPerUnc'] = pPerUnc
+                break
 
         # Extract the first star name if available
         star_names = self.data.get('basic_info', {}).get('star_names', '')
@@ -157,8 +164,8 @@ class ExoFOP:
 # (DONE/)     'dec': data['dec'],
 # (DONE/)     'pName': data['pl_name'],
 # (DONE/)     'sName': data['hostname'],
-#             'pPer': data['pl_orbper'],
-#             'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
+# (DONE/)     'pPer': data['pl_orbper'],
+# (DONE/)     'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
 
 #             'midT': data['pl_tranmid'],
 #             'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),

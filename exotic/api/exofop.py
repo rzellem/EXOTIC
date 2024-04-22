@@ -82,6 +82,8 @@ class ExoFOP:
             'pPer': 'N/A/',
             'pPerUnc': 'N/A',
             'midT': 'N/A',
+            'rprs': 'N/A',
+            'rprsUnc': 'N/A',
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -107,6 +109,15 @@ class ExoFOP:
                 formatted_data['pPerUnc'] = pPerUnc
             if 'epoch' in item and item['epoch']:
                 formatted_data['midT'] = item['epoch']
+            if 'epoch_e' in item and item['epoch_e']:
+                pl_tranmiderr1 = float(item['epoch_e'])
+                pl_tranmiderr1 = float(item['epoch_e'])
+                midTUnc = np.sqrt(np.abs(pl_tranmiderr1 * (pl_tranmiderr1 * -1))) #  or just... abs(pl_tranmiderr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
+                formatted_data['miDTUnc'] = midTUnc
+            if 'rr' in item and item['rr']:
+                formatted_data['rprs'] = item['rr']
+            if 'rr_e' in item and item['rr_e']:
+                formatted_data['rprsUnc'] = item['rr_e']
                 break
 
         # Extract the first star name if available
@@ -170,10 +181,10 @@ class ExoFOP:
 # (DONE/)     'pPer': data['pl_orbper'],
 # (DONE/)     'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
 
-#             'midT': data['pl_tranmid'],
-#             'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),
-#             'rprs': rprs,
-#             'rprsUnc': rprserr,
+# (DONE/)     'midT': data['pl_tranmid'],
+# (DONE/)     'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),
+# (DONE/)     'rprs': rprs,
+# (DONE/)     'rprsUnc': rprserr,
 #             'aRs': data['pl_ratdor'],
 #             'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
 #             'inc': data['pl_orbincl'],

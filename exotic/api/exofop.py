@@ -90,6 +90,9 @@ class ExoFOP:
             'incUnc': 'N/A',
             'omega': 0,
             'ecc': 0,
+            'teff': 0,
+            'teffUncPos': 0.1,
+            'teffUncNeg': -0.1,
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -144,6 +147,17 @@ class ExoFOP:
                     formatted_data['incUnc'] = item['inc_e']
             if 'ecc' in item and item['ecc']:
                 formatted_data['ecc'] = item['ecc']
+                break
+        
+        stellar_params = self.data.get('stellar_parameters', [])
+        for item in stellar_params:
+            if 'teff' in item and item['teff']:
+                formatted_data['teff'] = item['teff']
+            if 'teff_e' in item and item['teff_e']:
+                teffUncPos = float(item['teff_e'])
+                teffUncNeg = (-1 * float(item['teff_e']))
+                formatted_data['teffUncPos'] = teffUncPos
+                formatted_data['teffUncNeg'] = teffUncNeg
                 break
 
         # Extract the first star name if available
@@ -216,10 +230,10 @@ class ExoFOP:
 # (DONE/)     'inc': data['pl_orbincl'],
 # (DONE/)     'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
 # (DONE/)     'omega': data.get('pl_orblper', 0),
-#             'ecc': data.get('pl_orbeccen', 0),
-#             'teff': data['st_teff'],
-#             'teffUncPos': data['st_tefferr1'],
-#             'teffUncNeg': data['st_tefferr2'],
+# (DONE/)     'ecc': data.get('pl_orbeccen', 0),
+# (DONE/)     'teff': data['st_teff'],
+# (DONE/)     'teffUncPos': data['st_tefferr1'],
+# (DONE/)     'teffUncNeg': data['st_tefferr2'],
 #             'met': data['st_met'],
 #             'metUncPos': max(0.01, data['st_meterr1']),
 #             'metUncNeg': min(-0.01, data['st_meterr2']),

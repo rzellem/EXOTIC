@@ -15,6 +15,9 @@
     "incUnc": "0.03",
     "omega": "1.0914167",
     "ecc": 0,
+    "teff": "6154",
+    "teffUncPos": 105.682,
+    "teffUncNeg": -105.682,
     "Discovery Method": "WASP-12 b",
     "miDTUnc": 0.0001201
 }

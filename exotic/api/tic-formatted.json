@@ -11,5 +11,7 @@
     "rprsUnc": "0.0002",
     "aRs": "3",
     "aRsUnc": 0.016,
+    "inc": "83.52",
+    "incUnc": "0.03",
     "Discovery Method": "WASP-12 b"
 }

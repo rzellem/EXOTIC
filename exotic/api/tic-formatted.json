@@ -18,6 +18,9 @@
     "teff": "6154",
     "teffUncPos": 105.682,
     "teffUncNeg": -105.682,
+    "met": "0.21",
+    "metUncPos": 0.1,
+    "metUncNeg": -0.1,
     "Discovery Method": "WASP-12 b",
     "miDTUnc": 0.0001201
 }

@@ -93,6 +93,9 @@ class ExoFOP:
             'teff': 0,
             'teffUncPos': 0.1,
             'teffUncNeg': -0.1,
+            'met': 0,
+            'metUncPos': 0.1,
+            'metUncNeg': -0.1,
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -158,6 +161,13 @@ class ExoFOP:
                 teffUncNeg = (-1 * float(item['teff_e']))
                 formatted_data['teffUncPos'] = teffUncPos
                 formatted_data['teffUncNeg'] = teffUncNeg
+            if 'met' in item and item['met']:
+                formatted_data['met'] = item['met']
+            if 'met_e' in item and item['met_e']:
+                metUncPos = float(item['met_e'])
+                metUncNeg = (-1 * float(item['met_e']))
+                formatted_data['metUncPos'] = metUncPos
+                formatted_data['metUncNeg'] = metUncNeg
                 break
 
         # Extract the first star name if available
@@ -234,9 +244,9 @@ class ExoFOP:
 # (DONE/)     'teff': data['st_teff'],
 # (DONE/)     'teffUncPos': data['st_tefferr1'],
 # (DONE/)     'teffUncNeg': data['st_tefferr2'],
-#             'met': data['st_met'],
-#             'metUncPos': max(0.01, data['st_meterr1']),
-#             'metUncNeg': min(-0.01, data['st_meterr2']),
+# (DONE/)     'met': data['st_met'],
+# (DONE/)     'metUncPos': max(0.01, data['st_meterr1']),
+# (DONE/)     'metUncNeg': min(-0.01, data['st_meterr2']),
 #             'logg': data['st_logg'],
 #             'loggUncPos': data['st_loggerr1'],
 #             'loggUncNeg': data['st_loggerr2']

@@ -88,6 +88,8 @@ class ExoFOP:
             'aRsUnc': 'N/A',
             'inc': 'N/A',
             'incUnc': 'N/A',
+            'omega': 0,
+            'ecc': 0,
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -106,6 +108,7 @@ class ExoFOP:
                 formatted_data['pName'] = item['name']
             if 'per' in item and item['per']:
                 formatted_data['pPer'] = item['per']
+                formatted_data['omega'] = item['per']
             if 'per_e' in item and item['per_e']:
                 pl_orbpererr1 = float(item['per_e'])
                 pl_orbpererr2 = float(item['per_e'])
@@ -139,6 +142,8 @@ class ExoFOP:
                     formatted_data['incUnc'] = 0.1
                 else:
                     formatted_data['incUnc'] = item['inc_e']
+            if 'ecc' in item and item['ecc']:
+                formatted_data['ecc'] = item['ecc']
                 break
 
         # Extract the first star name if available
@@ -210,7 +215,7 @@ class ExoFOP:
 # (DONE/)     'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
 # (DONE/)     'inc': data['pl_orbincl'],
 # (DONE/)     'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
-#             'omega': data.get('pl_orblper', 0),
+# (DONE/)     'omega': data.get('pl_orblper', 0),
 #             'ecc': data.get('pl_orbeccen', 0),
 #             'teff': data['st_teff'],
 #             'teffUncPos': data['st_tefferr1'],
@@ -223,8 +228,8 @@ class ExoFOP:
 #             'loggUncNeg': data['st_loggerr2']
 #         }
 
-#         if self.pl_dict['aRsUnc'] == 0:
+# (DONE/) if self.pl_dict['aRsUnc'] == 0:
 #             self.pl_dict['aRsUnc'] = 0.1
 
-#         if self.pl_dict['incUnc'] == 0:
+# (DONE/) if self.pl_dict['incUnc'] == 0:
 #             self.pl_dict['incUnc'] = 0.1

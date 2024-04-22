@@ -82,6 +82,7 @@ class ExoFOP:
             'pPer': 'N/A/',
             'pPerUnc': 'N/A',
             'midT': 'N/A',
+            'midTUnc': 'N/A',
             'rprs': 'N/A',
             'rprsUnc': 'N/A',
             'aRs': 'N/A', 
@@ -127,7 +128,7 @@ class ExoFOP:
                 pl_tranmiderr1 = float(item['epoch_e'])
                 pl_tranmiderr2 = float(item['epoch_e'])
                 midTUnc = np.sqrt(np.abs(pl_tranmiderr1 * (pl_tranmiderr2 * -1))) #  or just... abs(pl_tranmiderr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
-                formatted_data['miDTUnc'] = midTUnc
+                formatted_data['midTUnc'] = midTUnc
             if 'rr' in item and item['rr']:
                 formatted_data['rprs'] = item['rr']
             if 'rr_e' in item and item['rr_e']:

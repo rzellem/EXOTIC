@@ -7,6 +7,7 @@
     "pPer": "1.0914167",
     "pPerUnc": 5e-07,
     "midT": "2459550.243082",
+    "midTUnc": 0.0001201,
     "rprs": "0.117",
     "rprsUnc": "0.0002",
     "aRs": "3",
@@ -23,6 +24,5 @@
     "metUncNeg": -0.1,
     "logg": "4.02046",
     "loggUncPos": 0.0803026,
-    "loggUncNeg": -0.0803026,
-    "miDTUnc": 0.0001201
+    "loggUncNeg": -0.0803026
 }

@@ -21,6 +21,8 @@
     "met": "0.21",
     "metUncPos": 0.1,
     "metUncNeg": -0.1,
-    "Discovery Method": "WASP-12 b",
+    "logg": "4.02046",
+    "loggUncPos": 0.0803026,
+    "loggUncNeg": -0.0803026,
     "miDTUnc": 0.0001201
 }

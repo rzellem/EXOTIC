@@ -96,8 +96,9 @@ class ExoFOP:
             'met': 0,
             'metUncPos': 0.1,
             'metUncNeg': -0.1,
-            'TIC ID': self.tic_code,
-            'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
+            'logg': 0,
+            'loggUncPos': 0.1,
+            'loggUncNeg': -0.1
         }
 
         # Update RA if coordinates are available
@@ -168,6 +169,13 @@ class ExoFOP:
                 metUncNeg = (-1 * float(item['met_e']))
                 formatted_data['metUncPos'] = metUncPos
                 formatted_data['metUncNeg'] = metUncNeg
+            if 'logg' in item and item['logg']:
+                formatted_data['logg'] = item['logg']
+            if 'logg_e' in item and item['logg_e']:
+                loggUncPos = float(item['logg_e'])
+                loggUncNeg = (-1 * float(item['logg_e']))
+                formatted_data['loggUncPos'] = loggUncPos
+                formatted_data['loggUncNeg'] = loggUncNeg
                 break
 
         # Extract the first star name if available
@@ -247,9 +255,9 @@ class ExoFOP:
 # (DONE/)     'met': data['st_met'],
 # (DONE/)     'metUncPos': max(0.01, data['st_meterr1']),
 # (DONE/)     'metUncNeg': min(-0.01, data['st_meterr2']),
-#             'logg': data['st_logg'],
-#             'loggUncPos': data['st_loggerr1'],
-#             'loggUncNeg': data['st_loggerr2']
+# (DONE/)     'logg': data['st_logg'],
+# (DONE/)     'loggUncPos': data['st_loggerr1'],
+# (DONE/)     'loggUncNeg': data['st_loggerr2']
 #         }
 
 # (DONE/) if self.pl_dict['aRsUnc'] == 0:

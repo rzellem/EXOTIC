@@ -81,6 +81,7 @@ class ExoFOP:
             'sName': 'N/A',
             'pPer': 'N/A/',
             'pPerUnc': 'N/A',
+            'midT': 'N/A',
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -104,6 +105,8 @@ class ExoFOP:
                 pl_orbpererr2 = float(item['per_e'])
                 pPerUnc = np.sqrt(np.abs(pl_orbpererr1 * (pl_orbpererr2 * -1))) #  or just... abs(pl_orbpererr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
                 formatted_data['pPerUnc'] = pPerUnc
+            if 'epoch' in item and item['epoch']:
+                formatted_data['midT'] = item['epoch']
                 break
 
         # Extract the first star name if available

@@ -9,5 +9,7 @@
     "midT": "N/A",
     "rprs": "0.117",
     "rprsUnc": "0.0002",
+    "aRs": "3",
+    "aRsUnc": 0.016,
     "Discovery Method": "WASP-12 b"
 }

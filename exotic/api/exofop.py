@@ -84,6 +84,8 @@ class ExoFOP:
             'midT': 'N/A',
             'rprs': 'N/A',
             'rprsUnc': 'N/A',
+            'aRs': 'N/A', 
+            'aRsUnc': 'N/A',
             'TIC ID': self.tic_code,
             'Discovery Method': self.data.get('basic_info', {}).get('confirmed_planets', 'N/A')
         }
@@ -111,13 +113,20 @@ class ExoFOP:
                 formatted_data['midT'] = item['epoch']
             if 'epoch_e' in item and item['epoch_e']:
                 pl_tranmiderr1 = float(item['epoch_e'])
-                pl_tranmiderr1 = float(item['epoch_e'])
-                midTUnc = np.sqrt(np.abs(pl_tranmiderr1 * (pl_tranmiderr1 * -1))) #  or just... abs(pl_tranmiderr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
+                pl_tranmiderr2 = float(item['epoch_e'])
+                midTUnc = np.sqrt(np.abs(pl_tranmiderr1 * (pl_tranmiderr2 * -1))) #  or just... abs(pl_tranmiderr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
                 formatted_data['miDTUnc'] = midTUnc
             if 'rr' in item and item['rr']:
                 formatted_data['rprs'] = item['rr']
             if 'rr_e' in item and item['rr_e']:
                 formatted_data['rprsUnc'] = item['rr_e']
+            if 'ar' in item and item['ar']:
+                formatted_data['aRs'] = item['ar']
+            if 'ar_e' in item and item['ar_e']:
+                pl_ratdorerr1 = float(item['ar_e'])
+                pl_ratdorerr2 = float(item['ar_e'])
+                aRsUnc = np.sqrt(np.abs(pl_ratdorerr1 * (pl_ratdorerr2 * -1))) #  or just... abs(pl_ratdorerr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
+                formatted_data['aRsUnc'] = aRsUnc
                 break
 
         # Extract the first star name if available

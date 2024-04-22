@@ -125,14 +125,20 @@ class ExoFOP:
             if 'ar' in item and item['ar']:
                 formatted_data['aRs'] = item['ar']
             if 'ar_e' in item and item['ar_e']:
-                pl_ratdorerr1 = float(item['ar_e'])
-                pl_ratdorerr2 = float(item['ar_e'])
-                aRsUnc = np.sqrt(np.abs(pl_ratdorerr1 * (pl_ratdorerr2 * -1))) #  or just... abs(pl_ratdorerr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
-                formatted_data['aRsUnc'] = aRsUnc
+                if item['ar_e'] == 0:
+                    formatted_data['aRsUnc'] = 0
+                else:
+                    pl_ratdorerr1 = float(item['ar_e'])
+                    pl_ratdorerr2 = float(item['ar_e'])
+                    aRsUnc = np.sqrt(np.abs(pl_ratdorerr1 * (pl_ratdorerr2 * -1))) #  or just... abs(pl_ratdorerr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
+                    formatted_data['aRsUnc'] = aRsUnc
             if 'inc' in item and item['inc']:
                 formatted_data['inc'] = item['inc']
             if 'inc_e' in item and item['inc_e']:
-                formatted_data['incUnc'] = item['inc_e']
+                if item['inc_e'] == 0:
+                    formatted_data['incUnc'] = 0.1
+                else:
+                    formatted_data['incUnc'] = item['inc_e']
                 break
 
         # Extract the first star name if available
@@ -202,8 +208,8 @@ class ExoFOP:
 # (DONE/)     'rprsUnc': rprserr,
 # (DONE/)     'aRs': data['pl_ratdor'],
 # (DONE/)     'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
-#             'inc': data['pl_orbincl'],
-#             'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
+# (DONE/)     'inc': data['pl_orbincl'],
+# (DONE/)     'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
 #             'omega': data.get('pl_orblper', 0),
 #             'ecc': data.get('pl_orbeccen', 0),
 #             'teff': data['st_teff'],

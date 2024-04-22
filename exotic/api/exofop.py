@@ -129,7 +129,8 @@ class ExoFOP:
                 pl_tranmiderr2 = float(item['epoch_e'])
                 midTUnc = np.sqrt(np.abs(pl_tranmiderr1 * (pl_tranmiderr2 * -1))) #  or just... abs(pl_tranmiderr1)  # Since we're squaring it, sqrt(abs(x^2)) == abs(x)
                 formatted_data['midTUnc'] = midTUnc
-            if 'rr' in item and item['rr']:
+            # Only update rprs if it has not been set to a valid value yet
+            if 'rr' in item and item['rr'] not in (None, "") and formatted_data['rprs'] == 'N/A':
                 formatted_data['rprs'] = item['rr']
             if 'rr_e' in item and item['rr_e']:
                 formatted_data['rprsUnc'] = item['rr_e']
@@ -152,7 +153,6 @@ class ExoFOP:
                     formatted_data['incUnc'] = item['inc_e']
             if 'ecc' in item and item['ecc']:
                 formatted_data['ecc'] = item['ecc']
-                break
         
         stellar_params = self.data.get('stellar_parameters', [])
         for item in stellar_params:

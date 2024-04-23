@@ -1,0 +1,80 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2761
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fswiss\fcharset0 Helvetica-Bold;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww12720\viewh6660\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 These procedures must be followed to extract the RV data that will be used by rv_mapper.py. The outputs of this process must be installed into the directory with grv_fitter_notebook.
+\f1\b \
+\
+\
+SOPHIE 
+\f0\b0 \
+\
+SOPHIE data is stored on the Observatoire de Haute-Provence website. The direct address to the RV download is http://atlas.obs-hp.fr/sophie/. The last section on this page is \'93Advanced Search.\'94 \
+\
+a. select "Whole set of observations" from the drop-down\
+b. select "Get CCF"\
+\
+When the selection page is displayed with the CCF function, click the check box under "Show" for all fields.\
+\
+At the bottom of the page, select "CSV" from the dropdown list next to "Output as".\
+\
+Click "Submit".\
+\
+
+\f1\b HARPS 
+\f0\b0 \
+\
+To obtain the consolidated 20 years of HARPS data, go to this site: https://archive.eso.org/dataset/ADP.2023-12-04T15:16:53.464. In the top menu, select "File Download".\
+\
+For full information on the contents of the HARPS catalog, go to: https://www.eso.org/rm/api/v1/public/releaseDescriptions/214\
+\
+
+\f1\b ESPRESSO
+\f0\b0 \
+\
+If you do not have an ESO account, go to https://www.eso.org/sso/login and click on "I would like to create a new account" at the bottom of the page.\
+\
+Go to site https://archive.eso.org/scienceportal/home.\
+\
+In the top left corner of the screen, select the menu widget (3 horizontal bars).\
+\
+From the Query Parameters drop-down, deselect all parameters and select \'93Instrument.\'94\
+\
+Underneath the displayed list, select "Show xx more out of xx". From the complete list, select "ESPRESSO". \
+\
+In the upper right corner of the window, select the orange icon (downward arrow above a disk icon). \
+\
+On the displayed line "Current search", select the same orange icon as before.\
+\
+On the displayed "Download Portal" page, de-select any checked boxes underneath "Science Spectrum". Then, select "Ancillary.ccf". On the right side of the page, select "Download Zip File". \
+\
+Move the zip file to the required directory and unzip it. In the same directory, execute utility_Convert_from_Espresso_Archive_to_flatfile.ipynb to produce a .CSV file with the ESPRESSO data.\
+\
+
+\f1\b HIRES 2017
+\f0\b0 \
+\
+Go to https://cdsarc.cds.unistra.fr/viz-bin/cat/J/AJ/153/208.\
+\
+Select \'93FTP\'94 from the menu at the top of the screen.\
+\
+From the displayed \'93contents\'94 list, select \'93table1.dat.gz\'94 and provide the correct directory location for the download.\
+\
+Unzip the contents of the downloaded file.\
+\
+
+\f1\b HIRES 2020
+\f0\b0 \
+\
+Go to https://ebps.carnegiescience.edu/data/hireskeck-data\
+\
+At the bottom of the screen, click on \'93keck_vels.tar\'94.  \
+\
+On the keck_vels.tar screen, click the download icon in the upper right corner and provide the correct directory location for the download. \
+\
+Unzip the contents of the downloaded file.\
+\
+}

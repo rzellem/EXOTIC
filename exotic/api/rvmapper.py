@@ -82,25 +82,21 @@ import numbers
 class RV_Mapper:
 
 	def __init__(self,target,instruments,indicators,rhk_value, 
-		dace,trifonov,
-		butler_2017,butler_2020,eso_harps,
-		eso_espresso,sophie,uves_2019,
+		dace,butler_2017,butler_2020,eso_harps,eso_espresso,sophie,
 		trim,trim_lower,trim_upper,remove_date_ranges,remove_date_singles,clip_snr,gamma):
 		self.target=target
 		print("self.target in normalizer ", self.target," target in normalizer ",target)
 		print()
+		self.rootdirectory='/Users/subercorley/beavers/'
 		self.instruments=instruments
 		self.indicators=indicators
 		self.rhk_value=rhk_value
-		self.dace=dace        
-#		self.discovery_TOI481=discovery_TOI481
-		self.trifonov=trifonov        
+		self.dace=dace                
 		self.butler_2017=butler_2017
 		self.butler_2020=butler_2020        
 		self.eso_harps=eso_harps
 		self.eso_espresso=eso_espresso
-		self.sophie=sophie
-		self.uves_2019=uves_2019        
+		self.sophie=sophie        
 		self.trim=trim
 		self.trim_lower=trim_lower
 		self.trim_upper=trim_upper
@@ -127,16 +123,7 @@ class RV_Mapper:
 		self.created=False
 		self.rv_sum_dace = 0.0
 		self.rv_err_sum_dace = 0.0
-		self.rv_count_dace = 0
-#		self.rv_sum_discovery_TOI481 = 0.0
-#		self.rv_err_sum_discovery_TOI481 = 0.0
-#		self.rv_count_discovery_TOI481 = 0        
-		self.rv_sum_discovery_hires = 0.0
-		self.rv_err_sum_discovery_hires = 0.0
-		self.rv_count_discovery_hires = 0        
-		self.rv_sum_trifonov = 0.0
-		self.rv_err_sum_trifonov = 0.0
-		self.rv_count_trifonov = 0
+		self.rv_count_dace = 0                
 		self.rv_sum_butler_2017 = 0.0
 		self.rv_err_sum_butler_2017 = 0.0
 		self.rv_count_butler_2017 = 0
@@ -151,10 +138,7 @@ class RV_Mapper:
 		self.rv_count_espresso = 0
 		self.rv_sum_sophie = 0.0
 		self.rv_err_sum_sophie = 0.0
-		self.rv_count_sophie = 0
-		self.rv_sum_uves_2019 = 0.0        
-		self.rv_err_sum_uves_2019 = 0.0
-		self.rv_count_uves_2019 = 0        
+		self.rv_count_sophie = 0        
 # Target set-up
 		i=0
 		self.target_alias = Simbad.query_objectids(self.target)
@@ -212,11 +196,7 @@ class RV_Mapper:
 			self.radegrees = 0
 			self.decdegrees = 0
 		if self.dace:
-			self._get_dace()
-#		if self.discovery_TOI481:
-#			self._get_discovery_TOI481()            
-		if self.trifonov:
-			self._get_trifonov()
+			self._get_dace()           
 		if self.butler_2017:
 			self._get_butler_2017()
 		if self.butler_2020:
@@ -226,9 +206,7 @@ class RV_Mapper:
 		if self.eso_espresso:
 			self._get_eso_espresso()
 		if self.sophie:
-			self._get_sophie()
-		if self.uves_2019:
-			self._get_uves_2019()            
+			self._get_sophie()            
 #		m=0                                                                               #
 		try:
 			date_count = len(self.rv_data['rjd'])
@@ -260,25 +238,7 @@ class RV_Mapper:
 			format_SNR_dace = "{:.5f}".format(self.average_SNR_dace)
 			print(f'Number of DACE observations is: {self.rv_count_dace}')
 			print(f'Average SNR DACE is: {format_SNR_dace}')
-			print()
-            
-		if self.rv_count_discovery_hires > 0:
-			self.average_rv_discovery_hires = self.rv_sum_discovery_hires / self.rv_count_discovery_hires
-			self.average_rv_err_discovery_hires = self.rv_err_sum_discovery_hires / self.rv_count_discovery_hires
-			self.average_SNR_discovery_hires = self.rv_sum_discovery_hires / self.rv_err_sum_discovery_hires
-			format_SNR_discovery_hires = "{:.5f}".format(self.average_SNR_discovery_hires)
-			print(f'Number of Discovery HIRES observations is: {self.rv_count_discovery_hires}')
-			print(f'Average SNR Discovery HIRES is: {format_SNR_discovery_hires}')
-			print()            
-
-		if self.rv_count_trifonov > 0:
-			self.average_rv_trifonov = self.rv_sum_trifonov / self.rv_count_trifonov
-			self.average_rv_err_trifonov = self.rv_err_sum_trifonov / self.rv_count_trifonov
-			self.average_SNR_trifonov = self.rv_sum_trifonov / self.rv_err_sum_trifonov
-			format_SNR_trifonov = "{:.5f}".format(self.average_SNR_trifonov)
-			print(f'Number of Trifonov observations is: {self.rv_count_trifonov}')
-			print(f'Average SNR Trifonov is: {format_SNR_trifonov}')
-			print()
+			print()           
 
 		if self.rv_count_butler_2017 > 0:
 			self.average_rv_butler_2017 = self.rv_sum_butler_2017 / self.rv_count_butler_2017
@@ -326,15 +286,6 @@ class RV_Mapper:
 			format_SNR_sophie = "{:.5f}".format(self.average_SNR_sophie)
 			print(f'Number of SOPHIE observations is: {self.rv_count_sophie}')
 			print(f'Average SNR SOPHIE is: {format_SNR_sophie}')
-			print()
-            
-		if self.rv_count_uves_2019 > 0:
-			self.average_rv_uves_2019 = self.rv_sum_uves_2019 / self.rv_count_uves_2019
-			self.average_rv_err_uves_2019 = self.rv_err_sum_uves_2019 / self.rv_count_uves_2019
-			self.average_SNR_uves_2019 = self.rv_sum_uves_2019 / self.rv_err_sum_uves_2019
-			format_SNR_uves_2019 = "{:.5f}".format(self.average_SNR_uves_2019)
-			print(f'Number of UVES 2019 observations is: {self.rv_count_uves_2019}')
-			print(f'Average SNR UVES 2019 is: {format_SNR_uves_2019}')
 			print()            
             
 #sort combined sources by rjd    
@@ -579,369 +530,12 @@ class RV_Mapper:
 			self.rv_sum_dace = self.rv_sum_dace + self.rv_data['rv'][i]
 			self.rv_err_sum_dace = self.rv_err_sum_dace + self.dace_data['rv_err'][i]
 			self.rv_count_dace += 1
-			i+=1
-                       
-                     
-	def _get_discovery_hires(self):
-		print("enter HIRES for WASP77A")
-		print()        
-		myfile21 = open ('WASP_77_A_Discovery_HIRES.csv', 'r')
-		for line in myfile21:
-			values = line.split(',')
-			object_name = values[7]
-			i=0
-			imax=0
-			max_fuzzy=0
-			while i < len(self.target_alias):
-				String_Matched = fuzz.ratio(object_name, self.target_alias[i][0])
-				if String_Matched > max_fuzzy:
-					max_fuzzy=String_Matched
-					imax=i
-				i+=1
-			if max_fuzzy > 80:
-#				line = "String Matched % "+str(max_fuzzy)+"target object"+object_name+ "target_max "+ self.target_alias[imax][0]
-#				with open(self.logname, 'a') as norm_log:
-#					norm_log.write('\n')
-#					norm_log.write(line)                
-				t_data = float(values[3]) - 2450000.0
-				if self.created:
-					self.rv_data['rjd'] += [float(values[6])]
-					self.rv_data['bjd'] += [float(values[3])]                    
-					self.rv_data['BJD'] += [float(values[3])]                   
-					self.rv_data['t'] += [t_data]                    
-					self.rv_data['berv'] += [-99999]
-					self.rv_data['berv_err'] += [-99999]
-					self.rv_data['bispan'] += [-99999]
-					self.rv_data['bispan_err'] += [-99999] 
-					self.rv_data['drift_noise'] += [-99999]
-					self.rv_data['drift_noise_err'] += [-99999]
-					self.rv_data['texp'] += [-99999]
-					self.rv_data['texp_err'] += [-99999]
-					self.rv_data['cal_therror'] += [-99999]  
-					self.rv_data['cal_therror_err'] += [-99999]
-					self.rv_data['protm08'] += [-99999] 
-					self.rv_data['protm08_err'] += [-99999] 
-					self.rv_data['protn84'] += [-99999] 
-					self.rv_data['protn84_err'] += [-99999] 
-					self.rv_data['fwhm'] += [-99999]  
-					self.rv_data['fwhm_err'] += [-99999]
-					self.rv_data['spectroFluxSn20'] += [-99999]
-					self.rv_data['spectroFluxSn20_err'] += [-99999]
-					self.rv_data['cal_thfile'] += [-99999] 
-					self.rv_data['rhk_err'] += [-99999]
-					self.rv_data['rhk'] += [self.rhk_value]
-					self.rv_data['drs_qc'] += [True]
-					self.rv_data['ins_name'] += [values[0]]
-					self.rv_data['Telescope'] += [values[0]]                    
-					self.rv_data['ins_mode'] += ['']
-					self.rv_data['mask'] += ['']
-					self.rv_data['contrast'] += [-99999]
-					self.rv_data['contrast_err'] += [-99999]
-					self.rv_data['spectroFluxSn50'] += [-99999]
-					self.rv_data['spectroFluxSn50_err'] += [-99999]
-					self.rv_data['naindex'] += [-99999]
-					self.rv_data['naindex_err'] += [-99999]
-					self.rv_data['snca2'] += [-99999]
-					self.rv_data['snca2_err'] += [-99999]
-					self.rv_data['public'] += [True]
-					self.rv_data['pub_reference'] += ['Maxted']
-					self.rv_data['pub_bibcode'] += ['']
-					self.rv_data['sindex'] += [-99999]
-					self.rv_data['sindex_err'] += [-99999]
-					self.rv_data['haindex'] += [-99999]
-					self.rv_data['haindex_err'] += [-99999]
-					self.rv_data['drs_version'] += ['Pub']  
-					self.rv_data['caindex'] += [-99999]
-					self.rv_data['caindex_err'] += [-99999]
-					self.rv_data['rjd_err'] += [-99999]
-					rv_value = (float(values[1]))*1000.0                    
-#					rv_value = float(values[4])*1.0
-					self.rv_data['rv'] += [rv_value]
-					self.rv_data['Vel(m/s)'] += [rv_value]
-					self.rv_data['vel'] += [rv_value]                   
-					rv_err_value = float(values[5])*1000.0
-					self.rv_data['rv_err'] += [rv_err_value]
-					self.rv_data['ErrVel(m/s)'] += [rv_err_value]
-					self.rv_data['errvel'] += [rv_err_value]
-					self.rv_data['sn26'] += [-99999]                    
-					self.rv_data['ccf_noise'] += [-99999]
-					self.rv_data['ccf_noise_err'] += [-99999]
-					self.rv_data['drift_used'] += [-99999]
-					self.rv_data['drift_used_err'] += [-99999]
-					self.rv_data['ccf_asym'] += [-99999]
-					self.rv_data['ccf_asym_err'] += [-99999]
-					self.rv_data['date_night'] += ['']  
-					self.rv_data['raw_file'] += ['Maxted']
-					self.rv_data['prog_id'] += [' ']
-					self.rv_data['th_ar'] += [-99999]
-					self.rv_data['th_ar1'] += [-99999]
-					self.rv_data['th_ar2'] += [-99999]                    
-				else:
-					self.rv_data['rjd'] = [float(values[6])]                    
-					self.rv_data['bjd'] = [float(values[3])]                    
-					self.rv_data['BJD'] = [float(values[3])]                    
-					self.rv_data['t'] = [t_data]                   
-					self.rv_data['berv'] = [-99999]
-					self.rv_data['berv_err'] = [-99999]
-					self.rv_data['bispan'] = [-99999]
-					self.rv_data['bispan_err'] = [-99999] 
-					self.rv_data['drift_noise'] = [-99999]
-					self.rv_data['drift_noise_err'] = [-99999]
-					self.rv_data['texp'] = [-99999]
-					self.rv_data['texp_err'] = [-99999]
-					self.rv_data['cal_therror'] = [-99999]  
-					self.rv_data['cal_therror_err'] = [-99999]
-					self.rv_data['protm08'] = [-99999] 
-					self.rv_data['protm08_err'] = [-99999] 
-					self.rv_data['protn84'] = [-99999] 
-					self.rv_data['protn84_err'] = [-99999] 
-					self.rv_data['fwhm'] = [-99999]  
-					self.rv_data['fwhm_err'] = [-99999]
-					self.rv_data['spectroFluxSn20'] = [-99999]
-					self.rv_data['spectroFluxSn20_err'] = [-99999]
-					self.rv_data['cal_thfile'] = [-99999] 
-					self.rv_data['rhk_err'] = [-99999]
-					self.rv_data['rhk'] = [self.rhk_value]
-					self.rv_data['drs_qc'] = [True]
-					self.rv_data['ins_name'] = [values[0]]
-					self.rv_data['Telescope'] = [values[0]]                    
-					self.rv_data['ins_mode'] = ['']
-					self.rv_data['mask'] = ['']
-					self.rv_data['contrast'] = [-99999]
-					self.rv_data['contrast_err'] = [-99999]
-					self.rv_data['spectroFluxSn50'] = [-99999]
-					self.rv_data['spectroFluxSn50_err'] = [-99999]
-					self.rv_data['naindex'] = [-99999]
-					self.rv_data['naindex_err'] = [-99999]
-					self.rv_data['snca2'] = [-99999]
-					self.rv_data['snca2_err'] = [-99999]
-					self.rv_data['public'] = [True]
-					self.rv_data['pub_reference'] = ['Maxted']
-					self.rv_data['pub_bibcode'] = ['']
-					self.rv_data['sindex'] = [-99999]
-					self.rv_data['sindex_err'] = [-99999]
-					self.rv_data['haindex'] = [-99999]
-					self.rv_data['haindex_err'] = [-99999]
-					self.rv_data['drs_version'] = ['Pub']  
-					self.rv_data['caindex'] = [-99999]
-					self.rv_data['caindex_err'] = [-99999]
-					self.rv_data['rjd_err'] = [-99999]
-					rv_value = (float(values[1]))*1000.0                    
-#					rv_value = float(values[4])*1.0
-					self.rv_data['rv'] = [rv_value]
-					self.rv_data['Vel(m/s)'] = [rv_value]
-					self.rv_data['vel'] = [rv_value]                    
-					rv_err_value = float(values[5])*1.0
-					self.rv_data['rv_err'] = [rv_err_value]
-					self.rv_data['ErrVel(m/s)'] = [rv_err_value]
-					self.rv_data['errvel'] = [rv_err_value]
-					self.rv_data['sn26'] = [-99999]                    
-					self.rv_data['ccf_noise'] = [-99999]
-					self.rv_data['ccf_noise_err'] = [-99999]
-					self.rv_data['drift_used'] = [-99999]
-					self.rv_data['drift_used_err'] = [-99999]
-					self.rv_data['ccf_asym'] = [-99999]
-					self.rv_data['ccf_asym_err'] = [-99999]
-					self.rv_data['date_night'] = ['']  
-					self.rv_data['raw_file'] = ['Maxted']
-					self.rv_data['prog_id'] = [' ']
-					self.rv_data['th_ar'] = [-99999]
-					self.rv_data['th_ar1'] = [-99999]
-					self.rv_data['th_ar2'] = [-99999]                    
-					self.created=True
-				self.rv_sum_discovery_hires = self.rv_sum_discovery_hires + float(values[4])
-				self.rv_err_sum_discovery_hires = self.rv_err_sum_discovery_hires + float(values[5])
-				self.rv_count_discovery_hires += 1
-#				obsstring = "HARPS" + " & " + values[3] + " & " + values[4] + " & " + values[5] + " \\\\"               
-#				with open(self.obsname, 'a') as observations_log:
-#					observations_log.write('\n')                    
-#					observations_log.write(obsstring)                 
-		myfile21.close()    
-
- # Note that time is in rjd format not bjd
- # The file must be in .csv format and will have the Trifonov file format
- # file is loaded from the same directory as the notebook
- 
-	def _get_trifonov(self):
-		print("enter HARPS03")
-		print()        
-		myfile1 = open ('HARPS_RVBank_v1.csv', 'r')
-		for line in myfile1:
-			values = line.split(',')
-			object_name = values[0]
-			i=0
-			imax=0
-			max_fuzzy=0
-			while i < len(self.target_alias):
-				String_Matched = fuzz.ratio(object_name, self.target_alias[i][0])
-				if String_Matched > max_fuzzy:
-					max_fuzzy=String_Matched
-					imax=i
-				i+=1
-			if max_fuzzy > 92:
-				line = "String Matched % "+str(max_fuzzy)+"target object"+object_name+ "target_max "+ self.target_alias[imax][0]
-#				with open(self.logname, 'a') as norm_log:
-#					norm_log.write('\n')
-#					norm_log.write(line)
-				print(line)
-				rjd_data = float(values[28]) - 2400000.0
-				t_data = float(values[28]) - 2450000.0                
-				if self.created:
-					self.rv_data['rjd'] += [rjd_data]
-					self.rv_data['bjd'] += [float(values[28])]
-					self.rv_data['BJD'] += [float(values[28])]
-					self.rv_data['t'] += [t_data]                     
-					self.rv_data['berv'] += [float(values[29])]
-					self.rv_data['berv_err'] += [-99999]
-					self.rv_data['bispan'] += [float(values[25])]
-					self.rv_data['bispan_err'] += [-99999] 
-					self.rv_data['drift_noise'] += [float(values[31])]
-					self.rv_data['drift_noise_err'] += [float(values[32])]
-					self.rv_data['texp'] += [float(values[37])]
-					self.rv_data['texp_err'] += [-99999]
-					self.rv_data['cal_therror'] += [-99999]  
-					self.rv_data['cal_therror_err'] += [-99999]
-					self.rv_data['protm08'] += [-99999] 
-					self.rv_data['protm08_err'] += [-99999] 
-					self.rv_data['protn84'] += [-99999] 
-					self.rv_data['protn84_err'] += [-99999] 
-					self.rv_data['fwhm'] += [float(values[23])]  
-					self.rv_data['fwhm_err'] += [-99999]
-					self.rv_data['spectroFluxSn20'] += [-99999]
-					self.rv_data['spectroFluxSn20_err'] += [-99999]
-					self.rv_data['cal_thfile'] += [-99999] 
-					self.rv_data['rhk_err'] += [-99999]
-					self.rv_data['rhk'] += [self.rhk_value]
-					self.rv_data['drs_qc'] += [True]
-					self.rv_data['ins_name'] += ['HARPS03']
-					self.rv_data['Telescope'] += ['HARPS03']                    
-					self.rv_data['ins_mode'] += ['']
-					self.rv_data['mask'] += [values[42]]
-					self.rv_data['contrast'] += [float(values[24])]
-					self.rv_data['contrast_err'] += [-99999]
-					self.rv_data['spectroFluxSn50'] += [-99999]
-					self.rv_data['spectroFluxSn50_err'] += [-99999]
-					self.rv_data['naindex'] += [float(values[18])]
-					self.rv_data['naindex_err'] += [float(values[19])]
-					self.rv_data['snca2'] += [-99999]
-					self.rv_data['snca2_err'] += [-99999]
-					self.rv_data['public'] += [True]
-					self.rv_data['pub_reference'] += ['Trifonov et al. 2020']
-					self.rv_data['pub_bibcode'] += ['']
-					self.rv_data['sindex'] += [-99999]
-					self.rv_data['sindex_err'] += [-99999]
-					self.rv_data['haindex'] += [float(values[16])]
-					self.rv_data['haindex_err'] += [float(values[17])]
-					self.rv_data['drs_version'] += ['Pub']  
-					self.rv_data['caindex'] += [-99999]
-					self.rv_data['caindex_err'] += [-99999]
-					self.rv_data['rjd_err'] += [-99999]
-					self.rv_data['rv'] += [float(values[4])]
-					self.rv_data['Vel(m/s)'] += [float(values[4])]
-					self.rv_data['vel'] += [float(values[4])]                    
-					self.rv_data['rv_err'] += [float(values[5])]
-					self.rv_data['ErrVel(m/s)'] += [float(values[5])]
-					self.rv_data['errvel'] += [float(values[5])]
-					self.rv_data['sn26'] += [-99999]                    
-					self.rv_data['ccf_noise'] += [-99999]
-					self.rv_data['ccf_noise_err'] += [-99999]
-					self.rv_data['drift_used'] += [-99999]
-					self.rv_data['drift_used_err'] += [-99999]
-					self.rv_data['ccf_asym'] += [-99999]
-					self.rv_data['ccf_asym_err'] += [-99999]
-					self.rv_data['date_night'] += ['']  
-					self.rv_data['raw_file'] += ['Trifonov et al. 2020']
-					self.rv_data['prog_id'] += [' ']
-					self.rv_data['th_ar'] += [-99999]
-					self.rv_data['th_ar1'] += [-99999]
-					self.rv_data['th_ar2'] += [-99999]                    
-				else:
-					self.rv_data['rjd'] = [rjd_data]
-					self.rv_data['bjd'] = [float(values[28])]
-					self.rv_data['BJD'] = [float(values[28])]
-					self.rv_data['t'] = [t_data]                    
-					self.rv_data['berv'] = [float(values[29])]
-					self.rv_data['berv_err'] = [-99999]
-					self.rv_data['bispan'] = [float(values[25])]
-					self.rv_data['bispan_err'] = [-99999] 
-					self.rv_data['drift_noise'] = [float(values[31])]
-					self.rv_data['drift_noise_err'] = [float(values[32])]
-					self.rv_data['texp'] = [float(values[37])]
-					self.rv_data['texp_err'] = [-99999]
-					self.rv_data['cal_therror'] = [-99999]  
-					self.rv_data['cal_therror_err'] = [-99999]
-					self.rv_data['protm08'] = [-99999] 
-					self.rv_data['protm08_err'] = [-99999] 
-					self.rv_data['protn84'] = [-99999] 
-					self.rv_data['protn84_err'] = [-99999] 
-					self.rv_data['fwhm'] = [float(values[23])]  
-					self.rv_data['fwhm_err'] = [-99999]
-					self.rv_data['spectroFluxSn20'] = [-99999]
-					self.rv_data['spectroFluxSn20_err'] = [-99999]
-					self.rv_data['cal_thfile'] = [-99999] 
-					self.rv_data['rhk_err'] = [-99999]
-					self.rv_data['rhk'] = [self.rhk_value]
-					self.rv_data['drs_qc'] = [True]
-					self.rv_data['ins_name'] = ['HARPS03']
-					self.rv_data['Telescope'] = ['HARPS03']                    
-					self.rv_data['ins_mode'] = ['']
-					self.rv_data['mask'] = [values[42]]
-					self.rv_data['contrast'] = [float(values[24])]
-					self.rv_data['contrast_err'] = [-99999]
-					self.rv_data['spectroFluxSn50'] = [-99999]
-					self.rv_data['spectroFluxSn50_err'] = [-99999]
-					self.rv_data['naindex'] = [float(values[18])]
-					self.rv_data['naindex_err'] = [float(values[19])]
-					self.rv_data['snca2'] = [-99999]
-					self.rv_data['snca2_err'] = [-99999]
-					self.rv_data['public'] = [True]
-					self.rv_data['pub_reference'] = ['Trifonov et al. 2020']
-					self.rv_data['pub_bibcode'] = ['']
-					self.rv_data['sindex'] = [-99999]
-					self.rv_data['sindex_err'] = [-99999]
-					self.rv_data['haindex'] = [float(values[16])]
-					self.rv_data['haindex_err'] = [float(values[17])]
-					self.rv_data['drs_version'] = ['Pub']  
-					self.rv_data['caindex'] = [-99999]
-					self.rv_data['caindex_err'] = [-99999]
-					self.rv_data['rjd_err'] = [-99999]
-					self.rv_data['rv'] = [float(values[4])]
-					self.rv_data['Vel(m/s)'] = [float(values[4])]
-					self.rv_data['vel'] = [float(values[4])]                    
-					self.rv_data['rv_err'] = [float(values[5])]
-					self.rv_data['ErrVel(m/s)'] = [float(values[5])]
-					self.rv_data['errvel'] = [float(values[5])]
-					self.rv_data['sn26'] = [-99999]                    
-					self.rv_data['ccf_noise'] = [-99999]
-					self.rv_data['ccf_noise_err'] = [-99999]
-					self.rv_data['drift_used'] = [-99999]
-					self.rv_data['drift_used_err'] = [-99999]
-					self.rv_data['ccf_asym'] = [-99999]
-					self.rv_data['ccf_asym_err'] = [-99999]
-					self.rv_data['date_night'] = ['']  
-					self.rv_data['raw_file'] = ['Trifonov et al. 2020']
-					self.rv_data['prog_id'] = [' ']
-					self.rv_data['th_ar'] = [-99999]
-					self.rv_data['th_ar1'] = [-99999]
-					self.rv_data['th_ar2'] = [-99999]                    
-					self.created=True
-				print('trifonov date ',rjd_data,'rv  ',float(values[4]))
-				print()
-				self.rv_sum_trifonov = self.rv_sum_trifonov + float(values[4])
-				self.rv_err_sum_trifonov = self.rv_err_sum_trifonov + float(values[5])
-				self.rv_count_trifonov +=1
-#				obsstring = "HARPS03" + " & " + values[28] + " & " + values[4] + " & " + values[5] + " \\\\"               
-#				with open(self.obsname, 'a') as observations_log:
-#					observations_log.write('\n')                    
-#					observations_log.write(obsstring)                
-		myfile1.close()
-
-# hardener: add RHK and DRS_QC since they were not filled   
+			i+=1   
 
 	def _get_butler_2017(self):
 		print("enter HIRES2017")
 		print()        
-		file_name = 'HIRES_Keck_Precision_Radial_Velocity_Exoplanet_Survey.csv'
+		file_name = self.rootdirectory+'HIRES_Keck_Precision_Radial_Velocity_Exoplanet_Survey.csv'
 		myfile3 = open (file_name, 'r')
 		for line in myfile3:
 			values = line.split(',')
@@ -1116,48 +710,13 @@ class RV_Mapper:
 #				with open(self.obsname, 'a') as observations_log:
 #					observations_log.write('\n')                    
 #					observations_log.write(obsstring)
-		myfile3.close()
-
-	def _get_butler_2020(self):
-		print("enter HIRES2020 Fred's Counts")
-		print()        
-		file_name = 'KeckVels_Coordinates_Aliases_with_RV_counts.csv'
-		myfilefred = open (file_name, 'r')
-		header_lines = 1
-		count_lines = 0
-		for line in myfilefred:
-			if count_lines < header_lines:
-				count_lines+=1
-				continue        
-			values = line.split(',')
-			object_name = values[0]                                
-			ravariation = 2/3600
-			try:
-				ravalue = float(values[4])
-			except:
-				ravalue = 0.0                
-			try:
-				decvalue = float(values[5])
-			except:
-				decvalue = 0.0
-			if abs(ravalue-self.radegrees) < ravariation and abs(decvalue-self.decdegrees) < ravariation:
-				print('target ', object_name)
-				print("RA ",ravalue, " DEC ",decvalue)
-				print("RA variation",abs(ravalue-self.radegrees)," DEC variation ",abs(decvalue-self.decdegrees), " variation allowed ",ravariation)
-				self.rv_sum_butler_2020 = self.rv_sum_butler_2020 + 0
-				self.rv_err_sum_butler_2020 = self.rv_err_sum_butler_2020 + 0
-				try:
-					rvcount = float(values[1])
-				except:
-					rvcount = 0.0
-				self.rv_count_butler_2020 += rvcount
-		myfilefred.close()                
+		myfile3.close()                
         
-	def _get_butler_2020a(self):
+	def _get_butler_2020(self):
 		print("enter get_butler_2020")
 		print()        
-		for filename in os.listdir('keck_vels'):
-			if fnmatch.fnmatch(filename, '*.vels'):
+		for filename in os.listdir(self.rootdirectory+'keck_vels'):
+			if fnmatch.fnmatch(filename, self.rootdirectory+'*.vels'):
 				target = filename.split('_',1)
 				object_name = target[0]
 #				print("object name ", object_name," filename ",filename)                
@@ -1169,7 +728,7 @@ class RV_Mapper:
 				while i < nospace_count:
 #					if object_name == self.target or object_name == self.target_alias[i][0] or object_name == self.target_alias_nospace[i][0]:            
 					if object_name == self.target_alias[i][0] or object_name == self.target_alias_nospace[i][0]:               
-						fileopen = 'keck_vels/'+filename
+						fileopen = self.rootdirectory+'keck_vels/'+filename
 						print("file name ",filename)                        
 						myfile5 = open (fileopen, 'r')
 						for line in myfile5:
@@ -1334,7 +893,7 @@ class RV_Mapper:
 		print("enter HARPS15")
 		print()        
 		from astropy.io import fits as pyfits
-		hdulist=pyfits.open('ADP.2023-12-04T15_16_53.464.fits')
+		hdulist=pyfits.open(self.rootdirectory+'ADP.2023-12-04T15_16_53.464.fits')
 		HARPS_Table=hdulist[1].data        
 		numobs = len(HARPS_Table)
 		k=0
@@ -1516,16 +1075,29 @@ class RV_Mapper:
 
 	def _get_eso_espresso(self):
 		print("enter eso espresso")
-		print()
-		for filename in os.listdir('ESPRESSO_Full_Data_Set/archive'):
-			if fnmatch.fnmatch(filename, '*.fits'):
-				hdul = fits.open('ESPRESSO_Full_Data_Set/archive/'+filename)
-				object_name = hdul[0].header['HIERARCH ESO OBS TARG NAME']  
-				ravariation = 2/3600            
-				if abs(hdul[0].header['RA']-self.radegrees) < ravariation and abs(hdul[0].header['DEC']-self.decdegrees) < ravariation:
+		print()        
+		myfile2 = open (self.rootdirectory+'ESPRESSO_flat_file.csv', 'r')
+		rjd_data = 0.0
+		header_lines = 1
+		count_lines = 0
+		for line in myfile2:
+			if count_lines < header_lines:
+				count_lines+=1
+				continue            
+			values = line.split(',')
+			colcount=len(values)
+			object_name = values[0]
+			ravariation = 2/3600
+#			try:
+#				ravalue = float(values[13])
+#			except:
+#				print('ravalue ',values[13])
+#				values[13] = 0
+			if abs(float(values[13])-self.radegrees) < ravariation and abs(float(values[14])-self.decdegrees) < ravariation:
 					print('target ', object_name)
-					print("RA ",hdul[0].header['RA'], " DEC ",hdul[0].header['DEC'])
-					bjd_data = float(hdul[0].header['HIERARCH ESO QC BJD'])
+					print("RA ",values[13], " DEC ",values[14])
+					print("RA variation",abs(float(values[13])-self.radegrees)," DEC variation ",abs(float(values[14])-self.decdegrees), " variation allowed ",ravariation)                        
+					bjd_data = values[1]
 					rjd_data = bjd_data - 2400000.0                    
 					t_data = bjd_data - 2450000.0                    
 					if self.created:
@@ -1533,12 +1105,12 @@ class RV_Mapper:
 						self.rv_data['bjd'] += [bjd_data]
 						self.rv_data['BJD'] += [bjd_data]    
 						self.rv_data['t'] += [t_data]                         
-						berv_value = float(hdul[0].header['HIERARCH ESO QC BERV'])*1000.0                       
+						berv_value = float(values[4])*1000.0                       
 						self.rv_data['berv'] += [berv_value]                       
 						self.rv_data['berv_err'] += [-99999]
-						bis_value = float(hdul[0].header['HIERARCH ESO QC CCF BIS SPAN'])*1000.0
+						bis_value = float(values[6])*1000.0
 						self.rv_data['bispan'] += [bis_value]                        
-						bis_err_value = float(hdul[0].header['HIERARCH ESO QC CCF BIS SPAN ERROR'])*1000.0
+						bis_err_value = float(values[7])*1000.0
 						self.rv_data['bispan_err'] += [bis_err_value]                        
 						self.rv_data['drift_noise'] += [-99999]
 						self.rv_data['drift_noise_err'] += [-99999]
@@ -1550,9 +1122,9 @@ class RV_Mapper:
 						self.rv_data['protm08_err'] += [-99999] 
 						self.rv_data['protn84'] += [-99999] 
 						self.rv_data['protn84_err'] += [-99999] 
-						fwhm_value = float(hdul[0].header['HIERARCH ESO QC CCF FWHM'])*1000.0
+						fwhm_value = float(values[8])*1000.0
 						self.rv_data['fwhm'] += [fwhm_value]                        
-						fwhm_err_value = float(hdul[0].header['HIERARCH ESO QC CCF FWHM ERROR'])*1000.0
+						fwhm_err_value = float(values[9])*1000.0
 						self.rv_data['fwhm_err'] += [fwhm_err_value]                        
 						self.rv_data['spectroFluxSn20'] += [-99999]
 						self.rv_data['spectroFluxSn20_err'] += [-99999]
@@ -1564,9 +1136,9 @@ class RV_Mapper:
 						self.rv_data['Telescope'] += ['ESPRESSO']                        
 						self.rv_data['ins_mode'] += ['']
 						self.rv_data['mask'] += ['']
-						contrast_value = float(hdul[0].header['HIERARCH ESO QC CCF CONTRAST'])*1000.0
+						contrast_value = float(values[10])*1000.0
 						self.rv_data['contrast'] += [contrast_value]
-						contrast_err_value = float(hdul[0].header['HIERARCH ESO QC CCF CONTRAST ERROR'])*1000.0
+						contrast_err_value = float(values[11])*1000.0
 						self.rv_data['contrast_err'] += [contrast_err_value]                        
 						self.rv_data['spectroFluxSn50'] += [-99999]
 						self.rv_data['spectroFluxSn50_err'] += [-99999]
@@ -1585,11 +1157,11 @@ class RV_Mapper:
 						self.rv_data['caindex'] += [-99999]
 						self.rv_data['caindex_err'] += [-99999]
 						self.rv_data['rjd_err'] += [-99999]
-						rv_value = float(hdul[0].header['HIERARCH ESO QC CCF RV'])*1000.0
+						rv_value = float(values[2])*1000.0
 						self.rv_data['rv'] += [rv_value]
 						self.rv_data['Vel(m/s)'] += [rv_value]
 						self.rv_data['vel'] += [rv_value]                         
-						rv_err_value = float(hdul[0].header['HIERARCH ESO QC CCF RV ERROR'])*1000.0
+						rv_err_value = float(values[3])*1000.0
 						self.rv_data['rv_err'] += [rv_err_value]
 						self.rv_data['ErrVel(m/s)'] += [rv_err_value]
 						self.rv_data['errvel'] += [rv_err_value]
@@ -1611,12 +1183,12 @@ class RV_Mapper:
 						self.rv_data['bjd'] = [bjd_data]
 						self.rv_data['BJD'] = [bjd_data]
 						self.rv_data['t'] = [t_data]                        
-						berv_value = float(hdul[0].header['HIERARCH ESO QC BERV'])*1000.0                        
+						berv_value = float(values[4])*1000.0                        
 						self.rv_data['berv'] = [berv_value]
 						self.rv_data['berv_err'] = [-99999]
-						bis_value = float(hdul[0].header['HIERARCH ESO QC CCF BIS SPAN'])*1000.0
+						bis_value = float(values[6])*1000.0
 						self.rv_data['bispan'] = [bis_value]                        
-						bis_err_value = float(hdul[0].header['HIERARCH ESO QC CCF BIS SPAN ERROR'])*1000.0
+						bis_err_value = float(values[7])*1000.0
 						self.rv_data['bispan_err'] = [bis_err_value] 
 						self.rv_data['drift_noise'] = [-99999]
 						self.rv_data['drift_noise_err'] = [-99999]
@@ -1628,9 +1200,9 @@ class RV_Mapper:
 						self.rv_data['protm08_err'] = [-99999] 
 						self.rv_data['protn84'] = [-99999] 
 						self.rv_data['protn84_err'] = [-99999] 
-						fwhm_value = float(hdul[0].header['HIERARCH ESO QC CCF FWHM'])*1000.0
+						fwhm_value = float(values[8])*1000.0
 						self.rv_data['fwhm'] = [fwhm_value]                        
-						fwhm_err_value = float(hdul[0].header['HIERARCH ESO QC CCF FWHM ERROR'])*1000.0
+						fwhm_err_value = float(values[9])*1000.0
 						self.rv_data['fwhm_err'] = [fwhm_err_value]
 						self.rv_data['spectroFluxSn20'] = [-99999]
 						self.rv_data['spectroFluxSn20_err'] = [-99999]
@@ -1642,9 +1214,9 @@ class RV_Mapper:
 						self.rv_data['Telescope'] = ['ESPRESSO']                        
 						self.rv_data['ins_mode'] = ['']
 						self.rv_data['mask'] = ['']
-						contrast_value = float(hdul[0].header['HIERARCH ESO QC CCF CONTRAST'])*1000.0
+						contrast_value = float(values[10])*1000.0
 						self.rv_data['contrast'] = [contrast_value]
-						contrast_err_value = float(hdul[0].header['HIERARCH ESO QC CCF CONTRAST ERROR'])*1000.0
+						contrast_err_value = float(values[12])*1000.0
 						self.rv_data['contrast_err'] = [contrast_err_value]
 						self.rv_data['spectroFluxSn50'] = [-99999]
 						self.rv_data['spectroFluxSn50_err'] = [-99999]
@@ -1663,11 +1235,11 @@ class RV_Mapper:
 						self.rv_data['caindex'] = [-99999]
 						self.rv_data['caindex_err'] = [-99999]
 						self.rv_data['rjd_err'] = [-99999]
-						rv_value = float(hdul[0].header['ESO QC CCF RV'])*1000.0
+						rv_value = float(values[2])*1000.0
 						self.rv_data['rv'] = [rv_value]
 						self.rv_data['Vel(m/s)'] = [rv_value]
 						self.rv_data['vel'] = [rv_value]                        
-						rv_err_value = float(hdul[0].header['ESO QC CCF RV ERROR'])*1000.0
+						rv_err_value = float(values[3])*1000.0
 						self.rv_data['rv_err'] = [rv_err_value]
 						self.rv_data['ErrVel(m/s)'] = [rv_err_value]
 						self.rv_data['errvel'] = [rv_err_value]
@@ -1692,19 +1264,12 @@ class RV_Mapper:
 #					with open(self.obsname, 'a') as observations_log:
 #						observations_log.write('\n')                        
 #						observations_log.write(obsstring)
-				hdul.close 
-
-#stubs for future development 
-	def _get_weiss(self):
-		myfile9 = ''
-
-	def _get_carmenes(self):
-		myfile5 = ''
+		myfile2.close() 
 
 	def _get_sophie(self):
 		print("enter SOPHIE")
 		print()        
-		myfile4 = open ('sophiecc_1686978863.txt', 'r')
+		myfile4 = open (self.rootdirectory+'sophiecc_1686978863.txt', 'r')
 		rjd_data = 0.0
 		header_lines = 38
 		count_lines = 0
@@ -1890,186 +1455,8 @@ class RV_Mapper:
 #							with open(self.obsname, 'a') as observations_log:
 #								observations_log.write('\n')                
 #								observations_log.write(obsstring)    
-		myfile4.close()
-                    
-	def _get_uves_2019(self):
-		print("enter get_uves_2019")
-		print()        
-		for filename in os.listdir('uves_vels_2019'):
-			if fnmatch.fnmatch(filename, '*.vels'):
-				target = filename.split('_',1)
-				object_name = target[0]
-#				print("object name ", object_name," filename ",filename)                
-				i=0
-				try:
-					nospace_count = len(self.target_alias_nospace)
-				except:
-					nospace_count = 0
-				while i < nospace_count:
-					if object_name == self.target_alias_nospace[i][0]:
-						fileopen = 'uves_vels_2019/'+filename
-						myfile6 = open (fileopen, 'r')
-						for line in myfile6:
-							values = line.split()                    
-							rjd_data = float(values[0]) - 2400000.0
-							t_data = float(values[0]) - 2450000.0                    
-							if self.created:
-								self.rv_data['rjd'] += [rjd_data]
-								self.rv_data['bjd'] += [float(values[0])]
-								self.rv_data['BJD'] += [float(values[0])]    
-								self.rv_data['t'] += [t_data]                                                
-								self.rv_data['berv'] += [-99999]                       
-								self.rv_data['berv_err'] += [-99999]
-								self.rv_data['bispan'] += [-99999]                        
-								self.rv_data['bispan_err'] += [-99999]                        
-								self.rv_data['drift_noise'] += [-99999]
-								self.rv_data['drift_noise_err'] += [-99999]
-								self.rv_data['texp'] += [-99999]
-								self.rv_data['texp_err'] += [-99999]
-								self.rv_data['cal_therror'] += [-99999] 
-								self.rv_data['cal_therror_err'] += [-99999]
-								self.rv_data['protm08'] += [-99999] 
-								self.rv_data['protm08_err'] += [-99999] 
-								self.rv_data['protn84'] += [-99999] 
-								self.rv_data['protn84_err'] += [-99999] 
-								self.rv_data['fwhm'] += [-99999]                        
-								self.rv_data['fwhm_err'] += [-99999]                        
-								self.rv_data['spectroFluxSn20'] += [-99999]
-								self.rv_data['spectroFluxSn20_err'] += [-99999]
-								self.rv_data['cal_thfile'] += [-99999] 
-								self.rv_data['rhk_err'] += [-99999]
-								self.rv_data['rhk'] += [self.rhk_value]
-								self.rv_data['drs_qc'] += [True]
-								self.rv_data['ins_name'] += ['UVES2019']
-								self.rv_data['Telescope'] += ['UVES2019']                        
-								self.rv_data['ins_mode'] += ['']
-								self.rv_data['mask'] += ['']
-								self.rv_data['contrast'] += [-99999]
-								self.rv_data['contrast_err'] += [-99999]                        
-								self.rv_data['spectroFluxSn50'] += [-99999]
-								self.rv_data['spectroFluxSn50_err'] += [-99999]
-								self.rv_data['naindex'] += [-99999]
-								self.rv_data['naindex_err'] += [-99999]
-								self.rv_data['snca2'] += [-99999]
-								self.rv_data['snca2_err'] += [-99999]
-								self.rv_data['public'] += [True]
-								self.rv_data['pub_reference'] += ['none']
-								self.rv_data['pub_bibcode'] += ['']
-								self.rv_data['sindex'] += [-99999]
-								self.rv_data['sindex_err'] += [-99999]
-								self.rv_data['haindex'] += [-99999]
-								self.rv_data['haindex_err'] += [-99999]
-								self.rv_data['drs_version'] += ['Pub']  
-								self.rv_data['caindex'] += [-99999]
-								self.rv_data['caindex_err'] += [-99999]
-								self.rv_data['rjd_err'] += [-99999]
-								rv_value = float(values[1])*1000.0
-								self.rv_data['rv'] += [rv_value]
-								self.rv_data['Vel(m/s)'] += [rv_value]
-								self.rv_data['vel'] += [rv_value]                         
-								rv_err_value = float(values[2])*1000.0
-								self.rv_data['rv_err'] += [rv_err_value]
-								self.rv_data['ErrVel(m/s)'] += [rv_err_value]
-								self.rv_data['errvel'] += [rv_err_value]
-								self.rv_data['sn26'] += [-99999]                        
-								self.rv_data['ccf_noise'] += [-99999]
-								self.rv_data['ccf_noise_err'] += [-99999]
-								self.rv_data['drift_used'] += [-99999]
-								self.rv_data['drift_used_err'] += [-99999]
-								self.rv_data['ccf_asym'] += [-99999]
-								self.rv_data['ccf_asym_err'] += [-99999]
-								self.rv_data['date_night'] += ['']  
-								self.rv_data['raw_file'] += ['none']
-								self.rv_data['prog_id'] += [' ']
-								self.rv_data['th_ar'] += [-99999]
-								self.rv_data['th_ar1'] += [-99999]
-								self.rv_data['th_ar2'] += [-99999]                                
-							else:
-								self.rv_data['rjd'] = [rjd_data]
-								self.rv_data['bjd'] = [float(values[0])]
-								self.rv_data['BJD'] = [float(values[0])]
-								self.rv_data['t'] = [t_data]                                                
-								self.rv_data['berv'] = [-99999]
-								self.rv_data['berv_err'] = [-99999]
-								self.rv_data['berv_err'] = [-99999]
-								self.rv_data['bispan'] = [-99999]                        
-								self.rv_data['bispan_err'] = [-99999] 
-								self.rv_data['drift_noise'] = [-99999]
-								self.rv_data['drift_noise_err'] = [-99999]
-								self.rv_data['texp'] = [-99999]
-								self.rv_data['texp_err'] = [-99999]
-								self.rv_data['cal_therror'] = [-99999]  
-								self.rv_data['cal_therror_err'] = [-99999]
-								self.rv_data['protm08'] = [-99999] 
-								self.rv_data['protm08_err'] = [-99999] 
-								self.rv_data['protn84'] = [-99999] 
-								self.rv_data['protn84_err'] = [-99999] 
-								self.rv_data['fwhm'] = [-99999]                        
-								self.rv_data['fwhm_err'] = [-99999]
-								self.rv_data['spectroFluxSn20'] = [-99999]
-								self.rv_data['spectroFluxSn20_err'] = [-99999]
-								self.rv_data['cal_thfile'] = [-99999] 
-								self.rv_data['rhk_err'] = [-99999]
-								self.rv_data['rhk'] = [self.rhk_value]
-								self.rv_data['drs_qc'] = [True]
-								self.rv_data['ins_name'] = ['UVES2019']
-								self.rv_data['Telescope'] = ['UVES2019']                        
-								self.rv_data['ins_mode'] = ['']
-								self.rv_data['mask'] = ['']
-								self.rv_data['contrast'] = [-99999]
-								self.rv_data['contrast_err'] = [-99999]
-								self.rv_data['spectroFluxSn50'] = [-99999]
-								self.rv_data['spectroFluxSn50_err'] = [-99999]
-								self.rv_data['naindex'] = [-99999]
-								self.rv_data['naindex_err'] = [-99999]
-								self.rv_data['snca2'] = [-99999]
-								self.rv_data['snca2_err'] = [-99999]
-								self.rv_data['public'] = [True]
-								self.rv_data['pub_reference'] = ['none']
-								self.rv_data['pub_bibcode'] = ['']
-								self.rv_data['sindex'] = [-99999]
-								self.rv_data['sindex_err'] = [-99999]
-								self.rv_data['haindex'] = [-99999]
-								self.rv_data['haindex_err'] = [-99999]
-								self.rv_data['drs_version'] = ['Pub']  
-								self.rv_data['caindex'] = [-99999]
-								self.rv_data['caindex_err'] = [-99999]
-								self.rv_data['rjd_err'] = [-99999]
-								rv_value = float(values[1])*1000.0
-								self.rv_data['rv'] = [rv_value]
-								self.rv_data['Vel(m/s)'] = [rv_value]
-								self.rv_data['vel'] = [rv_value]                        
-								rv_err_value = float(values[2])*1000.0
-								self.rv_data['rv_err'] = [rv_err_value]
-								self.rv_data['ErrVel(m/s)'] = [rv_err_value]
-								self.rv_data['errvel'] = [rv_err_value]
-								self.rv_data['sn26'] = [-99999]                        
-								self.rv_data['ccf_noise'] = [-99999]
-								self.rv_data['ccf_noise_err'] = [-99999]
-								self.rv_data['drift_used'] = [-99999]
-								self.rv_data['drift_used_err'] = [-99999]
-								self.rv_data['ccf_asym'] = [-99999]
-								self.rv_data['ccf_asym_err'] = [-99999]
-								self.rv_data['date_night'] = ['']  
-								self.rv_data['raw_file'] = ['none']
-								self.rv_data['prog_id'] = [' ']
-								self.rv_data['th_ar'] = [-99999]
-								self.rv_data['th_ar1'] = [-99999]
-								self.rv_data['th_ar2'] = [-99999]                                
-								self.created=True
-							self.rv_sum_uves_2019 = self.rv_sum_uves_2019 + rv_value
-							self.rv_err_sum_uves_2019 = self.rv_err_sum_uves_2019 + rv_err_value
-							self.rv_count_uves_2019 +=1
-#							obsstring = "UVES 2019" + " & " + values[0] + " & " + values[1] + " & " + values[2] + " \\\\"   
-#							with open(self.obsname, 'a') as observations_log:
-#								observations_log.write('\n')                        
-#								observations_log.write(obsstring)
-						myfile6.close() 
-					i+=1                     
-        
+		myfile4.close()        
 
-# hardener: add RHK and DRS-QC since they were not included
-# hardener: set up "try - except block" for the file read to cover stars not represented in HIRES
 	def _shrink_data(self,i):
 		a = np.array(self.rv_data['berv'])
 		a = np.delete(a, i)

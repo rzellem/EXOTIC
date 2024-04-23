@@ -83,11 +83,11 @@ class RV_Mapper:
 
 	def __init__(self,target,instruments,indicators,rhk_value, 
 		dace,butler_2017,butler_2020,eso_harps,eso_espresso,sophie,
-		trim,trim_lower,trim_upper,remove_date_ranges,remove_date_singles,clip_snr,gamma):
+		trim,trim_lower,trim_upper,remove_date_ranges,remove_date_singles,clip_snr,gamma,datadirectoryroot):
 		self.target=target
 		print("self.target in normalizer ", self.target," target in normalizer ",target)
 		print()
-		self.rootdirectory='/Users/subercorley/beavers/'
+		self.datadirectoryroot=datadirectoryroot
 		self.instruments=instruments
 		self.indicators=indicators
 		self.rhk_value=rhk_value
@@ -535,7 +535,7 @@ class RV_Mapper:
 	def _get_butler_2017(self):
 		print("enter HIRES2017")
 		print()        
-		file_name = self.rootdirectory+'HIRES_Keck_Precision_Radial_Velocity_Exoplanet_Survey.csv'
+		file_name = self.datadirectoryroot+'HIRES_Keck_Precision_Radial_Velocity_Exoplanet_Survey.csv'
 		myfile3 = open (file_name, 'r')
 		for line in myfile3:
 			values = line.split(',')
@@ -715,8 +715,8 @@ class RV_Mapper:
 	def _get_butler_2020(self):
 		print("enter get_butler_2020")
 		print()        
-		for filename in os.listdir(self.rootdirectory+'keck_vels'):
-			if fnmatch.fnmatch(filename, self.rootdirectory+'*.vels'):
+		for filename in os.listdir(self.datadirectoryroot+'keck_vels'):
+			if fnmatch.fnmatch(filename, self.datadirectoryroot+'*.vels'):
 				target = filename.split('_',1)
 				object_name = target[0]
 #				print("object name ", object_name," filename ",filename)                
@@ -728,7 +728,7 @@ class RV_Mapper:
 				while i < nospace_count:
 #					if object_name == self.target or object_name == self.target_alias[i][0] or object_name == self.target_alias_nospace[i][0]:            
 					if object_name == self.target_alias[i][0] or object_name == self.target_alias_nospace[i][0]:               
-						fileopen = self.rootdirectory+'keck_vels/'+filename
+						fileopen = self.datadirectoryroot+'keck_vels/'+filename
 						print("file name ",filename)                        
 						myfile5 = open (fileopen, 'r')
 						for line in myfile5:
@@ -893,7 +893,7 @@ class RV_Mapper:
 		print("enter HARPS15")
 		print()        
 		from astropy.io import fits as pyfits
-		hdulist=pyfits.open(self.rootdirectory+'ADP.2023-12-04T15_16_53.464.fits')
+		hdulist=pyfits.open(self.datadirectoryroot+'ADP.2023-12-04T15_16_53.464.fits')
 		HARPS_Table=hdulist[1].data        
 		numobs = len(HARPS_Table)
 		k=0
@@ -1076,7 +1076,7 @@ class RV_Mapper:
 	def _get_eso_espresso(self):
 		print("enter eso espresso")
 		print()        
-		myfile2 = open (self.rootdirectory+'ESPRESSO_flat_file.csv', 'r')
+		myfile2 = open (self.datadirectoryroot+'ESPRESSO_flat_file.csv', 'r')
 		rjd_data = 0.0
 		header_lines = 1
 		count_lines = 0
@@ -1269,7 +1269,7 @@ class RV_Mapper:
 	def _get_sophie(self):
 		print("enter SOPHIE")
 		print()        
-		myfile4 = open (self.rootdirectory+'sophiecc_1686978863.txt', 'r')
+		myfile4 = open (self.datadirectoryroot+'sophiecc_1686978863.txt', 'r')
 		rjd_data = 0.0
 		header_lines = 38
 		count_lines = 0

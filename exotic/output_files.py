@@ -46,8 +46,8 @@ class OutputFiles:
                                                          f"{round_to_2(self.fit.errors['rprs'])}",
             "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
                                        f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
-            "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- "
-                                                  f"{round_to_2(self.fit.errors['ars'])} ",
+            "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
+                                                  f"{round_to_2(self.fit.errors['inc'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
                                           f"{round_to_2(self.fit.errors['a1'])}",
             "Airmass coefficient 2 (a2)": f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
@@ -68,7 +68,8 @@ class OutputFiles:
                 phot_ext["Optimal Annulus"] = f"{min_annul}"
             params_num.update(phot_ext)
 
-        params_num["Transit Duration (day)"] = f"{round_to_2(mean(self.durs))} +/- {round_to_2(std(self.durs))}"
+        params_num["Transit Duration (day)"] = (f"{round_to_2(mean(self.durs), std(self.durs))} +/- "
+                                                f"{round_to_2(std(self.durs))}")
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 
         with params_file.open('w') as f:
@@ -110,7 +111,7 @@ class OutputFiles:
                     f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
                     f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
                     f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
-                    f",a/R*={round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- {round_to_2(self.fit.errors['ars'])}"
+                    f",inc={round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- {round_to_2(self.fit.errors['inc'])}"
                     f",Am1={round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- {round_to_2(self.fit.errors['a1'])}"
                     f",Am2={round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- {round_to_2(self.fit.errors['a2'])}\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
@@ -138,15 +139,17 @@ class OutputFiles:
         plate_status_file = self.dir / "temp" / f"PlateStatus_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
         plate_status.writePlateStatus(plate_status_file)
 
-class VSPOutputFiles:
-    def __init__(self, fit, p_dict, i_dict, vsp_params):
+class AIDOutputFiles:
+    def __init__(self, fit, p_dict, i_dict, auid, chart_id, vsp_params):
         self.fit = fit
+        self.auid = auid
+        self.chart_id = chart_id
         self.p_dict = p_dict
         self.i_dict = i_dict
         self.dir = Path(self.i_dict['save'])
         self.vsp_params = vsp_params
 
-    def aavso(self, airmasses):
+    def aavso(self):
         params_file = self.dir / f"AID_AAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
@@ -165,10 +168,9 @@ class VSPOutputFiles:
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:
-                f.write(f"{self.p_dict['sName']},"f"{round(vsp_p['time'], 5)}," f"{round(vsp_p['mag'], 5)}," f"{round(vsp_p['mag_err'], 5)},"
-                        "V,NO,STD," f"{vsp_p['cname']}," f"{round(vsp_p['cmag'], 5)}," "na,na," 
-                        f"{round(median(airmasses[vsp_p['idx'][0]:vsp_p['idx'][1]]), 7)}," "na," 
-                        f"{vsp_p['chart_id']}," "na\n")
+                f.write(f"{self.auid},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
+                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na," 
+                        f"{round(vsp_p['airmass'], 7)},na,{self.chart_id},na\n")
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
@@ -230,9 +232,9 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'value': str(round_to_2(fit.parameters['rprs'], fit.errors['rprs'])),
             'uncertainty': str(round_to_2(fit.errors['rprs']))
         },
-        'a/R*': {
-            'value': str(round_to_2(fit.parameters['ars'], fit.errors['ars'])),
-            'uncertainty': str(round_to_2(fit.errors['ars'])),
+        'inc': {
+            'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
+            'uncertainty': str(round_to_2(fit.errors['inc'])),
         },
         'Am1': {
             'value': str(round_to_2(fit.parameters['a1'], fit.errors['a1'])),

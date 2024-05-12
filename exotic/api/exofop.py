@@ -74,6 +74,19 @@ class ExoFOP:
         else:
             raise Exception(f"Failed to retrieve data: Status code {response.status_code}")
 
+    def planet_info(self):
+        """
+        Returns the formatted data for the planet.
+        """
+        return self.get_formatted_data()
+
+    def resolve_name(self):
+        """
+        Checks if the TIC code can be resolved to a planet.
+        """
+        data = self.query_exofop()
+        return data is not None
+    
     def get_formatted_data(self):
         """
         Formats the JSON data into a dictionary and tries to extract the planet name from 'planet_parameters'.

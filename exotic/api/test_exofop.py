@@ -38,6 +38,7 @@
 
 from exofop import ExoFOP
 import json
+import pandas as pd
 
 def main():
     # Prompt user to enter the TIC ID
@@ -58,11 +59,11 @@ def main():
         
         formatted_data = exofop_instance.get_formatted_data()
         print("\nFormatted Data:")
-        print(json.dumps(formatted_data, indent=4))
+        print(formatted_data.to_json(orient='records', indent=4))
 
         # Save formatted data to a JSON file
         with open('tic-formatted.json', 'w') as file:
-            json.dump(formatted_data, file, indent=4)
+            file.write(formatted_data.to_json(orient='records', indent=4))
 
     except Exception as e:
         print(f"An error occurred: {e}")

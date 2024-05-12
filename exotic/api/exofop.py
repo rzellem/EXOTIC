@@ -46,10 +46,13 @@ from astropy.coordinates import SkyCoord
 import astropy.units as u
 
 # constants
-G = const.G.to(AU**3 / (const.M_sun * u.day**2))                    # AU^3 /(msun * day^2)
-SA = lambda m, p: (G * m * p ** 2. / (4. * np.pi ** 2.)) ** (1. / 3.)  # Keplerian semi-major axis (au)
+AU = const.au                                                       # m
+R_SUN = const.R_sun                                                 # m
+R_JUP = const.R_jup      
 
 # CALCULATED VALUES
+G = const.G.to(AU**3 / (const.M_sun * u.day**2))                    # AU^3 /(msun * day^2)
+SA = lambda m, p: (G * m * p ** 2. / (4. * np.pi ** 2.)) ** (1. / 3.)  # Keplerian semi-major axis (au)
 
 # class
 
@@ -190,7 +193,9 @@ class ExoFOP:
         if star_names:
             formatted_data['sName'] = star_names.split(',')[0].strip()
 
-        return formatted_data
+        df = pd.DataFrame([formatted_data])
+        
+        return df
 
 # misc
 

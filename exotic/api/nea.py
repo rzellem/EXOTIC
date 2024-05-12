@@ -61,6 +61,8 @@ SA = lambda m, p: (G * m * p ** 2. / (4. * np.pi ** 2.)) ** (1. / 3.)  # Kepleri
 def result_if_max_retry_count(retry_state):
     pass
 
+class ExoplanetNotFoundError(Exception):
+    pass
 
 class NASAExoplanetArchive:
 
@@ -253,7 +255,7 @@ class NASAExoplanetArchive:
                   f"\nNote: Please go to https://exoplanetarchive.ipac.caltech.edu to check naming"
                   f"\nif you feel that {self.planet} should have been located in the NASA Exoplanet"
                   f"\nArchive. You may re-run this step in EXOTIC to re-enter the planet's name if so.")
-            return
+            raise ExoplanetNotFoundError(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive.")
         
         # if len(default) == 0:
         #     self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."

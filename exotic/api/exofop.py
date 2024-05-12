@@ -40,8 +40,13 @@
 import requests
 import json
 import numpy as np
+import astropy.constants as const
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 # constants
+G = const.G.to(AU**3 / (const.M_sun * u.day**2))                    # AU^3 /(msun * day^2)
+SA = lambda m, p: (G * m * p ** 2. / (4. * np.pi ** 2.)) ** (1. / 3.)  # Keplerian semi-major axis (au)
 
 # CALCULATED VALUES
 

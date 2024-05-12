@@ -249,13 +249,19 @@ class NASAExoplanetArchive:
 
         if len(default) == 0:
             self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
-                                f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"
-                                "\nre-enter the planet's name or type 'candidate' if this is a planet candidate: ")
-            if self.planet.strip().lower() == 'candidate':
-                self.planet = user_input("\nPlease enter candidate planet's name: ", type_=str)
-                return self.planet, True
-            else:
-                return self._new_scrape(filename="eaConf.json")
+                        f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"
+                        "\nre-enter the planet's name: ")
+            return self._new_scrape(filename="eaConf.json")
+        
+        # if len(default) == 0:
+        #     self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
+        #                         f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"
+        #                         "\nre-enter the planet's name or type 'candidate' if this is a planet candidate: ")
+        #     if self.planet.strip().lower() == 'candidate':
+        #         self.planet = user_input("\nPlease enter candidate planet's name: ", type_=str)
+        #         return self.planet, True
+        #     else:
+        #         return self._new_scrape(filename="eaConf.json")
         else:
             # replaces NEA default with most recent publication
             default.iloc[0] = extra.iloc[0]

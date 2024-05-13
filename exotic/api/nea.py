@@ -248,7 +248,11 @@ class NASAExoplanetArchive:
             uri_ipac_query["where"] += f" and pl_name = '{self.planet}'"
 
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
-
+        
+        # added for testing - Ira Bell 5/12/24
+        
+        print(f"Value of default: {default}")
+        
         if default is None or len(default) == 0:
             print(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
                   f"\nProceeding with next step, which is to look up {self.planet} at Tess ExoFOP."

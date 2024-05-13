@@ -254,13 +254,7 @@ class NASAExoplanetArchive:
         print(f"Value of default: {default}")
         
         if default is None or len(default) == 0:
-            print(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
-                  f"\nProceeding with next step, which is to look up {self.planet} at Tess ExoFOP."
-                  f"\nNote: Please go to https://exoplanetarchive.ipac.caltech.edu to check naming"
-                  f"\nif you feel that {self.planet} should have been located in the NASA Exoplanet"
-                  f"\nArchive. You may re-run this step in EXOTIC to re-enter the planet's name if so.")
             raise ExoplanetNotFoundError(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive.")
-        
         else:
             # replaces NEA default with most recent publication
             default.iloc[0] = extra.iloc[0]

@@ -78,6 +78,9 @@ class ExoFOP:
         """
         Returns the formatted data for the planet.
         """
+        if self.data is None:
+            self.query_exofop()  # Call query_exofop() if data is not loaded
+            
         return self.get_formatted_data()
 
     def resolve_name(self):

@@ -123,6 +123,14 @@ try:  # nea
     from .api.nea import NASAExoplanetArchive
 except ImportError:  # package import
     from api.nea import NASAExoplanetArchive
+try: # ExoplanetNotFoundError
+    from .api.nea import ExoplanetNotFoundError
+except ImportError:
+    from api.nea import ExoplanetNotFoundError
+try: # exofop
+    from .api.exofop import ExoFOP
+except ImportError:
+    from api.exofop import ExoFOP
 try:  # output files
     from output_files import OutputFiles, VSPOutputFiles
 except ImportError:  # package import

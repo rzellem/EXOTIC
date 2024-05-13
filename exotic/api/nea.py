@@ -249,7 +249,7 @@ class NASAExoplanetArchive:
 
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
-        if len(default) == 0:
+        if default is None or len(default) == 0:
             print(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
                   f"\nProceeding with next step, which is to look up {self.planet} at Tess ExoFOP."
                   f"\nNote: Please go to https://exoplanetarchive.ipac.caltech.edu to check naming"

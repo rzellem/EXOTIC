@@ -250,7 +250,7 @@ class NASAExoplanetArchive:
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
         
         # added for testing - Ira Bell 5/12/24
-        
+
         print(f"Value of default: {default}")
         
         if default is None or len(default) == 0:
@@ -261,24 +261,6 @@ class NASAExoplanetArchive:
                   f"\nArchive. You may re-run this step in EXOTIC to re-enter the planet's name if so.")
             raise ExoplanetNotFoundError(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive.")
         
-        # if len(default) == 0:
-        #     self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
-        #                 f"\nProceeding with next step, which is to look up {{self.planet}} at Tess ExoFOP."
-        #                 f"\nNote: Please go to https://exoplanetarchive.ipac.caltech.edu to check naming"
-        #                 f"\nif you feel that {{self.planet}} should have been located in the NASA Exoplanet"
-        #                 f"\nArchive. You may re-run this step in EXOTIC to re-enter the planet's name if so.")
-        #     return
-            # return self._new_scrape(filename="eaConf.json")
-        
-        # if len(default) == 0:
-        #     self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
-        #                         f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"
-        #                         "\nre-enter the planet's name or type 'candidate' if this is a planet candidate: ")
-        #     if self.planet.strip().lower() == 'candidate':
-        #         self.planet = user_input("\nPlease enter candidate planet's name: ", type_=str)
-        #         return self.planet, True
-        #     else:
-        #         return self._new_scrape(filename="eaConf.json")
         else:
             # replaces NEA default with most recent publication
             default.iloc[0] = extra.iloc[0]

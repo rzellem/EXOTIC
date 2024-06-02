@@ -3,7 +3,7 @@ from pandas import read_csv
 from astropy import units as u
 from astropy import constants as const
 import matplotlib.pyplot as plt
-from exotic.api.rv_fitter import rv_fitter
+from exotic.api.rv_fitter import rv_fitter, planet_orbit
 
 Mjup = const.M_jup.to(u.kg).value
 Msun = const.M_sun.to(u.kg).value
@@ -23,7 +23,7 @@ if __name__ == "__main__":
         'u2': 0.4578497817617948, 'u3': -0.21582471000247333,   # TESS bandpass generated from exotethys
         'ecc': 0.93132,
         'omega':-58.699,
-        'tmid':2459556.6942,
+        'tmid':2458888.07466,
         'a1':1, # transit airmass - not used
         'a2':0,
         'fpfs':0.5, # F_p/F_s - for eclipse depth
@@ -100,3 +100,10 @@ if __name__ == "__main__":
     # plt.tight_layout()
     # plt.savefig('RV_timeseries_acceleration.png')
     # plt.show()
+
+    # open hd80606_rv.txt
+    data = np.loadtxt('hd80606_rv.txt')
+    dist = myfit.planet_star_distance(data[:,0])
+
+    # add to file + save as float instead of scientific notation
+    np.savetxt('hd80606_rv_dist.txt', np.array([data[:,0], data[:,1], dist]).T, header='BJD, RV (m/s), Dist (a/Rs)', fmt='%.7f')

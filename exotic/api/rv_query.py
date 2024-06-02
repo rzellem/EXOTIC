@@ -14,7 +14,10 @@ class RadialVelocityQuery:
             "rv_err": []
         }
 
-        self.query_dace()
+        if target is not None:
+            self.query_dace()
+
+            # more queries can be added here
 
     def query_dace(self):
 
@@ -41,16 +44,21 @@ class RadialVelocityQuery:
 
             # TODO add activity index? other metrics?
 
-        # def query_database?
-        # def load_from_disk?
+    ###############################
+    # add more functions here
+    ###############################
 
     def save_to_disk(self, path):
         # save data as json
         with open(path, 'w') as f:
             json.dump(self.data, f)
 
-    def load_from_disk(self, path):
+    @staticmethod
+    def load_from_disk(path):
         # load data from json
         with open(path, 'r') as f:
-            self.data = json.load(f)
-        self.target = self.data["target"]
+            data = json.load(f)
+        rv = RadialVelocityQuery(target=None)
+        rv.data = data
+        rv.target = data["target"]
+        return rv

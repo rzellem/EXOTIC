@@ -51,7 +51,7 @@ class RadialVelocityQuery:
     def save_to_disk(self, path):
         # save data as json
         with open(path, 'w') as f:
-            json.dump(self.data, f)
+            json.dump(self.data, f, ident=4)
 
     @staticmethod
     def load_from_disk(path):

@@ -1,29 +1,9 @@
-
-# first create an environment with the proper dependencies + version
-# git clone https://github.com/rzellem/EXOTIC.git
-# cd EXOTIC
-#git status to check branch
-# git pull uodates changes
-# git stash to avoid conflicts with files
-# git checkout develop
-
-# conda env list to see list of env's
-# conda create -n tess python=3.9
-# conda activate tess
-# pip install pandas scipy matplotlib astropy statsmodels cython numpy==1.21.6
-# pip install wotan transitleastsquares pylightcurve lightkurve==2.0.6 ultranest==3.5.6
-# pip install .
-# cd examples
-# python tess.py -t "HAT-P-54 b" 
-## to search for additional signals in residuals## # python tess.py -t "K2-132 b" --tls
-##to run new target hit up arrow and change name.
-
-## to run a new targetat a different time 
-# conda activate tess_exotic
+## To run script after installing EXOTIC locally from the Main branch do the following in terminal
 # cd EXOTIC
 # cd examples
-# python tess.py -t "K2-132 b"
-#python tess.py -t "TOI-5375b"
+# python tess_individ_lc.py -t "WASP-77 A b"
+#To run a different target simply call the code again with your new target:
+# python tess_individ_lc.py -t "K2-132 b"
 import os
 import copy
 import json
@@ -119,7 +99,7 @@ def parse_args():
     parser.add_argument("-t", "--target", help=help_, type=str, default="WASP-18 b")
 
     help_ = "Directory for saving results"
-    parser.add_argument("-o", "--output", help=help_, default="output/", type=str)
+    parser.add_argument("-o", "--output", help=help_, default="tess_individ_lc_output/", type=str)
 
     help_ = "Sectors (0 = all)"
     parser.add_argument("-s", "--sector", help=help_, default=0, type=int)

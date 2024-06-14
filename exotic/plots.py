@@ -14,7 +14,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     fig, axs = plt.subplots(3, 2, figsize=(12, 10))
 
     axs[0, 0].set_title(f"{target_name} X-Centroid Position", fontsize=14)
-    axs[0, 0].set_xlabel(f"Time [BJD_TDB-{np.nanmin(times)}:.5f]", fontsize=12)
+    axs[0, 0].set_xlabel(f"Time [BJD_TDB-{np.nanmin(times):.5f}]", fontsize=12)
     axs[0, 0].set_ylabel("X-Centroid [px]", fontsize=12)
     axs[0, 0].plot(times - np.nanmin(times), x_targ, 'k.')
 

@@ -826,8 +826,14 @@ def vsx_variable(ra, dec, radius=0.01, maglimit=14):
     except Exception:
         return False
 
+def build_comp_ra_dec(ra_wcs, dec_wcs, comp_stars):
+    comp_ra_dec = []
+    for _, comp_star in enumerate(comp_stars[:]):
+        comp_ra_dec.append([ra_wcs[int(comp_star[1])][int(comp_star[0])],
+            dec_wcs[int(comp_star[1])][int(comp_star[0])]])
+    return comp_ra_dec
 
-def check_for_variable_stars(ra_wcs, dec_wcs, comp_ra_dec, comp_stars):
+def check_for_variable_stars(ra_wcs, dec_wcs, comp_stars):
     for i, comp_star in enumerate(comp_stars[:]):
         ra = ra_wcs[int(comp_star[1])][int(comp_star[0])]
         dec = dec_wcs[int(comp_star[1])][int(comp_star[0])]
@@ -836,8 +842,6 @@ def check_for_variable_stars(ra_wcs, dec_wcs, comp_ra_dec, comp_stars):
                  f"\n\tPixel X: {comp_star[0]} Pixel Y: {comp_star[1]}")
         if query_variable_star_apis(ra, dec):
             comp_stars.remove(comp_star)
-        else:
-            comp_ra_dec.append([ra, dec])
 
 
 @retry(stop=stop_after_delay(30))
@@ -910,12 +914,18 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
         image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
     return image_data
 
-def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None):
+def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None, user_targ_star=None):
     if user_comp_stars is None:
         user_comp_stars = []
 
     vsp_comp_stars_info = {}
     vsp_star_count = 0
+
+    # Build combined list for comps and target - there are known cases when AAVsO comps have planets (XO-2 N)
+    # Plus, we don't want comp too close to target
+    targ_and_comp_stars = user_comp_stars[:]
+    if user_targ_star is not None:
+        targ_and_comp_stars.append(user_targ_star)
 
     wcs_hdr = search_wcs(file)
     fov = (img_scale * max(axis)) / 60
@@ -941,7 +951,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
 
             if (ra_pix < axis[0] and dec_pix < axis[1]) and (ra_pix > 1 and dec_pix > 1):
                 vsp_star = [int(ra_pix.min()), int(dec_pix.min())]
-                exist, vsp_star = check_comp_star_exists(user_comp_stars, vsp_star)
+                exist, vsp_star = check_comp_star_exists(targ_and_comp_stars, vsp_star)
 
                 if obs_filter in [band['band'] for band in star['bands']]:
                     star_info = next(band for band in star['bands'] if band['band'] == obs_filter)
@@ -2039,20 +2049,22 @@ def main():
 
                 auid = vsx_auid(ra_dec_tar[0], ra_dec_tar[1])
 
-                check_for_variable_stars(ra_wcs, dec_wcs, ra_dec_wcs, exotic_infoDict['comp_stars'])
+                check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
 
                 if exotic_infoDict['aavso_comp'] == 'y':
                     vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
                                                          exotic_infoDict['filter'], img_scale,
-                                                         user_comp_stars=exotic_infoDict['comp_stars'])
+                                                         user_comp_stars=exotic_infoDict['comp_stars'],
+                                                         user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
 
                 while not exotic_infoDict['comp_stars']:
                     log_info("\nThere are no comparison stars left as all of them were indicated as variable stars."
                              "\nPlease reenter new comparison star coordinates.")
                     exotic_infoDict['comp_stars'] = comparison_star_coords(exotic_infoDict['comp_stars'], False)
-                    check_for_variable_stars(ra_wcs, dec_wcs, ra_dec_wcs, exotic_infoDict['comp_stars'])
-
+                    check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
+                # Build RA/Dec for comp after list is finalized (avoid off by one issues, etc
+                ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
 
             # aperture sizes in stdev (sigma) of PSF

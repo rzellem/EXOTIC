@@ -4,6 +4,10 @@
 import os
 import fnmatch
 from astropy.io import fits
+from astropy.visualization import astropy_mpl_style
+from astropy import table
+from astropy.coordinates import SkyCoord
+from astropy.units import Quantity
 import pandas as pd
 import numpy as np
 from math import sin,cos,tan,asin,acos,atan,radians,degrees,pi,log,isnan
@@ -24,25 +28,21 @@ import warnings
 import requests
 import cgi
 from pyvo.dal import tap
-
 import matplotlib.pyplot as plt
 import pandas
-
-ESO_TAP_OBS = "http://archive.eso.org/tap_obs"
-
-tapobs = tap.TAPService(ESO_TAP_OBS)
 import sys
 import pyvo as vo
-from pyvo.dal import tap
+import tarfile
 
 # Verify the version of pyvo 
 from pkg_resources import parse_version
 if parse_version(vo.__version__) < parse_version('1.4'):
-    raise ImportError('pyvo version must be 1.4 or higher')
-    
+    raise ImportError('pyvo version must be 1.4 or higher')    
 print('pyvo             version {version}'.format(version=vo.__version__))
 
 # Defining the ESO tap service to query for phase 3 products:
+ESO_TAP_OBS = "http://archive.eso.org/tap_obs"
+tapobs = tap.TAPService(ESO_TAP_OBS)
 tap = vo.dal.TAPService("https://archive.eso.org/tap_obs")
 
 def query_simbad(target):
@@ -106,7 +106,7 @@ def query_dace(target):
 		rv_mod={}
 		rv_sum_dace = 0.0
 		rv_err_sum_dace = 0.0
-		rv_count_dace = 0        
+		rv_count_dace = 0         
 		print("enter DACE")
 		print()
 		created=False
@@ -293,202 +293,268 @@ def query_dace(target):
 			print()
 		rv_mod_df=pd.DataFrame.from_dict(rv_mod)       
 		return rv_mod_df
-###################################################################################################################           
+###################################################################################################################
 def query_harps(target):
+		print("enter harps")
+		print()
 		target_alias,ra,dec = query_simbad(target)
 		gamma = query_nasa(target)
-		rhk = 3.0        
+		rhk = 3.0
+# Read data from ESO website based upon RA and DEC from Simbad
+		sr = 2.5/60. # search radius of 2.5 arcmin, always expressed in degrees
+# Cone search: looking for footprints of reduced datasets intersecting a circle of 2.5' around NGC 4666
+		query = """SELECT *
+		FROM ivoa.ObsCore
+		WHERE intersects(s_region, circle('', %f, %f, %f))=1
+		""" % (ra , dec, sr)
+		res = tapobs.search(query=query)
+		product_id_list = convert(res['dp_id'])
+		product_id_count = len(product_id_list)
 		rv_mod={}
 		rv_sum_harps = 0.0
 		rv_err_sum_harps = 0.0
-		rv_count_harps = 0    
-		print("enter HARPS15")
-		print()
+		rv_count_harps = 0
+		basepath = os.getcwd()
+		cleanpath = basepath + '/radial_velocity/data/data'
+		print("In case that a prior run was interrupted remove files and directory from >>> ",cleanpath)
+		try:
+			shutil.rmtree(cleanpath)
+		except:
+			print("No data to clean.")        
+		print("basepath ",basepath)
+		path = basepath + '/radial_velocity/data'
+		extendedpath=path+'/data'
+		os.mkdir(extendedpath)        
+		os.chdir(extendedpath)
+		path = os.getcwd()        
 		created=False        
-		from astropy.io import fits as pyfits
-		hdulist=pyfits.open('ADP.2023-12-04T15_16_53.464.fits')
-		HARPS_Table=hdulist[1].data        
-		numobs = len(HARPS_Table)
 		k=0
-		while k<numobs:                
-				object_name = HARPS_Table[k][6]
-				bjd_data = float(HARPS_Table[k][13])
-# On June 3, 2015 the HARPS upgrade to hexagonal fiber was implemented and data prior to that date is unreliable
-				ravariation = 2/3600            
-				if abs(HARPS_Table[k][35]-ra) < ravariation and abs(HARPS_Table[k][36]-dec) < ravariation and bjd_data >= 2457387.00000:
-#					print('target ', object_name)
-#					print("RA ",HARPS_Table[k][35], " DEC ",HARPS_Table[k][36]," Program ID ",HARPS_Table[k][2])               
-					rjd_data = bjd_data - 2400000.0
-					t_data = bjd_data - 2450000.0                    
-					if created:
-						rv_mod['rjd'] += [rjd_data]
-						rv_mod['bjd'] += [float(HARPS_Table[k][13])]
-						rv_mod['BJD'] += [float(HARPS_Table[k][13])]
-						rv_mod['t'] += [t_data]                       
-						berv_value = float(HARPS_Table[k][16])*1000.0
-						rv_mod['berv'] += [berv_value]
-						rv_mod['berv_err'] += [-99999]
-						rv_mod['bispan'] += [-99999]
-						rv_mod['bispan_err'] += [-99999] 
-						rv_mod['drift_noise'] += [-99999]
-						rv_mod['drift_noise_err'] += [-99999]
-						rv_mod['texp'] += [-99999]
-						rv_mod['texp_err'] += [-99999]
-						rv_mod['cal_therror'] += [-99999]  
-						rv_mod['cal_therror_err'] += [-99999]
-						rv_mod['protm08'] += [-99999] 
-						rv_mod['protm08_err'] += [-99999] 
-						rv_mod['protn84'] += [-99999] 
-						rv_mod['protn84_err'] += [-99999] 
-						fwhm_value = float(HARPS_Table[k][23])*1000.0 
-						rv_mod['fwhm'] += [fwhm_value]
-						rv_mod['fwhm_err'] += [-99999]
-						rv_mod['spectroFluxSn20'] += [-99999]
-						rv_mod['spectroFluxSn20_err'] += [-99999]
-						rv_mod['cal_thfile'] += [-99999] 
-						rv_mod['rhk_err'] += [-99999]
-						rv_mod['rhk'] += [rhk]
-						rv_mod['drs_qc'] += [True]
-						rv_mod['ins_name'] += ['HARPS15']
-						rv_mod['Telescope'] += ['HARPS15']                         
-						rv_mod['ins_mode'] += ['']
-						rv_mod['mask'] += ['']
-						contrast_value = float(HARPS_Table[k][22])                     
-						rv_mod['contrast'] += [contrast_value]
-						rv_mod['contrast_err'] += [-99999]
-						rv_mod['spectroFluxSn50'] += [-99999]
-						rv_mod['spectroFluxSn50_err'] += [-99999]
-						rv_mod['naindex'] += [-99999]
-						rv_mod['naindex_err'] += [-99999]
-						rv_mod['snca2'] += [-99999]
-						rv_mod['snca2_err'] += [-99999]
-						rv_mod['public'] += [True]
-						rv_mod['pub_reference'] += ['none']
-						rv_mod['pub_bibcode'] += ['']
-						rv_mod['sindex'] += [-99999]
-						rv_mod['sindex_err'] += [-99999]
-						rv_mod['haindex'] += [-99999]
-						rv_mod['haindex_err'] += [-99999]
-						rv_mod['drs_version'] += ['Pub']  
-						rv_mod['caindex'] += [-99999]
-						rv_mod['caindex_err'] += [-99999]
-						rv_mod['rjd_err'] += [-99999]
-						rv_value = (float(HARPS_Table[k][19])-gamma)*1000.0                        
-						rv_mod['rv'] += [rv_value]
-						rv_mod['Vel(m/s)'] += [rv_value]
-						rv_mod['vel'] += [rv_value]                         
-						rv_err_value = float(HARPS_Table[k][24])*1000.0                    
-						rv_mod['rv_err'] += [rv_err_value]
-						rv_mod['ErrVel(m/s)'] += [rv_err_value]
-						rv_mod['errvel'] += [rv_err_value]
-						rv_mod['sn26'] += [-99999]                        
-						rv_mod['ccf_noise'] += [-99999]
-						rv_mod['ccf_noise_err'] += [-99999]
-						rv_mod['drift_used'] += [-99999]
-						rv_mod['drift_used_err'] += [-99999]
-						rv_mod['ccf_asym'] += [-99999]
-						rv_mod['ccf_asym_err'] += [-99999]
-						rv_mod['date_night'] += ['']  
-						rv_mod['raw_file'] += [HARPS_Table[k][1]]
-						rv_mod['prog_id'] += [HARPS_Table[k][2]]
-						rv_mod['th_ar'] += [-99999]
-						rv_mod['th_ar1'] += [-99999]
-						rv_mod['th_ar2'] += [-99999]
-						rv_mod['target'] += [target]
-						rv_mod['RA'] += [HARPS_Table[k][35]]
-						rv_mod['DEC'] += [HARPS_Table[k][36]]                        
+		while k < product_id_count:                                
+			query2="""SELECT archive_id, original_filename, eso_category 
+			FROM phase3v2.product_files
+			WHERE eso_category = 'ANCILLARY.HARPSTAR' AND product_id = '%s'""" % (product_id_list[k])
+			try:
+				res = tapobs.search(query2)
+				res_len = len(res)
+			except:
+				res_len = 0                
+			if res_len > 0:
+				try:
+					file_url_table = ('https://dataportal.eso.org/dataportal_new/file/'+res['archive_id'][0])
+					response = requests.get(file_url_table)
+					filename = writeFile( response )
+					if filename:
+						print("Saved file: %s" % (filename))
 					else:
-						rv_mod['rjd'] = [rjd_data]
-						rv_mod['bjd'] = [float(HARPS_Table[k][13])]
-						rv_mod['BJD'] = [float(HARPS_Table[k][13])]
-						rv_mod['t'] = [t_data]                       
-						berv_value = float(HARPS_Table[k][16])*1000.0
-						rv_mod['berv'] = [berv_value]
-						rv_mod['berv_err'] = [-99999]
-						rv_mod['bispan'] = [-99999]
-						rv_mod['bispan_err'] = [-99999] 
-						rv_mod['drift_noise'] = [-99999]
-						rv_mod['drift_noise_err'] = [-99999]
-						rv_mod['texp'] = [-99999]
-						rv_mod['texp_err'] = [-99999]
-						rv_mod['cal_therror'] = [-99999]  
-						rv_mod['cal_therror_err'] = [-99999]
-						rv_mod['protm08'] = [-99999] 
-						rv_mod['protm08_err'] = [-99999] 
-						rv_mod['protn84'] = [-99999] 
-						rv_mod['protn84_err'] = [-99999] 
-						fwhm_value = float(HARPS_Table[k][23])*1000.0 
-						rv_mod['fwhm'] = [fwhm_value]
-						rv_mod['fwhm_err'] = [-99999]
-						rv_mod['spectroFluxSn20'] = [-99999]
-						rv_mod['spectroFluxSn20_err'] = [-99999]
-						rv_mod['cal_thfile'] = [-99999] 
-						rv_mod['rhk_err'] = [-99999]
-						rv_mod['rhk'] = [rhk]
-						rv_mod['drs_qc'] = [True]
-						rv_mod['ins_name'] = ['HARPS15']
-						rv_mod['Telescope'] = ['HARPS15']                         
-						rv_mod['ins_mode'] = ['']
-						rv_mod['mask'] = ['']
-						contrast_value = float(HARPS_Table[k][22])                     
-						rv_mod['contrast'] = [contrast_value]
-						rv_mod['contrast_err'] = [-99999]
-						rv_mod['spectroFluxSn50'] = [-99999]
-						rv_mod['spectroFluxSn50_err'] = [-99999]
-						rv_mod['naindex'] = [-99999]
-						rv_mod['naindex_err'] = [-99999]
-						rv_mod['snca2'] = [-99999]
-						rv_mod['snca2_err'] = [-99999]
-						rv_mod['public'] = [True]
-						rv_mod['pub_reference'] = ['none']
-						rv_mod['pub_bibcode'] = ['']
-						rv_mod['sindex'] = [-99999]
-						rv_mod['sindex_err'] = [-99999]
-						rv_mod['haindex'] = [-99999]
-						rv_mod['haindex_err'] = [-99999]
-						rv_mod['drs_version'] = ['Pub']  
-						rv_mod['caindex'] = [-99999]
-						rv_mod['caindex_err'] = [-99999]
-						rv_mod['rjd_err'] = [-99999]
-						rv_value = (float(HARPS_Table[k][19])-gamma)*1000.0                        
-						rv_mod['rv'] = [rv_value]
-						rv_mod['Vel(m/s)'] = [rv_value]
-						rv_mod['vel'] = [rv_value]                         
-						rv_err_value = float(HARPS_Table[k][24])*1000.0                    
-						rv_mod['rv_err'] = [rv_err_value]
-						rv_mod['ErrVel(m/s)'] = [rv_err_value]
-						rv_mod['errvel'] = [rv_err_value]
-						rv_mod['sn26'] = [-99999]                        
-						rv_mod['ccf_noise'] = [-99999]
-						rv_mod['ccf_noise_err'] = [-99999]
-						rv_mod['drift_used'] = [-99999]
-						rv_mod['drift_used_err'] = [-99999]
-						rv_mod['ccf_asym'] = [-99999]
-						rv_mod['ccf_asym_err'] = [-99999]
-						rv_mod['date_night'] = ['']  
-						rv_mod['raw_file'] = [HARPS_Table[k][1]]
-						rv_mod['prog_id'] = [HARPS_Table[k][2]]
-						rv_mod['th_ar'] = [-99999]
-						rv_mod['th_ar1'] = [-99999]
-						rv_mod['th_ar2'] = [-99999]
-						rv_mod['target'] = [target]
-						rv_mod['RA'] = [HARPS_Table[k][35]]
-						rv_mod['DEC'] = [HARPS_Table[k][36]]                        
-						created=True                        
-					rv_sum_harps = rv_sum_harps + rv_value
-					rv_err_sum_harps = rv_err_sum_harps + rv_err_value
-					rv_count_harps +=1                                       
-				k+=1
+						print("Could not get file (status: %d)" % (response.status_code))
+				except:
+						print("Could not get file (status: %d)" % (response.status_code))                    
+				if filename.endswith(".tar"):                   
+					tar = tarfile.open(extendedpath+"/"+filename)
+					files=tar.extractall()
+					tar.close()
+					os.remove(filename)
+					ccffile_exists = False
+					bisfile_exists = False
+					for harpspath, directories, files in os.walk(extendedpath):
+						for f in files:
+							if f.endswith('ccf_G2_A.fits'):
+								ccffile = f
+								ccfpath = harpspath
+								ccffile_exists = True
+							if f.endswith('bis_G2_A.fits'):
+								bisfile = f
+								bispath = harpspath                                
+								bisfile_exists = True
+					if ccffile_exists and bisfile_exists:
+						hdul = fits.open(ccfpath+'/'+ccffile)
+						rv_value = float(hdul[0].header['HIERARCH ESO DRS CCF RVC'])*1000     # units = km/s * 1000           
+						contrast_value = float(hdul[0].header['HIERARCH ESO DRS CCF CONTRAST'])     # units = %
+						fwhm_value = float(hdul[0].header['HIERARCH ESO DRS CCF FWHM'])*1000     # units = km/s * 1000
+						instrument_name = hdul[0].header['INSTRUME']
+						RA = float(hdul[0].header['RA'])
+						DEC = float(hdul[0].header['DEC'])
+						object_name = hdul[0].header['OBJECT']
+						mjd_value = float(hdul[0].header['MJD-OBS'])     # units = 50000.0000                   
+						rv_err_value = float(hdul[0].header['HIERARCH ESO DRS DVRMS'])     #  estimated error units = m/s
+						RA = float(hdul[0].header['RA'])
+						hdul.close
+						hdul = fits.open(bispath+'/'+bisfile)
+						bis_value = float(hdul[0].header['HIERARCH ESO DRS BIS SPAN'])
+						berv_value = float(hdul[0].header['HIERARCH ESO DRS BERV'])*1000
+						hdul.close                    
+						rjd_data = 0.0  
+						bjd_data = mjd_value + 2400000.0
+						rjd_data = mjd_value                    
+						t_data = bjd_data - 2450000.0                    
+						if created:
+							rv_mod['rjd'] += [rjd_data]
+							rv_mod['bjd'] += [bjd_data]
+							rv_mod['BJD'] += [bjd_data]    
+							rv_mod['t'] += [t_data]                                                
+							rv_mod['berv'] += [berv_value]                       
+							rv_mod['berv_err'] += [-99999]
+							rv_mod['bispan'] += [bis_value]                        
+							rv_mod['bispan_err'] += [-99999]                        
+							rv_mod['drift_noise'] += [-99999]
+							rv_mod['drift_noise_err'] += [-99999]
+							rv_mod['texp'] += [-99999]
+							rv_mod['texp_err'] += [-99999]
+							rv_mod['cal_therror'] += [-99999] 
+							rv_mod['cal_therror_err'] += [-99999]
+							rv_mod['protm08'] += [-99999] 
+							rv_mod['protm08_err'] += [-99999] 
+							rv_mod['protn84'] += [-99999] 
+							rv_mod['protn84_err'] += [-99999] 
+							rv_mod['fwhm'] += [fwhm_value]                        
+							rv_mod['fwhm_err'] += [-99999]                        
+							rv_mod['spectroFluxSn20'] += [-99999]
+							rv_mod['spectroFluxSn20_err'] += [-99999]
+							rv_mod['cal_thfile'] += [-99999] 
+							rv_mod['rhk_err'] += [-99999]
+							rv_mod['rhk'] += [rhk]
+							rv_mod['drs_qc'] += [True]
+							rv_mod['ins_name'] += [instrument_name]
+							rv_mod['Telescope'] += [instrument_name]                        
+							rv_mod['ins_mode'] += ['']
+							rv_mod['mask'] += ['']
+							rv_mod['contrast'] += [contrast_value]
+							rv_mod['contrast_err'] += [-99999]                        
+							rv_mod['spectroFluxSn50'] += [-99999]
+							rv_mod['spectroFluxSn50_err'] += [-99999]
+							rv_mod['naindex'] += [-99999]
+							rv_mod['naindex_err'] += [-99999]
+							rv_mod['snca2'] += [-99999]
+							rv_mod['snca2_err'] += [-99999]
+							rv_mod['public'] += [True]
+							rv_mod['pub_reference'] += ['none']
+							rv_mod['pub_bibcode'] += ['']
+							rv_mod['sindex'] += [-99999]
+							rv_mod['sindex_err'] += [-99999]
+							rv_mod['haindex'] += [-99999]
+							rv_mod['haindex_err'] += [-99999]
+							rv_mod['drs_version'] += ['Pub']  
+							rv_mod['caindex'] += [-99999]
+							rv_mod['caindex_err'] += [-99999]
+							rv_mod['rjd_err'] += [-99999]
+							rv_mod['rv'] += [rv_value]
+							rv_mod['Vel(m/s)'] += [rv_value]
+							rv_mod['vel'] += [rv_value]                         
+							rv_mod['rv_err'] += [rv_err_value]
+							rv_mod['ErrVel(m/s)'] += [rv_err_value]
+							rv_mod['errvel'] += [rv_err_value]
+							rv_mod['sn26'] += [-99999]                        
+							rv_mod['ccf_noise'] += [-99999]
+							rv_mod['ccf_noise_err'] += [-99999]
+							rv_mod['drift_used'] += [-99999]
+							rv_mod['drift_used_err'] += [-99999]
+							rv_mod['ccf_asym'] += [-99999]
+							rv_mod['ccf_asym_err'] += [-99999]
+							rv_mod['date_night'] += ['']  
+							rv_mod['raw_file'] += ['none']
+							rv_mod['prog_id'] += [' ']
+							rv_mod['th_ar'] += [-99999]
+							rv_mod['th_ar1'] += [-99999]
+							rv_mod['th_ar2'] += [-99999]
+							rv_mod['target'] += [target]
+							rv_mod['RA'] += [RA]
+							rv_mod['DEC'] += [DEC]                        
+						else:
+							rv_mod['rjd'] = [rjd_data]
+							rv_mod['bjd'] = [bjd_data]
+							rv_mod['BJD'] = [bjd_data]    
+							rv_mod['t'] = [t_data]                                                
+							rv_mod['berv'] = [berv_value]                       
+							rv_mod['berv_err'] = [-99999]
+							rv_mod['bispan'] = [bis_value]                        
+							rv_mod['bispan_err'] = [-99999]                        
+							rv_mod['drift_noise'] = [-99999]
+							rv_mod['drift_noise_err'] = [-99999]
+							rv_mod['texp'] = [-99999]
+							rv_mod['texp_err'] = [-99999]
+							rv_mod['cal_therror'] = [-99999] 
+							rv_mod['cal_therror_err'] = [-99999]
+							rv_mod['protm08'] = [-99999] 
+							rv_mod['protm08_err'] = [-99999] 
+							rv_mod['protn84'] = [-99999] 
+							rv_mod['protn84_err'] = [-99999] 
+							rv_mod['fwhm'] = [fwhm_value]                        
+							rv_mod['fwhm_err'] = [-99999]                        
+							rv_mod['spectroFluxSn20'] = [-99999]
+							rv_mod['spectroFluxSn20_err'] = [-99999]
+							rv_mod['cal_thfile'] = [-99999] 
+							rv_mod['rhk_err'] = [-99999]
+							rv_mod['rhk'] = [rhk]
+							rv_mod['drs_qc'] = [True]
+							rv_mod['ins_name'] = [instrument_name]
+							rv_mod['Telescope'] = [instrument_name]                        
+							rv_mod['ins_mode'] = ['']
+							rv_mod['mask'] = ['']
+							rv_mod['contrast'] = [contrast_value]
+							rv_mod['contrast_err'] = [-99999]                        
+							rv_mod['spectroFluxSn50'] = [-99999]
+							rv_mod['spectroFluxSn50_err'] = [-99999]
+							rv_mod['naindex'] = [-99999]
+							rv_mod['naindex_err'] = [-99999]
+							rv_mod['snca2'] = [-99999]
+							rv_mod['snca2_err'] = [-99999]
+							rv_mod['public'] = [True]
+							rv_mod['pub_reference'] = ['none']
+							rv_mod['pub_bibcode'] = ['']
+							rv_mod['sindex'] = [-99999]
+							rv_mod['sindex_err'] = [-99999]
+							rv_mod['haindex'] = [-99999]
+							rv_mod['haindex_err'] = [-99999]
+							rv_mod['drs_version'] = ['Pub']  
+							rv_mod['caindex'] = [-99999]
+							rv_mod['caindex_err'] = [-99999]
+							rv_mod['rjd_err'] = [-99999]
+							rv_mod['rv'] = [rv_value]
+							rv_mod['Vel(m/s)'] = [rv_value]
+							rv_mod['vel'] = [rv_value]                         
+							rv_mod['rv_err'] = [rv_err_value]
+							rv_mod['ErrVel(m/s)'] = [rv_err_value]
+							rv_mod['errvel'] = [rv_err_value]
+							rv_mod['sn26'] = [-99999]                        
+							rv_mod['ccf_noise'] = [-99999]
+							rv_mod['ccf_noise_err'] = [-99999]
+							rv_mod['drift_used'] = [-99999]
+							rv_mod['drift_used_err'] = [-99999]
+							rv_mod['ccf_asym'] = [-99999]
+							rv_mod['ccf_asym_err'] = [-99999]
+							rv_mod['date_night'] = ['']  
+							rv_mod['raw_file'] = ['none']
+							rv_mod['prog_id'] = [' ']
+							rv_mod['th_ar'] = [-99999]
+							rv_mod['th_ar1'] = [-99999]
+							rv_mod['th_ar2'] = [-99999]
+							rv_mod['target'] = [target]
+							rv_mod['RA'] = [RA]
+							rv_mod['DEC'] = [DEC]                         
+							created=True
+						rv_sum_harps = rv_sum_harps + rv_value
+						rv_err_sum_harps = rv_err_sum_harps + rv_err_value
+						rv_count_harps +=1 
+			k+=1
+#clean up the downloaded and unzipped files that have been used in this method and reset base path to working directory       
+		path = basepath
+		cleanpath = path + '/radial_velocity/data/data'
+		print("Remove files that were downloaded and upzipped from >>> ",cleanpath)
+		try:
+			shutil.rmtree(cleanpath)
+		except:
+			print("No data to clean.")            
+		os.chdir(basepath)
 		if rv_count_harps > 0:
 			average_rv_harps = rv_sum_harps / rv_count_harps
 			average_rv_err_harps = rv_err_sum_harps / rv_count_harps
 			average_SNR_harps = rv_sum_harps / rv_err_sum_harps
 			format_SNR_harps = "{:.5f}".format(average_SNR_harps)
 			print(f'Number of HARPS observations is: {rv_count_harps}')
-			print(f'Average SNR HARPS is: {format_SNR_harps}')
+			print(f'Average HARPS is: {format_SNR_harps}')
 			print()
 		rv_mod_df=pd.DataFrame.from_dict(rv_mod)                        
-		return rv_mod_df            
+		return rv_mod_df    
 ###################################################################################################################     
 def query_espresso(target):
 
@@ -570,8 +636,8 @@ def query_espresso(target):
 						rv_mod['rhk_err'] += [-99999]
 						rv_mod['rhk'] += [rhk]
 						rv_mod['drs_qc'] += [True]
-						rv_mod['ins_name'] += ['ESPRESSO']
-						rv_mod['Telescope'] += ['ESPRESSO']                        
+						rv_mod['ins_name'] += [hdul[0].header['INSTRUME']]
+						rv_mod['Telescope'] += [hdul[0].header['INSTRUME']]                        
 						rv_mod['ins_mode'] += ['']
 						rv_mod['mask'] += ['']
 						contrast_value = float(hdul[0].header['HIERARCH ESO QC CCF CONTRAST'])*1000.0
@@ -651,8 +717,8 @@ def query_espresso(target):
 						rv_mod['rhk_err'] = [-99999]
 						rv_mod['rhk'] = [rhk]
 						rv_mod['drs_qc'] = [True]
-						rv_mod['ins_name'] = ['ESPRESSO']
-						rv_mod['Telescope'] = ['ESPRESSO']                        
+						rv_mod['ins_name'] = [hdul[0].header['INSTRUME']]
+						rv_mod['Telescope'] = [hdul[0].header['INSTRUME']]                        
 						rv_mod['ins_mode'] = ['']
 						rv_mod['mask'] = ['']
 						contrast_value = float(hdul[0].header['HIERARCH ESO QC CCF CONTRAST'])*1000.0
@@ -704,7 +770,8 @@ def query_espresso(target):
 					rv_sum_espresso = rv_sum_espresso + rv_value
 					rv_err_sum_espresso = rv_err_sum_espresso + rv_err_value
 					rv_count_espresso +=1
-				hdul.close                    
+				hdul.close
+				os.remove(str(res['archive_id'][j])+'.fits')
 				j+=1                    
 			i+=1                    
 		if rv_count_espresso > 0:
@@ -909,7 +976,7 @@ def query_neid(target):
 							rv_mod['th_ar'] = [-99999]
 							rv_mod['th_ar1'] = [-99999]
 							rv_mod['th_ar2'] = [-99999]
-							rv_mod['target'] = [self.target]                
+							rv_mod['target'] = [target]                
 							rv_mod['RA'] = [hdul[0].header['QRA']]
 							rv_mod['DEC'] = [hdul[0].header['QDEC']] 
 							created=True
@@ -917,6 +984,10 @@ def query_neid(target):
 						rv_err_sum_neid = rv_err_sum_neid + rv_err_value
 						rv_count_neid +=1                
 					hdul.close
+		try:        
+			shutil.rmtree('./dnload_dir')
+		except:            
+			print('NEID dnload_dir not present, no NEID observations found')                     
 		if rv_count_neid > 0:
 			average_rv_neid = rv_sum_neid / rv_count_neid
 			average_rv_err_neid = rv_err_sum_neid / rv_count_neid
@@ -944,8 +1015,11 @@ def query_hires(target):
 		aliasnotfound=True    
 		simbad_alias=''
 		while alias_count<alias_max and aliasnotfound:
-			simbad_alias=target_alias[alias_count][0]               
-			data = Download('prv.cookies', './')
+			simbad_alias=target_alias[alias_count][0]
+			try: 
+				data = Download('prv.cookies', './')
+			except:
+				print('TEMPORARY FATAL ERROR MESSAGE: Keck HIRES archive appears to be unavailable at this time. You may need to generate the file prv.cookies. Check the hiresprv.ipac site for more information.')                
 			targetstring = simbad_alias
 			targetlist = targetstring.partition(' ')
 			if targetlist[0] == "HD":     
@@ -954,8 +1028,11 @@ def query_hires(target):
 				if len(targetlist) > 0:
 					filestub=targetlist[0]+targetlist[2]
 				else:
-					filestub=simbad_alias        
-			rtn = data.rvcurve(filestub)
+					filestub=simbad_alias
+			try: 
+				rtn = data.rvcurve(filestub)
+			except:
+				print('TEMPORARY FATAL ERROR MESSAGE: Keck HIRES archive appears to be unavailable at this time. You may need to generate the file prv.cookies. Check the hiresprv.ipac site for more information.')                    
 			try:
 				num_lines = sum(1 for _ in open('vst'+filestub+'.csv'))
 			except:
@@ -1125,10 +1202,11 @@ def query_hires(target):
 								rv_mod['target'] = [target]                
 								rv_mod['RA'] = [ra]
 								rv_mod['DEC'] = [dec]  
-								self.created=True
+								created=True
 							rv_sum_hires = rv_sum_hires + rv_value
 							rv_err_sum_hires = rv_err_sum_hires + rv_err_value
 							rv_count_hires +=1
+			os.remove('vst'+filestub+'.csv')                                                       
 		if rv_count_hires > 0:
 			average_rv_hires = rv_sum_hires / rv_count_hires
 			average_rv_err_hires = rv_err_sum_hires / rv_count_hires
@@ -1165,10 +1243,12 @@ def query_sophie(target):
 		header_lines = 42
 		count_lines = 0        
 		for line in sophielines:
+#			print("sophie line ",line)
 			if count_lines < header_lines:
 				count_lines+=1
 				continue
-			sophiefields = line.split(',')            
+			sophiefields = line.split(',')
+#			print("sophiefields ",sophiefields)            
 			colcount=len(sophiefields)
 			if colcount == 29:
 				if sophiefields[28] != '\n' and sophiefields[1] != "SUN" and sophiefields[1] != "MOON" and sophiefields[16] != '' and sophiefields[17] != '':
@@ -1181,10 +1261,7 @@ def query_sophie(target):
 				if count_lines < num_lines:
 					if count_lines < header_lines:
 						count_lines+=1
-					else:
-						rasophie = float(sophiefields[16])
-						decsophie = float(sophiefields[17])
-						if abs(rasophie-ra) < ravariation and abs(decsophie-dec) < ravariation:                        
+					else:                        
 							if created:                      
 								bjd_data = float(sophiefields[28])
 								rjd_data = bjd_data - 2400000.0
@@ -1244,9 +1321,9 @@ def query_sophie(target):
 								rv_mod['caindex'] += [-99999]
 								rv_mod['caindex_err'] += [-99999]
 								rv_mod['rjd_err'] += [-99999]                
-								rv_value = (float(sophiefields[6])-gamma)*1000.0
+								rv_value = (float(sophiefields[6]))*1000.0
 								rv_mod['rv'] += [rv_value]
-								rv_mod['Vel(m/s)'] += [rv_value]*1000.0
+								rv_mod['Vel(m/s)'] += [rv_value]
 								rv_mod['vel'] += [rv_value]                
 								rv_err_value = float(sophiefields[19])
 								rv_mod['rv_err'] += [rv_err_value]
@@ -1327,11 +1404,11 @@ def query_sophie(target):
 								rv_mod['caindex'] = [-99999]
 								rv_mod['caindex_err'] = [-99999]
 								rv_mod['rjd_err'] = [-99999]                
-								rv_value = (float(sophiefields[6])-gamma)*1000.0
+								rv_value = (float(sophiefields[6]))*1000.0
 								rv_mod['rv'] = [rv_value]
 								rv_mod['Vel(m/s)'] = [rv_value]
 								rv_mod['vel'] = [rv_value]                
-								rv_err_value = float(sophiefields[19])*1000.0
+								rv_err_value = (float(sophiefields[19]))*1000.0
 								rv_mod['rv_err'] = [rv_err_value]
 								rv_mod['ErrVel(m/s)'] = [rv_err_value]
 								rv_mod['errvel'] = [rv_err_value]
@@ -1353,9 +1430,10 @@ def query_sophie(target):
 								rv_mod['DEC'] = [sophiefields[17]]   
 								created=True
 							rv_sum_sophie = rv_sum_sophie + rv_value
-							rv_err_sum_sophie = rv_err_sum_sophie + rv_err_value
+							rv_err_sum_sophie = rv_err_sum_sophie + rv_err_value                            
 							rv_count_sophie +=1
-						count_lines+=1
+							count_lines+=1
+#							print(rv_mod)                            
 		if rv_count_sophie > 0:
 			average_rv_sophie = rv_sum_sophie / rv_count_sophie
 			average_rv_err_sophie = rv_err_sum_sophie / rv_count_sophie
@@ -1389,12 +1467,14 @@ class RadialVelocityDatabase:
 		self.query_fn = [query_dace,query_harps,query_espresso,query_neid,query_hires,query_sophie]         
 		for query_fn  in self.query_fn:
 			query_df = query_fn(self.target)
-			if first_time and len(query_df)>0:
-				self.rv_data_df = query_df
-				first_time = False                
-			else:                
-				self.rv_data_df = pd.concat([self.rv_data_df, query_df])                
-		self.rv_data = self.rv_data_df.to_dict('list')      
+			if len(query_df)>0:
+				if first_time:
+					self.rv_data_df = query_df
+					first_time = False                
+				else:                
+					self.rv_data_df = pd.concat([self.rv_data_df, query_df])                
+		self.rv_data = self.rv_data_df.to_dict('list')
+        
 		try:
 			date_count = len(self.rv_data['rjd'])
 		except:

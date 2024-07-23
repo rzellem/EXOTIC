@@ -142,24 +142,3 @@ class PlateSolution:
         print("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net"
               f" due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
         return False
-
-
-def _sub_status(self, sub_url):
-        r = requests.get(sub_url, timeout=30)
-        if r.json()['job_calibrations']:
-            return r.json()['jobs'][0]
-        return False
-
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=20),
-           retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
-           retry_error_callback=result_if_max_retry_count)
-    def _job_status(self, job_url, wcs_file, download_url):
-        r = requests.get(job_url, timeout=30)
-        if r.json()['status'] == 'success':
-            r = requests.get(download_url, timeout=30)
-            with wcs_file.open('wb') as f:
-                f.write(r.content)
-            hdu = PrimaryHDU(data=getdata(filename=self.file), header=getheader(filename=wcs_file))
-            hdu.writeto(wcs_file, overwrite=True)
-            return wcs_file
-        return False

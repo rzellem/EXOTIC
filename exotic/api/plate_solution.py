@@ -114,7 +114,7 @@ class PlateSolution:
             return r.json()['subid']
         return False
 
-    @retry(stop=stop_after_attempt(10), wait=wait_exponential(multiplier=1, min=4, max=45),
+    @retry(stop=stop_after_attempt(20), wait=wait_exponential(multiplier=1, min=4, max=45),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):

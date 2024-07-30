@@ -89,7 +89,7 @@ class PlateSolution:
     def _get_url(self, service):
         return self.api_url + service
 
-    @retry(stop=stop_after_attempt(9), wait=wait_exponential(multiplier=1, min=4, max=30),
+    @retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=1, min=4, max=30),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
@@ -100,7 +100,7 @@ class PlateSolution:
             return r.json()['session']
         return False
 
-    @retry(stop=stop_after_attempt(9), wait=wait_exponential(multiplier=1, min=4, max=30),
+    @retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=1, min=4, max=30),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
@@ -114,7 +114,7 @@ class PlateSolution:
             return r.json()['subid']
         return False
 
-    @retry(stop=stop_after_attempt(60), wait=wait_exponential(multiplier=1, min=4, max=30),
+    @retry(stop=stop_after_attempt(10), wait=wait_exponential(multiplier=1, min=4, max=45),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
@@ -123,7 +123,7 @@ class PlateSolution:
             return r.json()['jobs'][0]
         return False
 
-    @retry(stop=stop_after_attempt(9), wait=wait_exponential(multiplier=1, min=4, max=30),
+    @retry(stop=stop_after_attempt(10), wait=wait_exponential(multiplier=1, min=4, max=45),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):

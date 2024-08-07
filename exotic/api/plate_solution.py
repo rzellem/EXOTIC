@@ -89,7 +89,7 @@ class PlateSolution:
     def _get_url(self, service):
         return self.api_url + service
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=1, min=4, max=30),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
@@ -100,7 +100,7 @@ class PlateSolution:
             return r.json()['session']
         return False
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=1, min=4, max=30),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
@@ -114,22 +114,22 @@ class PlateSolution:
             return r.json()['subid']
         return False
 
-    @retry(stop=stop_after_attempt(20), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(20), wait=wait_exponential(multiplier=1, min=4, max=45),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
-        r = requests.get(sub_url)
+        r = requests.get(sub_url, timeout=60)
         if r.json()['job_calibrations']:
             return r.json()['jobs'][0]
         return False
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(10), wait=wait_exponential(multiplier=1, min=4, max=45),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):
-        r = requests.get(job_url)
+        r = requests.get(job_url, timeout=60)
         if r.json()['status'] == 'success':
-            r = requests.get(download_url)
+            r = requests.get(download_url, timeout=60)
             with wcs_file.open('wb') as f:
                 f.write(r.content)
             hdu = PrimaryHDU(data=getdata(filename=self.file), header=getheader(filename=wcs_file))

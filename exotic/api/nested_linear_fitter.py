@@ -148,7 +148,7 @@ class linear_fitter(object):
         fig, ax = plt.subplots(1, figsize=(9, 6))
 
         # check if labels are not None
-        if self.labels is not None:
+        if self.labels.size:
             # find unique set of labels
             ulabels = np.unique(self.labels)
             # set up a color/marker cycle
@@ -721,7 +721,7 @@ class non_linear_fitter(object):
         fig, ax = plt.subplots(1, figsize=(9, 6))
 
         # check if labels are not None
-        if self.labels is not None:
+        if self.labels.size:
             # find unique set of labels
             ulabels = np.unique(self.labels)
             # set up a color/marker cycle

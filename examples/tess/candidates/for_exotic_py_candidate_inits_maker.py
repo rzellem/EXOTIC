@@ -1,9 +1,14 @@
-##### for single target JSON
 import requests
 import os
 import time
-
-
+import json
+import csv
+from datetime import datetime
+from math import degrees, floor
+import pandas as pd
+import numpy as np
+from astropy.constants import G, M_sun, R_sun, au
+from astropy import units as u
 
 def download_tic_json(tic_id):
     url = f'https://exofop.ipac.caltech.edu/tess/target.php?id={tic_id}&json'
@@ -14,11 +19,12 @@ def download_tic_json(tic_id):
             print(f'No TIC object found for TIC ID: {tic_id}')
             return False
         else:
-            # Create the directory if it doesn't exist
-            os.makedirs('candidate_files', exist_ok=True)
+            # Create the directory using TIC ID if it doesn't exist
+            directory = f'output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_files'
+            os.makedirs(directory, exist_ok=True)
             
             # Write to a JSON file
-            with open(f'candidate_files/{tic_id}.json', 'wb') as file:
+            with open(f'{directory}/{tic_id}.json', 'wb') as file:
                 file.write(response.content)
             
             print(f'Downloaded JSON for TIC ID: {tic_id}')
@@ -47,20 +53,7 @@ while True:
 # for multiple file version, Delay for a specified number of seconds so we're not a robot. beep boop
 time.sleep(1)  
 
-print('Download completed and saved to candidate_files folder')
-
-
-
-
-
-
-
-##last good June 7
-import json
-import csv
-import os
-from datetime import datetime
-from math import degrees, floor
+print(f'Download completed and saved to output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_files folder')
 
 def load_json_data(file_path):
     try:
@@ -227,7 +220,7 @@ def extract_data(data):
         'time_series_count': time_series_count
     }
 
-def save_to_csv(data, filename='candidate_files/exofop_data.csv'):
+def save_to_csv(data, filename):
     with open(filename, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
 
@@ -375,7 +368,7 @@ def save_to_csv(data, filename='candidate_files/exofop_data.csv'):
 
                     writer.writerow(row)
 
-folder_path = 'candidate_files'
+folder_path = f'output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_files'
 extracted_data = []
 
 for file_name in os.listdir(folder_path):
@@ -388,25 +381,9 @@ for file_name in os.listdir(folder_path):
     if data:
         extracted_data.append(extract_data(data))
 
-save_to_csv(extracted_data)
+# Save the CSV with the host star TIC ID in the filename
+save_to_csv(extracted_data, f'{folder_path}/{tic_id}_exofop_data.csv')
 print("CSV file saved")
-
-
-
-
-
-
-
-
-
-
-
-
-import pandas as pd
-import numpy as np
-from astropy.constants import G, M_sun, R_sun, au
-from astropy import units as u
-import json
 
 def display_entries(data):
     relevant_columns = {
@@ -507,7 +484,7 @@ def estimate_missing_parameters(P_days, M_star, R_star, R_p_earth):
 def extract_host_star_name(planet_name):
     return str(planet_name).split('.')[0]
 
-def create_inits_file(parameters, file_name='inits.json'):
+def create_inits_file(parameters, file_name):
     Teff_err = parameters.get("Teff_err (K)", [None, None])
     if not isinstance(Teff_err, list):
         Teff_err = [Teff_err, Teff_err]
@@ -580,14 +557,18 @@ def create_inits_file(parameters, file_name='inits.json'):
             "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None)
         }
     }
+    # Update the filename to include the planet name
+    if file_name is None:
+        file_name = f'output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_files/{planet_name}_inits.json'
 
     with open(file_name, 'w') as f:
         json.dump(inits, f, indent=4)
     
     return inits
 
+
 # Load the CSV file
-file_path = 'candidate_files/exofop_data.csv'  # Replace with the actual file path
+file_path = f'{folder_path}/{tic_id}_exofop_data.csv'
 data = pd.read_csv(file_path, comment='#')
 
 # Display entries for the user to choose from
@@ -722,7 +703,7 @@ if observer_info == 'y':
     stored_parameters["Filter Maximum Wavelength (nm)"] = filter_max_wavelength
 
 # Create the inits file and print the inits dictionary
-inits = create_inits_file(stored_parameters, 'candidate_files/inits.json')
+inits = create_inits_file(stored_parameters, None)
 
 # Print the inits dictionary
 print("Inits Dictionary:")

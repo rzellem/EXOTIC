@@ -1,11 +1,17 @@
-##### for single target JSON
 import requests
 import os
 import time
+import json
+import csv
+import pandas as pd
+import numpy as np
+from astropy.constants import G, M_sun, R_sun, au
+from astropy import units as u
+from datetime import datetime
+from math import degrees, floor
 
-
-
-def download_tic_json(tic_id):
+# Function to download the TIC JSON file from ExoFOP and save to target directory
+def download_tic_json(tic_id, target_directory):
     url = f'https://exofop.ipac.caltech.edu/tess/target.php?id={tic_id}&json'
     response = requests.get(url)
     
@@ -14,13 +20,8 @@ def download_tic_json(tic_id):
             print(f'No TIC object found for TIC ID: {tic_id}')
             return False
         else:
-            # Create the directory if it doesn't exist
-            os.makedirs('candidate_files', exist_ok=True)
-            
-            # Write to a JSON file
-            with open(f'candidate_files/{tic_id}.json', 'wb') as file:
+            with open(f'{target_directory}/{tic_id}.json', 'wb') as file:
                 file.write(response.content)
-            
             print(f'Downloaded JSON for TIC ID: {tic_id}')
             return True
     else:
@@ -36,44 +37,33 @@ print("*************************************************************************
 while True:
     tic_id = input("Enter the TIC ID: ")
 
-    # Ensure the input is an integer
     try:
         tic_id = int(tic_id)
-        if download_tic_json(tic_id):
+        target_directory = f'output_inits_files/for_toi_py_candidate_inits_output_files/{tic_id}_files'
+        os.makedirs(target_directory, exist_ok=True)
+        if download_tic_json(tic_id, target_directory):
             break  # Exit the loop if the download was successful
     except ValueError:
         print("Invalid TIC ID. Please enter a correct numeric value.")
 
-# for multiple file version, Delay for a specified number of seconds so we're not a robot. beep boop
-time.sleep(1)  
+# Delay to prevent rapid consecutive requests
+time.sleep(1)
 
-print('Download completed and saved to candidate_files folder')
+print(f'Download completed and saved to {target_directory} folder')
 
-
-
-
-
-
-
-##last good June 7
-import json
-import csv
-import os
-from datetime import datetime
-from math import degrees, floor
-
+# Function to load JSON data
 def load_json_data(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             content = file.read()
-            if not content.strip():  # Check if the file is empty
+            if not content.strip():
                 print(f"Skipping empty file: {file_path}")
                 return None
             return json.loads(content)
     except UnicodeDecodeError:
         with open(file_path, 'r', encoding='latin-1') as file:
             content = file.read()
-            if not content.strip():  # Check if the file is empty
+            if not content.strip():
                 print(f"Skipping empty file: {file_path}")
                 return None
             return json.loads(content)
@@ -81,6 +71,7 @@ def load_json_data(file_path):
         print(f"Error loading JSON data from {file_path}: {e}")
         return None
 
+# Functions to convert RA and DEC to HMS and DMS
 def ra_to_hms(ra):
     hours = ra * 24 / 360
     h = floor(hours)
@@ -96,12 +87,14 @@ def dec_to_dms(dec):
     s = (dec - d - m/60) * 3600
     return f"{sign}{d:02d}:{m:02d}:{s:.2f}"
 
+# Function to get stellar parameters
 def get_stellar_parameter(stellar_params, param):
     for entry in stellar_params:
         if entry.get(param) is not None:
             return entry.get(param)
     return 'Not available'
 
+# Function to extract data from the loaded JSON
 def extract_data(data):
     tic_id = data.get('basic_info', {}).get('tic_id', 'Not available')
     ra = data.get('coordinates', {}).get('ra', 'Not available')
@@ -116,6 +109,11 @@ def extract_data(data):
         name_parts = planet.get('name', '').split('.')
         planet_tic_id = f"{tic_id}.{name_parts[-1]}" if len(name_parts) > 1 else tic_id
         toi = planet.get('toi', '')
+
+        # Replace NaN with 0.03 and -0.03 for pl_orbsmaxerr1 and pl_orbsmaxerr2
+        sma_e = planet.get('sma_e', 'Not available')
+        if sma_e == 'Not available' or pd.isna(sma_e):
+            sma_e = 0.03
 
         planet_data.append({
             'tic_id': planet_tic_id,
@@ -141,7 +139,7 @@ def extract_data(data):
             'mass': planet.get('mass', 'Not available'),
             'mass_e': planet.get('mass_e', 'Not available'),
             'sma': planet.get('sma', 'Not available'),
-            'sma_e': planet.get('sma_e', 'Not available'),
+            'sma_e': sma_e,  # Use the corrected value here
             'arg': planet.get('arg', 'Not available'),
             'arg_e': planet.get('arg_e', 'Not available'),
             'ins': planet.get('ins', 'Not available'),
@@ -227,7 +225,8 @@ def extract_data(data):
         'time_series_count': time_series_count
     }
 
-def save_to_csv(data, filename='candidate_files/exofop_data.csv'):
+# Function to save extracted data to CSV
+def save_to_csv(data, filename):
     with open(filename, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
 
@@ -319,7 +318,7 @@ def save_to_csv(data, filename='candidate_files/exofop_data.csv'):
         for entry in data:
             magnitudes = [entry['magnitudes'].get(mag, 'Not available') for mag in magnitude_bands]
             for planet in entry['planet_data']:
-                if '.' in planet['tic_id']:  # Only write rows where tic_id contains a period
+                if '.' in planet['tic_id']:
                     row = [
                         planet['tic_id'], planet['toi'], entry['ra_hms'], entry['dec_dms'],
                         planet['epoch'], planet['epoch_e'],
@@ -375,39 +374,25 @@ def save_to_csv(data, filename='candidate_files/exofop_data.csv'):
 
                     writer.writerow(row)
 
-folder_path = 'candidate_files'
+# Folder path and data extraction
 extracted_data = []
 
-for file_name in os.listdir(folder_path):
+for file_name in os.listdir(target_directory):
     if not file_name.endswith('.json'):
         print(f"Skipping non-JSON file: {file_name}")
         continue
-    file_path = os.path.join(folder_path, file_name)
+    file_path = os.path.join(target_directory, file_name)
     print(f"Processing file: {file_path}")
     data = load_json_data(file_path)
     if data:
         extracted_data.append(extract_data(data))
 
-save_to_csv(extracted_data)
-print("CSV file saved")
+# Save the extracted data to a CSV file
+csv_filename = f'{target_directory}/exofop_data_{tic_id}.csv'
+save_to_csv(extracted_data, csv_filename)
+print(f"CSV file saved to {csv_filename}")
 
-
-
-
-
-
-
-
-
-
-
-
-import pandas as pd
-import numpy as np
-from astropy.constants import G, M_sun, R_sun, au
-from astropy import units as u
-import json
-
+# Function to display entries for user selection
 def display_entries(data):
     relevant_columns = {
         "RA (hms)": "Target Star RA", 
@@ -442,6 +427,7 @@ def display_entries(data):
                 print(f"{display_name}: {row[col]}")
         print("\n")
 
+# Function to get the user's choice of entry
 def get_user_choice(data):
     while True:
         try:
@@ -453,10 +439,12 @@ def get_user_choice(data):
         except ValueError:
             print("Invalid input. Please enter a number.")
 
+# Function to store the selected parameters
 def store_parameters(data, choice):
     selected_entry = data.iloc[choice].copy()
     return selected_entry
 
+# Function to print relevant parameters of the chosen entry
 def print_relevant_parameters(selected_entry):
     relevant_columns = {
         "RA (hms)": "Target Star RA", 
@@ -488,6 +476,7 @@ def print_relevant_parameters(selected_entry):
         else:
             print(f"{display_name}: {selected_entry[col]}")
 
+# Function to estimate missing parameters
 def estimate_missing_parameters(P_days, M_star, R_star, R_p_earth):
     R_p_jupiter = (R_p_earth * u.earthRad).to(u.jupiterRad).value
     P_years = (P_days * u.day).to(u.year)
@@ -504,10 +493,12 @@ def estimate_missing_parameters(P_days, M_star, R_star, R_p_earth):
 
     return a_AU, pl_ratdor, pl_ratror
 
+# Function to extract host star name from planet name
 def extract_host_star_name(planet_name):
     return str(planet_name).split('.')[0]
 
-def create_inits_file(parameters, file_name='inits.json'):
+# Function to create the inits file with the new directory structure and file naming
+def create_inits_file(parameters, target_directory):
     Teff_err = parameters.get("Teff_err (K)", [None, None])
     if not isinstance(Teff_err, list):
         Teff_err = [Teff_err, Teff_err]
@@ -526,60 +517,48 @@ def create_inits_file(parameters, file_name='inits.json'):
     host_star_name = extract_host_star_name(planet_name)
 
     inits = {
-        "planetary_parameters": {
-            "Target Star RA": parameters["RA (hms)"],
-            "Target Star Dec": parameters["DEC (dms)"],
-            "Planet Name": planet_name,
-            "Host Star Name": host_star_name,
-            "Orbital Period (days)": parameters["Per (days)"],
-            "Orbital Period Uncertainty": parameters["Per_err (days)"],
-            "Published Mid-Transit Time (BJD-UTC)": parameters["Epoch (BJD)"],
-            "Mid-Transit Time Uncertainty": parameters["Epoch_err (BJD)"],
-            "Ratio of Planet to Stellar Radius (Rp/Rs)": parameters.get("Rp/Rs"),
-            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": parameters.get("Rp/Rs err", 0.1),
-            "Ratio of Distance to Stellar Radius (a/Rs)": parameters.get("a/Rstar"),
-            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty": parameters.get("a/Rstar_err", 1.0),
-            "Orbital Inclination (deg)": parameters.get("Inc (deg)", 90),
-            "Orbital Inclination (deg) Uncertainty": parameters.get("Inc_err (deg)", 8.0),
-            "Orbital Eccentricity (0 if null)": parameters.get("Orbital Eccentricity", 0.0),
-            "Argument of Periastron (deg)": parameters.get("omega (deg)", 0.0),
-            "Star Effective Temperature (K)": parameters["Teff (K)"],
-            "Star Effective Temperature (+) Uncertainty": Teff_err[0],
-            "Star Effective Temperature (-) Uncertainty": Teff_err[1],
-            "Star Metallicity ([FE/H])": parameters.get("[Fe/H] (dex)", 0.0),
-            "Star Metallicity (+) Uncertainty": FeH_err[0],
-            "Star Metallicity (-) Uncertainty": FeH_err[1],
-            "Star Surface Gravity (log(g))": parameters["logg"],
-            "Star Surface Gravity (+) Uncertainty": logg_err[0],
-            "Star Surface Gravity (-) Uncertainty": logg_err[1]
-        },
-        "user_info": {
-            "Directory with FITS files": parameters.get("Directory with FITS files", None),
-            "Directory to Save Plots": parameters.get("Directory to Save Plots", None),
-            "Directory of Flats": parameters.get("Directory of Flats", None),
-            "Directory of Darks": parameters.get("Directory of Darks", None),
-            "Directory of Biases": parameters.get("Directory of Biases", None),
-            "AAVSO Observer Code (N/A if none)": parameters.get("AAVSO Observer Code (N/A if none)", "N/A"),
-            "Secondary Observer Codes (N/A if none)": parameters.get("Secondary Observer Codes (N/A if none)", "N/A"),
-            "Observation date": parameters.get("Observation date", None),
-            "Obs. Latitude": parameters.get("Obs. Latitude", None),
-            "Obs. Longitude": parameters.get("Obs. Longitude", None),
-            "Obs. Elevation (meters)": parameters.get("Obs. Elevation (meters)", None),
-            "Camera Type (CCD or DSLR)": parameters.get("Camera Type (CCD or DSLR)", None),
-            "Pixel Binning": parameters.get("Pixel Binning", None),
-            "Filter Name (aavso.org/filters)": parameters.get("Filter Name (aavso.org/filters)", None),
-            "Observing Notes": parameters.get("Observing Notes", "N/A"),
-            "Plate Solution? (y/n)": parameters.get("Plate Solution? (y/n)", None),
-            "Align Images? (y/n)": parameters.get("Align Images? (y/n)", None),
-            "Target Star X & Y Pixel": parameters.get("Target Star X & Y Pixel", None),
-            "Comparison Star(s) X & Y Pixel": parameters.get("Comparison Star(s) X & Y Pixel", None)
-        },    
-        "optional_info": {
-            "Pixel Scale (Ex: 5.21 arcsecs/pixel)": parameters.get("Pixel Scale (Ex: 5.21 arcsecs/pixel)", None),
-            "Filter Minimum Wavelength (nm)": parameters.get("Filter Minimum Wavelength (nm)", None),
-            "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None)
-        }
+        "pl_name": planet_name,
+        "hostname": host_star_name,
+        "pl_radj": parameters.get("Rp (Earths)"),  # Assuming this is in Earth radii and converting to Jupiter radii if necessary
+        "pl_radjerr1": parameters.get("Rp_err (Earths)", 0.1),
+        "ra": parameters["RA (hms)"],
+        "dec": parameters["DEC (dms)"],
+        "pl_orbincl": parameters.get("Inc (deg)", 90),
+        "pl_orbinclerr1": parameters.get("Inc_err (deg)", 8.0),
+        "pl_orbinclerr2": -parameters.get("Inc_err (deg)", 8.0),
+        "pl_orbper": parameters["Per (days)"],
+        "pl_orbpererr1": parameters["Per_err (days)"],
+        "pl_orbpererr2": -parameters["Per_err (days)"],
+        "pl_orbeccen": parameters.get("Orbital Eccentricity", 0.0),
+        "pl_orblper": parameters.get("omega (deg)", 0.0),
+        "pl_tranmid": parameters["Epoch (BJD)"],
+        "pl_tranmiderr1": parameters["Epoch_err (BJD)"],
+        "pl_tranmiderr2": -parameters["Epoch_err (BJD)"],
+        "st_teff": parameters["Teff (K)"],
+        "st_tefferr1": Teff_err[0],
+        "st_tefferr2": Teff_err[1],
+        "st_met": parameters.get("[Fe/H] (dex)", 0.0),
+        "st_meterr1": FeH_err[0],
+        "st_meterr2": FeH_err[1],
+        "st_logg": parameters["logg"],
+        "st_loggerr1": logg_err[0],
+        "st_loggerr2": logg_err[1],
+        "st_mass": parameters.get("Ms (Msun)", 1.0),
+        "st_rad": parameters.get("Rs (Rsun)", 1.0),
+        "st_raderr1": parameters.get("Rs_err (Rsun)", 0.1),
+        "pl_orbsmax": parameters.get("a (AU)", 1.0),
+        "pl_orbsmaxerr1": parameters.get("a_err (AU)", 0.03),
+        "pl_orbsmaxerr2": -parameters.get("a_err (AU)", -0.03),
+        "pl_ratdor": parameters.get("a/Rstar", 15.0),
+        "pl_ratdorerr1": parameters.get("a/Rstar_err", 1.0),
+        "pl_ratdorerr2": -parameters.get("a/Rstar_err", 1.0),
+        "pl_ratror": parameters.get("Rp/Rs", 0.1),
+        "pl_ratrorerr1": parameters.get("Rp/Rs err", 0.01),
+        "pl_ratrorerr2": -parameters.get("Rp/Rs err", 0.01)
     }
+
+    # Create the inits file with the target name included in the filename
+    file_name = f"{target_directory}/inits_{planet_name}.json"
 
     with open(file_name, 'w') as f:
         json.dump(inits, f, indent=4)
@@ -587,8 +566,7 @@ def create_inits_file(parameters, file_name='inits.json'):
     return inits
 
 # Load the CSV file
-file_path = 'candidate_files/exofop_data.csv'  # Replace with the actual file path
-data = pd.read_csv(file_path, comment='#')
+data = pd.read_csv(csv_filename, comment='#')
 
 # Display entries for the user to choose from
 display_entries(data)
@@ -627,20 +605,20 @@ if pd.isna(stored_parameters.get("a (AU)")) or pd.isna(stored_parameters.get("Rp
 if pd.isna(stored_parameters.get("[Fe/H] (dex)")):
     stored_parameters["[Fe/H] (dex)"] = 0.0
     stored_parameters["[Fe/H]_err (dex)"] = 0.1
-    print ("Missing metallicity setting to default value 0.0 with error 0.1")
+    print("Missing metallicity setting to default value 0.0 with error 0.1")
 
 if pd.isna(stored_parameters.get("Inc (deg)")):
     stored_parameters["Inc (deg)"] = 90
     stored_parameters["Inc_err (deg)"] = 8.0
-    print ("Missing Inc and Inc_err setting to default value of 90 with error 8.0")
+    print("Missing Inc and Inc_err setting to default value of 90 with error 8.0")
 
 if pd.isna(stored_parameters.get("Orbital Eccentricity")):
     stored_parameters["Orbital Eccentricity"] = 0.0
-    print ("Missing Orbital Eccentricity setting to default value 0.0")
+    print("Missing Orbital Eccentricity setting to default value 0.0")
 
 if pd.isna(stored_parameters.get("omega (deg)")):
     stored_parameters["omega (deg)"] = 0.0
-    print ("Missing omega setting to default value 0.0 deg")
+    print("Missing omega setting to default value 0.0 deg")
 
 # Prompt for missing parameters if necessary
 if "P_days" in missing_parameters and pd.isna(P_days):
@@ -668,63 +646,10 @@ if missing_parameters and pd.notna(P_days) and pd.notna(M_star) and pd.notna(R_s
 print("Relevant Parameters of Chosen Entry:")
 print_relevant_parameters(stored_parameters)
 
-# Prompt the user for additional information if required
-observer_info = input("Do you want to enter the observer location and telescope information for your targets? If (n) you can fill them in later in the outputted json files or alternatively exotic.py will prompt you for them when you run the target from inits with python exotic.py -ov., (y/n): ").strip().lower()
-
-if observer_info == 'y':
-    observer = input("Enter observer name: ").strip()
-    fits_dir = input("Enter directory with FITS files: ").strip()
-    plots_dir = input("Enter directory to save plots: ").strip()
-    flats_dir = input("Enter directory of flats: ").strip()
-    darks_dir = input("Enter directory of darks: ").strip()
-    biases_dir = input("Enter directory of biases (or leave blank if none): ").strip() or None
-    secondary_observers = input("Enter secondary observer codes (or 'N/A' if none): ").strip()
-    obs_date = input("Enter observation date: ").strip()
-    latitude = input("Enter observation latitude: ").strip()
-    longitude = input("Enter observation longitude: ").strip()
-    elevation = input("Enter observation elevation (meters): ").strip()
-    camera_type = input("Enter camera type (CCD or DSLR): ").strip()
-    pixel_binning = input("Enter pixel binning: ").strip()
-    filter_name = input("Enter filter name: ").strip()
-    observing_notes = input("Enter observing notes (or 'N/A' if none): ").strip()
-    plate_solution = input("Plate solution? (y/n): ").strip()
-    align_images = input("Align images? (y/n): ").strip()
-    target_star_xy = [int(coord) for coord in input("Enter target star X & Y Pixel (comma separated): ").strip().split(',')]
-    comparison_stars_xy = [
-        [int(coord) for coord in star.strip().split(',')]
-        for star in input("Enter comparison stars X & Y Pixel (comma separated for each star): ").strip().split(';')
-    ]
-    pixel_scale = float(input("Enter pixel scale (Ex: 5.21 arcsecs/pixel): ").strip())
-    filter_min_wavelength = int(input("Enter filter minimum wavelength (nm): ").strip())
-    filter_max_wavelength = int(input("Enter filter maximum wavelength (nm): ").strip())
-
-    stored_parameters["AAVSO Observer Code (N/A if none)"] = observer
-    stored_parameters["Directory with FITS files"] = fits_dir
-    stored_parameters["Directory to Save Plots"] = plots_dir
-    stored_parameters["Directory of Flats"] = flats_dir
-    stored_parameters["Directory of Darks"] = darks_dir
-    stored_parameters["Directory of Biases"] = biases_dir
-    stored_parameters["Secondary Observer Codes (N/A if none)"] = secondary_observers
-    stored_parameters["Observation date"] = obs_date
-    stored_parameters["Obs. Latitude"] = latitude
-    stored_parameters["Obs. Longitude"] = longitude
-    stored_parameters["Obs. Elevation (meters)"] = elevation
-    stored_parameters["Camera Type (CCD or DSLR)"] = camera_type
-    stored_parameters["Pixel Binning"] = pixel_binning
-    stored_parameters["Filter Name (aavso.org/filters)"] = filter_name
-    stored_parameters["Observing Notes"] = observing_notes
-    stored_parameters["Plate Solution? (y/n)"] = plate_solution
-    stored_parameters["Align Images? (y/n)"] = align_images
-    stored_parameters["Target Star X & Y Pixel"] = target_star_xy
-    stored_parameters["Comparison Star(s) X & Y Pixel"] = comparison_stars_xy
-    stored_parameters["Pixel Scale (Ex: 5.21 arcsecs/pixel)"] = pixel_scale
-    stored_parameters["Filter Minimum Wavelength (nm)"] = filter_min_wavelength
-    stored_parameters["Filter Maximum Wavelength (nm)"] = filter_max_wavelength
-
-# Create the inits file and print the inits dictionary
-inits = create_inits_file(stored_parameters, 'candidate_files/inits.json')
+# Create the inits file with the correct directory structure and naming convention
+inits = create_inits_file(stored_parameters, target_directory)
 
 # Print the inits dictionary
 print("Inits Dictionary:")
 print(json.dumps(inits, indent=4))
-print ("All files created")
+print("All files created and saved in the directory.")

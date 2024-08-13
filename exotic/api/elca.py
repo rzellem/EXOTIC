@@ -325,7 +325,7 @@ class lc_fitter(object):
             dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(freekeys),
                                                     bound='multi', sample='unif')
             dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
-                                maxbatch=10, nlive_batch=100, print_progressbool=self.verbose)
+                                maxbatch=10, nlive_batch=100, print_progress=self.verbose)
             self.results = dsampler.results
 
             tests = [copy.deepcopy(self.prior) for i in range(5)]

@@ -42,6 +42,10 @@ import requests
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
+_R_MAX_STOPS_LOW = 7
+_R_MAX_STOPS = 10
+_R_MAX_SECS = 37
+
 
 def is_false(value):
     return value is False
@@ -89,7 +93,7 @@ class PlateSolution:
     def _get_url(self, service):
         return self.api_url + service
 
-    @retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=1, min=4, max=30),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS_LOW), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
@@ -100,7 +104,7 @@ class PlateSolution:
             return r.json()['session']
         return False
 
-    @retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=1, min=4, max=30),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS_LOW), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
@@ -114,7 +118,7 @@ class PlateSolution:
             return r.json()['subid']
         return False
 
-    @retry(stop=stop_after_attempt(20), wait=wait_exponential(multiplier=1, min=4, max=45),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
@@ -123,7 +127,7 @@ class PlateSolution:
             return r.json()['jobs'][0]
         return False
 
-    @retry(stop=stop_after_attempt(10), wait=wait_exponential(multiplier=1, min=4, max=45),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):

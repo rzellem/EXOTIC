@@ -155,7 +155,7 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', verbose=True):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', jd_times=None, verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -164,6 +164,7 @@ class lc_fitter(object):
         self.bounds = bounds
         self.max_ncalls = 2e5
         self.verbose = verbose
+        self.jd_times = jd_times
         self.mode = mode
         self.neighbors = neighbors
         self.results = None
@@ -324,7 +325,7 @@ class lc_fitter(object):
             dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(freekeys),
                                                     bound='multi', sample='unif')
             dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
-                                maxbatch=10, nlive_batch=100, print_progressbool=self.verbose)
+                                maxbatch=10, nlive_batch=100, print_progress=self.verbose)
             self.results = dsampler.results
 
             tests = [copy.deepcopy(self.prior) for i in range(5)]

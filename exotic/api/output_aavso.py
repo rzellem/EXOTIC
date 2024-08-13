@@ -103,7 +103,8 @@ class OutputFiles:
                 phot_ext["Optimal Annulus"] = f"{min_annul}"
             params_num.update(phot_ext)
 
-        params_num["Transit Duration (day)"] = f"{round_to_2(mean(self.durs))} +/- {round_to_2(std(self.durs))}"
+        params_num["Transit Duration (day)"] = (f"{round_to_2(mean(self.durs), std(self.durs))} +/- "
+                                                f"{round_to_2(std(self.durs))}")
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 
         with params_file.open('w') as f:

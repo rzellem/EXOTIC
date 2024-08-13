@@ -122,7 +122,7 @@ class PlateSolution:
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
-        r = requests.get(sub_url, timeout=60)
+        r = requests.get(sub_url)
         if r.json()['job_calibrations']:
             return r.json()['jobs'][0]
         return False
@@ -131,9 +131,9 @@ class PlateSolution:
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):
-        r = requests.get(job_url, timeout=60)
+        r = requests.get(job_url)
         if r.json()['status'] == 'success':
-            r = requests.get(download_url, timeout=60)
+            r = requests.get(download_url)
             with wcs_file.open('wb') as f:
                 f.write(r.content)
             hdu = PrimaryHDU(data=getdata(filename=self.file), header=getheader(filename=wcs_file))

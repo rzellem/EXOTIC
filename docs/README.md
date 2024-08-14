@@ -54,7 +54,7 @@ We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata) cons
 
 A lightcurve from the sample dataset is shown below:
 
-![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/HAT-P-32bExample.png)
+![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/docs/images/HAT-P-32bExample.png)
 
 For the full output of EXOTIC please see the [example output](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/example_output.txt)
 
@@ -83,23 +83,23 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
 
 3. A new loading screen will pop up where you will see many required packages being automatically installed and updated. If this is your first time running the code, this can take up to a few minutes, depending on your internet connection.
 
-![EXOTIC Loading Screen](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_loading.png)
+![EXOTIC Loading Screen](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_loading.png)
 
 4. After EXOTIC finishes loading, you will see a welcome screen. Click Next to proceed.
 
-  ![EXOTIC Welcome Screen](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_welcome.png)
+  ![EXOTIC Welcome Screen](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_welcome.png)
 
 5. Select how you want to use EXOTIC - either in "Real Time Reduction" (for quickly analyzing your data while simulatenously observing) or in "Complete Reduction" (for analyzing your data after an observing run). Since we already have our sample data on our computer harddrive, we will select "Complete Reduction" and click Next.
 
-![EXOTIC Reduction Mode](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_redmode.png)
+![EXOTIC Reduction Mode](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_redmode.png)
 
 6. Select how you want to run EXOTIC: either by starting with raw image files (typically in FITS format or similar) or by starting with pre-reduced data (i.e., data already reduced with other software). Since we want to fully analyze our sample data, which are image files, we will select "Analyze your image files" and click Next.
 
-![EXOTIC Ru Mode](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_runmode.png)
+![EXOTIC Ru Mode](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_runmode.png)
 
 7. Select how you would like to enter information about your observing run (e.g., location, sky conditions, position of the target and comparison star(s) on the detector, etc.). For our sample data run, select "Manually".
 
-![EXOTIC Input Observation Information](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_inputobsinfo.png)
+![EXOTIC Input Observation Information](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_inputobsinfo.png)
 
 8. Now enter the information about your observing run.
     - Folder with your FITS files - the folder that contains your image files from your observation run; typically, this is a file called "Downloads"
@@ -124,27 +124,27 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
     - Comparison Star(s) X & Y Pixel Position - the pixel location of your comparision star(s) in [x-position, y-position] format; it is recommended that you input at least 2 comparision stars and EXOTIC will automatically select the "best" comparision by the one that produces the least amount of scatter in your data
     - *NOTE:* In the screenshot below, Rob has already entered all of the information for you for the sample data (with the exception that you'll need to point to the correct directory for your FITS files and your EXOTIC Output)
     
-    ![EXOTIC Input Observation Information](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_inputobs.png)
+    ![EXOTIC Input Observation Information](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_inputobs.png)
     
 9. Select how you want to enter your planetary system parameters. For first-time users, it is recommended that you enter these "Manually". Advanced users might want to simply adopt all planetary parameters from the NASA Exoplanet Archive. If you have already input your parameters in a pre-existing initialization file, then please select the last option.
 
-![EXOTIC Input Planetary Parameters](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_inputplanetparams.png)
+![EXOTIC Input Planetary Parameters](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_inputplanetparams.png)
 
 10. Enter the planetary parameters for your exoplanetary system. You can find this information on a variety of resources, but we recommend you look up your planet on the [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu). Note to users who are reducing the sample HAT-P-32b dataset- Rob has already filled out the system parameters for HAT-P-32b.
 
-![EXOTIC Input Planetary Parameters](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_planetparams.png)
+![EXOTIC Input Planetary Parameters](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_planetparams.png)
 
 11. EXOTIC will now create an initialization file for you. This file essentially saves all of the answers to the questions and prompts you just filled out- that way, you can just bypass all of these questions the next time you reduce these observations by simply loading in this initialization file. Please select the location on your harddrive where you want to save this file. It will be then named as `inits_MM_DD_YYYY__HH_MM_SS.json` where MM-DD-YYYY is the month, day, and year and HH_MM_SS is the current time.
 
-![EXOTIC Save Initialization File](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_saveinits.png)
+![EXOTIC Save Initialization File](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_saveinits.png)
     
 12. Congratulations! EXOTIC has successfully saved your initialization file! Click "Run EXOTIC" to launch EXOTIC and start analyzing the sample data!
 
-![EXOTIC Initialization File Saved](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_initssaved.png)
+![EXOTIC Initialization File Saved](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_initssaved.png)
 
 13. EXOTIC is now running!
 
-![EXOTIC is now Running! Saved](https://github.com/rzellem/EXOTIC/blob/develop/Documentation/Images/exotic_running.png)
+![EXOTIC is now Running! Saved](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_running.png)
 
 ## If you run into any issues with EXOTIC
 - Please send a message on our Slack Workspace on the #data-reduction channel to get help from the Exoplanet Watch Community. You can sign up for your own free Slack account by clicking on [this link](https://join.slack.com/t/uol-ets/shared_invite/zt-mvb4ljbo-LRBgpk3uMmUokbs4ge2JlA).

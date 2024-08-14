@@ -118,7 +118,7 @@ def plot_image(filename, save=False, bg_min=60, bg_max=99):
 
     # create a figure with text on mouse hover\
     print("Saturated pixels are marked with red. These are pixels which have exceeded the maximum value for brightness, and are thus not suitable for use as comparison stars.")
-    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=800, plot_height=800,
+    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], width=800, height=800,
         tools=[PanTool(),BoxZoomTool(),WheelZoomTool(),ResetTool(),HoverTool()])
     fig.x_range.range_padding = fig.y_range.range_padding = 0
 

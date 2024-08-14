@@ -8,7 +8,7 @@ A Python 3 package for analyzing photometric data of transiting exoplanets into 
 
 The EXOplanet Transit Interpretation Code relies upon the [transit method](https://exoplanets.nasa.gov/alien-worlds/ways-to-find-a-planet/#/2) for exoplanet detection. This method detects exoplanets by measuring the dimming of a star as an orbiting planet transits, which is when it passes between its host star and the Earth. If we record the host star’s emitted light, known as the flux, and observe how it changes as a function of time, we should observe a small dip in the brightness when a transit event occurs. A graph of host star flux vs. time is known as a lightcurve, and it holds the key to determining how large the planet is, and how long it will be until it transits again.
 
-![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/transitsimple.jpg)
+![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/docs/images/transitsimple.jpg)
 (NASA Ames)
 
 The objective of this pipeline is to help you reduce your images of your transiting exoplanet into a lightcurve, and fit a model to your data to extract planetary information that is crucial to increasing the efficiency of larger observational platforms, and futhering our astronomical knowledge.
@@ -64,7 +64,7 @@ We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/relea
 
 A lightcurve from the sample dataset is shown below:
 
-![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/HAT-P-32bExample.png)
+![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/docs/images/HAT-P-32bExample.png)
 
 For the full output of EXOTIC please see the [example output](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/example_output.txt)
 
@@ -166,15 +166,15 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 - Hot Pixel Masking
 
-![](Documentation/Images/Hot_pixel_mask.png)
+![](https://github.com/rzellem/EXOTIC/raw/main/docs/images/Hot_pixel_mask.png)
 
 - Aperture Photometry with PSF centroiding (2D Gaussian + rotation)
 
-![HAT-P-32 b Centroid Position Graph, X-Pixel versus Time in Julian Date.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/centroids.png)
+![HAT-P-32 b Centroid Position Graph, X-Pixel versus Time in Julian Date.](https://github.com/rzellem/EXOTIC/raw/main/docs/images/centroids.png)
 
 - Stellar masking in background estimate
 
-![](Documentation/Images/Background_Estimate.png)
+![](https://github.com/rzellem/EXOTIC/raw/main/docs/images/Background_Estimate.png)
 
 - Multiple comparison star + aperture size optimization
 
@@ -182,7 +182,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 - Light curve parameter optimization with [Nested Sampling](https://dynesty.readthedocs.io/en/latest/index.html)
 
-![Chart showing how Nested Sampling iterations reveal light curve optimization results.](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/posterior_sample.png)
+![Chart showing how Nested Sampling iterations reveal light curve optimization results.](https://github.com/rzellem/EXOTIC/raw/main/docs/images/posterior_sample.png)
 
 ## Contributing to EXOTIC
 
@@ -195,7 +195,7 @@ Please also include the following statement in your paper's Acknowledgements sec
 >This publication makes use of data products from Exoplanet Watch, a citizen science project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. This work is supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute.
 
 ## Exoplanet Watch
-![https://exoplanets.nasa.gov/exoplanet-watch/about-exoplanet-watch/](https://github.com/rzellem/EXOTIC/raw/main/Documentation/Images/ExoplanetWatch.png) 
+![https://exoplanets\.nasa\.gov/exoplanet-watch/about\-exoplanet\-watch/](https://github.com/rzellem/EXOTIC/raw/main/docs/images/ExoplanetWatch.png) 
 
 Contribute to [Exoplanet Watch](https://exoplanets.nasa.gov/exoplanet-watch/about-exoplanet-watch/), a citizen science project that improves the properties of exoplanets and their orbits using observations processed with EXOTIC. Register with [AAVSO](https://www.aavso.org/exoplanet-section) and input your Observer Code to help track your contributions allowing for proper credit on future publications using those measurements. Ask about our Exoplanet Watch Slack Channel!
 

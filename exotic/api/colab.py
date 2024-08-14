@@ -109,7 +109,7 @@ def display_image(filename):
     # )
 
     # create a figure with text on mouse hover
-    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], plot_width=p_width, plot_height=p_height,
+    fig = figure(tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")], width=p_width, height=p_height,
         tools=[PanTool(),BoxZoomTool(),WheelZoomTool(),ResetTool(),HoverTool()])
     fig.x_range.range_padding = fig.y_range.range_padding = 0
 

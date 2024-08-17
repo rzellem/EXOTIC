@@ -18,47 +18,47 @@ Below are the instructions for installing and running EXOTIC for the first time.
 
 ## Installation and Running
 
-EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer. You can also use EXOTIC via the free Google Colab, which features cloud computing, many helpful plotting functions, and a simplified installation. However, if you are a user with many images or large images, we recommend running EXOTIC locally on your own computer.
+EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer using Python 3.10. You can also use EXOTIC via the free Google Colab, which features cloud computing, many helpful plotting functions, and a simplified installation. However, if you are a user with many images or large images, we recommend running EXOTIC locally on your own computer.
 
- **Google Colab Cloud**
-  - Features: does not require the user to install any software locally on their own computer.
-  - Limitations: Requires user to upload their images to a free Gdrive account.
-  - Recommendations: If you run out of space on your default Google/Gdrive account, you can sign up for a new, free account to use. Some users even make a new Google account for every new dataset to avoid running out of space.
-  - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
-  - [How to use EXOTIC on the Colab written instructions](http://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
-  - [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
-  
+`pip install exotic`
 
- **Locally On Your Own Computer**
-  - Features: Images are read off of the user's harddrive- nothing is uploaded to Gdrive. This method can be helpful for those with large filesizes, many files, or a slow internet connection.
-  - Limitations: Requires user to install Python3 and multiple subpackages.
-  
-  - Installation Instructions:
-    1. ​[Download and install the latest release of Python.](https://www.python.org/downloads/)
-        **NOTE FOR WINDOWS USERS:** make sure to check the box "Add Python to PATH" when installing.
-        **NOTE FOR ALL USERS:** please download and install the latest release of Python, even if you have a previous installation already on your computer, to ensure that all Python packages are properly installed.
-    2. [Download the latest release of EXOTIC.](https://github.com/rzellem/EXOTIC/releases)
-    3. Unzip this file.
-    4. Double-click on the appropriate installer for your operating system:
-        - Windows: run_exotic_windows.bat
-        - Macintosh: run_exotic_macintosh.command
-        - Linux: run_exotic_linux.sh
-    5. If you get a security warning about the software being from an unidentified, unsigned, or non-trusted developer, you can bypass it by:
-        - Windows: click "More info" and then the "Run away" box at the bottom of the window.
-        - Macintosh: Please follow [these instructions](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac).
+## How to Run EXOTIC
 
-- **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
-- How EXOTIC Works
-  - [Document](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/How-EXOTIC-Works.pdf)
-  - [Video](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
+To run a full photometric reduction with light curve modeling, use the following command:
 
-- Lastly, we offer these documents [in other languages](https://github.com/rzellem/EXOTIC/raw/main/Documentation/)
+`exotic -red inits.json -ov`
 
-## Requirements
-FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC.
+```
+usage: exotic [-h] [-rt [REALTIME]] [-red [REDUCE]] [-pre [PREREDUCED]] [-phot [PHOTOMETRY]] [-ov] [-nea]
+
+Using a JSON initialization file to bypass user inputs for EXOTIC.
+
+options:
+  -h, --help            show this help message and exit
+  -rt [REALTIME], --realtime [REALTIME]
+                        Plots transit in real-time while observing with a telescope. An initialization file (e.g., inits.json) is optional to use with this command.
+  -red [REDUCE], --reduce [REDUCE]
+                        Performs aperture photometry on FITS files and a reduction on dataset. An initialization file (e.g., inits.json) is optional to use with this command.
+  -pre [PREREDUCED], --prereduced [PREREDUCED]
+                        Performs a reduction on dataset using the nested sampler only. An initialization file (e.g., inits.json) is optional to use with this command.
+  -phot [PHOTOMETRY], --photometry [PHOTOMETRY]
+                        Performs only aperture photometry on FITS files. An initialization file (e.g., inits.json) is optional to use with this command.
+  -ov, --override       Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. Can be used as an additional argument with -rt (--realtime), -red (--reduce), -pre
+                        (--prereduced), and -phot (--photometry).Do not combine with the -nea, --nasaexoarch argument.
+  -nea, --nasaexoarch   Adopts all the NASA Exoplanet Archive planetary parameters from https://exoplanetarchive.ipac.caltech.edu. Can be used as an additional argument with -rt (--realtime), -red
+                        (--reduce), -pre (--prereduced), and -phot (--photometry).Do not combine with the -ov, --override argument.
+```
+
+For more use-cases like individual light curve fitting, multiple light curve fitting, joint RV + transit analysis, O-C plots and more see our [examples](/examples/).
+
+**Google Colab Cloud**
+- [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
+- [How to use EXOTIC on the Colab written instructions](http://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
+- [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
+
 
 ## Sample Data and Outputs
-We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
+We provide a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics. **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 
 [Sample Data](https://github.com/rzellem/EXOTIC_sampledata/releases/)
 

@@ -117,7 +117,7 @@ EXOTIC also hosts a TESS analysis pipeline tailored for processing TESS lightcur
 ## Linear Ephemeris Model
 Exoplanets experience gravitational forces from their host star and other planets in multiplanet systems. Consequently, these forces result in fluctuations in a planet's time-influenced parameters, such as its orbital period and transit duration. the mid-transit time uncertainty increases over time, necessitating updated transit ephemerides. To address this issue, EXOTIC includes an auxiliary package that enables users to aggregate all available mid-transit times and compute the next mid-transit time
 
-T_{mid} = n \cdot P + T_0
+$T_{mid} = n \cdot P + T_0$
 
 where $T_{mid}$ is the upcoming mid-transit time, $T_0$ is the planet's mid-transit time, $P$ is planet's orbital period, and $n$ is the number of orbits between $T_0$ and $T_{mid}$. EXOTIC uses the Bayesian nested sampling package {Ultranest} to estimate the period and epoch as shown in the Observed-Calculated (O-C) plot. It compares the Bayesian evidence between linear and nonlinear ephemerides, considering perturbations from nearby companions.
 
@@ -125,7 +125,7 @@ Although the linear ephemeris equation does not consider non-linear variations f
 
 Furthermore, we also integrate an orbital decay model alongside the linear ephemeris model into the package. The model accounts for planets experiencing tidal forces from their host star, which can induce decay in the planet's orbit. To accommodate for orbital decay, EXOTIC uses the following equation from :
 
-T_{mid} = n \cdot P + T_0 + \frac{1}{2} \cdot \frac{dP}{dn} \cdot n^2
+$T_{mid} = T_0 + n \cdot P  + \frac{1}{2} \cdot \frac{dP}{dn} \cdot n^2$
 
 where $\frac{dP}{dn}$ is the rate at which the orbital period changes with respect to the change in the number of orbits. 
 
@@ -133,18 +133,17 @@ where $\frac{dP}{dn}$ is the rate at which the orbital period changes with respe
 ## Lomb-Scargle Periodogram
 The gravitational influence of a companion within the system perturbs a planet's orbit. One method of detecting the perturbing planet is to examine deviations in the periodic transit timings of the known transiting planet through transiting timing variations. TTVs provide valuable insights into the dynamics and architecture of multi-planet systems as they imply the presence of additional planets through mean motion resonance (MMR), characterize their orbits, and constrain planetary masses and radii. We search for TTVs within the dataset by utilizing a Lomb-Scargle periodogram to detect periodic patterns in the irregularly spaced O-C data. This procedure generates a power spectrum of the O-C data against frequency, subsequently transformed into periods. EXOTIC then uses the results of the Lomb-Scargle periodogram to fit two Fourier functions to the data through weighted least squares regression. The first-order Fourier function is applied using
 
-T_{mid} = n \cdot P + T_0 + A\sin(w_1n) + B\cos(w_1n),
+$T_{mid} = n \cdot P + T_0 + A\sin(w_1n) + B\cos(w_1n)$
 
 where $w_1 = 2\pi/P_{max}$ and $P_{max}$ represents the period of greatest power from the Lomb-Scargle periodogram. The objective of the first-order Fourier function is to identify and describe short-term fluctuations within the TTV signal. These fluctuations predominantly arise from gravitational forces acting between planets in or close to MMR. The second-order Fourier function is utilized with
 
-T_{\text{mid}} = n \cdot P + T_0 + A\sin(w_1n) + B\cos(w_1n) \nonumber \\
-&\quad + C\sin(w_2n) + D\cos(w_2n),
+$T_{\text{mid}} = n \cdot P + T_0 + A\sin(w_1n) + B\cos(w_1n) + C\sin(w_2n) + D\cos(w_2n)$
 
 where $w_2 = 4\pi/P_{max,res}$ and $P_{max,res}$ represents the period with the highest power according to the Lomb-Scargle periodogram of the linear residuals. We use the second-order Fourier function to model and understand long-term variations in the TTV data, often linked to the orbits' precession. This precession could refer to the gradual shift in the orientation of the orbital ellipse of a planet, which gravitational interactions with other bodies in the system, relativistic effects, or other forces can cause. 
 
 To determine which model best represents the data between the linear and Fourier fits, the pipeline applies the Bayesian Information Criterion (BIC) to obtain a numerical value for comparison. When deciding between models, the model with the lowest BIC value is generally preferred and is calculated from
 
-\text{BIC} = k \ln(n) - 2 \ln(\hat{L}),
+$\text{BIC} = k \ln(n) - 2 \ln(\hat{L})$
 
 where $\hat{L}$ is the maximized value of the model's likelihood function, $n$ is the number of data points, and $k$ is the number of parameters the model estimates.
 

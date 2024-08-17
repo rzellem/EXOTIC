@@ -201,3 +201,8 @@ Contribute to [Exoplanet Watch](https://exoplanets.nasa.gov/exoplanet-watch/abou
 
 ## Acknowledgements
 Exoplanet Watch is a project by NASA's Universe of Learning. NASA's Universe of Learning materials are based upon work supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute, working in partnership with Caltech/IPAC, Center for Astrophysics | Harvard & Smithsonian, and the Jet Propulsion Laboratory.
+
+# chat bot links
+
+https://raw.githubusercontent.com/rzellem/EXOTIC/docs/README.md
+

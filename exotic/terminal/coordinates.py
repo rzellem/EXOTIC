@@ -69,7 +69,7 @@ if __name__ == "__main__":
     logo = mpimg.imread('exoplanet-watch-logo.png')
 
     # axes for logo
-    ax_logo = fig.add_axes([0.0, 0.75, 0.2, 0.2], anchor='NW', zorder=10)
+    ax_logo = fig.add_axes([0.04, 0.75, 0.2, 0.2], anchor='NW', zorder=10)
     ax_logo.imshow(logo)
     ax_logo.axis('off')
 

@@ -31,11 +31,12 @@ def on_hover(event, ax, image_data):
             fig.canvas.draw_idle()
 
 if __name__ == "__main__":
-    # load FITS file
-    filename = "lum-bin-1-min-5-0042-20.fit"
+    # Load the FITS file
+    # filename = "lum-bin-1-min-5-0001-20.fit"  # Replace with your FITS file
+    filename = "lum-bin-1-min-5-0001-20.fit"  # Replace with your FITS file
     image_data = load_and_autostretch_fits(filename)
 
-    # define available stretches/intervals
+    # Define the available stretches and intervals
     stretch_map = {
         'Asinh': AsinhStretch(),
         'Log': LogStretch(),
@@ -55,7 +56,7 @@ if __name__ == "__main__":
     # so a user could hone in I guess. will get feedback. - Ira
     initial_stretch = 'Log'
     initial_interval = 'ZScale'
-    initial_vmin = 114
+    initial_vmin = 219
     initial_vmax = 976
 
     norm = ImageNormalize(image_data, interval=interval_map[initial_interval], stretch=stretch_map[initial_stretch], vmin=initial_vmin, vmax=initial_vmax)
@@ -67,11 +68,7 @@ if __name__ == "__main__":
 
     # exoplanet watch logo
     logo = mpimg.imread('exoplanet-watch-logo.png')
-
-    # axes for logo
-    ax_logo = fig.add_axes([0.04, 0.75, 0.2, 0.2], anchor='NW', zorder=10)
-    ax_logo.imshow(logo)
-    ax_logo.axis('off')
+    fig.figimage(logo, xo=10, yo=fig.bbox.ymax - logo.shape[0] - 10, zorder=10)
 
     # Asinh, Log, Linear radio buttons (need to decide if these are even needed, maybe just default to log or linear)
     ax_stretch = plt.axes([0.05, 0.5, 0.15, 0.15])
@@ -83,7 +80,7 @@ if __name__ == "__main__":
     interval_radio = RadioButtons(ax_interval, ('ZScale', 'MinMax'))
     interval_radio.set_active(list(interval_map.keys()).index(initial_interval))
 
-    # vmin/vmax
+    # sliders for vmin and vmax
     ax_vmin = plt.axes([0.25, 0.15, 0.65, 0.03])
     vmin_slider = Slider(ax_vmin, 'vmin', np.min(image_data), np.max(image_data), valinit=initial_vmin)
     
@@ -96,7 +93,7 @@ if __name__ == "__main__":
     vmin_slider.on_changed(update)
     vmax_slider.on_changed(update)
 
-    # tie hover event to function
+    # connect hover event to the function
     fig.canvas.mpl_connect('motion_notify_event', lambda event: on_hover(event, ax, image_data))
 
     plt.show()

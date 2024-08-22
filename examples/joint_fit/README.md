@@ -16,10 +16,8 @@ In preparation for the joint fit, the radial velocity data were subjected to aut
 
 The quality assurance checks provided 13 good SOPHIE observations over the 13 HIRES radial velocity observations. 
 
-![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/docs/images/transitsimple.jpg)
-(NASA Ames)
-
 ## New Users
+
 Below are the instructions for installing and running the JOINT fit code for the first time.
 
 ## Installation and Running
@@ -49,116 +47,130 @@ To run the example systems, the data, and all necessary parameters should have b
 
 ## Sample Data and Outputs
 - The directory structure within EXOTIC for the JOINT fit code and data is:
-- EXOTIC
--- examples
---- joint_fit
----- criteria.tbl
----- grv_fitter_7_free_parms.ipynb
----- joint_oc_eclipse_plot.pdf
----- joint_oc_transits_plot.pdf
----- joint_posterior.pdf
----- joint_rv_fit_plot.pdf
----- joint_transit_plot.pdf
----- prv.cookies
----- radial_velocity
------ data
------- HAT-P-23_textfiles
-------- ..._AAVSO.txt
-------- ... (multiple files)
------- HAT-P-23.csv
------- WASP-77A_textfiles
-------- ..._AAVSO.txt
-------- ... (multiple files)
------- WASP-77A.csv
------ grv_fitter_params
------- HAT-P-23emidarray.csv
------- HAT-P-23priors.csv
------- HAT-P-23priorsarray.csv
------- HAT-P-23sigmas.csv
------- HAT-P-23TESSarray.csv
------- HAT-P-23tmidarray.csv
------- WASP-77Aemidarray.csv
------- WASP-77Apriors.csv
------- WASP-77Apriorsarray.csv
------- WASP-77Asigmas.csv
------- WASP-77ATESSarray.csv
------- WASP-77Atmidarray.csv
----- README.md (this file)
----- RVDataCollector.ipynb
----- targetlist.csv
--- exotic
---- api
----- joint_elca.py
----- rv_csv.py
----- rv.py
+  - EXOTIC
+    - examples
+      - joint_fit
+        - criteria.tbl
+        - grv_fitter_7_free_parms.ipynb
+        - joint_oc_eclipse_plot.pdf
+        - joint_oc_transits_plot.pdf
+        - joint_posterior.pdf
+        - joint_rv_fit_plot.pdf
+        - joint_transit_plot.pdf
+        - prv.cookies
+        - radial_velocity
+          - data
+            - HAT-P-23_textfiles
+              - ..._AAVSO.txt
+              - ... (multiple files)
+            - HAT-P-23.csv
+            - WASP-77A_textfiles
+            - ..._AAVSO.txt
+            - ... (multiple files)
+            - WASP-77A.csv
+          - grv_fitter_params
+            - HAT-P-23emidarray.csv
+            - HAT-P-23priors.csv
+            - HAT-P-23priorsarray.csv
+            - HAT-P-23sigmas.csv
+            - HAT-P-23TESSarray.csv
+            - HAT-P-23tmidarray.csv
+            - WASP-77Aemidarray.csv
+            - WASP-77Apriors.csv
+            - WASP-77Apriorsarray.csv
+            - WASP-77Asigmas.csv
+            - WASP-77ATESSarray.csv
+            - WASP-77Atmidarray.csv
+        - README.md (this file)
+        - RVDataCollector.ipynb
+        - targetlist.csv
+    - exotic
+      - api
+        - joint_elca.py
+        - rv_csv.py
+        - rv.py
 
-- **VERY IMPORTANT. You must load your target data from your sources if you choose a target other than HAT-P-23. If you do so, your files must follow the pattern above where the target host star's name must be inserted into all folders and file names as shown here. In addition, the target name shown in these files and folder names must be supplied for the JOINT fit, and the RVDataCollector runs when you are asked for the target name. In addition, be aware that the target name you use must be resolvable by SIMBAD.
+- **VERY IMPORTANT.** You must load your target data from your sources if you choose a target other than HAT-P-23. If you do so, your files must follow the pattern above where the target host star's name must be inserted into all folders and file names as shown here. In addition, the target name shown in these files and folder names must be supplied for the JOINT fit, and the RVDataCollector runs when you are asked for the target name. In addition, be aware that the target name you use must be resolvable by SIMBAD.
 
 - The content of the example files in the "data" folder are:
--- target_textfiles contain TESS light curve data
--- target.csv files contain data that is collected by RVDataCollector from the six radial velocity sources discussed above
+  - target_textfiles contain TESS light curve data
+  - target.csv files contain data that is collected by RVDataCollector from the six radial velocity sources discussed above
 
 - The content of the example files in the "grv_fitter_params folder are:
--- HAT-P-23emidarray.csv
---- 2456117.91288,0.00271,Palomar O'Rourke 2014            
---- 2455895.95423,0.00181,Spitzer 3.6 um O'Rourke 2014 PI Heather Knutson Prog ID 80219
---- 2455897.16873, 0.00153,Spitzer 4.5 um O'Rourke 2014 PI Heather Knutson Prog ID 80219
---- 2457762.573776,0.000248,Spitzer 3.6 um Kyle Pearson 2024 PI Kevin Stevenson
---- 2457766.213359,0.000171,Spitzer 4.5 um Kyle Pearson 2024 PI Kevin Stevenson
+  - HAT-P-23emidarray.csv
+    - 2456117.91288,0.00271,Palomar O'Rourke 2014            
+    - 2455895.95423,0.00181,Spitzer 3.6 um O'Rourke 2014 PI Heather Knutson Prog ID 80219
+    - 2455897.16873, 0.00153,Spitzer 4.5 um O'Rourke 2014 PI Heather Knutson Prog ID 80219
+    - 2457762.573776,0.000248,Spitzer 3.6 um Kyle Pearson 2024 PI Kevin Stevenson
+    - 2457766.213359,0.000171,Spitzer 4.5 um Kyle Pearson 2024 PI Kevin Stevenson
 
--- HAT-P-23priors.csv
---- rprs,0.1169,0.0012,Bakos 2010
---- per,1.212884,0.000002,Bakos 2010                                                   
---- inc,85.1,1.5,Bakos 2010
---- u0,0.4163869898789653,0.0,exotethys - limb darkening (nonlinear) 
---- u1,0.08385912567010312,0.0,exotethys - limb darkening (nonlinear)
---- u2,0.3128291721930472,0.0,F. Noguer (March 08, 2024)
---- u3,-0.18203890672188036,0.0,F. Noguer (March 08, 2024)
---- ecc,0.106,0.044,Bakos 2010
---- omega,118.0,25.0,Bakos 2010
---- tmid,2460501.86952,0.00042,RHEC as most recent tmid from which to project
---- a1,1,0,transit airmass - not used
---- a2,0,0,transit airmass - not used
---- fpfs,0.5,0.0,F_p/F_s - for eclipse depth
---- rstar,1.203,0.074,Bakos 2010 R_sun
---- mstar,1.130,0.035,Bakos 2010 M_sun
---- mplanet,2.090,0.111,Bakos 2010 M_Jupiter
---- rv_linear,0,0,not used
---- rv_quad,0,0,not used
+  - HAT-P-23priors.csv
+    - rprs,0.1169,0.0012,Bakos 2010
+    - per,1.212884,0.000002,Bakos 2010                                                   
+    - inc,85.1,1.5,Bakos 2010
+    - u0,0.4163869898789653,0.0,exotethys - limb darkening (nonlinear) 
+    - u1,0.08385912567010312,0.0,exotethys - limb darkening (nonlinear)
+    - u2,0.3128291721930472,0.0,F. Noguer (March 08, 2024)
+    - u3,-0.18203890672188036,0.0,F. Noguer (March 08, 2024)
+    - ecc,0.106,0.044,Bakos 2010
+    - omega,118.0,25.0,Bakos 2010
+    - tmid,2460501.86952,0.00042,RHEC as most recent tmid from which to project
+    - a1,1,0,transit airmass - not used
+    - a2,0,0,transit airmass - not used
+    - fpfs,0.5,0.0,F_p/F_s - for eclipse depth
+    - rstar,1.203,0.074,Bakos 2010 R_sun
+    - mstar,1.130,0.035,Bakos 2010 M_sun
+    - mplanet,2.090,0.111,Bakos 2010 M_Jupiter
+    - rv_linear,0,0,not used
+    - rv_quad,0,0,not used
 
--- HAT-P-23priorsarray.csv
---- per,1.212884,0.000002,Bakos 2010
---- tmid,2454852.26464,0.00018,Bakos 2010            
---- emid,2456117.91288,0.00271,Palomar O'Rourke 2014 
---- ecc,0.106,0.044,Bakos 2010
---- omega,118.0,25.0,Bakos 2010
---- a,0.0232,0.0002,Bakos 2010
---- rstar,1.203,0.074,Bakos 2010
+  - HAT-P-23priorsarray.csv
+    - per,1.212884,0.000002,Bakos 2010
+    - tmid,2454852.26464,0.00018,Bakos 2010            
+    - emid,2456117.91288,0.00271,Palomar O'Rourke 2014 
+    - ecc,0.106,0.044,Bakos 2010
+    - omega,118.0,25.0,Bakos 2010
+    - a,0.0232,0.0002,Bakos 2010
+    - rstar,1.203,0.074,Bakos 2010
 
--- HAT-P-23sigmas.csv
---- tmid,100,
---- per,10,
---- inc,3,
---- omega,3,
---- ecc,3,
---- Mp,8,
+  - HAT-P-23sigmas.csv
+    - tmid,100,
+    - per,10,
+    - inc,3,
+    - omega,3,
+    - ecc,3,
+    - Mp,8,
 
--- HAT-P-23TESSarray.csv
---- 2459770.51948,0.0008,TESS
---- ...multiple files
+  - HAT-P-23TESSarray.csv
+    - 2459770.51948,0.0008,TESS
+    - ...multiple files
 
--- HAT-P-23tmidarray.csv
---- 2459048.8538,0.0012,xxxx
---- ... multiple files
+  - HAT-P-23tmidarray.csv
+    - 2459048.8538,0.0012,xxxx
+    - ... multiple files
 
 There is another very important file in the joint_fit folder: targetlist.csv. This file can be used with RVDataCollector by inputting the file name rather than the name of an individual target when the code asks for input of the target name. The targetlist.csv file contains the names of some 200 targets identified as potential targets for ARIEL and other missions later this decade and early in the next. As the example shows, any similar list can also be used so long as the fields in the file are comma-separated. 
 
+- Outputs include information about the process of the convergence and plots of the results.
+### Convergence of the Ultranest fit should begin to appear almost immediately and conclude after much of the processing is complete.
+    
+![Ultranest convergence.](images/Ultranest.png)   
+  
+### The lightcurve plot of all transit data in the fit.    
+![Light Curve Graph displaying brightness versus time.](images/joint_transit_plot.jpg) 
+
+### The posterior plot indicates how well the fit converged. Since inclination cannot physically exceed 90°,the upper boundary is fixed at that value and Ultranest clips the plot to indicate this result.
+![Posterior.](images/joint_posterior.png)
+
+### The RV plot.
+![Radial velocity.](images/joint_rv_fit_plot.png)
+
+### The O-C plot for the transit.
+![Transit O-C.](images/joint_oc_transits_plot.png) 
+
+### The O-C plot for the eclipse values.
+
+![Eclipse O-C.](images/joint_oc_eclipse_plot.png) 
 *********************************************************
 Please note that the HAT-P-23 run of grv_fitter_7_free_parms.ipynb is very long. It will take around 12 hours to complete depending on your local computer. The WASP-77A target, by contrast, runs much quicker
 *********************************************************
-
-```
-
-
-```
-

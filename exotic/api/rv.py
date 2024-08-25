@@ -1,3 +1,4 @@
+# a series of functions for querying radial velocity archives
 import io
 import os
 import shutil

@@ -21,7 +21,7 @@ A Python 3 package for reducing and analyzing photometric data of exoplanetary t
 To install EXOTIC, you need to have Python 3.10 or lower installed on your computer. You can then install EXOTIC by following these steps:
 
 1. Install [Anaconda](https://www.anaconda.com/products/distribution) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (a minimal version of Anaconda) on your computer.
-2. Create a new conda environment and activate it:
+2. Create a new virtual environment and activate it:
 
    ```
    conda create -n exotic python=3.10

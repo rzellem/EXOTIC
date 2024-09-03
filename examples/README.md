@@ -1,6 +1,6 @@
 # EXOTIC Use Cases
 
-This repository contains examples of how to use the EXOTIC software to perform a variety of tasks related to exoplanet transit science. The package is designed to be used with FITS images, photometric data, radial velocity data, and ephemeris data. We gave our documentation and code samples to an AI [Chat Assistant](https://hf.co/chat/assistant/66c0cb652a9c7710cec9341c), so you can ask questions and get answers in real-time.
+This repository contains examples of how to use the EXOTIC software to perform a variety of tasks related to exoplanet transit science. The package is designed to be used with FITS images, photometric data, radial velocity data, and ephemeris data. We gave our documentation and code samples to an AI [Chat Assistant](https://hf.co/chat/assistant/66c0cb652a9c7710cec9341c), so you can ask questions and get answers in real-time!
 
 ## [Programmatic Access to Exoplanet Watch Results](Exoplanet_Watch_API.ipynb) 
 

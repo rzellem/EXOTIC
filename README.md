@@ -16,6 +16,8 @@ A Python 3 package for reducing and analyzing photometric data of exoplanetary t
 ![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/docs/images/transitsimple.jpg)
 (NASA Ames)
 
+https://exoplanets.nasa.gov/exoplanet-watch/how-to-contribute/how-to-analyze-your-data/
+
 ## Installation + Setup
 
 To install EXOTIC, you need to have Python 3.10 or lower installed on your computer. You can then install EXOTIC by following these steps:
@@ -53,7 +55,7 @@ Google Colab is a free cloud service that allows you to run Python code in a Jup
 
 If those links are broken check our [website](https://exoplanets.nasa.gov/exoplanet-watch/exotic/welcome/) for the latest.
 
-![](docs/images/exotic_colab.png)
+[![](docs/images/exotic_colab.png)](https://exoplanets.nasa.gov/exoplanet-watch/exotic/welcome/)
 
 ## New User Tutorials
 
@@ -65,7 +67,7 @@ The user community behind [Exoplanet Watch](https://exoplanets.nasa.gov/exoplane
 - [EXOTIC Tutorial (video)](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
 - These documents [in other languages](https://github.com/rzellem/EXOTIC/tree/main/docs/regions)
 - [AI Chatbot for Exoplanet Watch (written)](https://hf.co/chat/assistant/66c0cb652a9c7710cec9341c)
-- [How to analyze your data (written)](https://exoplanets.nasa.gov/exoplanet-watch/how-to-contribute/how-to-analyze-your-data/)
+- [How to analyze your data]
 
 ## Sample Data
 We recommend you test exotic with a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.
@@ -205,7 +207,7 @@ Please also include the following statement in your paper's Acknowledgements sec
 >This publication makes use of data products from Exoplanet Watch, a citizen science project managed by NASA’s Jet Propulsion Laboratory on behalf of NASA’s Universe of Learning. This work is supported by NASA under award number NNX16AC65A to the Space Telescope Science Institute.
 
 ## Exoplanet Watch
-![https://exoplanets\.nasa\.gov/exoplanet-watch/about\-exoplanet\-watch/](https://github.com/rzellem/EXOTIC/raw/main/docs/images/ExoplanetWatch.png) 
+[![](https://github.com/rzellem/EXOTIC/raw/main/docs/images/ExoplanetWatch.png)](https://exoplanets.nasa.gov/exoplanet-watch/how-to-contribute/checklist/)
 
 Contribute to [Exoplanet Watch](https://exoplanets.nasa.gov/exoplanet-watch/about-exoplanet-watch/), a citizen science project that improves the properties of exoplanets and their orbits using observations processed with EXOTIC. Register with [AAVSO](https://www.aavso.org/exoplanet-section) and input your Observer Code to help track your contributions allowing for proper credit on future publications using those measurements. Ask about our Exoplanet Watch Slack Channel!
 

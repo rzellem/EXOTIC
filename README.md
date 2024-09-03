@@ -16,8 +16,6 @@ A Python 3 package for reducing and analyzing photometric data of exoplanetary t
 ![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/docs/images/transitsimple.jpg)
 (NASA Ames)
 
-https://exoplanets.nasa.gov/exoplanet-watch/how-to-contribute/how-to-analyze-your-data/
-
 ## Installation + Setup
 
 To install EXOTIC, you need to have Python 3.10 or lower installed on your computer. You can then install EXOTIC by following these steps:
@@ -63,11 +61,10 @@ The user community behind [Exoplanet Watch](https://exoplanets.nasa.gov/exoplane
 
 - [Installation instructions](https://github.com/rzellem/EXOTIC/tree/main/docs) for Windows, Mac, and Linux.
 - [How to use EXOTIC on the Colab (video)](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
-- [How to use EXOTIC on the Colab (written)](http://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
+- [How to use EXOTIC on the Colab](http://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
 - [EXOTIC Tutorial (video)](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
+- [AI Chatbot for Exoplanet Watch](https://hf.co/chat/assistant/66c0cb652a9c7710cec9341c)
 - These documents [in other languages](https://github.com/rzellem/EXOTIC/tree/main/docs/regions)
-- [AI Chatbot for Exoplanet Watch (written)](https://hf.co/chat/assistant/66c0cb652a9c7710cec9341c)
-- [How to analyze your data]
 
 ## Sample Data
 We recommend you test exotic with a [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/) consisting of 142 `fits` files taken by a 6” telescope of the exoplanet HAT-P-32 b (V-mag = 11.44) observed on December 20, 2017. The telescope used to collect this dataset is part of the [MicroObservatory Robotic Telescope Network](http://microobservatory.org) operated by the Harvard-Smithsonian Center for Astrophysics.

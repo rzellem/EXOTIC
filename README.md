@@ -62,7 +62,7 @@ A lightcurve from the sample dataset is shown below:
 
 ![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/docs/images/HAT-P-32bExample.png)
 
-For the full output of EXOTIC please see the [example output](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/example_output.txt)
+Exotic will output the final parameters in a text file and a plot of the light curve. The output will look similar to the following:
 
 ```
 *********************************************************

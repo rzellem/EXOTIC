@@ -42,8 +42,13 @@ from itertools import cycle
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from ultranest import ReactiveNestedSampler
-from scipy.optimize import least_squares
+try:
+    from ultranest import ReactiveNestedSampler
+except ImportError:
+    import dynesty
+    import dynesty.plotting
+    from dynesty.utils import resample_equal
+    from scipy.stats import gaussian_kde
 
 try:
     from elca import lc_fitter
@@ -315,9 +320,6 @@ class rv_fitter(lc_fitter):
             self.data[n]['detrend'] = self.data[n]['vel'] - self.data[n]['priors']['offset']
             self.data[n]['residuals'] = self.data[n]['detrend'] - self.data[n]['model']
 
-            # scale factor to get avg error to equal std of residuals
-            self.data[n]['error_scale'] = np.std(self.data[n]['residuals'])/np.mean(self.data[n]['velerr'])
-
         # global up-scaled model
         self.alltime = np.linspace(min(alltime), max(alltime), 100000)
         dalltime = self.alltime - self.alltime.min()
@@ -398,7 +400,7 @@ class rv_fitter(lc_fitter):
         ax[2].set_xlabel("Phase")
         ax[0].set_title(title)
         ax[2].grid(ls='--')
-        ax[2].legend(loc='upper right')
+        ax[0].legend(loc='upper right')
         ax[1].legend(loc='best')
         return fig, ax
 
@@ -592,4 +594,5 @@ class rv_fitter(lc_fitter):
         cbar.set_label('Time [BJD]')
 
         return fig
+    
     

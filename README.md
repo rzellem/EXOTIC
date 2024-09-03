@@ -42,7 +42,7 @@ After installing EXOTIC, you can verify the installation by running the followin
 python -c "import exotic"
 ```
 
-If EXOTIC is installed correctly, you should not see any error messages. You can now start using EXOTIC by following [examples](https://github.com/rzellem/EXOTIC/tree/main/examples) provided in the repository or by using our [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/).
+If EXOTIC is installed correctly, you should not see any error messages. You can now start using EXOTIC by following the [examples](https://github.com/rzellem/EXOTIC/tree/main/examples) provided in the repository or by using our [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/).
 
 ## New User Tutorials
 

@@ -593,4 +593,3 @@ class rv_fitter(lc_fitter):
 
         return fig
     
-    

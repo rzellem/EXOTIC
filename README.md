@@ -46,7 +46,7 @@ If EXOTIC is installed correctly, you should not see any error messages. You can
 
 ## New User Tutorials
 
-The user community behind Exoplanet Watch has created extensive documentation to help you get started with EXOTIC. We recommend you start with the following resources:
+The user community behind [Exoplanet Watch](https://exoplanets.nasa.gov/exoplanet-watch/about-exoplanet-watch/overview/) has created extensive documentation to help you get started with EXOTIC. We recommend you start with the following resources:
 
 - [Installation instructions](https://github.com/rzellem/EXOTIC/tree/main/docs) for Windows, Mac, and Linux.
 - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)

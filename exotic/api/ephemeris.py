@@ -415,8 +415,8 @@ class ephemeris_fitter(object):
         basis[1] = self.epochs
         basis[2] = np.sin(2 * np.pi * self.epochs / per)
         basis[3] = np.cos(2 * np.pi * self.epochs / per)
-        basis[4] = np.sin(4 * np.pi * self.epochs / per2)
-        basis[5] = np.cos(4 * np.pi * self.epochs / per2)
+        basis[4] = np.sin(2 * np.pi * self.epochs / per2)
+        basis[5] = np.cos(2 * np.pi * self.epochs / per2)
 
         # perform the weighted least squares regression
         res_second_order = sm.WLS(self.data, basis.T, weights=1.0 / self.dataerr ** 2).fit()
@@ -505,8 +505,8 @@ class ephemeris_fitter(object):
         basis_new = np.ones((4, len(xnew)))
         basis_new[0] = np.sin(2 * np.pi * xnew / per)
         basis_new[1] = np.cos(2 * np.pi * xnew / per)
-        basis_new[2] = np.sin(4 * np.pi * xnew / per2)
-        basis_new[3] = np.cos(4 * np.pi * xnew / per2)
+        basis_new[2] = np.sin(2 * np.pi * xnew / per2)
+        basis_new[3] = np.cos(2 * np.pi * xnew / per2)
         y_bestfit_new2 = np.dot(basis_new.T, coeffs_second_order[2:])  # reconstruct signal
 
         # plot first order fourier solution

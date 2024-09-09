@@ -290,26 +290,33 @@ class NASAExoplanetArchive:
             return self.planet, False
 
     def _get_params(self, data):
-        # translate data from Archive keys to Ethan Keys
-        try:
+        # Initialize variables with default values that won't interfere with calculations
+        rprs = np.nan
+        rprserr = np.nan
+
+        # Check if necessary keys exist before attempting to access them
+        if 'pl_trandep' in data and data['pl_trandep'] != 0:
             rprs = np.sqrt(data['pl_trandep'] / 100.)
             rprserr = np.sqrt(np.abs((data['pl_trandeperr1'] / 100.) * (data['pl_trandeperr2'] / 100.))) / (2. * rprs)
-        except (KeyError, TypeError):
-            try:
-                rprs = data['pl_ratror']
-                rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
-            except (KeyError, TypeError):
-                rp = data['pl_radj'] * R_JUP.value
-                rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP.value
-                rs = data['st_rad'] * R_SUN.value
-                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN.value
+
+        elif 'pl_ratror' in data and data['pl_ratror'] != 0:
+            rprs = data['pl_ratror']
+            rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
+
+        elif 'pl_radj' in data and data['pl_radj'] != 0:
+            rp = data['pl_radj'] * R_JUP.value
+            rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP.value
+            rs = data['st_rad'] * R_SUN.value if 'st_rad' in data and data['st_rad'] != 0 else np.nan
+            rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN.value if 'st_raderr1' in data and data['st_raderr1'] != 0 else np.nan
+            if not np.isnan(rs) and rp != 0:
                 rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
                 rprs = rp / rs
 
-        if data['pl_ratdor'] is None or np.isnan(data['pl_ratdor']) or data['pl_ratdor'] < 1.:
-            data['pl_ratdor'] = pow((data['pl_orbper'] / 365.) ** 2, 1. / 3.) / (data['st_rad'] * R_SUN.to('au')).value
-        else:
-            print("WARNING: a/Rs can not be estimated from Nasa Exoplanet Archive. Please use an inits file instead.")
+        if 'pl_ratdor' not in data or np.isnan(data['pl_ratdor']) or data['pl_ratdor'] < 1.:
+            if 'pl_orbper' in data and data['pl_orbper'] != 0 and 'st_rad' in data and data['st_rad'] != 0:
+                data['pl_ratdor'] = pow((data['pl_orbper'] / 365.) ** 2, 1. / 3.) / (data['st_rad'] * R_SUN.to('au')).value
+            else:
+                print("WARNING: a/Rs could not be calculated due to missing or invalid orbital period or stellar radius.")
 
         self.pl_dict = {
             'ra': data['ra'],

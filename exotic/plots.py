@@ -2,9 +2,9 @@ from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormal
 from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 from pathlib import Path
-from scipy.ndimage import median_filter
 
 plt.style.use(astropy_mpl_style)
 
@@ -52,7 +52,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
 
 def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date):
     ref_circle, ref_circle_sky = None, None
-    picframe = 10 * (aper + 15 * sigma)
+    picframe = 5 * (aper + 15 * sigma)
 
     pltx = [max([0, min([x_targ, x_ref]) - picframe]), min([np.shape(image)[1], max([x_targ, x_ref]) + picframe])]
     plty = [max([0, min([y_targ, y_ref]) - picframe]), min([np.shape(image)[0], max([y_targ, y_ref]) + picframe])]
@@ -60,36 +60,47 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
     for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
         fig, ax = plt.subplots()
 
-        # Draw apertures and sky annuli
-        target_circle = plt.Circle((x_targ, y_targ), aper, color='lime', fill=False, ls='-', label='Target')
-        target_circle_sky = plt.Circle((x_targ, y_targ), aper + annulus, color='lime', fill=False, ls='--', lw=.5)
+        target_circle = plt.Circle((x_targ, y_targ), aper, color='r', fill=False, ls='-')
+        target_circle_sky = plt.Circle((x_targ, y_targ), aper + annulus, color='lime', fill=False, ls='-')
+
         if aper >= 0:
-            ref_circle = plt.Circle((x_ref, y_ref), aper, color='r', fill=False, ls='-.', label='Comp')
-            ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color='r', fill=False, ls='--', lw=.5)
-        med_img = median_filter(image, (4, 4))[int(pltx[0]):round(int(pltx[1])), int(plty[0]):round(int(plty[1]))]
-        norm = ImageNormalize(image, interval=ZScaleInterval(), stretch=stretch, vmin=np.nanpercentile(med_img, 5),
-                              vmax=np.nanpercentile(med_img, 99))
-        plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-        plt.plot(x_targ, y_targ, marker='+', color='lime')
+            ref_circle = plt.Circle((x_ref, y_ref), aper, color='r', fill=False, ls='-')
+            ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color='lime', fill=False, ls='-')
+
+        interval = ZScaleInterval()
+        vmin, vmax = interval.get_limits(image)
+
+        norm = ImageNormalize(image, interval=interval, stretch=stretch, vmin=vmin, vmax=vmax)
+
+        im = plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+        fig.colorbar(im)
+
         ax.add_artist(target_circle)
         ax.add_artist(target_circle_sky)
+        ax.text(x_targ + aper + annulus + 5, y_targ, targ_name, color='w', fontsize=10,
+                path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+
         if aper >= 0:
             ax.add_artist(ref_circle)
             ax.add_artist(ref_circle_sky)
-            plt.plot(x_ref, y_ref, '+r')
+            ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
+                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+
+        aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
+        annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
+        handles = [aperture_line, annulus_line]
+
+        plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlabel("x-axis [pixel]")
         plt.ylabel("y-axis [pixel]")
-        plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlim(pltx[0], pltx[1])
         plt.ylim(plty[0], plty[1])
         ax.grid(False)
-        plt.plot(0, 0, color='lime', ls='-', label='Target')
-        if aper >= 0:
-            plt.plot(0, 0, color='r', ls='-.', label='Comp')
-        l = plt.legend(framealpha=0.75)
+
+        l = plt.legend(handles=handles, framealpha=0.75)
         for text in l.get_texts():
             text.set_color("k")
-            text.set_path_effects([path_effects.withStroke(linewidth=1, foreground='white')])
+            text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)

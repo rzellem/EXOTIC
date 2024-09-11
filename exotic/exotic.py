@@ -2408,7 +2408,9 @@ def main():
 
             # save psf_data to disk for best comparison star
             if bestCompStar:
-                np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_comp.txt", psf_data[f"comp{bestCompStar}"])
+                np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_comp.txt", psf_data[f"comp{bestCompStar}"],
+                            header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
+                            fmt="%.6f")
 
             # sigma clip
             si = np.argsort(best_fit_lc.time)

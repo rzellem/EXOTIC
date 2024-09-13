@@ -714,8 +714,10 @@ class glc_fitter(lc_fitter):
         for n in range(nobs):
             self.lc_data[n]['errors'] = {}
             
-            # copy global parameters
-            self.lc_data[n]['priors'] = copy.deepcopy(self.parameters)
+            # set global parameters without overwriting everything
+            for gk in gfreekeys:
+                self.lc_data[n]['priors'][gk] = self.parameters[gk]
+                self.lc_data[n]['errors'][gk] = self.errors[gk]
 
             # loop over local keys and save best fit values
             for k in lfreekeys[n]:
@@ -746,12 +748,11 @@ class glc_fitter(lc_fitter):
             self.lc_data[n]['phase_upsample'] = get_phase(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
             self.lc_data[n]['transit_upsample'] = transit(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors'])
 
-        # create an average value from all the local fits
+        # create an average value from all the local fits, used for plotting final best fit
         if rprs_in_local:
             self.parameters['rprs'] = np.mean(local_rprs)
             self.errors['rprs'] = np.std(local_rprs)
 
-        #import pdb; pdb.set_trace()
 
     def plot_bestfits(self):
         nrows = len(self.lc_data)//4+1

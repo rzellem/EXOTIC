@@ -569,10 +569,10 @@ class ephemeris_fitter(object):
         # find best fit signal with 2 periods
         # construct basis vectors with sin and cos
         basis2 = np.ones((5, len(self.epochs)))
-        basis2[0] = np.sin(2 * np.pi * self.epochs / per)
-        basis2[1] = np.cos(2 * np.pi * self.epochs / per)
-        basis2[2] = np.sin(2 * np.pi * self.epochs / per2)
-        basis2[3] = np.cos(2 * np.pi * self.epochs / per2)
+        basis2[0] = np.sin(2. * np.pi * self.epochs / per)
+        basis2[1] = np.cos(2. * np.pi * self.epochs / per)
+        basis2[2] = np.sin(2. * np.pi * self.epochs / per2)
+        basis2[3] = np.cos(2. * np.pi * self.epochs / per2)
 
         # perform the weighted least squares regression to find second order fourier solution
         res = sm.WLS(residuals_first_order, basis2.T, weights=1.0 / self.dataerr ** 2).fit()
@@ -583,10 +583,10 @@ class ephemeris_fitter(object):
         # super sample fourier solution
         xnew = np.linspace(self.epochs.min(), self.epochs.max(), 1000)
         basis_new = np.ones((5, len(xnew)))
-        basis_new[1] = np.sin(2 * np.pi * xnew / per)
-        basis_new[2] = np.cos(2 * np.pi * xnew / per)
-        basis_new[3] = np.sin(2 * np.pi * xnew / per2)
-        basis_new[4] = np.cos(2 * np.pi * xnew / per2)
+        basis_new[1] = np.sin(2. * np.pi * xnew / per)
+        basis_new[2] = np.cos(2. * np.pi * xnew / per)
+        basis_new[3] = np.sin(2. * np.pi * xnew / per2)
+        basis_new[4] = np.cos(2. * np.pi * xnew / per2)
         y_bestfit_new = np.dot(basis_new.T, coeffs)
         xnewphase = xnew / per2 % 1
         si = np.argsort(xnewphase)

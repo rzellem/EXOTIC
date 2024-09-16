@@ -6,10 +6,11 @@ name: Upload Python Package
 
 on:
   release:
-    types: [published]
+    types: [ published ]
 
 jobs:
-  deploy:
+
+  build:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -28,10 +29,25 @@ jobs:
       run: |
         python3 -m build --wheel
         python3 setup.py sdist --format=zip
-    - name: Publish package
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: |
-        twine check dist/*
-        twine upload --verbose dist/*.whl dist/*.zip
+    - name: Store package
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distribution
+        path: dist/
+
+  release:
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    permissions:
+      id-token: write  # mandatory for trusted publishing
+    steps:
+    - name: Retrieve package
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distribution
+        path: dist/
+    - name: Publish package (PyPi)
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://pypi.org/p/exotic  # for testing sub https://test.pypi.org/legacy/

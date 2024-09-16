@@ -598,16 +598,16 @@ class ephemeris_fitter(object):
 
         # create single sine wave from detrended data
         basis_new = np.ones((3, len(xnew)))
-        basis_new[1] = np.sin(2 * np.pi * xnew / per)
-        basis_new[2] = np.cos(2 * np.pi * xnew / per)
+        basis_new[1] = np.sin(2. * np.pi * xnew / per)
+        basis_new[2] = np.cos(2. * np.pi * xnew / per)
         y_best_single = np.dot(basis_new.T, coeffs[:3])
 
         # create best double sine wave from detrended data
         basis_new = np.ones((5, len(xnew)))
-        basis_new[1] = np.sin(2 * np.pi * xnew / per)
-        basis_new[2] = np.cos(2 * np.pi * xnew / per)
-        basis_new[3] = np.sin(2 * np.pi * xnew / per2)
-        basis_new[4] = np.cos(2 * np.pi * xnew / per2)
+        basis_new[1] = np.sin(2. * np.pi * xnew / per)
+        basis_new[2] = np.cos(2. * np.pi * xnew / per)
+        basis_new[3] = np.sin(2. * np.pi * xnew / per2)
+        basis_new[4] = np.cos(2. * np.pi * xnew / per2)
         y_best_double = np.dot(basis_new.T, coeffs)
 
         # use uncertainty to derive fill between region

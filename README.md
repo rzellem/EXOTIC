@@ -188,7 +188,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 - Multiple comparison star + aperture size optimization
 
-- Non-linear 4 parameter limb darkening with [LDTK](https://github.com/hpparvi/ldtk)
+- Non-linear 4 parameter limb darkening with [LDTK](https://github.com/hpparvi/ldtk). For a list of compatible filters please see: [filters.py](https://github.com/rzellem/EXOTIC/blob/main/exotic/api/filters.py)
 
 - Light curve parameter optimization with [Nested Sampling](https://johannesbuchner.github.io/UltraNest/readme.html)
 

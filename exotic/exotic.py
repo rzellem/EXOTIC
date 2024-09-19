@@ -2231,6 +2231,12 @@ def main():
 
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
+            # save PSF data to disk using savetxt
+            np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_target.txt", psf_data["target"],
+                          header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
+                          fmt="%.6f")
+                        # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
+
             # PSF flux
             tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
 
@@ -2399,6 +2405,12 @@ def main():
             best_fit_lc = photometry_info['best_fit_lc']
             bestCompStar = photometry_info['comp_star_num']
             comp_coords = photometry_info['comp_star_coords']
+
+            # save psf_data to disk for best comparison star
+            if bestCompStar:
+                np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_comp.txt", psf_data[f"comp{bestCompStar}"],
+                            header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
+                            fmt="%.6f")
 
             # sigma clip
             si = np.argsort(best_fit_lc.time)

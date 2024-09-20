@@ -150,10 +150,10 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         # Dynamically choose which lines to add to the legend
         handles = []
-        if method == "Aperture":
+        if opt_method == "Aperture":
             aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
             handles.append(aperture_line)
-        elif method == "PSF":
+        elif opt_method == "PSF":
             annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
             handles.append(annulus_line)
 

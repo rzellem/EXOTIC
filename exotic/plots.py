@@ -50,7 +50,69 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     plt.close()
 
 
-def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date):
+# def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date):
+#     ref_circle, ref_circle_sky = None, None
+#     picframe = 5 * (aper + 15 * sigma)
+
+#     pltx = [max([0, min([x_targ, x_ref]) - picframe]), min([np.shape(image)[1], max([x_targ, x_ref]) + picframe])]
+#     plty = [max([0, min([y_targ, y_ref]) - picframe]), min([np.shape(image)[0], max([y_targ, y_ref]) + picframe])]
+
+#     for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
+#         fig, ax = plt.subplots()
+
+#         target_circle = plt.Circle((x_targ, y_targ), aper, color='r', fill=False, ls='-')
+#         target_circle_sky = plt.Circle((x_targ, y_targ), aper + annulus, color='lime', fill=False, ls='-')
+
+#         if aper >= 0:
+#             ref_circle = plt.Circle((x_ref, y_ref), aper, color='r', fill=False, ls='-')
+#             ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color='lime', fill=False, ls='-')
+
+#         interval = ZScaleInterval()
+#         vmin, vmax = interval.get_limits(image)
+
+#         norm = ImageNormalize(image, interval=interval, stretch=stretch, vmin=vmin, vmax=vmax)
+
+#         im = plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
+#         fig.colorbar(im)
+
+#         ax.add_artist(target_circle)
+#         ax.add_artist(target_circle_sky)
+#         ax.text(x_targ + aper + annulus + 5, y_targ, targ_name, color='w', fontsize=10,
+#                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+
+#         if aper >= 0:
+#             ax.add_artist(ref_circle)
+#             ax.add_artist(ref_circle_sky)
+#             ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
+#                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+
+#         aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
+#         annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
+#         handles = [aperture_line, annulus_line]
+
+#         plt.title(f"FOV for {targ_name}\n({image_scale})")
+#         plt.xlabel("x-axis [pixel]")
+#         plt.ylabel("y-axis [pixel]")
+#         plt.xlim(pltx[0], pltx[1])
+#         plt.ylim(plty[0], plty[1])
+#         ax.grid(False)
+
+#         l = plt.legend(handles=handles, framealpha=0.75)
+#         for text in l.get_texts():
+#             text.set_color("k")
+#             text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
+
+#         apos = '\''
+#         Path(save).mkdir(parents=True, exist_ok=True)
+#         Path(save,"temp").mkdir(parents=True, exist_ok=True)
+
+#         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
+#                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
+#         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
+#                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
+#         plt.close()
+
+def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method):
     ref_circle, ref_circle_sky = None, None
     picframe = 5 * (aper + 15 * sigma)
 
@@ -86,9 +148,14 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
-        aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
-        annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
-        handles = [aperture_line, annulus_line]
+        # Dynamically choose which lines to add to the legend
+        handles = []
+        if method == "Aperture":
+            aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
+            handles.append(aperture_line)
+        elif method == "PSF":
+            annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
+            handles.append(annulus_line)
 
         plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlabel("x-axis [pixel]")
@@ -97,10 +164,11 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         plt.ylim(plty[0], plty[1])
         ax.grid(False)
 
-        l = plt.legend(handles=handles, framealpha=0.75)
-        for text in l.get_texts():
-            text.set_color("k")
-            text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
+        if handles:  # Only create a legend if there's something to show
+            l = plt.legend(handles=handles, framealpha=0.75)
+            for text in l.get_texts():
+                text.set_color("k")
+                text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)
@@ -111,6 +179,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
         plt.close()
+
 
 
 def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass, targ_name, save, date):

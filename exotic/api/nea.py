@@ -49,9 +49,9 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
 
 # constants
-AU = const.au                                                       # m
-R_SUN = const.R_sun                                                 # m
-R_JUP = const.R_jup                                                 # m
+AU = const.au # m
+R_SUN = const.R_sun # m
+R_JUP = const.R_jup # m
 
 # CALCULATED VALUES
 G = const.G.to(AU**3 / (const.M_sun * u.day**2))                    # AU^3 /(msun * day^2)
@@ -290,54 +290,69 @@ class NASAExoplanetArchive:
             return self.planet, False
 
     def _get_params(self, data):
-        # translate data from Archive keys to Ethan Keys
-        try:
+        # Initialize variables with default values
+        rprs = np.nan
+        rprserr = np.nan
+        rp = np.nan
+        rperr = np.nan
+        rs = np.nan
+        rserr = np.nan
+
+        # compute Rp/Rs
+        if 'pl_trandep' in data and data['pl_trandep'] is not None:
             rprs = np.sqrt(data['pl_trandep'] / 100.)
             rprserr = np.sqrt(np.abs((data['pl_trandeperr1'] / 100.) * (data['pl_trandeperr2'] / 100.))) / (2. * rprs)
-        except (KeyError, TypeError):
-            try:
-                rprs = data['pl_ratror']
-                rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
-            except (KeyError, TypeError):
+
+        elif 'pl_ratror' in data and data['pl_ratror'] is not None:
+            rprs = data['pl_ratror']
+            rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
+
+        # check if rprs is still 0 or nan
+        if np.isnan(rprs) or rprs <= 0.:
+
+            # compute with stellar and planetary radius
+            if 'pl_radj' in data and data['pl_radj'] is not None and 'st_rad' in data and data['st_rad'] is not None:
                 rp = data['pl_radj'] * R_JUP.value
                 rperr = np.sqrt(np.abs(data['pl_radjerr1'] * data['pl_radjerr2'])) * R_JUP.value
-                rs = data['st_rad'] * R_SUN.value
-                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN.value
-                rprserr = ((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2) ** 0.5
-                rprs = rp / rs
+                rs = data['st_rad'] * R_SUN.value if 'st_rad' in data and data['st_rad'] is not None else np.nan
+                rserr = np.sqrt(np.abs(data['st_raderr1'] * data['st_raderr2'])) * R_SUN.value if 'st_raderr1' in data and data['st_raderr1'] is not None else np.nan
+                if not np.isnan(rs) and not np.isnan(rp):
+                    rprserr = np.sqrt((rperr / rs) ** 2 + (-rp * rserr / rs ** 2) ** 2)
+                    rprs = rp / rs
 
-        if data['pl_ratdor'] is None or np.isnan(data['pl_ratdor']) or data['pl_ratdor'] < 1.:
-            data['pl_ratdor'] = pow((data['pl_orbper'] / 365.) ** 2, 1. / 3.) / (data['st_rad'] * R_SUN.to('au')).value
-        else:
-            print("WARNING: a/Rs can not be estimated from Nasa Exoplanet Archive. Please use an inits file instead.")
+        # compute a/Rs
+        if 'pl_ratdor' not in data or data['pl_ratdor'] is None or data['pl_ratdor'] < 1.:
+            if 'pl_orbper' in data and data['pl_orbper'] is not None and 'st_rad' in data and data['st_rad'] is not None:
+                data['pl_ratdor'] = (data['pl_orbper'] / 365.) ** (2. / 3.) / (data['st_rad'] * R_SUN.to('au')).value
+            else:
+                print("WARNING: a/Rs could not be calculated due to missing or invalid orbital period or stellar radius.")
 
         self.pl_dict = {
-            'ra': data['ra'],
-            'dec': data['dec'],
-            'pName': data['pl_name'],
-            'sName': data['hostname'],
-            'pPer': data['pl_orbper'],
-            'pPerUnc': np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2'])),
-
-            'midT': data['pl_tranmid'],
-            'midTUnc': np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2'])),
-            'rprs': rprs,
-            'rprsUnc': rprserr,
-            'aRs': data['pl_ratdor'],
-            'aRsUnc': np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2'])),
-            'inc': data['pl_orbincl'],
-            'incUnc': np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2'])),
-            'omega': data.get('pl_orblper', 0),
-            'ecc': data.get('pl_orbeccen', 0),
-            'teff': data['st_teff'],
-            'teffUncPos': data['st_tefferr1'],
-            'teffUncNeg': data['st_tefferr2'],
-            'met': data['st_met'],
-            'metUncPos': max(0.01, data['st_meterr1']),
-            'metUncNeg': min(-0.01, data['st_meterr2']),
-            'logg': data['st_logg'],
-            'loggUncPos': data['st_loggerr1'],
-            'loggUncNeg': data['st_loggerr2']
+            'ra': float(data['ra']) if 'ra' in data and data['ra'] is not None else np.nan,
+            'dec': float(data['dec']) if 'dec' in data and data['dec'] is not None else np.nan,
+            'pName': str(data['pl_name']),
+            'sName': str(data['hostname']),
+            'pPer': float(data['pl_orbper']) if 'pl_orbper' in data and data['pl_orbper'] is not None else np.nan,
+            'pPerUnc': float(np.sqrt(np.abs(data['pl_orbpererr1'] * data['pl_orbpererr2']))) if 'pl_orbpererr1' in data and 'pl_orbpererr2' in data and data['pl_orbpererr1'] is not None and data['pl_orbpererr2'] is not None else np.nan,
+            'midT': float(data['pl_tranmid']) if 'pl_tranmid' in data and data['pl_tranmid'] is not None else np.nan,
+            'midTUnc': float(np.sqrt(np.abs(data['pl_tranmiderr1'] * data['pl_tranmiderr2']))) if 'pl_tranmiderr1' in data and 'pl_tranmiderr2' in data and data['pl_tranmiderr1'] is not None and data['pl_tranmiderr2'] is not None else np.nan,
+            'rprs': float(rprs) if not np.isnan(rprs) else np.nan,
+            'rprsUnc': float(rprserr) if not np.isnan(rprserr) else np.nan,
+            'aRs': float(data['pl_ratdor']) if 'pl_ratdor' in data and data['pl_ratdor'] is not None else np.nan,
+            'aRsUnc': float(np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2']))) if 'pl_ratdorerr2' in data and data['pl_ratdorerr2'] is not None else 0.1,
+            'inc': float(data['pl_orbincl']) if 'pl_orbincl' in data and data['pl_orbincl'] is not None else np.nan,
+            'incUnc': float(np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2']))) if 'pl_orbinclerr1' in data and 'pl_orbinclerr2' in data and data['pl_orbinclerr1'] is not None and data['pl_orbinclerr2'] is not None else 0.1,
+            'omega': float(data.get('pl_orblper', 0)),
+            'ecc': float(data.get('pl_orbeccen', 0)),
+            'teff': float(data['st_teff']) if 'st_teff' in data and data['st_teff'] is not None else np.nan,
+            'teffUncPos': float(data['st_tefferr1']) if 'st_tefferr1' in data and data['st_tefferr1'] is not None else np.nan,
+            'teffUncNeg': float(data['st_tefferr2']) if 'st_tefferr2' in data and data['st_tefferr2'] is not None else np.nan,
+            'met': float(data['st_met']) if 'st_met' in data and data['st_met'] is not None else np.nan,
+            'metUncPos': float(max(0.01, data['st_meterr1'])) if 'st_meterr1' in data and data['st_meterr1'] is not None else 0.01,
+            'metUncNeg': float(min(-0.01, data['st_meterr2'])) if 'st_meterr2' in data and data['st_meterr2'] is not None else -0.01,
+            'logg': float(data['st_logg']) if 'st_logg' in data and data['st_logg'] is not None else np.nan,
+            'loggUncPos': float(data['st_loggerr1']) if 'st_loggerr1' in data and data['st_loggerr1'] is not None else np.nan,
+            'loggUncNeg': float(data['st_loggerr2']) if 'st_loggerr2' in data and data['st_loggerr2'] is not None else np.nan
         }
 
         if self.pl_dict['aRsUnc'] == 0:

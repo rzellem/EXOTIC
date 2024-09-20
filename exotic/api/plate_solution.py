@@ -42,6 +42,11 @@ import requests
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
+_R_MAX_STOPS_LOW = 7
+_R_MAX_STOPS = 10
+_R_MAX_SECS = 37
+_RQ_TIMEOUT = 16.0
+
 
 def is_false(value):
     return value is False
@@ -89,18 +94,18 @@ class PlateSolution:
     def _get_url(self, service):
         return self.api_url + service
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS_LOW), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _login(self):
-        r = requests.post(self._get_url('login'), data={'request-json': dumps(self.api_key)})
+        r = requests.post(self._get_url('login'), data={'request-json': dumps(self.api_key)}, timeout=_RQ_TIMEOUT)
         if r.status_code >= 400:
             return False
         elif r.json()['status'] == 'success':
             return r.json()['session']
         return False
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS_LOW), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
@@ -108,28 +113,28 @@ class PlateSolution:
         headers = {'request-json': dumps({"session": session}), 'allow_commercial_use': 'n',
                    'allow_modifications': 'n', 'publicly_visible': 'n'}
 
-        r = requests.post(self.api_url + 'upload', files=files, data=headers)
+        r = requests.post(self.api_url + 'upload', files=files, data=headers, timeout=_RQ_TIMEOUT)
 
         if r.json()['status'] == 'success':
             return r.json()['subid']
         return False
 
-    @retry(stop=stop_after_attempt(20), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _sub_status(self, sub_url):
-        r = requests.get(sub_url)
+        r = requests.get(sub_url, timeout=_RQ_TIMEOUT)
         if r.json()['job_calibrations']:
             return r.json()['jobs'][0]
         return False
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
+    @retry(stop=stop_after_attempt(_R_MAX_STOPS), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _job_status(self, job_url, wcs_file, download_url):
-        r = requests.get(job_url)
+        r = requests.get(job_url, timeout=_RQ_TIMEOUT)
         if r.json()['status'] == 'success':
-            r = requests.get(download_url)
+            r = requests.get(download_url, timeout=_RQ_TIMEOUT)
             with wcs_file.open('wb') as f:
                 f.write(r.content)
             hdu = PrimaryHDU(data=getdata(filename=self.file), header=getheader(filename=wcs_file))

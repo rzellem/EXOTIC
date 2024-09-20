@@ -157,7 +157,7 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', verbose=True):
+    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', jd_times=None, verbose=True):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -166,6 +166,7 @@ class lc_fitter(object):
         self.bounds = bounds
         self.max_ncalls = 2e5
         self.verbose = verbose
+        self.jd_times = jd_times
         self.mode = mode
         self.neighbors = neighbors
         self.results = None
@@ -331,7 +332,7 @@ class lc_fitter(object):
             dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(freekeys),
                                                     bound='multi', sample='unif')
             dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
-                                maxbatch=10, nlive_batch=100, print_progressbool=self.verbose)
+                                maxbatch=10, nlive_batch=100, print_progress=self.verbose)
             self.results = dsampler.results
 
             tests = [copy.deepcopy(self.prior) for i in range(5)]
@@ -720,8 +721,10 @@ class glc_fitter(lc_fitter):
         for n in range(nobs):
             self.lc_data[n]['errors'] = {}
             
-            # copy global parameters
-            self.lc_data[n]['priors'] = copy.deepcopy(self.parameters)
+            # set global parameters without overwriting everything
+            for gk in gfreekeys:
+                self.lc_data[n]['priors'][gk] = self.parameters[gk]
+                self.lc_data[n]['errors'][gk] = self.errors[gk]
 
             # loop over local keys and save best fit values
             for k in lfreekeys[n]:
@@ -752,12 +755,11 @@ class glc_fitter(lc_fitter):
             self.lc_data[n]['phase_upsample'] = get_phase(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
             self.lc_data[n]['transit_upsample'] = transit(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors'])
 
-        # create an average value from all the local fits
+        # create an average value from all the local fits, used for plotting final best fit
         if rprs_in_local:
             self.parameters['rprs'] = np.mean(local_rprs)
             self.errors['rprs'] = np.std(local_rprs)
 
-        #import pdb; pdb.set_trace()
 
     def plot_bestfits(self):
         nrows = len(self.lc_data)//4+1

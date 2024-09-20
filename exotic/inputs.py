@@ -201,7 +201,7 @@ class Inputs:
 
 
 def check_imaging_files(directory, img_type):
-    file_extensions = ['.fits', '.fit', '.fts', '.fz', '.fits.gz', '.fit.gz']
+    file_extensions = ['.fits', '.fit', '.fts', '.fz', '.fits.gz', '.fit.gz', '.fits.fz', 'fit.fz']
     input_files = []
 
     while True:
@@ -373,7 +373,7 @@ def latitude(lat, hdr=None):
         if lat[0] == '+' or lat[0] == '-':
             # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                lat = float(lat.replace(' ', ''))
+                lat = float(lat.strip())
             except ValueError:
                 lat = float(process_lat_long(lat, 'latitude'))
 
@@ -403,7 +403,7 @@ def longitude(long, hdr=None):
         if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
             try:
-                long = float(long.replace(' ', ''))
+                long = float(long.strip())
             except ValueError:
                 long = float(process_lat_long(long, 'longitude'))
 
@@ -493,11 +493,11 @@ def target_star_coords(coords, planet):
     if isinstance(coords, list) and len(coords) == 2:
         pass
     elif isinstance(coords, str) and any(str.isdigit(x) for x in coords):
-        coords = ' '.join(re.sub('\D', ' ', coords).split()).split(' ')
-        coords = [int(i) for i in coords]
+        coords = re.findall(r"[-+]?(?:\d*\.?\d+)", coords)
+        coords = [int(float(coord)) for coord in coords]
     else:
-        coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=float),
-                  user_input(f"\nPlease enter {planet}'s Y Pixel Coordinate: ", type_=float)]
+        coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=int),
+                  user_input(f"\nPlease enter {planet}'s Y Pixel Coordinate: ", type_=int)]
 
     return coords
 
@@ -507,8 +507,9 @@ def comparison_star_coords(comp_stars, rt_bool):
             all(isinstance(star, list) for star in comp_stars):
         comp_stars = [star for star in comp_stars if star != []]
     elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
-        comp_stars = ' '.join(re.sub('\D', ' ', comp_stars).split()).split(' ')
-        comp_stars = [[int(comp_stars[i]), int(comp_stars[i+1])] for i in range(0, len(comp_stars), 2)]
+        comp_stars = re.findall(r"[-+]?(?:\d*\.?\d+)", comp_stars)
+        comp_stars = [int(float(comp_star)) for comp_star in comp_stars]
+        comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
     else:
         comp_stars = []
 
@@ -524,8 +525,8 @@ def comparison_star_coords(comp_stars, rt_bool):
                 break
 
         for num in range(num_comp_stars):
-            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=float)
-            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=float)
+            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=int)
+            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=int)
             comp_stars.append([x_pix, y_pix])
 
     if rt_bool and isinstance(comp_stars[0], list):

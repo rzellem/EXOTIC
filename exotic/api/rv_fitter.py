@@ -42,13 +42,8 @@ from itertools import cycle
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-try:
-    from ultranest import ReactiveNestedSampler
-except ImportError:
-    import dynesty
-    import dynesty.plotting
-    from dynesty.utils import resample_equal
-    from scipy.stats import gaussian_kde
+from ultranest import ReactiveNestedSampler
+from scipy.optimize import least_squares
 
 try:
     from elca import lc_fitter
@@ -320,6 +315,9 @@ class rv_fitter(lc_fitter):
             self.data[n]['detrend'] = self.data[n]['vel'] - self.data[n]['priors']['offset']
             self.data[n]['residuals'] = self.data[n]['detrend'] - self.data[n]['model']
 
+            # scale factor to get avg error to equal std of residuals
+            self.data[n]['error_scale'] = np.std(self.data[n]['residuals'])/np.mean(self.data[n]['velerr'])
+
         # global up-scaled model
         self.alltime = np.linspace(min(alltime), max(alltime), 100000)
         dalltime = self.alltime - self.alltime.min()
@@ -334,6 +332,22 @@ class rv_fitter(lc_fitter):
         self.acceleration = acceleration_model(self.alltime, self.data[0]['priors'])
 
         self.K = (rv.max()-rv.min())/2
+
+    def planet_star_distance(self, time):
+        planet= planet_orbit(self.data[0]['priors']['per'],  self.data[0]['priors']['ars'],  self.data[0]['priors']['ecc'], 
+                            self.data[0]['priors']['inc'],  self.data[0]['priors']['omega'],  self.data[0]['priors']['tmid'], 
+                            time, mu=1-self.data[0]['priors']['mu'], ww=0)
+    
+        star = planet_orbit(self.data[0]['priors']['per'],  self.data[0]['priors']['ars'],  self.data[0]['priors']['ecc'], 
+                            self.data[0]['priors']['inc'],  self.data[0]['priors']['omega'],  self.data[0]['priors']['tmid'], 
+                            time, mu=self.data[0]['priors']['mu'], ww=0)
+
+        # flip the star so it's on the other side of center of mass      
+        star[0] *= -1
+        star[1] *= -1
+        star[2] *= -1
+
+        return np.sqrt((planet[0]-star[0])**2 + (planet[1]-star[1])**2 + (planet[2]-star[2])**2)
 
     def plot_bestfit(self, title=""):
         """Plot the best-fit model and residuals for each dataset."""
@@ -369,8 +383,8 @@ class rv_fitter(lc_fitter):
 
         label = rf"$K$ = {self.K:.2f} m/s" + "\n" \
                 rf"$P$ = {self.parameters['per']:.4f} $\pm$ {self.errors['per']:.2e}" + "\n" \
-                rf"$ecc$ = {self.parameters['ecc']:.4f} $\pm$ {self.errors['ecc']:.4f}" + "\n" \
-                rf"$\omega$ = {self.parameters['omega']:.2f} $\pm$ {self.errors['omega']:.2f}" + "\n" \
+                rf"$ecc$ = {self.parameters.get('ecc', self.data[0]['priors']['ecc']):.4f} $\pm$ {self.errors.get('ecc',0):.4f}" + "\n" \
+                rf"$\omega$ = {self.parameters.get('omega',self.data[0]['priors']['omega']):.2f} $\pm$ {self.errors.get('omega',0):.2f}" + "\n" \
                 rf"$M_p$ = {self.parameters['mplanet']:.4f} $\pm$ {self.errors['mplanet']:.4f}"+r"$M_{Jup}$"
 
         ax[1].plot(nphase[si], self.allmodel[si], 'k-', label=label)
@@ -384,7 +398,7 @@ class rv_fitter(lc_fitter):
         ax[2].set_xlabel("Phase")
         ax[0].set_title(title)
         ax[2].grid(ls='--')
-        ax[0].legend(loc='upper right')
+        ax[2].legend(loc='upper right')
         ax[1].legend(loc='best')
         return fig, ax
 

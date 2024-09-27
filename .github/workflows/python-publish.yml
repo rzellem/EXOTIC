@@ -1,5 +1,5 @@
-# This workflows will upload a Python Package using Twine when a release is created
-# For more information see: 
+# This workflows will upload a Python Package when a release is created
+# For more information see:
 #     https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
 
 name: Upload Python Package
@@ -36,9 +36,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: python-package-distribution
-        path:
+        path: |
           dist/*.whl
           dist/*.zip
+        if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
@@ -52,8 +53,11 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: python-package-distribution
-        path: dist/
+        path: dist/*
     - name: Publish package (PyPi)
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
+        attestations: true
+        print-hash: true
         repository-url: https://pypi.org/p/exotic/  # for testing sub https://test.pypi.org/legacy/
+

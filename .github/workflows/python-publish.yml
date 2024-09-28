@@ -57,7 +57,5 @@ jobs:
     - name: Publish package (PyPi)
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        attestations: true
         print-hash: true
         repository-url: https://pypi.org/p/exotic/  # for testing sub https://test.pypi.org/legacy/
-

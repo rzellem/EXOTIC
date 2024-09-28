@@ -15,10 +15,7 @@
 name: "CodeQL"
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
-    # The branches below must be a subset of the branches above
     branches: [develop]
   schedule:
     # default branch on sundays at 5a
@@ -49,9 +46,9 @@ jobs:
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
-        #config-file: ./.github/workflows/codeql/codeql-config.yml
+        config-file: ./.github/workflows/codeql/codeql-config.yml
         languages: ${{ matrix.language }}
-        queries: security-and-quality, security-extended
+        # queries: security-and-quality, security-extended
         # If you wish to specify custom queries, you can do so here or in a config file.
         # By default, queries listed here will override any specified in a config file.
         # Prefix the list here with "+" to use these queries and those in the config file.

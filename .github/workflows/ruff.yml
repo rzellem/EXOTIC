@@ -13,10 +13,7 @@
 name: "Ruff"
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
-    # The branches below must be a subset of the branches above
     branches: [develop]
 
 jobs:
@@ -24,27 +21,30 @@ jobs:
     name: Analyze
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: read
-      security-events: write
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+
     - name: Upgrade tooling
       run: |
         python3 -m pip install --upgrade pip
         pip3 install --upgrade build importlib_metadata setuptools setuptools_scm wheel
         pip3 install ruff
+
     - name: Install dependencies
       run: |
         pip3 install -r requirements.txt
         pip3 install -e .
+
     - name: Prepare PYTHONPATH
       run: |
         src_paths=`find ${PWD} -type f -maxdepth 3 -mindepth 2 -name "*.py" -exec dirname {} + | uniq`
@@ -54,11 +54,13 @@ jobs:
             pythonpathplus="${pythonpathplus:+:${pythonpathplus}}:$p"
         done
         echo "PYTHONPATH=${PYTHONPATH:+:${PYTHONPATH}}${pythonpathplus}:." >> $GITHUB_ENV
+
     - name: Analyze
       # Refer to https://docs.astral.sh/ruff/configuration/#command-line-interface
       # to add extra rules or a configuration file.
       run: ruff check --output-file ruff_report.txt . || true
       continue-on-error: true
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:

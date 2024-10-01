@@ -1089,7 +1089,7 @@ def get_img_scale(hdr, wcs_file, pixel_init):
         img_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
         img_scale_units = "arcsec/pixel"
 
-    img_scale = f"Image scale in {img_scale_units}: {img_scale_num}"
+    img_scale = f"Image scale in {img_scale_units}: {round_to_2(float(img_scale_num))}"
 
     return img_scale, float(img_scale_num)
 

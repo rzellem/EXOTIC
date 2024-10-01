@@ -1073,8 +1073,8 @@ def get_img_scale(hdr, wcs_file, pixel_init):
             img_scale_units = astrometry_scale[0][2]
         else:
             wcs = WCS(wcs_hdr).proj_plane_pixel_scales()
-            img_scale_num = (wcs[0].value + wcs[1].value) / 2
-            img_scale_units = "arsec/pixel"
+            img_scale_num = (wcs[0].value + wcs[1].value) / 2 * 3600  # Convert to arcsec/pixel
+            img_scale_units = "arcsec/pixel"
     elif 'IM_SCALE' in hdr:
         img_scale_num = hdr['IM_SCALE']
         img_scale_units = hdr.comments['IM_SCALE']
@@ -1083,11 +1083,11 @@ def get_img_scale(hdr, wcs_file, pixel_init):
         img_scale_units = hdr.comments['PIXSCALE']
     elif pixel_init:
         img_scale_num = pixel_init
-        img_scale_units = "arsec/pixel"
+        img_scale_units = "arcsec/pixel"
     else:
         log_info("Not able to find Image Scale in the Image Header.")
         img_scale_num = user_input("Please enter Image Scale (arcsec/pixel): ", type_=float)
-        img_scale_units = "arsec/pixel"
+        img_scale_units = "arcsec/pixel"
 
     img_scale = f"Image scale in {img_scale_units}: {img_scale_num}"
 

@@ -49,7 +49,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target_name}_{date}.pdf")
     plt.close()
 
-def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method):
+def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method, min_aper_fov, min_annulus_fov):
     ref_circle, ref_circle_sky = None, None
     picframe = 5 * (aper + 15 * sigma)
 
@@ -61,9 +61,9 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         # Set color for target and reference outer circles based on opt_method
         if opt_method == "Aperture":
-            outer_circle_color = 'r'  # Make the outer circle red when Aperture is chosen
+            outer_circle_color = 'r'
         else:
-            outer_circle_color = 'lime'  # Keep it lime for other methods (like PSF)
+            outer_circle_color = 'lime'
 
         # Create the target and reference circles
         target_circle = plt.Circle((x_targ, y_targ), aper, color='r', fill=False, ls='-')
@@ -92,17 +92,15 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
-        # Dynamically choose which lines to add to the legend
         handles = []
-        label_aper = f"{opt_method} Photometry (Aper: {aper:.2f} px)"
-        label_annulus = f"{opt_method} Photometry (Annulus: {annulus:.2f} px)"
+        label_aper = f"{opt_method} Photometry\n(Min Aper: {min_aper_fov:.2f} px)\n(Min Annulus: {min_annulus_fov:.2f} px)"
         
         if opt_method == "Aperture":
             aperture_line = Line2D([], [], color='r', linestyle='-', label=label_aper)
             handles.append(aperture_line)
         elif opt_method == "PSF":
-            annulus_line = Line2D([], [], color='lime', linestyle='-', label=label_annulus)
-            handles.append(annulus_line)
+            psf_line = Line2D([], [], color='lime', linestyle='-', label=label_aper)
+            handles.append(psf_line)
 
         plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlabel("x-axis [pixel]")
@@ -111,7 +109,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         plt.ylim(plty[0], plty[1])
         ax.grid(False)
 
-        if handles:  # Only create a legend if there's something to show
+        if handles:
             l = plt.legend(handles=handles, framealpha=0.75)
             for text in l.get_texts():
                 text.set_color("k")
@@ -126,7 +124,6 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
         plt.close()
-
 
 
 def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass, targ_name, save, date):

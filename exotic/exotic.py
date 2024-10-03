@@ -2457,31 +2457,22 @@ def main():
                                flux_unc_tar=flux_values['flux_unc_tar'][si][gi],
                                flux_unc_ref=flux_values['flux_unc_ref'][si][gi])
 
-            # if photometry_info['min_aperture'] == 0:
-            #     opt_method = "PSF"
-            # else:
-            #     opt_method = "Aperture"
 
             if photometry_info['min_aperture'] == 0:
                 opt_method = "PSF"
                 # Calculate min_aper and min_annulus using the stdev
                 stdev_fov = (psf_data['target'][:, 3] + psf_data['target'][:, 4]) * 0.5
-                min_aper_fov = 5 * stdev_fov
-                min_annulus_fov = 15 * stdev_fov
+                min_aper_fov = float(5 * stdev_fov.mean())
+                min_annulus_fov = float(15 * stdev_fov.mean())
             else:
                 opt_method = "Aperture"
-                min_aper_fov = photometry_info['min_aperture']
-                min_annulus_fov = photometry_info['min_annulus']
-
-            plot_fov(min_aper_fov, min_annulus_fov, sigma,
+                min_aper_fov = float(photometry_info['min_aperture'])
+                min_annulus_fov = float(photometry_info['min_annulus'])
+            
+            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma,
                      centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                      centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
-                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method)
-            
-            # plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma,
-            #          centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
-            #          centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
-            #          firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method)
+                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov)
 
             plot_centroids(centroid_positions['x_targ'], centroid_positions['y_targ'],
                            centroid_positions['x_ref'], centroid_positions['y_ref'],

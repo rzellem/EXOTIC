@@ -130,10 +130,7 @@ class NASAExoplanetArchive:
 
     def _tap_query(self, base_url, query, dataframe=True):
         # Build the ADQL query string
-        adql_query = ''
-        for k in query:
-            if k != "format":
-                adql_query += f"{k} {query[k]} "
+        adql_query = ' '.join(f"{k} {v}" for k, v in query.items() if k != "format")
         adql_query = adql_query.strip()  # Remove any trailing space
 
         # URL-encode the entire ADQL query

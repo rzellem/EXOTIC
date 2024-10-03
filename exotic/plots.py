@@ -94,11 +94,14 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         # Dynamically choose which lines to add to the legend
         handles = []
+        label_aper = f"{opt_method} Photometry (Aper: {aper:.2f} px)"
+        label_annulus = f"{opt_method} Photometry (Annulus: {annulus:.2f} px)"
+        
         if opt_method == "Aperture":
-            aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
+            aperture_line = Line2D([], [], color='r', linestyle='-', label=label_aper)
             handles.append(aperture_line)
         elif opt_method == "PSF":
-            annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
+            annulus_line = Line2D([], [], color='lime', linestyle='-', label=label_annulus)
             handles.append(annulus_line)
 
         plt.title(f"FOV for {targ_name}\n({image_scale})")
@@ -116,7 +119,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)
-        Path(save,"temp").mkdir(parents=True, exist_ok=True)
+        Path(save, "temp").mkdir(parents=True, exist_ok=True)
 
         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')

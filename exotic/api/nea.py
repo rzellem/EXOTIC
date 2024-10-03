@@ -45,6 +45,7 @@ import os
 import pandas
 import requests
 import time
+import urllib.parse
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
 
@@ -128,21 +129,19 @@ class NASAExoplanetArchive:
             f.write(json.dumps(jsondata['data'], indent=4))
 
     def _tap_query(self, base_url, query, dataframe=True):
-        # table access protocol query
+        # Build the ADQL query string
+        adql_query = ' '.join(f"{k} {v}" for k, v in query.items() if k != "format")
+        adql_query = adql_query.strip()  # Remove any trailing space
 
-        # build url
-        uri_full = base_url
-        for k in query:
-            if k != "format":
-                uri_full += f"{k} {query[k]} "
+        # URL-encode the entire ADQL query
+        encoded_query = urllib.parse.quote(adql_query)
 
-        uri_full = f"{uri_full[:-1]} &format={query.get('format', 'csv')}"
-        uri_full = uri_full.replace(' ', '+')
-        # log_info(uri_full)
-        # log.debug(uri_full)
+        # Build the full URL with the encoded query
+        # Since base_url already ends with 'query=', we append the encoded query directly
+        uri_full = f"{base_url}{encoded_query}&format={query.get('format', 'csv')}"
 
+        # Send the request
         response = requests.get(uri_full, timeout=self.requests_timeout)
-        # TODO check status_code?
 
         if dataframe:
             return pandas.read_csv(StringIO(response.text))

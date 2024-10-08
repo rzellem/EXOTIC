@@ -1,45 +1,35 @@
-# This workflows will upload a Python Package when a release is created
-# For more information see:
-#     https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
-
-name: Upload Python Package
+name: Publish Package to TestPyPi
 
 on:
   release:
     types: [ published ]
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
-    - name: Upgrade tooling
+        python-version: "3.11"
+
+    - name: Install pypa/build
       run: |
         python3 -m pip install --upgrade pip
-        pip3 install --upgrade build setuptools setuptools_scm[toml] twine wheel
+        pip3 install --upgrade build --user
+
     - name: Build package
-      run: |
-        python3 -m build --wheel
-        python3 setup.py sdist --format=zip
-    - name: Verify package
-      run: |
-        twine check dist/*
-    - name: Store package
+      run: python3 -m build
+
+    - name: Store packages
       uses: actions/upload-artifact@v4
       with:
-        name: python-package-distribution
-        path: |
-          dist/*.whl
-          dist/*.zip
-        if-no-files-found: error
+        name: python-package-distributions
+        path: dist/
 
   release:
     runs-on: ubuntu-latest
@@ -47,15 +37,15 @@ jobs:
     environment:
       name: release
     permissions:
-      id-token: write  # mandatory for trusted publishing
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
     steps:
     - name: Retrieve package
       uses: actions/download-artifact@v4
       with:
-        name: python-package-distribution
+        name: python-package-distributions
         path: dist/
-    - name: Publish package (PyPi)
+
+    - name: Publish package to TestPyPi
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        print-hash: true
-        repository-url: https://pypi.org/p/exotic/  # for testing sub https://test.pypi.org/legacy/
+        repository-url: https://test.pypi.org/legacy/

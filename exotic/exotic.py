@@ -713,11 +713,14 @@ def deg_to_pix(exp_ra, exp_dec, ra_list, dec_list):
     return np.unravel_index(dist.argmin(), dist.shape)
 
 
-def check_target_pixel_wcs(input_x_pixel, input_y_pixel, expected_ra, expected_dec, ra_list, dec_list, image_data):
+def check_target_pixel_wcs(input_x_pixel, input_y_pixel, info_dict, ra_list, dec_list, image_data, obs_time):
     """
     Verify the provided pixel coordinates match the target's right ascension and declination.
     """
-    calculated_y_pixel, calculated_x_pixel = deg_to_pix(expected_ra, expected_dec, ra_list, dec_list)
+    updated_ra, updated_dec = update_coordinates_with_proper_motion(info_dict, obs_time)
+
+    calculated_y_pixel, calculated_x_pixel = deg_to_pix(updated_ra, updated_dec, ra_list, dec_list)
+
     centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, calculated_x_pixel, calculated_y_pixel)
 
     return check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
@@ -1136,57 +1139,23 @@ def exp_time_med(exptimes):
         return np.median(exptimes)
 
 
-# finds target in WCS image after applying proper motion correction from SIMBAD
-def find_target(target, hdufile, verbose=False):
-    # query simbad to get proper motions
-    service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
-    # http://simbad.u-strasbg.fr/simbad/tap/tapsearch.html
-    query = '''
-    SELECT basic.OID, ra, dec, main_id, pmra, pmdec
-    FROM basic JOIN ident ON oidref = oid
-    WHERE id = '{}';
-    '''.format(target)
+def update_coordinates_with_proper_motion(info_dict, time_obs):
+    time_j2000 = Time(2000, format='jyear')
+    time_obs = Time(time_obs, format='jd')
 
-    result = service.search(query)
-    # TODO check that simbad returned a value
-
-    # set up astropy object
     coord = SkyCoord(
-        ra=result['ra'][0] * u.deg,
-        dec=result['dec'][0] * u.deg,
-        distance=1 * u.pc,
-        pm_ra_cosdec=result['pmra'][0] * u.mas / u.yr,
-        pm_dec=result['pmdec'][0] * u.mas / u.yr,
+        ra=info_dict['ra'] * u.deg,
+        dec=info_dict['dec'] * u.deg,
+        distance=info_dict['dist'] * u.pc,
+        pm_ra_cosdec=info_dict['pm_ra'] * u.mas / u.yr,
+        pm_dec=info_dict['pm_dec'] * u.mas / u.yr,
         frame="icrs",
-        obstime=Time("2000-1-1T00:00:00")
+        obstime=time_j2000
     )
 
-    hdu = fits.open(hdufile)[0]
+    updated_coord = coord.apply_space_motion(time_obs)
 
-    try:
-        dateobs = hdu.header['DATE_OBS']
-    except:
-        dateobs = hdu.header['DATE']
-
-    # ignore timezone
-    if len(dateobs.split('-')) == 4:
-        dateobs = '-'.join(dateobs.split('-')[:-1])
-
-    t = Time(dateobs, format='isot', scale='utc')
-    coordpm = coord.apply_space_motion(new_obstime=t)
-
-    # wcs coordinate translation
-    wcs = WCS(hdu.header)
-
-    pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]], 0)
-
-    if verbose:
-        print("Simbad:", result)
-        print("\nObs Date:", t)
-        print("NEW:", coordpm.ra, coordpm.dec)
-        print("\nTarget Location:", np.round(pixcoord[0], 2))
-
-    return pixcoord[0]
+    return updated_coord.ra.deg, updated_coord.dec.deg
 
 
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
@@ -2071,8 +2040,9 @@ def main():
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header)
 
                 exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                            pDict['ra'], pDict['dec'], ra_wcs, dec_wcs,
-                                                                            fits.getdata(inputfiles[0]))
+                                                                            pDict, ra_wcs, dec_wcs,
+                                                                            fits.getdata(inputfiles[0]),
+                                                                            jd_times[0])
                 ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 

@@ -2465,10 +2465,10 @@ def main():
                 min_annulus_fov = float(15 * stdev_fov.mean())
             else:
                 opt_method = "Aperture"
-                min_aper_fov = float(photometry_info['min_aperture'] * 2.0)
-                min_annulus_fov = float(photometry_info['min_annulus'] * 2.0)
+                min_aper_fov = float(photometry_info['min_aperture'])
+                min_annulus_fov = float(photometry_info['min_annulus'])
             
-            plot_fov(photometry_info['min_aperture'] * 2.0, photometry_info['min_annulus'] * 2.0, sigma,
+            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma,
                      centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                      centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
                      firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov)

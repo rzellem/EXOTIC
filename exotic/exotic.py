@@ -745,10 +745,15 @@ def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroi
     ra_value = ra_list[int(input_y_pixel)][int(input_x_pixel)]
     dec_value = dec_list[int(input_y_pixel)][int(input_x_pixel)]
 
-    if not (centroid_x - sigma_x <= ra_value <= centroid_x + sigma_x):
+    x_min = centroid_x - (sigma_x * 5)
+    x_max = centroid_x + (sigma_x * 5)
+    y_min = centroid_y - (sigma_y * 5)
+    y_max = centroid_y + (sigma_y * 5)
+
+    if not (x_min <= ra_value <= x_max):
         log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
         raise ValueError
-    if not (centroid_y - sigma_y <= dec_value <= centroid_y + sigma_y):
+    if not (y_min <= dec_value <= y_max):
         log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
         raise ValueError
 
@@ -2066,9 +2071,9 @@ def main():
                 wcs_header = fits.getheader(filename=wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header)
 
-                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                          pDict['ra'], pDict['dec'], ra_wcs, dec_wcs,
-                                                                          fits.getdata(inputfiles[0]))
+                exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(exotic_UIprevTPX, exotic_UIprevTPY,
+                                                                            pDict['ra'], pDict['dec'], ra_wcs, dec_wcs,
+                                                                            fits.getdata(inputfiles[0]))
                 ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 

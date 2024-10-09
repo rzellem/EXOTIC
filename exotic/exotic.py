@@ -741,6 +741,9 @@ def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigm
 
 
 def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y):
+    """
+    Validating the provided pixel coordinates are within 5 PSF of the expected coordinates.
+    """
     x_min = centroid_x - (sigma_x * 5)
     x_max = centroid_x + (sigma_x * 5)
     y_min = centroid_y - (sigma_y * 5)

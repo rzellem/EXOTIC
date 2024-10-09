@@ -2321,18 +2321,18 @@ def main():
                         log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
                         res_std = myfit.residuals.std() / np.median(myfit.data)
-                    # if photometry_info['min_std'] > res_std and myfit is not None:
-                    #     ref_flux_opt = True
-                    #
-                    #     photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
-                    #                            comp_star_num=None, comp_star_coords=None,
-                    #                            min_std=res_std, min_aperture=-aper, min_annulus=annulus)
-                    #
-                    #     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                    #                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
-                    #
-                    #     centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
-                    #                               x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
+                    if photometry_info['min_std'] > res_std and myfit is not None:
+                        ref_flux_opt = True
+
+                        photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
+                                               comp_star_num=None, comp_star_coords=None,
+                                               min_std=res_std, min_aperture=-aper, min_annulus=annulus)
+
+                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
+                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+
+                        centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
+                                                  x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
 
                     # try to fit data with comp star
                     for j in range(len(exotic_infoDict['comp_stars'])):

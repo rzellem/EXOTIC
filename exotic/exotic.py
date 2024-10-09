@@ -721,7 +721,7 @@ def check_target_pixel_wcs(input_x_pixel, input_y_pixel, expected_ra, expected_d
     centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, calculated_x_pixel, calculated_y_pixel)
 
     return check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
-                             ra_list, dec_list, calculated_x_pixel, calculated_y_pixel)
+                             calculated_x_pixel, calculated_y_pixel)
 
 
 def get_psf_parameters(image_data, x_pixel, y_pixel):
@@ -730,30 +730,26 @@ def get_psf_parameters(image_data, x_pixel, y_pixel):
 
 
 def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
-                      ra_list, dec_list, calculated_x_pixel, calculated_y_pixel):
+                      calculated_x_pixel, calculated_y_pixel):
     while True:
         try:
-            validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y, ra_list,
-                                       dec_list)
+            validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y)
             return input_x_pixel, input_y_pixel
         except ValueError:
             input_x_pixel, input_y_pixel = prompt_user_for_coordinates(input_x_pixel, input_y_pixel,
                                                                        calculated_x_pixel, calculated_y_pixel)
 
 
-def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y, ra_list, dec_list):
-    ra_value = ra_list[int(input_y_pixel)][int(input_x_pixel)]
-    dec_value = dec_list[int(input_y_pixel)][int(input_x_pixel)]
-
+def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y):
     x_min = centroid_x - (sigma_x * 5)
     x_max = centroid_x + (sigma_x * 5)
     y_min = centroid_y - (sigma_y * 5)
     y_max = centroid_y + (sigma_y * 5)
 
-    if not (x_min <= ra_value <= x_max):
+    if not (x_min <= input_x_pixel <= x_max):
         log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
         raise ValueError
-    if not (y_min <= dec_value <= y_max):
+    if not (y_min <= input_y_pixel <= y_max):
         log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
         raise ValueError
 

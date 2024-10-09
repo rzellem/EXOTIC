@@ -713,43 +713,67 @@ def deg_to_pix(exp_ra, exp_dec, ra_list, dec_list):
     return np.unravel_index(dist.argmin(), dist.shape)
 
 
-# Check the ra and dec against the plate solution to see if the user entered in the correct values
-def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
+def check_target_pixel_wcs(input_x_pixel, input_y_pixel, expected_ra, expected_dec, ra_list, dec_list, image_data):
+    """
+    Verify the provided pixel coordinates match the target's right ascension and declination.
+    """
+    calculated_y_pixel, calculated_x_pixel = deg_to_pix(expected_ra, expected_dec, ra_list, dec_list)
+    centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, calculated_x_pixel, calculated_y_pixel)
+
+    return check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
+                             ra_list, dec_list, calculated_x_pixel, calculated_y_pixel)
+
+
+def get_psf_parameters(image_data, x_pixel, y_pixel):
+    psf_data = fit_centroid(image_data, [x_pixel, y_pixel], 0)
+    return psf_data[0], psf_data[1], psf_data[3], psf_data[4]
+
+
+def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
+                      ra_list, dec_list, calculated_x_pixel, calculated_y_pixel):
     while True:
         try:
-            uncert = 1 / 36
-            # Margins are within 100 arcseconds
-            if not (expra - uncert <= ralist[int(pixy)][int(pixx)] <= expra + uncert):
-                log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
-                raise ValueError
-            if not (expdec - uncert <= declist[int(pixy)][int(pixx)] <= expdec + uncert):
-                log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
-                raise ValueError
-            return pixx, pixy
+            validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y, ra_list,
+                                       dec_list)
+            return input_x_pixel, input_y_pixel
         except ValueError:
-            log_info(f"Your input pixel coordinates: [{pixx}, {pixy}]")
-            exotic_pixy, exotic_pixx = deg_to_pix(expra, expdec, ralist, declist)
-            log_info(f"EXOTIC's calculated pixel coordinates: [{exotic_pixx}, {exotic_pixy}]")
+            input_x_pixel, input_y_pixel = prompt_user_for_coordinates(input_x_pixel, input_y_pixel,
+                                                                       calculated_x_pixel, calculated_y_pixel)
 
-            opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, values=['y', 'n'])
 
-            # User wants to change their coordinates
-            if opt == 'y':
-                searchopt = user_input(f"Here are the suggested pixel coordinates:"
-                                       f"  X Pixel: {exotic_pixx}"
-                                       f"  Y Pixel: {exotic_pixy}"
-                                       "\nWould you like to use these? (y/n): ",
-                                       type_=str, values=['y', 'n'])
-                # Use the coordinates found by code
-                if searchopt == 'y':
-                    return exotic_pixx, exotic_pixy
-                # User enters their own coordinates to be re-checked
-                else:
-                    pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
-                    pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
-            else:
-                # User does not want to change coordinates even though they don't match the expected ra and dec
-                return pixx, pixy
+def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y, ra_list, dec_list):
+    ra_value = ra_list[int(input_y_pixel)][int(input_x_pixel)]
+    dec_value = dec_list[int(input_y_pixel)][int(input_x_pixel)]
+
+    if not (centroid_x - sigma_x <= ra_value <= centroid_x + sigma_x):
+        log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
+        raise ValueError
+    if not (centroid_y - sigma_y <= dec_value <= centroid_y + sigma_y):
+        log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
+        raise ValueError
+
+
+def prompt_user_for_coordinates(input_x_pixel, input_y_pixel, calculated_x_pixel, calculated_y_pixel):
+    log_info(f"Your input pixel coordinates: [{input_x_pixel}, {input_y_pixel}]")
+    log_info(f"EXOTIC's calculated pixel coordinates: [{calculated_x_pixel}, {calculated_y_pixel}]")
+    opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, values=['y', 'n'])
+
+    if opt == 'y':
+        use_suggested = user_input(
+            f"Here are the suggested pixel coordinates:"
+            f"  X Pixel: {calculated_x_pixel}"
+            f"  Y Pixel: {calculated_y_pixel}"
+            "\nWould you like to use these? (y/n): ",
+            type_=str, values=['y', 'n']
+        )
+
+        if use_suggested == 'y':
+            return calculated_x_pixel, calculated_y_pixel
+        else:
+            input_x_pixel = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
+            input_y_pixel = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
+
+    return input_x_pixel, input_y_pixel
 
 
 # Checks if comparison star is variable via querying SIMBAD
@@ -2014,8 +2038,8 @@ def main():
                 plateStatus.setCurrentFilename(ifile)
                 first_image = fits.getdata(ifile)
                 try:
-                    get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
-                    if np.isnan(get_first[0]):
+                    initial_centroid = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
+                    if np.isnan(initial_centroid[0]):
                         inc += 1
                     else:
                         break
@@ -2043,7 +2067,8 @@ def main():
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header)
 
                 exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                          pDict['ra'], pDict['dec'], ra_wcs, dec_wcs)
+                                                                          pDict['ra'], pDict['dec'], ra_wcs, dec_wcs,
+                                                                          fits.getdata(inputfiles[0]))
                 ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
@@ -2322,18 +2347,18 @@ def main():
                         log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
 
                         res_std = myfit.residuals.std() / np.median(myfit.data)
-                    if photometry_info['min_std'] > res_std and myfit is not None:
-                        ref_flux_opt = True
-
-                        photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
-                                               comp_star_num=None, comp_star_coords=None,
-                                               min_std=res_std, min_aperture=-aper, min_annulus=annulus)
-
-                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
-
-                        centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
-                                                  x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
+                    # if photometry_info['min_std'] > res_std and myfit is not None:
+                    #     ref_flux_opt = True
+                    #
+                    #     photometry_info.update(best_fit_lc=copy.deepcopy(myfit),
+                    #                            comp_star_num=None, comp_star_coords=None,
+                    #                            min_std=res_std, min_aperture=-aper, min_annulus=annulus)
+                    #
+                    #     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
+                    #                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                    #
+                    #     centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
+                    #                               x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
 
                     # try to fit data with comp star
                     for j in range(len(exotic_infoDict['comp_stars'])):
@@ -2466,10 +2491,10 @@ def main():
                 min_annulus_fov = float(15 * stdev_fov.mean())
             else:
                 opt_method = "Aperture"
-                min_aper_fov = float(photometry_info['min_aperture'])
-                min_annulus_fov = float(photometry_info['min_annulus'])
+                min_aper_fov = float(photometry_info['min_aperture'] * 2.0)
+                min_annulus_fov = float(photometry_info['min_annulus'] * 2.0)
             
-            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma,
+            plot_fov(photometry_info['min_aperture'] * 2.0, photometry_info['min_annulus'] * 2.0, sigma,
                      centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                      centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
                      firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov)

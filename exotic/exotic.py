@@ -1153,7 +1153,7 @@ def update_coordinates_with_proper_motion(info_dict, time_obs):
         obstime=time_j2000
     )
 
-    updated_coord = coord.apply_space_motion(time_obs)
+    updated_coord = coord.apply_space_motion(new_obstime=time_obs)
 
     return updated_coord.ra.deg, updated_coord.dec.deg
 

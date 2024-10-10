@@ -739,8 +739,12 @@ def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigm
             validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y)
             return input_x_pixel, input_y_pixel
         except ValueError:
-            input_x_pixel, input_y_pixel = prompt_user_for_coordinates(input_x_pixel, input_y_pixel,
-                                                                       calculated_x_pixel, calculated_y_pixel)
+            new_x_pixel, new_y_pixel = prompt_user_for_coordinates(input_x_pixel, input_y_pixel,
+                                                                   calculated_x_pixel, calculated_y_pixel)
+            if new_x_pixel == input_x_pixel and new_y_pixel == input_y_pixel:
+                return input_x_pixel, input_y_pixel
+            else:
+                input_x_pixel, input_y_pixel = new_x_pixel, new_y_pixel
 
 
 def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y):

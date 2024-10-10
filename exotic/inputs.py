@@ -183,7 +183,10 @@ class Inputs:
             'met': 'Star Metallicity ([FE/H])', 'metUncPos': 'Star Metallicity (+) Uncertainty',
             'metUncNeg': 'Star Metallicity (-) Uncertainty',
             'logg': 'Star Surface Gravity (log(g))', 'loggUncPos': 'Star Surface Gravity (+) Uncertainty',
-            'loggUncNeg': 'Star Surface Gravity (-) Uncertainty'
+            'loggUncNeg': 'Star Surface Gravity (-) Uncertainty',
+            'dist': 'Star Distance (pc)',
+            'pm_ra': 'Star Proper Motion RA (mas/yr)',
+            'pm_dec': 'Star Proper Motion DEC (mas/yr)'
         }
         opt_info = {
             'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',

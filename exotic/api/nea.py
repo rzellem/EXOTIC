@@ -105,7 +105,10 @@ class NASAExoplanetArchive:
                 "Star Metallicity (-) Uncertainty": self.pl_dict['metUncNeg'],
                 "Star Surface Gravity (log(g))": self.pl_dict['logg'],
                 "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
-                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
+                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg'],
+                "Star Distance (pc)": self.pl_dict['dist'],
+                "Star Proper Motion RA (mas/yr)": self.pl_dict['pm_ra'],
+                "Star Proper Motion DEC (mas/yr)": self.pl_dict['pm_dec']
             }
 
             return json.dumps(flabels, indent=4)

@@ -1756,7 +1756,7 @@ def main():
                  'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
                  'inc': None, 'incUnc': None, 'omega': None, 'ecc': None, 'teff': None,
                  'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
-                 'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
+                 'logg': None, 'loggUncPos': None, 'loggUncNeg': None, 'dist': None, 'pm_ra': None, 'pm_dec': None}
 
     # ---USER INPUTS--------------------------------------------------------------------------
     if isinstance(args.realtime, str):

@@ -1144,22 +1144,37 @@ def exp_time_med(exptimes):
 
 
 def update_coordinates_with_proper_motion(info_dict, time_obs):
-    time_j2000 = Time(2000, format='jyear')
-    time_obs = Time(time_obs, format='jd')
+    parameter_names = {
+        'dist': 'Distance (pc)',
+        'pm_ra': 'Proper Motion RA (mas/yr)',
+        'pm_dec': 'Proper Motion DEC (mas/yr)'
+    }
 
-    coord = SkyCoord(
-        ra=info_dict['ra'] * u.deg,
-        dec=info_dict['dec'] * u.deg,
-        distance=info_dict['dist'] * u.pc,
-        pm_ra_cosdec=info_dict['pm_ra'] * u.mas / u.yr,
-        pm_dec=info_dict['pm_dec'] * u.mas / u.yr,
-        frame="icrs",
-        obstime=time_j2000
-    )
+    missing_values = [parameter_names[key] for key in ['dist', 'pm_ra', 'pm_dec'] if info_dict.get(key) == 0.0]
 
-    updated_coord = coord.apply_space_motion(new_obstime=time_obs)
+    if missing_values:
+        missing_values = ", ".join(missing_values)
+        log_info("Warning: Cannot properly account for proper motion due to missing values in: "
+                 f"\n{missing_values}. Please re-run and fill in values in the initialization file to account "
+                 f"for proper motion", warn=True)
 
-    return updated_coord.ra.deg, updated_coord.dec.deg
+        return info_dict['ra'], info_dict['dec']
+    else:
+        time_j2000 = Time(2000, format='jyear')
+        time_obs = Time(time_obs, format='jd')
+
+        coord = SkyCoord(
+            ra=info_dict['ra'] * u.deg,
+            dec=info_dict['dec'] * u.deg,
+            distance=info_dict['dist'] * u.pc,
+            pm_ra_cosdec=info_dict['pm_ra'] * u.mas / u.yr,
+            pm_dec=info_dict['pm_dec'] * u.mas / u.yr,
+            frame="icrs",
+            obstime=time_j2000
+        )
+
+        updated_coord = coord.apply_space_motion(new_obstime=time_obs)
+        return updated_coord.ra.deg, updated_coord.dec.deg
 
 
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):

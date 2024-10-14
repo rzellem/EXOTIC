@@ -1154,7 +1154,7 @@ def update_coordinates_with_proper_motion(info_dict, time_obs):
 
     if missing_values:
         missing_values = ", ".join(missing_values)
-        log_info("Warning: Cannot properly account for proper motion due to missing values in: "
+        log_info("Warning: Cannot account for proper motion due to missing values in: "
                  f"\n{missing_values}. Please re-run and fill in values in the initialization file to account "
                  f"for proper motion", warn=True)
 

@@ -51,7 +51,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
 
 def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method, min_aper_fov, min_annulus_fov):
     ref_circle, ref_circle_sky = None, None
-    picframe = 10 * (aper + 15 * sigma)
+    picframe = 10. * (aper + 15. * sigma)
 
     pltx = [max([0, min([x_targ, x_ref]) - picframe]), min([np.shape(image)[1], max([x_targ, x_ref]) + picframe])]
     plty = [max([0, min([y_targ, y_ref]) - picframe]), min([np.shape(image)[0], max([y_targ, y_ref]) + picframe])]

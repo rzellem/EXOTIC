@@ -1636,6 +1636,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None):
         log_info('No data left after filtering', warn=True)
         return None, None, None
     else:
+        f1 = f1[~nanmask]
+        f2 = f2[~nanmask]
         arrayFinalFlux = arrayFinalFlux[~nanmask]
         arrayNormUnc = arrayNormUnc[~nanmask]
         arrayTimes = arrayTimes[~nanmask]
@@ -1694,11 +1696,13 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None):
         arrayAirmass,
         prior,
         mybounds,
+        target_flux=f1,
+        comparison_flux=f2,
         jd_times=arrayJDTimes,
         mode='lm'
     )
 
-    return myfit, f1, f2
+    return myfit
 
 
 def parse_args():
@@ -2092,6 +2096,13 @@ def main():
                 aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 tar_comp_dist[ckey] = np.zeros(2)
 
+            for i, coord in enumerate(exotic_infoDict['fortuitous_stars']):
+                fkey = f"fort{i + 1}"
+                psf_data[fkey] = np.zeros((len(inputfiles), 7))
+                aper_data[fkey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                aper_data[f"{fkey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                tar_comp_dist[fkey] = np.zeros(2)
+
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
                 plateStatus.setCurrentFilename(fileName)
@@ -2177,6 +2188,12 @@ def main():
                             tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
                             tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
 
+                    for j, coord in enumerate(exotic_infoDict['fortuitous_stars']):
+                        fkey = f"fort{j + 1}"
+
+                        fx, fy = tform(coord)[0]
+                        psf_data[fkey][i] = fit_centroid(imageData, [fx, fy], j+1)
+
                 # aperture photometry
                 if i == 0:
                     sigma = float((psf_data['target'][0][3] + psf_data['target'][0][4]) * 0.5)
@@ -2204,6 +2221,17 @@ def main():
                                 aper_data[ckey][i][a][an] = np.nan
                                 aper_data[f"{ckey}_bg"][i][a][an] = np.nan
 
+                        for j in range(len(exotic_infoDict['fortuitous_stars'])):
+                            fkey = f"fort{j + 1}"
+                            if not np.isnan(psf_data[fkey][i][0]):
+                                aper_data[fkey][i][a][an], \
+                                aper_data[f"{fkey}_bg"][i][a][an] = aperPhot(imageData, j + 1, psf_data[fkey][i, 0],
+                                                                            psf_data[fkey][i, 1], aper, annulus)
+                            else:
+                                aper_data[fkey][i][a][an] = np.nan
+                                aper_data[f"{fkey}_bg"][i][a][an] = np.nan
+
+
                 # close file + delete from memory
                 hdul.close()
                 del hdul
@@ -2228,6 +2256,12 @@ def main():
                 psf_data[ckey] = psf_data[ckey][goodmask]
                 aper_data[ckey] = aper_data[ckey][goodmask]
                 aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
+
+            for j in range(len(exotic_infoDict['fortuitous_stars'])):
+                fkey = f"fort{j + 1}"
+                psf_data[fkey] = psf_data[fkey][goodmask]
+                aper_data[fkey] = aper_data[fkey][goodmask]
+                aper_data[f"{fkey}_bg"] = aper_data[f"{fkey}_bg"][goodmask]
 
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
@@ -2272,7 +2306,7 @@ def main():
                 ckey = f"comp{j + 1}"
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
+                myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
 
                 if myfit is not None:
                     for k in myfit.bounds.keys():
@@ -2289,8 +2323,8 @@ def main():
                                            comp_star_num=j + 1, comp_star_coords=exotic_infoDict['comp_stars'][j],
                                            min_std=res_std, min_aperture=0, min_annulus=15 * sigma)
 
-                    flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                       flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                    flux_values.update(flux_tar=myfit.target_flux, flux_ref=myfit.comparison_flux,
+                                       flux_unc_tar=myfit.target_flux ** 0.5, flux_unc_ref=myfit.comparison_flux ** 0.5)
 
                     centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                               x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
@@ -2311,7 +2345,7 @@ def main():
                     temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict, jd_times)
+                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict, jd_times)
 
                     if myfit is not None:
                         for k in myfit.bounds.keys():
@@ -2329,8 +2363,8 @@ def main():
                                                comp_star_num=None, comp_star_coords=None,
                                                min_std=res_std, min_aperture=-aper, min_annulus=annulus)
 
-                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                        flux_values.update(flux_tar=myfit.target_flux, flux_ref=myfit.comparison_flux,
+                                           flux_unc_tar=myfit.target_flux ** 0.5, flux_unc_ref=myfit.comparison_flux ** 0.5)
 
                         centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                                   x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
@@ -2341,7 +2375,7 @@ def main():
                         aper_mask = np.isfinite(aper_data[ckey][:, a, an])
                         cFlux = aper_data[ckey][aper_mask][:, a, an]
 
-                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict, jd_times[aper_mask])
+                        myfit = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict, jd_times[aper_mask])
 
                         if myfit is not None:
                             if j in vsp_num:
@@ -2366,8 +2400,8 @@ def main():
                                                    comp_star_coords=exotic_infoDict['comp_stars'][j],
                                                    min_std=res_std, min_aperture=aper, min_annulus=annulus)
 
-                            flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                               flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                            flux_values.update(flux_tar=myfit.target_flux, flux_ref=myfit.comparison_flux,
+                                               flux_unc_tar=myfit.target_flux ** 0.5, flux_unc_ref=myfit.comparison_flux ** 0.5)
 
                             centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                                       x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])

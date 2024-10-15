@@ -43,6 +43,7 @@ import json
 import numpy as np
 import os
 import pandas
+import re
 import requests
 import time
 import urllib.parse
@@ -185,7 +186,7 @@ class NASAExoplanetArchive:
         }
         default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
-        new_index = [planet.lower().replace(' ', '').replace('-', '') for planet in default.pl_name.values]
+        new_index = [re.sub(r'[^a-zA-Z0-9]', '', planet.lower()) for planet in default.pl_name.values]
 
         planets = dict(zip(new_index, default.pl_name.values))
         with open(filename, "w") as f:
@@ -219,10 +220,13 @@ class NASAExoplanetArchive:
         if os.path.exists('pl_names.json'):
             with open("pl_names.json", "r") as f:
                 planets = json.load(f)
-                for key, value in planets.items():
-                    if self.planet.lower().replace(' ', '').replace('-', '') == key:
-                        self.planet = value
-                        break
+                planet_key = re.sub(r'[^a-zA-Z0-9]', '', self.planet.lower())
+
+                planet_exists = planets.get(planet_key, False)
+
+                if planet_exists:
+                    self.planet = planet_exists
+
         print(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
 
         if self.planet:

@@ -1150,7 +1150,7 @@ def update_coordinates_with_proper_motion(info_dict, time_obs):
         'pm_dec': 'Proper Motion DEC (mas/yr)'
     }
 
-    missing_values = [parameter_names[key] for key in ['dist', 'pm_ra', 'pm_dec'] if info_dict.get(key) == 0.0]
+    missing_values = [parameter_names[key] for key in ['dist', 'pm_ra', 'pm_dec'] if info_dict.get(key, 0.0) == 0.0]
 
     if missing_values:
         missing_values = ", ".join(missing_values)
@@ -1160,7 +1160,7 @@ def update_coordinates_with_proper_motion(info_dict, time_obs):
 
         return info_dict['ra'], info_dict['dec']
     else:
-        time_j2000 = Time(2000, format='jyear')
+        time_j2000 = Time(2000.0, format='jyear')
         time_obs = Time(time_obs, format='jd')
 
         coord = SkyCoord(

@@ -265,7 +265,7 @@ class NASAExoplanetArchive:
                 # for each nan column in default
                 nans = ddata.isna()
                 for k in ddata.keys():
-                    if nans[k].bool():  # if col value is nan
+                    if nans[k].iloc[0]:  # if col value is nan
                         if not edata[k].isna().all():  # if replacement data exists
                             # replace with first index
                             default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]

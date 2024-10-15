@@ -43,8 +43,10 @@ import json
 import numpy as np
 import os
 import pandas
+import re
 import requests
 import time
+import urllib.parse
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
 
@@ -104,7 +106,10 @@ class NASAExoplanetArchive:
                 "Star Metallicity (-) Uncertainty": self.pl_dict['metUncNeg'],
                 "Star Surface Gravity (log(g))": self.pl_dict['logg'],
                 "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
-                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
+                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg'],
+                "Star Distance (pc)": self.pl_dict['dist'],
+                "Star Proper Motion RA (mas/yr)": self.pl_dict['pm_ra'],
+                "Star Proper Motion DEC (mas/yr)": self.pl_dict['pm_dec']
             }
 
             return json.dumps(flabels, indent=4)
@@ -128,21 +133,19 @@ class NASAExoplanetArchive:
             f.write(json.dumps(jsondata['data'], indent=4))
 
     def _tap_query(self, base_url, query, dataframe=True):
-        # table access protocol query
+        # Build the ADQL query string
+        adql_query = ' '.join(f"{k} {v}" for k, v in query.items() if k != "format")
+        adql_query = adql_query.strip()  # Remove any trailing space
 
-        # build url
-        uri_full = base_url
-        for k in query:
-            if k != "format":
-                uri_full += f"{k} {query[k]} "
+        # URL-encode the entire ADQL query
+        encoded_query = urllib.parse.quote(adql_query)
 
-        uri_full = f"{uri_full[:-1]} &format={query.get('format', 'csv')}"
-        uri_full = uri_full.replace(' ', '+')
-        # log_info(uri_full)
-        # log.debug(uri_full)
+        # Build the full URL with the encoded query
+        # Since base_url already ends with 'query=', we append the encoded query directly
+        uri_full = f"{base_url}{encoded_query}&format={query.get('format', 'csv')}"
 
+        # Send the request
         response = requests.get(uri_full, timeout=self.requests_timeout)
-        # TODO check status_code?
 
         if dataframe:
             return pandas.read_csv(StringIO(response.text))
@@ -186,7 +189,7 @@ class NASAExoplanetArchive:
         }
         default = self._tap_query(uri_ipac_base, uri_ipac_query)
 
-        new_index = [planet.lower().replace(' ', '').replace('-', '') for planet in default.pl_name.values]
+        new_index = [re.sub(r'[^a-zA-Z0-9]', '', planet.lower()) for planet in default.pl_name.values]
 
         planets = dict(zip(new_index, default.pl_name.values))
         with open(filename, "w") as f:
@@ -208,6 +211,7 @@ class NASAExoplanetArchive:
                       "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                       "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                       "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
+                      "sy_pmra,sy_pmdec,sy_dist,"
                       "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,st_raderr2,ra,dec,pl_pubdate",
             "from": "ps",
             "where": "tran_flag = 1 and default_flag = 1",
@@ -220,10 +224,13 @@ class NASAExoplanetArchive:
         if os.path.exists('pl_names.json'):
             with open("pl_names.json", "r") as f:
                 planets = json.load(f)
-                for key, value in planets.items():
-                    if self.planet.lower().replace(' ', '').replace('-', '') == key:
-                        self.planet = value
-                        break
+                planet_key = re.sub(r'[^a-zA-Z0-9]', '', self.planet.lower())
+
+                planet_exists = planets.get(planet_key, False)
+
+                if planet_exists:
+                    self.planet = planet_exists
+
         print(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
 
         if self.planet:
@@ -262,7 +269,7 @@ class NASAExoplanetArchive:
                 # for each nan column in default
                 nans = ddata.isna()
                 for k in ddata.keys():
-                    if nans[k].bool():  # if col value is nan
+                    if nans[k].iloc[0]:  # if col value is nan
                         if not edata[k].isna().all():  # if replacement data exists
                             # replace with first index
                             default.loc[default.pl_name == i, k] = edata[k][edata[k].notna()].values[0]
@@ -352,7 +359,10 @@ class NASAExoplanetArchive:
             'metUncNeg': float(min(-0.01, data['st_meterr2'])) if 'st_meterr2' in data and data['st_meterr2'] is not None else -0.01,
             'logg': float(data['st_logg']) if 'st_logg' in data and data['st_logg'] is not None else np.nan,
             'loggUncPos': float(data['st_loggerr1']) if 'st_loggerr1' in data and data['st_loggerr1'] is not None else np.nan,
-            'loggUncNeg': float(data['st_loggerr2']) if 'st_loggerr2' in data and data['st_loggerr2'] is not None else np.nan
+            'loggUncNeg': float(data['st_loggerr2']) if 'st_loggerr2' in data and data['st_loggerr2'] is not None else np.nan,
+            'dist': float(data['sy_dist']) if 'sy_dist' in data and data['sy_dist'] is not None else np.nan,
+            'pm_dec': float(data['sy_pmdec']) if 'sy_pmdec' in data and data['sy_pmdec'] is not None else np.nan,
+            'pm_ra': float(data['sy_pmra']) if 'sy_pmra' in data and data['sy_pmra'] is not None else np.nan
         }
 
         if self.pl_dict['aRsUnc'] == 0:

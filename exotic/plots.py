@@ -49,10 +49,9 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target_name}_{date}.pdf")
     plt.close()
 
-
-def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date):
+def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method, min_aper_fov, min_annulus_fov):
     ref_circle, ref_circle_sky = None, None
-    picframe = 5 * (aper + 15 * sigma)
+    picframe = 10. * (aper + 15. * sigma)
 
     pltx = [max([0, min([x_targ, x_ref]) - picframe]), min([np.shape(image)[1], max([x_targ, x_ref]) + picframe])]
     plty = [max([0, min([y_targ, y_ref]) - picframe]), min([np.shape(image)[0], max([y_targ, y_ref]) + picframe])]
@@ -60,12 +59,19 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
     for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
         fig, ax = plt.subplots()
 
+        # Set color for target and reference outer circles based on opt_method
+        if opt_method == "Aperture":
+            outer_circle_color = 'r'
+        else:
+            outer_circle_color = 'lime'
+
+        # Create the target and reference circles
         target_circle = plt.Circle((x_targ, y_targ), aper, color='r', fill=False, ls='-')
-        target_circle_sky = plt.Circle((x_targ, y_targ), aper + annulus, color='lime', fill=False, ls='-')
+        target_circle_sky = plt.Circle((x_targ, y_targ), aper + annulus, color=outer_circle_color, fill=False, ls='-')
 
         if aper >= 0:
             ref_circle = plt.Circle((x_ref, y_ref), aper, color='r', fill=False, ls='-')
-            ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color='lime', fill=False, ls='-')
+            ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color=outer_circle_color, fill=False, ls='-')
 
         interval = ZScaleInterval()
         vmin, vmax = interval.get_limits(image)
@@ -86,9 +92,15 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
-        aperture_line = Line2D([], [], color='r', linestyle='-', label='Aperture')
-        annulus_line = Line2D([], [], color='lime', linestyle='-', label='Annulus')
-        handles = [aperture_line, annulus_line]
+        handles = []
+        label_aper = f"{opt_method} Photometry\n(Min Aper: {min_aper_fov:.2f} px)\n(Min Annulus: {min_annulus_fov:.2f} px)"
+        
+        if opt_method == "Aperture":
+            aperture_line = Line2D([], [], color='r', linestyle='-', label=label_aper)
+            handles.append(aperture_line)
+        elif opt_method == "PSF":
+            psf_line = Line2D([], [], color='lime', linestyle='-', label=label_aper)
+            handles.append(psf_line)
 
         plt.title(f"FOV for {targ_name}\n({image_scale})")
         plt.xlabel("x-axis [pixel]")
@@ -97,14 +109,15 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         plt.ylim(plty[0], plty[1])
         ax.grid(False)
 
-        l = plt.legend(handles=handles, framealpha=0.75)
-        for text in l.get_texts():
-            text.set_color("k")
-            text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
+        if handles:
+            l = plt.legend(handles=handles, framealpha=0.75)
+            for text in l.get_texts():
+                text.set_color("k")
+                text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)
-        Path(save,"temp").mkdir(parents=True, exist_ok=True)
+        Path(save, "temp").mkdir(parents=True, exist_ok=True)
 
         plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
                     f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')

@@ -713,43 +713,78 @@ def deg_to_pix(exp_ra, exp_dec, ra_list, dec_list):
     return np.unravel_index(dist.argmin(), dist.shape)
 
 
-# Check the ra and dec against the plate solution to see if the user entered in the correct values
-def check_targetpixelwcs(pixx, pixy, expra, expdec, ralist, declist):
+def check_target_pixel_wcs(input_x_pixel, input_y_pixel, info_dict, ra_list, dec_list, image_data, obs_time):
+    """
+    Verify the provided pixel coordinates match the target's right ascension and declination.
+    """
+    updated_ra, updated_dec = update_coordinates_with_proper_motion(info_dict, obs_time)
+
+    calculated_y_pixel, calculated_x_pixel = deg_to_pix(updated_ra, updated_dec, ra_list, dec_list)
+
+    centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, calculated_x_pixel, calculated_y_pixel)
+
+    return check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
+                             calculated_x_pixel, calculated_y_pixel)
+
+
+def get_psf_parameters(image_data, x_pixel, y_pixel):
+    psf_data = fit_centroid(image_data, [x_pixel, y_pixel], 0)
+    return psf_data[0], psf_data[1], psf_data[3], psf_data[4]
+
+
+def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
+                      calculated_x_pixel, calculated_y_pixel):
     while True:
         try:
-            uncert = 1 / 36
-            # Margins are within 100 arcseconds
-            if not (expra - uncert <= ralist[int(pixy)][int(pixx)] <= expra + uncert):
-                log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
-                raise ValueError
-            if not (expdec - uncert <= declist[int(pixy)][int(pixx)] <= expdec + uncert):
-                log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
-                raise ValueError
-            return pixx, pixy
+            validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y)
+            return input_x_pixel, input_y_pixel
         except ValueError:
-            log_info(f"Your input pixel coordinates: [{pixx}, {pixy}]")
-            exotic_pixy, exotic_pixx = deg_to_pix(expra, expdec, ralist, declist)
-            log_info(f"EXOTIC's calculated pixel coordinates: [{exotic_pixx}, {exotic_pixy}]")
-
-            opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, values=['y', 'n'])
-
-            # User wants to change their coordinates
-            if opt == 'y':
-                searchopt = user_input(f"Here are the suggested pixel coordinates:"
-                                       f"  X Pixel: {exotic_pixx}"
-                                       f"  Y Pixel: {exotic_pixy}"
-                                       "\nWould you like to use these? (y/n): ",
-                                       type_=str, values=['y', 'n'])
-                # Use the coordinates found by code
-                if searchopt == 'y':
-                    return exotic_pixx, exotic_pixy
-                # User enters their own coordinates to be re-checked
-                else:
-                    pixx = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
-                    pixy = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
+            new_x_pixel, new_y_pixel = prompt_user_for_coordinates(input_x_pixel, input_y_pixel,
+                                                                   calculated_x_pixel, calculated_y_pixel)
+            if new_x_pixel == input_x_pixel and new_y_pixel == input_y_pixel:
+                return input_x_pixel, input_y_pixel
             else:
-                # User does not want to change coordinates even though they don't match the expected ra and dec
-                return pixx, pixy
+                input_x_pixel, input_y_pixel = new_x_pixel, new_y_pixel
+
+
+def validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y):
+    """
+    Validating the provided pixel coordinates are within 5 PSF of the expected coordinates.
+    """
+    x_min = centroid_x - (sigma_x * 5)
+    x_max = centroid_x + (sigma_x * 5)
+    y_min = centroid_y - (sigma_y * 5)
+    y_max = centroid_y + (sigma_y * 5)
+
+    if not (x_min <= input_x_pixel <= x_max):
+        log_info("\nWarning: The X Pixel Coordinate entered does not match the target's Right Ascension.", warn=True)
+        raise ValueError
+    if not (y_min <= input_y_pixel <= y_max):
+        log_info("\nWarning: The Y Pixel Coordinate entered does not match the target's Declination.", warn=True)
+        raise ValueError
+
+
+def prompt_user_for_coordinates(input_x_pixel, input_y_pixel, calculated_x_pixel, calculated_y_pixel):
+    log_info(f"Your input pixel coordinates: [{input_x_pixel}, {input_y_pixel}]")
+    log_info(f"EXOTIC's calculated pixel coordinates: [{calculated_x_pixel}, {calculated_y_pixel}]")
+    opt = user_input("Would you like to re-enter the pixel coordinates? (y/n): ", type_=str, values=['y', 'n'])
+
+    if opt == 'y':
+        use_suggested = user_input(
+            f"Here are the suggested pixel coordinates:"
+            f"  X Pixel: {calculated_x_pixel}"
+            f"  Y Pixel: {calculated_y_pixel}"
+            "\nWould you like to use these? (y/n): ",
+            type_=str, values=['y', 'n']
+        )
+
+        if use_suggested == 'y':
+            return calculated_x_pixel, calculated_y_pixel
+        else:
+            input_x_pixel = user_input("Please re-enter the target star's X Pixel Coordinate: ", type_=int)
+            input_y_pixel = user_input("Please re-enter the target star's Y Pixel Coordinate: ", type_=int)
+
+    return input_x_pixel, input_y_pixel
 
 
 # Checks if comparison star is variable via querying SIMBAD
@@ -1108,57 +1143,38 @@ def exp_time_med(exptimes):
         return np.median(exptimes)
 
 
-# finds target in WCS image after applying proper motion correction from SIMBAD
-def find_target(target, hdufile, verbose=False):
-    # query simbad to get proper motions
-    service = vo.dal.TAPService("http://simbad.u-strasbg.fr/simbad/sim-tap")
-    # http://simbad.u-strasbg.fr/simbad/tap/tapsearch.html
-    query = '''
-    SELECT basic.OID, ra, dec, main_id, pmra, pmdec
-    FROM basic JOIN ident ON oidref = oid
-    WHERE id = '{}';
-    '''.format(target)
+def update_coordinates_with_proper_motion(info_dict, time_obs):
+    parameter_names = {
+        'dist': 'Distance (pc)',
+        'pm_ra': 'Proper Motion RA (mas/yr)',
+        'pm_dec': 'Proper Motion DEC (mas/yr)'
+    }
 
-    result = service.search(query)
-    # TODO check that simbad returned a value
+    missing_values = [parameter_names[key] for key in ['dist', 'pm_ra', 'pm_dec'] if info_dict.get(key, 0.0) == 0.0]
 
-    # set up astropy object
-    coord = SkyCoord(
-        ra=result['ra'][0] * u.deg,
-        dec=result['dec'][0] * u.deg,
-        distance=1 * u.pc,
-        pm_ra_cosdec=result['pmra'][0] * u.mas / u.yr,
-        pm_dec=result['pmdec'][0] * u.mas / u.yr,
-        frame="icrs",
-        obstime=Time("2000-1-1T00:00:00")
-    )
+    if missing_values:
+        missing_values = ", ".join(missing_values)
+        log_info("Warning: Cannot account for proper motion due to missing values in: "
+                 f"\n{missing_values}. Please re-run and fill in values in the initialization file to account "
+                 f"for proper motion", warn=True)
 
-    hdu = fits.open(hdufile)[0]
+        return info_dict['ra'], info_dict['dec']
+    else:
+        time_j2000 = Time(2000.0, format='jyear')
+        time_obs = Time(time_obs, format='jd')
 
-    try:
-        dateobs = hdu.header['DATE_OBS']
-    except:
-        dateobs = hdu.header['DATE']
+        coord = SkyCoord(
+            ra=info_dict['ra'] * u.deg,
+            dec=info_dict['dec'] * u.deg,
+            distance=info_dict['dist'] * u.pc,
+            pm_ra_cosdec=info_dict['pm_ra'] * u.mas / u.yr,
+            pm_dec=info_dict['pm_dec'] * u.mas / u.yr,
+            frame="icrs",
+            obstime=time_j2000
+        )
 
-    # ignore timezone
-    if len(dateobs.split('-')) == 4:
-        dateobs = '-'.join(dateobs.split('-')[:-1])
-
-    t = Time(dateobs, format='isot', scale='utc')
-    coordpm = coord.apply_space_motion(new_obstime=t)
-
-    # wcs coordinate translation
-    wcs = WCS(hdu.header)
-
-    pixcoord = wcs.wcs_world2pix([[coordpm.ra.value, coordpm.dec.value]], 0)
-
-    if verbose:
-        print("Simbad:", result)
-        print("\nObs Date:", t)
-        print("NEW:", coordpm.ra, coordpm.dec)
-        print("\nTarget Location:", np.round(pixcoord[0], 2))
-
-    return pixcoord[0]
+        updated_coord = coord.apply_space_motion(new_obstime=time_obs)
+        return updated_coord.ra.deg, updated_coord.dec.deg
 
 
 def gaussian_psf(x, y, x0, y0, a, sigx, sigy, rot, b):
@@ -1759,7 +1775,7 @@ def main():
                  'midT': None, 'midTUnc': None, 'rprs': None, 'rprsUnc': None, 'aRs': None, 'aRsUnc': None,
                  'inc': None, 'incUnc': None, 'omega': None, 'ecc': None, 'teff': None,
                  'teffUncPos': None, 'teffUncNeg': None, 'met': None, 'metUncPos': None, 'metUncNeg': None,
-                 'logg': None, 'loggUncPos': None, 'loggUncNeg': None}
+                 'logg': None, 'loggUncPos': None, 'loggUncNeg': None, 'dist': None, 'pm_ra': None, 'pm_dec': None}
 
     # ---USER INPUTS--------------------------------------------------------------------------
     if isinstance(args.realtime, str):
@@ -2014,8 +2030,8 @@ def main():
                 plateStatus.setCurrentFilename(ifile)
                 first_image = fits.getdata(ifile)
                 try:
-                    get_first = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
-                    if np.isnan(get_first[0]):
+                    initial_centroid = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
+                    if np.isnan(initial_centroid[0]):
                         inc += 1
                     else:
                         break
@@ -2042,8 +2058,10 @@ def main():
                 wcs_header = fits.getheader(filename=wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header)
 
-                exotic_UIprevTPX, exotic_UIprevTPY = check_targetpixelwcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                          pDict['ra'], pDict['dec'], ra_wcs, dec_wcs)
+                exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(exotic_UIprevTPX, exotic_UIprevTPY,
+                                                                            pDict, ra_wcs, dec_wcs,
+                                                                            fits.getdata(inputfiles[0]),
+                                                                            jd_times[0])
                 ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 

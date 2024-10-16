@@ -77,7 +77,10 @@
             "Star Metallicity (-) Uncertainty": -0.08,
             "Star Surface Gravity (log(g))": 4.22,
             "Star Surface Gravity (+) Uncertainty": 0.04,
-            "Star Surface Gravity (-) Uncertainty": -0.04
+            "Star Surface Gravity (-) Uncertainty": -0.04,
+            "Star Distance (pc)": 289.21,
+            "Star Proper Motion RA (mas/yr)": -9.82,
+            "Star Proper Motion DEC (mas/yr)": 3.48
     },
     "optional_info": {
             "Pre-reduced File:": "/sample-data/NormalizedFlux_HAT-P-32 b_December 17, 2017.txt",

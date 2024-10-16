@@ -106,7 +106,10 @@ class NASAExoplanetArchive:
                 "Star Metallicity (-) Uncertainty": self.pl_dict['metUncNeg'],
                 "Star Surface Gravity (log(g))": self.pl_dict['logg'],
                 "Star Surface Gravity (+) Uncertainty": self.pl_dict['loggUncPos'],
-                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg']
+                "Star Surface Gravity (-) Uncertainty": self.pl_dict['loggUncNeg'],
+                "Star Distance (pc)": self.pl_dict['dist'],
+                "Star Proper Motion RA (mas/yr)": self.pl_dict['pm_ra'],
+                "Star Proper Motion DEC (mas/yr)": self.pl_dict['pm_dec']
             }
 
             return json.dumps(flabels, indent=4)
@@ -208,6 +211,7 @@ class NASAExoplanetArchive:
                       "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                       "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                       "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
+                      "sy_pmra,sy_pmdec,sy_dist,"
                       "st_logg,st_loggerr1,st_loggerr2,st_mass,st_rad,st_raderr1,st_raderr2,ra,dec,pl_pubdate",
             "from": "ps",
             "where": "tran_flag = 1 and default_flag = 1",
@@ -355,7 +359,10 @@ class NASAExoplanetArchive:
             'metUncNeg': float(min(-0.01, data['st_meterr2'])) if 'st_meterr2' in data and data['st_meterr2'] is not None else -0.01,
             'logg': float(data['st_logg']) if 'st_logg' in data and data['st_logg'] is not None else np.nan,
             'loggUncPos': float(data['st_loggerr1']) if 'st_loggerr1' in data and data['st_loggerr1'] is not None else np.nan,
-            'loggUncNeg': float(data['st_loggerr2']) if 'st_loggerr2' in data and data['st_loggerr2'] is not None else np.nan
+            'loggUncNeg': float(data['st_loggerr2']) if 'st_loggerr2' in data and data['st_loggerr2'] is not None else np.nan,
+            'dist': float(data['sy_dist']) if 'sy_dist' in data and data['sy_dist'] is not None else np.nan,
+            'pm_dec': float(data['sy_pmdec']) if 'sy_pmdec' in data and data['sy_pmdec'] is not None else np.nan,
+            'pm_ra': float(data['sy_pmra']) if 'sy_pmra' in data and data['sy_pmra'] is not None else np.nan
         }
 
         if self.pl_dict['aRsUnc'] == 0:

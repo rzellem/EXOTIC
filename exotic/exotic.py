@@ -411,7 +411,10 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Star Metallicity Negative Uncertainty ([FE/H])",
                      "Star Surface Gravity (log(g))",
                      "Star Surface Gravity Positive Uncertainty (log(g))",
-                     "Star Surface Gravity Negative Uncertainty (log(g))"]
+                     "Star Surface Gravity Negative Uncertainty (log(g))",
+                     "Star Distance (pc)",
+                     "Star Proper Motion RA (mas/yr)",
+                     "Star Proper Motion DEC (mas/yr)"]
 
     # Conversion between hours to degrees if user entered ra and dec
     if userpdict['ra'] is None:

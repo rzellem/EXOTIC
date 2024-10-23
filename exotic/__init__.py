@@ -35,31 +35,40 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-import importlib_metadata as metadata
+
+# Import metadata handling based on Python version
+try:
+    from importlib import metadata  # Python 3.8+
+except ImportError:
+    # Fallback to importlib_metadata for older versions
+    import importlib_metadata as metadata  # Python <3.8
+
 from pathlib import Path
 import sys
 
-# extend PYTHONPATH
+# Extend PYTHONPATH to include current directory and parent directory
+# This ensures imports can find modules in the current package structure
 path_update = ['.', str(Path(__file__).resolve().parent)]
 for p in path_update:
     if p not in sys.path:
         sys.path.append(p)
 
-try:  # module import
+# Import custom version reading function for fallback scenario
+try:  
+    # First attempt: import as a relative module (when running as part of a package)
     from .api.versioning import version_read
-except ImportError:  # package import
+except ImportError:
+    # Second attempt: import as an absolute package (when running standalone)
     from api.versioning import version_read
 
-ignore = True
-
+# Version detection 
 try:
+    # First attempt: get version from package metadata
     __version__ = metadata.version(__name__)
 except metadata.PackageNotFoundError:
-    # package is not installed, try reading from exotic script
+    # Second attempt: package is not installed, try reading version from exotic script
     try:
         __version__ = version_read("exotic.py")
     except IOError:
-        # unable to read from exotic script
+        # Unable to read from exotic script
         __version__ = "unknown"
-        pass
-    pass

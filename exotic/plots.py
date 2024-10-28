@@ -170,6 +170,31 @@ def plot_variable_residuals(save):
     plt.close()
 
 
+def plot_airmass_with_residuals(airmass, airmass_model, time, save, position):
+    residuals = airmass - airmass_model
+
+    fig, axs = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+
+    axs[0].plot(time, airmass, label='Airmass', color='blue')
+    axs[0].plot(time, airmass_model, label='Airmass Model', color='orange')
+    axs[0].set_ylabel("Airmass")
+    axs[0].legend()
+
+    axs[1].plot(time, residuals, label='Residuals', color='red')
+    axs[1].set_ylabel("Residuals")
+    axs[1].set_xlabel("Time [JD]")
+    axs[1].legend()
+
+    position = " ".join(map(str, position))
+    position = position.replace(' ', '_').replace(',', '_')
+
+    title = f"Variable_Airmass_Combined_{position}.png"
+
+    plt.tight_layout()
+    plt.savefig(Path(save) / "temp" / title)
+    plt.close()
+
+
 def plot_stellar_variability(vsp_params, save, star_name=None, position=None):
     for vsp_p in vsp_params:
         plt.errorbar(vsp_p['time'], vsp_p['mag'], yerr=vsp_p['mag_err'], color="tomato", fmt='.')

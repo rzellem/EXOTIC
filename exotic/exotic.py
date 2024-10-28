@@ -135,10 +135,10 @@ except ImportError:
     from .plate_status import PlateStatus
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
-        plot_stellar_variability, plot_variable_residuals
+        plot_stellar_variability, plot_variable_residuals, plot_airmass_with_residuals
 except ImportError:  # package import
     from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
-        plot_stellar_variability, plot_variable_residuals
+        plot_stellar_variability, plot_variable_residuals, plot_airmass_with_residuals
 try:  # tools
     from utils import round_to_2, user_input
 except ImportError: # package import
@@ -1526,7 +1526,7 @@ def detrend_and_calculate_magnitude(norm_flux, airmass_model, comparison_star_pa
     return Mt, Mt_err
 
 
-def analyze_fortuitous_star(target_key, star_coords, comparison_star_params, aper_data, psf_data, jd_times, fortuitous_stars_id):
+def analyze_fortuitous_star(target_key, star_coords, comparison_star_params, aper_data, psf_data, jd_times, fortuitous_stars_id, save):
     target_flux = calculate_fortuitous_star_flux(target_key, comparison_star_params, aper_data, psf_data)
 
     mask = np.isin(jd_times, comparison_star_params['times'])
@@ -1536,6 +1536,9 @@ def analyze_fortuitous_star(target_key, star_coords, comparison_star_params, ape
     norm_flux /= np.nanmedian(norm_flux)
 
     airmass_model, a2 = calculate_airmass_model(norm_flux, comparison_star_params)
+
+    plot_airmass_with_residuals(comparison_star_params['airmass'], airmass_model, comparison_star_params['times'], save,
+                                star_coords)
 
     Mt, Mt_err = detrend_and_calculate_magnitude(norm_flux, airmass_model, comparison_star_params, a2)
 
@@ -1555,7 +1558,8 @@ def process_fortuitous_stars(fortuitous_stars_coords, jd_times, ref_flux, aper_d
             target_key = f"fort{i + 1}"
 
             fortuitous_params[tuple(star_coords)] = analyze_fortuitous_star(target_key, star_coords, comparison_star_params,
-                                                                            aper_data, psf_data, jd_times, fortuitous_stars_id)
+                                                                            aper_data, psf_data, jd_times, fortuitous_stars_id,
+                                                                            save)
 
             plot_stellar_variability(fortuitous_params[tuple(star_coords)], save, position=star_coords)
         except Exception as e:

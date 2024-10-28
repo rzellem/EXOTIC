@@ -508,13 +508,13 @@ def target_star_coords(coords, planet):
 
 
 def fortuitous_star_coords(fortuitous_stars):
-    fortuitous_stars = check_star_coords(fortuitous_stars)
+    fortuitous_stars = check_star_coords(fortuitous_stars, limit=False)
 
     return fortuitous_stars if fortuitous_stars else []
 
 
 def comparison_star_coords(comp_stars, rt_bool):
-    comp_stars = check_star_coords(comp_stars)
+    comp_stars = check_star_coords(comp_stars, limit=True)
 
     if not comp_stars:
         comp_stars = get_comparison_star_coords(comp_stars, rt_bool)
@@ -524,18 +524,20 @@ def comparison_star_coords(comp_stars, rt_bool):
 
     return comp_stars
 
-def check_star_coords(comp_stars):
-    if isinstance(comp_stars, list) and 1 <= len(comp_stars) <= 10 and \
-            all(isinstance(star, list) for star in comp_stars):
-        comp_stars = [star for star in comp_stars if star != []]
+def check_star_coords(comp_stars, limit=True):
+    filtered_comp_stars = []
+
+    if isinstance(comp_stars, list) and all(isinstance(star, list) for star in comp_stars):
+        if limit and not (1 <= len(comp_stars) <= 10):
+            return filtered_comp_stars
+
+        filtered_comp_stars = [star for star in comp_stars if star]
     elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
         comp_stars = re.findall(r"[-+]?\d*\.?\d+", comp_stars)
         comp_stars = [int(float(comp_star)) for comp_star in comp_stars]
-        comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
-    else:
-        comp_stars = []
+        filtered_comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
 
-    return comp_stars
+    return filtered_comp_stars
 
 def get_comparison_star_coords(comp_stars, rt_bool):
     while True:

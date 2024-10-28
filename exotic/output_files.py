@@ -140,17 +140,20 @@ class OutputFiles:
         plate_status.writePlateStatus(plate_status_file)
 
 class AIDOutputFiles:
-    def __init__(self, fit, p_dict, i_dict, auid, chart_id, vsp_params):
-        self.fit = fit
-        self.auid = auid
+    def __init__(self, p_dict, i_dict, chart_id, star_params):
         self.chart_id = chart_id
         self.p_dict = p_dict
         self.i_dict = i_dict
         self.dir = Path(self.i_dict['save'])
-        self.vsp_params = vsp_params
+        self.star_params = star_params
 
-    def aavso(self):
-        params_file = self.dir / f"AID_AAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
+    def aavso(self, star_coords):
+        if self.star_params[0].get('id'):
+            name = self.star_params[0]['id']
+        else:
+            name = " ".join(map(str, star_coords))
+
+        params_file = self.dir / f"AID_AAVSO_{name.replace(' ', '_').replace(',', '_')}_{self.i_dict['date']}.txt"
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
@@ -167,10 +170,10 @@ class AIDOutputFiles:
                 "aavso.org/data-usage-guidelines\n")
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
-            for vsp_p in self.vsp_params:
-                f.write(f"{self.auid},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
-                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na," 
-                        f"{round(vsp_p['airmass'], 7)},na,{self.chart_id},na\n")
+            for params in self.star_params:
+                f.write(f"{params['id']},{round(params['time'], 5)},{round(params['mag'], 5)},{round(params['mag_err'], 5)},"
+                        f"{self.i_dict['filter']},NO,STD,{params['cname']},{round(params['cmag'], 5)},na,na," 
+                        f"{round(params['airmass'], 7)},na,{self.chart_id},na\n")
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

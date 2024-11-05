@@ -1245,16 +1245,28 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
 
 # Method calculates the flux of the star (uses the skybg_phot method to do background sub)
 def aperPhot(data, starIndex, xc, yc, r=5, dr=5):
-    if dr > 0 and not np.isnan(xc) and not np.isnan(yc):
+    # Check for invalid coordinates
+    if np.isnan(xc) or np.isnan(yc):
+        return 0, 0
+    
+    # Calculate background if dr > 0
+    if dr > 0:
         bgflux, sigmabg, Nbg = skybg_phot(data, starIndex, xc, yc, r + 2, dr)
     else:
         bgflux, sigmabg, Nbg = 0, 0, 0
-
+    
+    # Create aperture and mask
     aperture = CircularAperture(positions=[(xc, yc)], r=r)
     mask = aperture.to_mask(method='exact')[0]
     data_cutout = mask.cutout(data)
+    
+    # Check if aperture is valid
+    if data_cutout is None:
+        # Aperture is partially or fully outside the image
+        return 0, bgflux    # Return zero flux but valid background
+    
+    # Calculate and return aperture sum
     aperture_sum = (mask.data * (data_cutout - bgflux)).sum()
-
     return aperture_sum, bgflux
 
 

@@ -1909,8 +1909,19 @@ def main():
                 darksImgList = []
                 for darkFile in exotic_infoDict['darks']:
                     darkData = fits.getdata(darkFile)
+                    #Validate if a frame is likely a dark frame using a simple mean/max ratio.
+                    max_val = np.max(darkData)
+                    mean_val = np.median(darkData)
+                    ratio = mean_val / max_val
+                    #If the median of all the pixels in the darkfile is above 50% of the max value, the file is likely not a true dark file
+                    if ratio > 0.5:
+                        log_info(f"\nWarning: Skipping suspicious dark frame {darkFile}: median/max ratio = {ratio}\n", warn=True)
+                        continue
                     darksImgList.append(darkData)
-                generalDark = np.median(darksImgList, axis=0)
+                if not darksImgList:
+                    log_info(f"\n\nNo valid dark frames found! Proceeding without dark correction.")
+                else:
+                    generalDark = np.median(darksImgList, axis=0)
 
             if exotic_infoDict['biases']:
                 biasesImgList = []

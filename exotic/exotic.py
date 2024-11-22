@@ -1911,8 +1911,8 @@ def main():
                     darkData = fits.getdata(darkFile)
                     #Validate if a frame is likely a dark frame using a simple mean/max ratio.
                     max_val = np.max(darkData)
-                    mean_val = np.median(darkData)
-                    ratio = mean_val / max_val
+                    median_val = np.median(darkData)
+                    ratio = median_val / max_val
                     #If the median of all the pixels in the darkfile is above 50% of the max value, the file is likely not a true dark file
                     if ratio > 0.5:
                         log_info(f"\nWarning: Skipping suspicious dark frame {darkFile}: median/max ratio = {ratio}\n", warn=True)

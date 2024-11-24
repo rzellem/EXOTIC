@@ -1906,21 +1906,30 @@ def main():
         if fitsortext == 1:
             # Only do the dark correction if user selects this option
             if exotic_infoDict['darks']:
+                # First pass: find maximum value across all dark files
+                # this value will be a proxy for the saturation value
+                # EXOTIC will reject a dark frame if it's too bright, i.e. its median relative to max_across_darks
+                max_across_darks = 0
+                for darkFile in exotic_infoDict['darks']:
+                    darkData = fits.getdata(darkFile)
+                    file_max = np.max(darkData)
+                    max_across_darks = max(max_across_darks, file_max)
+                # Second pass: validate darks
                 darksImgList = []
                 for darkFile in exotic_infoDict['darks']:
                     darkData = fits.getdata(darkFile)
-                    #Validate if a frame is likely a dark frame using a simple mean/max ratio.
-                    max_val = np.max(darkData)
                     median_val = np.median(darkData)
-                    ratio = median_val / max_val
-                    #If the median of all the pixels in the darkfile is above 50% of the max value, the file is likely not a true dark file
-                    if ratio > 0.5:
+                    ratio = median_val / max_across_darks  # Compare dark file median to saturation value
+                    #If the median of all the pixels in the darkfile is above 80% of the saturation value, the file is likely not a valid dark file
+                    if ratio > 0.8:
                         log_info(f"\nWarning: Skipping suspicious dark frame {darkFile}: median/max ratio = {ratio}\n", warn=True)
                         continue
                     darksImgList.append(darkData)
+
                 if not darksImgList:
                     log_info(f"\n\nNo valid dark frames found! Proceeding without dark correction.")
                 else:
+                    #Create the master dark file to calibrate the science frames
                     generalDark = np.median(darksImgList, axis=0)
 
             if exotic_infoDict['biases']:

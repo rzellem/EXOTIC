@@ -79,6 +79,8 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         interval = ZScaleInterval()
         vmin, vmax = interval.get_limits(image)
 
+        norm = ImageNormalize(image, interval=interval, stretch=stretch, vmin=vmin, vmax=vmax)
+
         im = plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
         fig.colorbar(im)
 

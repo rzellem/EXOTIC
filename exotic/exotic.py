@@ -1914,13 +1914,11 @@ def main():
                     darkData = fits.getdata(darkFile)
                     file_max = np.max(darkData)
                     saturation_value = max(saturation_value, file_max)
-                print("saturation value:", saturation_value)
                 # We also check a science frame looking for the saturation value
                 inputfile = corruption_check(exotic_infoDict['images'])[0]
                 inputfileData = fits.getdata(inputfile)
                 file_max = np.max(inputfileData)
                 saturation_value = max(saturation_value, file_max)
-                print("saturation value:", saturation_value)
                 # Second pass: validate darks
                 darksImgList = []
                 for darkFile in exotic_infoDict['darks']:

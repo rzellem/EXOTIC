@@ -1911,10 +1911,9 @@ def main():
                 darksMedians = []
                 # First pass: collect all the dark frames medians and data 
                 for darkFile in exotic_infoDict['darks']:
-                    with fits.open(darkFile) as hdul:
-                        darkData = hdul[0].data
-                        darkMedian = np.nanmedian(darkData)
-                        darksMedians.append((darkFile, darkData, darkMedian))
+                    darkData = fits.getdata(darkFile)
+                    darkMedian = np.nanmedian(darkData)
+                    darksMedians.append((darkFile, darkData, darkMedian))
 
                 dMedian = np.median([median for _, _, median in darksMedians])
                 threshold = 1.7  # 70% higher than overall median

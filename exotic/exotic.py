@@ -1906,36 +1906,31 @@ def main():
         if fitsortext == 1:
             # Only do the dark correction if user selects this option
             if exotic_infoDict['darks']:
-                # First pass: find max value across all dark files
-                # this value will be a proxy for the saturation value
-                # EXOTIC will reject a dark frame if it's too bright, i.e. its median relative to the saturation value
-                saturation_value = 0
+                # EXOTIC will filter dark files whose median is much higher than the overall dark files median
+                # e.g. to discard saturated dark files that may negatively affect the master dark used to calibrate the science frames
+                darksMedians = []
+                # First pass: collect all the dark frames medians and data 
                 for darkFile in exotic_infoDict['darks']:
-                    darkData = fits.getdata(darkFile)
-                    file_max = np.max(darkData)
-                    saturation_value = max(saturation_value, file_max)
-                # We also check a science frame looking for the saturation value
-                inputfile = corruption_check(exotic_infoDict['images'])[0]
-                inputfileData = fits.getdata(inputfile)
-                file_max = np.max(inputfileData)
-                saturation_value = max(saturation_value, file_max)
-                # Second pass: validate darks
+                    with fits.open(darkFile) as hdul:
+                        darkData = hdul[0].data
+                        darkMedian = np.nanmedian(darkData)
+                        darksMedians.append((darkFile, darkData, darkMedian))
+
+                dMedian = np.median([median for _, _, median in darksMedians])
+                threshold = 1.7  # 70% higher than overall median
+                # Second pass: filter dark frames
                 darksImgList = []
-                for darkFile in exotic_infoDict['darks']:
-                    darkData = fits.getdata(darkFile)
-                    median_val = np.median(darkData)
-                    ratio = median_val / saturation_value # Compare dark file median to saturation value
-                    #If the median of all the pixels in the darkfile is above 80% of the saturation value, the file is likely not a valid dark file
-                    if ratio > 0.8:
-                        log_info(f"\nWarning: Skipping suspicious dark frame {darkFile}: median/max ratio = {ratio}\n", warn=True)
+                for darkFile, darkData, darkMedian in darksMedians:
+                    median_ratio = darkMedian / dMedian
+                    if median_ratio > threshold:
+                        log_info(
+                            f"\nWarning: Skipping suspicious dark frame {darkFile}: "
+                            f"median/overall_median = {median_ratio:.2f}\n",
+                            warn=True
+                        )
                         continue
                     darksImgList.append(darkData)
-
-                if not darksImgList:
-                    log_info(f"\n\nNo valid dark frames found! Proceeding without dark correction.")
-                else:
-                    #Create the master dark file to calibrate the science frames
-                    generalDark = np.median(darksImgList, axis=0)
+                generalDark = np.median(darksImgList, axis=0)
 
             if exotic_infoDict['biases']:
                 biasesImgList = []

@@ -1906,9 +1906,28 @@ def main():
         if fitsortext == 1:
             # Only do the dark correction if user selects this option
             if exotic_infoDict['darks']:
-                darksImgList = []
+                # EXOTIC will filter dark files whose median is much higher than the overall dark files median
+                # e.g. to discard saturated dark files that may negatively affect the master dark used to calibrate the science frames
+                darksMedians = []
+                # First pass: collect all the dark frames medians and data 
                 for darkFile in exotic_infoDict['darks']:
                     darkData = fits.getdata(darkFile)
+                    darkMedian = np.nanmedian(darkData)
+                    darksMedians.append((darkFile, darkData, darkMedian))
+
+                dMedian = np.median([median for _, _, median in darksMedians])
+                threshold = 1.7  # 70% higher than overall median
+                # Second pass: filter dark frames
+                darksImgList = []
+                for darkFile, darkData, darkMedian in darksMedians:
+                    median_ratio = darkMedian / dMedian
+                    if median_ratio > threshold:
+                        log_info(
+                            f"\nWarning: Skipping suspicious dark frame {darkFile}: "
+                            f"median/overall_median = {median_ratio:.2f}\n",
+                            warn=True
+                        )
+                        continue
                     darksImgList.append(darkData)
                 generalDark = np.median(darksImgList, axis=0)
 

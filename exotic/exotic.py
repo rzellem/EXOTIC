@@ -1906,20 +1906,27 @@ def main():
         if fitsortext == 1:
             # Only do the dark correction if user selects this option
             if exotic_infoDict['darks']:
-                # First pass: find maximum value across all dark files
+                # First pass: find max value across all dark files
                 # this value will be a proxy for the saturation value
-                # EXOTIC will reject a dark frame if it's too bright, i.e. its median relative to max_across_darks
-                max_across_darks = 0
+                # EXOTIC will reject a dark frame if it's too bright, i.e. its median relative to the saturation value
+                saturation_value = 0
                 for darkFile in exotic_infoDict['darks']:
                     darkData = fits.getdata(darkFile)
                     file_max = np.max(darkData)
-                    max_across_darks = max(max_across_darks, file_max)
+                    saturation_value = max(saturation_value, file_max)
+                print("saturation value:", saturation_value)
+                # We also check a science frame looking for the saturation value
+                inputfile = corruption_check(exotic_infoDict['images'])[0]
+                inputfileData = fits.getdata(inputfile)
+                file_max = np.max(inputfileData)
+                saturation_value = max(saturation_value, file_max)
+                print("saturation value:", saturation_value)
                 # Second pass: validate darks
                 darksImgList = []
                 for darkFile in exotic_infoDict['darks']:
                     darkData = fits.getdata(darkFile)
                     median_val = np.median(darkData)
-                    ratio = median_val / max_across_darks  # Compare dark file median to saturation value
+                    ratio = median_val / saturation_value # Compare dark file median to saturation value
                     #If the median of all the pixels in the darkfile is above 80% of the saturation value, the file is likely not a valid dark file
                     if ratio > 0.8:
                         log_info(f"\nWarning: Skipping suspicious dark frame {darkFile}: median/max ratio = {ratio}\n", warn=True)

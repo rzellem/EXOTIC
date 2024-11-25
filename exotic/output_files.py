@@ -167,11 +167,12 @@ class AIDOutputFiles:
                 "aavso.org/data-usage-guidelines\n")
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
+            # Filter out entries where mag_err equals 1
             for vsp_p in self.vsp_params:
-                f.write(f"{self.auid},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
-                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na," 
-                        f"{round(vsp_p['airmass'], 7)},na,{self.chart_id},na\n")
-
+                if vsp_p['mag_err'] < 1:  # Only write lines where mag_err is less than 1
+                    f.write(f"{self.auid},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
+                            f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na," 
+                            f"{round(vsp_p['airmass'], 7)},na,{self.chart_id},na\n")
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     priors = {

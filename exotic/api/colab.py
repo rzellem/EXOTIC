@@ -370,7 +370,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "Observing Notes": "%s",
 
             "Plate Solution? (y/n)": "y",
-            "Add Comparison Stars from AAVSO? (y/n)": "n",
+            "Add Comparison Stars from AAVSO? (y/n)": "y",
 
             "Target Star X & Y Pixel": %s,
             "Comparison Star(s) X & Y Pixel": %s,

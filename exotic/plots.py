@@ -50,6 +50,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     plt.close()
 
 def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method, min_aper_fov, min_annulus_fov):
+
     ref_circle, ref_circle_sky = None, None
     picframe = 10. * (aper + 15. * sigma)
 
@@ -65,12 +66,14 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         else:
             outer_circle_color = 'lime'
 
-        # Create the target and reference circles
-        target_circle = plt.Circle((x_targ, y_targ), aper, color='r', fill=False, ls='-')
-        target_circle_sky = plt.Circle((x_targ, y_targ), aper + annulus, color=outer_circle_color, fill=False, ls='-')
+        # Create the target circles
+        # We are using abs(aper) to account for a negative aperture in case EXOTIC is not using a comparison star
+        target_circle = plt.Circle((x_targ, y_targ), abs(aper), color=outer_circle_color, fill=False, ls='-')
+        target_circle_sky = plt.Circle((x_targ, y_targ), abs(aper) + annulus, color=outer_circle_color, fill=False, ls='-')
 
+        # IF EXOTIC is using a comparison star, create its circles
         if aper >= 0:
-            ref_circle = plt.Circle((x_ref, y_ref), aper, color='r', fill=False, ls='-')
+            ref_circle = plt.Circle((x_ref, y_ref), aper, color=outer_circle_color, fill=False, ls='-')
             ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color=outer_circle_color, fill=False, ls='-')
 
         interval = ZScaleInterval()
@@ -83,23 +86,23 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         ax.add_artist(target_circle)
         ax.add_artist(target_circle_sky)
-        ax.text(x_targ + aper + annulus + 5, y_targ, targ_name, color='w', fontsize=10,
+        ax.text(x_targ + abs(aper) + annulus + 5, y_targ, targ_name, color='w', fontsize=10,
                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
-        if aper >= 0:
+        if aper >= 0: #EXOTIC is using a comparison star
             ax.add_artist(ref_circle)
             ax.add_artist(ref_circle_sky)
             ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
         handles = []
-        label_aper = f"{opt_method} Photometry\n(Min Aper: {min_aper_fov:.2f} px)\n(Min Annulus: {min_annulus_fov:.2f} px)"
+        label_aper = f"{opt_method} Photometry\n(Min Aper: {abs(min_aper_fov):.2f} px)\n(Min Annulus: {min_annulus_fov:.2f} px)"
         
         if opt_method == "Aperture":
-            aperture_line = Line2D([], [], color='r', linestyle='-', label=label_aper)
+            aperture_line = Line2D([], [], color=outer_circle_color, linestyle='-', label=label_aper)
             handles.append(aperture_line)
         elif opt_method == "PSF":
-            psf_line = Line2D([], [], color='lime', linestyle='-', label=label_aper)
+            psf_line = Line2D([], [], color=outer_circle_color, linestyle='-', label=label_aper)
             handles.append(psf_line)
 
         plt.title(f"FOV for {targ_name}\n({image_scale})")

@@ -1329,6 +1329,55 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
         plt.show()
     return mode(dat.flatten(), nan_policy='omit', keepdims=True).mode[0], np.nanstd(dat.flatten()), np.sum(mask)
 
+def process_dark_frames(dark_files):
+    """Process dark frames and return the master dark."""
+    if not dark_files:
+        return None
+    # Dark files whose median is much higher than the overall dark files median will be filtered
+    # e.g. to discard saturated dark files that may negatively affect the master dark used to calibrate the science frames
+    # First pass: collect all dark frame medians
+    darks_medians = [(dark_file, np.nanmedian(fits.getdata(dark_file))) for dark_file in dark_files]
+
+    d_median = np.median([median for _, median in darks_medians])
+    threshold = 1.7  # 70% higher than overall median
+
+    # Second pass: collect valid dark frames
+    darks_img_list = []
+    for dark_file, dark_median in darks_medians:
+        median_ratio = dark_median / d_median
+        if median_ratio > threshold:
+            log_info(
+                f"\nWarning: Skipping suspicious dark frame {dark_file}: "
+                f"median/overall_median = {median_ratio:.2f}\n",
+                warn=True
+            )
+            continue
+        dark_data = fits.getdata(dark_file)
+        darks_img_list.append(dark_data)
+            
+    return np.median(darks_img_list, axis=0) if darks_img_list else None
+
+def process_bias_frames(bias_files):
+    """Process bias frames and return the master bias."""
+    if not bias_files:
+        return None
+        
+    biases_img_list = [fits.getdata(bias_file) for bias_file in bias_files]  
+    return np.median(biases_img_list, axis=0) if biases_img_list else None
+
+def process_flat_frames(flat_files, master_bias=None):
+    """Process flat frames and return the normalized master flat."""
+    if not flat_files:
+        return None
+        
+    flats_img_list = [fits.getdata(flat_file) for flat_file in flat_files]      
+    master_flat = np.median(flats_img_list, axis=0)
+    # Bias subtract after creating master flat
+    if master_bias is not None:
+        master_flat = master_flat - master_bias
+    # Normalize
+    medi = np.median(master_flat)
+    return master_flat / medi
 
 def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
     try:
@@ -1907,34 +1956,9 @@ def main():
 
         if fitsortext == 1:
             # Only do the dark correction if user selects this option
-            if exotic_infoDict['darks']:
-                darksImgList = []
-                for darkFile in exotic_infoDict['darks']:
-                    darkData = fits.getdata(darkFile)
-                    darksImgList.append(darkData)
-                generalDark = np.median(darksImgList, axis=0)
-
-            if exotic_infoDict['biases']:
-                biasesImgList = []
-                for biasFile in exotic_infoDict['biases']:
-                    biasData = fits.getdata(biasFile)
-                    biasesImgList.append(biasData)
-                generalBias = np.median(biasesImgList, axis=0)
-
-            if exotic_infoDict['flats']:
-                flatsImgList = []
-                for flatFile in exotic_infoDict['flats']:
-                    flatData = fits.getdata(flatFile)
-                    flatsImgList.append(flatData)
-                notNormFlat = np.median(flatsImgList, axis=0)
-
-                # if the bias exists, bias subtract the flatfield
-                if exotic_infoDict['biases']:
-                    notNormFlat = notNormFlat - generalBias
-
-                # NORMALIZE
-                medi = np.median(notNormFlat)
-                generalFlat = notNormFlat / medi
+            generalDark = process_dark_frames(exotic_infoDict['darks'])
+            generalBias = process_bias_frames(exotic_infoDict['biases'])
+            generalFlat = process_flat_frames(exotic_infoDict['flats'], generalBias)
 
             if exotic_infoDict['demosaic_fmt']:
                 demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()

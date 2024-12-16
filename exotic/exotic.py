@@ -1334,12 +1334,8 @@ def process_dark_frames(dark_files):
     # Dark files whose median is much higher than the overall dark files median will be filtered
     # e.g. to discard saturated dark files that may negatively affect the master dark used to calibrate the science frames
     # First pass: collect all dark frame medians
-    darks_medians = []
-    for dark_file in dark_files:
-        dark_data = fits.getdata(dark_file)
-        dark_median = np.nanmedian(dark_data)
-        darks_medians.append((dark_file, dark_median))
-        
+    darks_medians = [(dark_file, np.nanmedian(fits.getdata(dark_file))) for dark_file in dark_files]
+
     d_median = np.median([median for _, median in darks_medians])
     threshold = 1.7  # 70% higher than overall median
 
@@ -1364,11 +1360,7 @@ def process_bias_frames(bias_files):
     if not bias_files:
         return None
         
-    biases_img_list = []
-    for bias_file in bias_files:
-        bias_data = fits.getdata(bias_file)
-        biases_img_list.append(bias_data)
-            
+    biases_img_list = [fits.getdata(bias_file) for bias_file in bias_files]  
     return np.median(biases_img_list, axis=0) if biases_img_list else None
 
 def process_flat_frames(flat_files, master_bias=None):
@@ -1376,17 +1368,11 @@ def process_flat_frames(flat_files, master_bias=None):
     if not flat_files:
         return None
         
-    flats_img_list = []
-    for flat_file in flat_files:
-        flat_data = fits.getdata(flat_file)
-        flats_img_list.append(flat_data)
-            
+    flats_img_list = [fits.getdata(flat_file) for flat_file in flat_files]      
     master_flat = np.median(flats_img_list, axis=0)
-    
     # Bias subtract after creating master flat
     if master_bias is not None:
         master_flat = master_flat - master_bias
-        
     # Normalize
     medi = np.median(master_flat)
     return master_flat / medi

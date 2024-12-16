@@ -1272,7 +1272,9 @@ def aperPhot(data, starIndex, xc, yc, r=5, dr=5):
 
 def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
     # create a crude annulus to mask out bright background pixels
-    xv, yv = mesh_box([xc, yc], np.round(r + dr))
+    # the box will not extend beyond the borders of the image
+    image_height, image_width = data.shape
+    xv, yv = mesh_box([xc, yc], np.round(r + dr), maxx=image_width, maxy=image_height)
     rv = ((xv - xc) ** 2 + (yv - yc) ** 2) ** 0.5
     mask = (rv > r) & (rv < (r + dr))
     try:

@@ -902,18 +902,18 @@ def simbad_query(sample):
 
 # Apply calibrations if applicable
 def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
-    if gen_dark.size != 0:
+    if gen_dark is not None and gen_dark.size != 0:
         if i == 0:
             log_info("Dark subtracting images.")
         image_data = image_data - gen_dark
-    elif gen_bias.size != 0:  # if a dark is not available, then at least subtract off the pedestal via the bias
+    elif gen_bias is not None and gen_bias.size != 0:  # if a dark is not available, then at least subtract off the pedestal via the bias
         if i == 0:
             log_info("Bias-correcting images.")
         image_data = image_data - gen_bias
     else:
         pass
 
-    if gen_flat.size != 0:
+    if gen_flat is not None and gen_flat.size != 0:
         if i == 0:
             log_info("Flattening images.")
         gen_flat[gen_flat == 0] = 1

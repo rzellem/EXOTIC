@@ -37,13 +37,14 @@ class Inputs:
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
-            'random_seed': None, "demosaic_fmt": None, "demosaic_out": None
+            'random_seed': None, "demosaic_fmt": None, "demosaic_out": None, 'fortuitous_stars': None
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
             'date': obs_date, 'lat': latitude, 'long': longitude, 'elev': elevation, 'camera': camera,
             'pixel_bin': pixel_bin, 'notes': obs_notes, 'plate_opt': plate_solution_opt, 'aavso_comp': aavso_comp,
-            'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
+            'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords,
+            'fortuitous_stars': fortuitous_star_coords
         }
 
     def complete_red(self, planet):
@@ -195,6 +196,7 @@ class Inputs:
             'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
             'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'),
             'exposure': 'Exposure Time (s)',
+            'fortuitous_stars': 'Fortuitous Variable Star(s) X & Y Pixel',
             'random_seed': 'Random Seed'
         }
 
@@ -496,7 +498,7 @@ def target_star_coords(coords, planet):
     if isinstance(coords, list) and len(coords) == 2:
         pass
     elif isinstance(coords, str) and any(str.isdigit(x) for x in coords):
-        coords = re.findall(r"[-+]?(?:\d*\.?\d+)", coords)
+        coords = re.findall(r'[-+]?\d*\.?\d+', coords)
         coords = [int(float(coord)) for coord in coords]
     else:
         coords = [user_input(f"\nPlease enter {planet}'s X Pixel Coordinate: ", type_=int),
@@ -505,35 +507,53 @@ def target_star_coords(coords, planet):
     return coords
 
 
+def fortuitous_star_coords(fortuitous_stars):
+    fortuitous_stars = check_star_coords(fortuitous_stars, limit=False)
+
+    return fortuitous_stars if fortuitous_stars else []
+
+
 def comparison_star_coords(comp_stars, rt_bool):
-    if isinstance(comp_stars, list) and 1 <= len(comp_stars) <= 10 and \
-            all(isinstance(star, list) for star in comp_stars):
-        comp_stars = [star for star in comp_stars if star != []]
-    elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
-        comp_stars = re.findall(r"[-+]?(?:\d*\.?\d+)", comp_stars)
-        comp_stars = [int(float(comp_star)) for comp_star in comp_stars]
-        comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
-    else:
-        comp_stars = []
+    comp_stars = check_star_coords(comp_stars, limit=True)
 
     if not comp_stars:
-        while True:
-            if not rt_bool:
-                num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
-                if 1 <= num_comp_stars <= 10:
-                    break
-                log_info("\nError: The number of Comparison Stars entered is incorrect.", error=True)
-            else:
-                num_comp_stars = 1
-                break
-
-        for num in range(num_comp_stars):
-            x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=int)
-            y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=int)
-            comp_stars.append([x_pix, y_pix])
+        comp_stars = get_comparison_star_coords(comp_stars, rt_bool)
 
     if rt_bool and isinstance(comp_stars[0], list):
         comp_stars = comp_stars[0]
+
+    return comp_stars
+
+def check_star_coords(comp_stars, limit=True):
+    filtered_comp_stars = []
+
+    if isinstance(comp_stars, list) and all(isinstance(star, list) for star in comp_stars):
+        if limit and not (1 <= len(comp_stars) <= 10):
+            return filtered_comp_stars
+
+        filtered_comp_stars = [star for star in comp_stars if star]
+    elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
+        comp_stars = re.findall(r"[-+]?\d*\.?\d+", comp_stars)
+        comp_stars = [int(float(comp_star)) for comp_star in comp_stars]
+        filtered_comp_stars = [comp_stars[i:i+2] for i in range(0, len(comp_stars), 2)]
+
+    return filtered_comp_stars
+
+def get_comparison_star_coords(comp_stars, rt_bool):
+    while True:
+        if not rt_bool:
+            num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
+            if 1 <= num_comp_stars <= 10:
+                break
+            log_info("\nError: The number of Comparison Stars entered is incorrect.", error=True)
+        else:
+            num_comp_stars = 1
+            break
+
+    for num in range(num_comp_stars):
+        x_pix = user_input(f"\nComparison Star {num + 1} X Pixel Coordinate: ", type_=int)
+        y_pix = user_input(f"Comparison Star {num + 1} Y Pixel Coordinate: ", type_=int)
+        comp_stars.append([x_pix, y_pix])
 
     return comp_stars
 

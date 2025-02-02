@@ -99,6 +99,7 @@ from scipy.ndimage import binary_erosion
 from skimage.util import view_as_windows
 from skimage.transform import SimilarityTransform
 from skimage.color import rgb2gray
+import statsmodels.api as sm
 # error handling for scraper
 from tenacity import retry, stop_after_delay
 # color, color_demosaicing
@@ -134,10 +135,10 @@ except ImportError:
     from .plate_status import PlateStatus
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
-        plot_stellar_variability, plot_variable_residuals
+        plot_stellar_variability, plot_variable_residuals, plot_airmass_with_residuals
 except ImportError:  # package import
     from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
-        plot_stellar_variability, plot_variable_residuals
+        plot_stellar_variability, plot_variable_residuals, plot_airmass_with_residuals
 try:  # tools
     from utils import round_to_2, user_input
 except ImportError: # package import
@@ -836,13 +837,28 @@ def query_variable_star_apis(ra, dec):
 
 
 @retry(stop=stop_after_delay(30))
-def vsx_auid(ra, dec, radius=0.01, maglimit=14):
+def get_vsx_id(ra, dec, radius=0.01, magnitude_limit=15):
     try:
-        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
+        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={magnitude_limit}&format=json"
         result = requests.get(url)
-        return result.json()['VSXObjects']['VSXObject'][0]['AUID']
-    except Exception:
-        log.info("\nThe target star does not have an AUID.")
+        vsx_objects = result.json().get('VSXObjects', {})
+
+        if not vsx_objects:
+            log.info("\nNo VSX sources found for the specified coordinates. EXOTIC will continue to reduce the dataset"
+                     "\n with source with an unknown name.")
+            return False
+
+        vsx_object = vsx_objects['VSXObject'][0]
+
+        vsx_id = vsx_object.get('AUID') or vsx_object.get('Name') or False
+
+        if vsx_id:
+            return vsx_id
+        else:
+            log_info(f"\nWarning: The entered star at {ra} and {dec} does not have an AUID or name.", warn=True)
+            return False
+    except Exception as e:
+        log_info(f"Error: Occurred while fetching VSX ID - {e}", error=True)
         return False
 
 
@@ -979,7 +995,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
 
     if obs_filter == "CV":
         obs_filter = "V"
-    elif obs_filter == "R":
+    elif obs_filter == "R" or obs_filter == 'RJ':
         obs_filter = "Rc"
 
     if data['photometry']:
@@ -1159,7 +1175,7 @@ def update_coordinates_with_proper_motion(info_dict, time_obs):
         missing_values = ", ".join(missing_values)
         log_info("Warning: Cannot account for proper motion due to missing values in: "
                  f"\n{missing_values}. Please re-run and fill in values in the initialization file to account "
-                 f"for proper motion", warn=True)
+                 f"for proper motion.", warn=True)
 
         return info_dict['ra'], info_dict['dec']
     else:
@@ -1394,7 +1410,7 @@ def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
     return goodTimes
 
 
-def calculate_variablility(fit_lc_ref, fit_lc_best):
+def calculate_variability(fit_lc_ref, fit_lc_best):
     info_ref = None
 
     mask_oot_ref = (fit_lc_ref.transit == 1)
@@ -1430,7 +1446,7 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
             i = 0
         if k >= len(markers):
             k = 0
-        ref_comp[ckey] = calculate_variablility(fit_lc_refs[ckey]['myfit'], fit_lc_best)
+        ref_comp[ckey] = calculate_variability(fit_lc_refs[ckey]['myfit'], fit_lc_best)
 
         if ref_comp[ckey]:
             plt.errorbar(ref_comp[ckey]['fit_lc'].jd_times[ref_comp[ckey]['mask_ref']], ref_comp[ckey]['res'],
@@ -1445,7 +1461,22 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
     return comp_stars[min_std_dev]
 
 
-def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
+def gather_stellar_data(Mt, Mt_err, Mc, airmass, times, target_id, comparison_star_id, comparison_star_position):
+    return [
+        {
+            'id': target_id,
+            'time': times[i],
+            'airmass': airmass[i],
+            'mag': mt,
+            'mag_err': Mt_err[i],
+            'cname': comparison_star_id,
+            'cmag':Mc,
+            'pos': comparison_star_position
+        }
+        for i, mt in enumerate(Mt) if Mt_err[i] <= 1.0
+    ]
+
+def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, star_name, target_id):
     info_comps = {}
 
     try:
@@ -1454,14 +1485,14 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
                                                     save)
         else:
             comp_pos = comp_stars[best_comp]
-            info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+            info_comps[best_comp] = calculate_variability(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
     except Exception as e:
         log_info(f"Error selecting or calculating variability for comparison star: {e}", warn=True)
         return []
 
     try:
         comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
-        vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
+        vsp_id_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
     except StopIteration:
         log_info("Comparison star or VSP AUID not found.", warn=True)
         return []
@@ -1491,22 +1522,117 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
         return []
 
     try:
-        vsp_params = [{
-            'time': lc_fit.jd_times[mask_ref][i],
-            'airmass': lc_fit.airmass[mask_ref][i],
-            'mag': mt,
-            'mag_err': Mt_err[i],
-            'cname': vsp_auid_comp,
-            'cmag': Mc,
-            'pos': comp_pos
-        } for i, mt in enumerate(Mt)]
+        vsp_params = gather_stellar_data(Mt, Mt_err, Mc, lc_fit.airmass[mask_ref], lc_fit.jd_times[mask_ref], target_id,
+                                         vsp_id_comp, comp_pos)
 
-        plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
+        plot_stellar_variability(vsp_params, save, star_name=star_name)
     except Exception as e:
         log_info(f"Error in plotting or finalizing stellar variability data: {e}", warn=True)
         return []
 
     return vsp_params
+
+
+def get_comparison_star_parameters(vsp_params, ref_flux, vsp_list, vsp_comp_stars):
+    position = vsp_params[0]['pos']
+    comp_star = next(
+        vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if position == vsp_comp_stars[ckey]['pos'])
+    vsp_comp_star = ref_flux[vsp_list.index(position)]
+
+    return {
+        'position': position,
+        'times': vsp_comp_star['myfit'].jd_times,
+        'aperture': vsp_comp_star['photometry_parameters']['aperture'] if vsp_comp_star['photometry_method'] == 'Aperture' else None,
+        'annulus': vsp_comp_star['photometry_parameters']['annulus'] if vsp_comp_star['photometry_method'] == 'Aperture' else None,
+        'flux': vsp_comp_star['myfit'].comparison_flux,
+        'airmass': vsp_comp_star['myfit'].airmass,
+        'id': next(key for key, value in vsp_comp_stars.items() if value['pos'] == position),
+        'Mc': comp_star['mag'],
+        'Mc_err': comp_star['error']
+    }
+
+
+def calculate_fortuitous_star_flux(target_key, comparison_star_params, aper_data, psf_data):
+    if comparison_star_params['aperture']:
+        aperture = comparison_star_params['aperture']
+        annulus = comparison_star_params['annulus']
+        target_flux = aper_data[target_key][:, aperture, annulus]
+    else:
+        target_flux = 2 * np.pi * psf_data[target_key][:, 2] * psf_data[target_key][:, 3] * psf_data[target_key][:, 4]
+
+    return target_flux
+
+
+def calculate_airmass_model(norm_flux, comparison_star_params):
+    transformed_norm_flux = np.log(norm_flux)
+
+    X = sm.add_constant(comparison_star_params['airmass'])
+
+    model = sm.OLS(transformed_norm_flux, X).fit()
+
+    a1 = model.params[1]
+    a2 = model.params[0]
+
+    airmass_model = np.exp(a1) * np.exp(a2 * comparison_star_params['airmass'])
+
+    return airmass_model, a2
+
+
+def detrend_and_calculate_magnitude(norm_flux, airmass_model, comparison_star_params, a2):
+    oot_scatter = np.std((norm_flux / airmass_model))
+    norm_flux_unc = oot_scatter * airmass_model
+    norm_flux_unc /= np.nanmedian(norm_flux)
+
+    model = np.exp(a2 * airmass_model)
+    detrended = norm_flux / model
+
+    Mt = comparison_star_params['Mc'] - (2.5 * np.log10(detrended))
+    Mt_err = (comparison_star_params['Mc_err'] ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+
+    return Mt, Mt_err
+
+
+def analyze_fortuitous_star(target_key, star_coords, comparison_star_params, aper_data, psf_data, jd_times, fortuitous_stars_id, save):
+    target_flux = calculate_fortuitous_star_flux(target_key, comparison_star_params, aper_data, psf_data)
+
+    mask = np.isin(jd_times, comparison_star_params['times'])
+
+    norm_flux = target_flux[mask] / comparison_star_params['flux']
+
+    norm_flux /= np.nanmedian(norm_flux)
+
+    airmass_model, a2 = calculate_airmass_model(norm_flux, comparison_star_params)
+
+    plot_airmass_with_residuals(comparison_star_params['airmass'], airmass_model, comparison_star_params['times'], save,
+                                star_coords)
+
+    Mt, Mt_err = detrend_and_calculate_magnitude(norm_flux, airmass_model, comparison_star_params, a2)
+
+    return gather_stellar_data(Mt, Mt_err, comparison_star_params['Mc'], comparison_star_params['airmass'],
+                               comparison_star_params['times'], fortuitous_stars_id[tuple(star_coords)],
+                               comparison_star_params['id'], comparison_star_params['position'])
+
+
+def process_fortuitous_stars(fortuitous_stars_coords, jd_times, ref_flux, aper_data, psf_data, vsp_comp_stars, vsp_list, vsp_params,
+                                           save, fortuitous_stars_id):
+    fortuitous_params = {}
+
+    comparison_star_params = get_comparison_star_parameters(vsp_params, ref_flux, vsp_list, vsp_comp_stars)
+
+    for i, star_coords in enumerate(fortuitous_stars_coords):
+        try:
+            target_key = f"fort{i + 1}"
+
+            fortuitous_params[tuple(star_coords)] = analyze_fortuitous_star(target_key, star_coords, comparison_star_params,
+                                                                            aper_data, psf_data, jd_times, fortuitous_stars_id,
+                                                                            save)
+
+            plot_stellar_variability(fortuitous_params[tuple(star_coords)], save, position=star_coords)
+        except Exception as e:
+            log_info(f"Error in plotting or finalizing stellar variability data for star at {star_coords}: {e}", warn=True)
+            fortuitous_params[tuple(star_coords)] = None
+
+    return fortuitous_params
 
 
 # Mid-Transit Time Prior Helper Functions
@@ -1718,6 +1844,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None):
         log_info('No data left after filtering', warn=True)
         return None, None, None
     else:
+        f1 = f1[~nanmask]
+        f2 = f2[~nanmask]
         arrayFinalFlux = arrayFinalFlux[~nanmask]
         arrayNormUnc = arrayNormUnc[~nanmask]
         arrayTimes = arrayTimes[~nanmask]
@@ -1776,11 +1904,13 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None):
         arrayAirmass,
         prior,
         mybounds,
+        target_flux=f1,
+        comparison_flux=f2,
         jd_times=arrayJDTimes,
         mode='lm'
     )
 
-    return myfit, f1, f2
+    return myfit
 
 
 def parse_args():
@@ -1902,10 +2032,11 @@ def main():
         log_info("Complete Reduction Routine")
         log_info("**************************")
 
-        init_path, wcs_file, wcs_header, ra_wcs, dec_wcs, vsp_params, auid = None, None, None, None, None, None, None
+        init_path, wcs_file, wcs_header, ra_wcs, dec_wcs, vsp_params, vsx_id = None, None, None, None, None, None, None
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
         demosaic_fmt = None
         demosaic_out = None
+        fortuitous_stars_output = None
 
         if isinstance(args.reduce, str):
             fitsortext = 1
@@ -2093,6 +2224,7 @@ def main():
             plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             ra_dec_tar, ra_dec_wcs = None, []
             chart_id, vsp_comp_stars, vsp_list = None, None, []
+            fortuitous_stars_id = {}
 
             if wcs_file:
                 log_info(f"\nHere is the path to your plate solution: {wcs_file}")
@@ -2106,7 +2238,7 @@ def main():
                 ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
-                auid = vsx_auid(ra_dec_tar[0], ra_dec_tar[1])
+                vsx_id = get_vsx_id(ra_dec_tar[0], ra_dec_tar[1])
 
                 check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
 
@@ -2116,6 +2248,12 @@ def main():
                                                          user_comp_stars=exotic_infoDict['comp_stars'],
                                                          user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
+
+                for coord in exotic_infoDict['fortuitous_stars']:
+                    ra = ra_wcs[int(coord[1])][int(coord[0])]
+                    dec = dec_wcs[int(coord[1])][int(coord[0])]
+                    vsx_id_found = get_vsx_id(ra, dec)
+                    fortuitous_stars_id[tuple(coord)] = vsx_id_found
 
                 while not exotic_infoDict['comp_stars']:
                     log_info("\nThere are no comparison stars left as all of them were indicated as variable stars."
@@ -2150,6 +2288,13 @@ def main():
                 aper_data[ckey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 aper_data[f"{ckey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
                 tar_comp_dist[ckey] = np.zeros(2)
+
+            for i, coord in enumerate(exotic_infoDict['fortuitous_stars']):
+                fkey = f"fort{i + 1}"
+                psf_data[fkey] = np.zeros((len(inputfiles), 7))
+                aper_data[fkey] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                aper_data[f"{fkey}_bg"] = np.zeros((len(inputfiles), len(apers), len(annuli)))
+                tar_comp_dist[fkey] = np.zeros(2)
 
             # open files, calibrate, align, photometry
             for i, fileName in enumerate(inputfiles):
@@ -2236,6 +2381,12 @@ def main():
                             tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
                             tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
 
+                    for j, coord in enumerate(exotic_infoDict['fortuitous_stars']):
+                        fkey = f"fort{j + 1}"
+
+                        fx, fy = tform(coord)[0]
+                        psf_data[fkey][i] = fit_centroid(imageData, [fx, fy], j+1)
+
                 # aperture photometry
                 if i == 0:
                     sigma = float((psf_data['target'][0][3] + psf_data['target'][0][4]) * 0.5)
@@ -2263,6 +2414,17 @@ def main():
                                 aper_data[ckey][i][a][an] = np.nan
                                 aper_data[f"{ckey}_bg"][i][a][an] = np.nan
 
+                        for j in range(len(exotic_infoDict['fortuitous_stars'])):
+                            fkey = f"fort{j + 1}"
+                            if not np.isnan(psf_data[fkey][i][0]):
+                                aper_data[fkey][i][a][an], \
+                                aper_data[f"{fkey}_bg"][i][a][an] = aperPhot(imageData, j + 1, psf_data[fkey][i, 0],
+                                                                            psf_data[fkey][i, 1], aper, annulus)
+                            else:
+                                aper_data[fkey][i][a][an] = np.nan
+                                aper_data[f"{fkey}_bg"][i][a][an] = np.nan
+
+
                 # close file + delete from memory
                 hdul.close()
                 del hdul
@@ -2287,6 +2449,12 @@ def main():
                 psf_data[ckey] = psf_data[ckey][goodmask]
                 aper_data[ckey] = aper_data[ckey][goodmask]
                 aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
+
+            for j in range(len(exotic_infoDict['fortuitous_stars'])):
+                fkey = f"fort{j + 1}"
+                psf_data[fkey] = psf_data[fkey][goodmask]
+                aper_data[fkey] = aper_data[fkey][goodmask]
+                aper_data[f"{fkey}_bg"] = aper_data[f"{fkey}_bg"][goodmask]
 
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
@@ -2331,7 +2499,7 @@ def main():
                 ckey = f"comp{j + 1}"
 
                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
+                myfit = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
 
                 if myfit is not None:
                     for k in myfit.bounds.keys():
@@ -2348,8 +2516,8 @@ def main():
                                            comp_star_num=j + 1, comp_star_coords=exotic_infoDict['comp_stars'][j],
                                            min_std=res_std, min_aperture=0, min_annulus=15 * sigma)
 
-                    flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                       flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                    flux_values.update(flux_tar=myfit.target_flux, flux_ref=myfit.comparison_flux,
+                                       flux_unc_tar=myfit.target_flux ** 0.5, flux_unc_ref=myfit.comparison_flux ** 0.5)
 
                     centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                               x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
@@ -2357,7 +2525,9 @@ def main():
                 if j in vsp_num:
                     ref_flux[j] = {
                         'myfit': copy.deepcopy(myfit),
-                        'pos': exotic_infoDict['comp_stars'][j]
+                        'pos': exotic_infoDict['comp_stars'][j],
+                        'photometry_method': 'PSF',
+                        'photometry_parameters': {}
                     }
 
             log_info("\nComputing best comparison star, aperture, and sky annulus. Please wait.")
@@ -2370,7 +2540,7 @@ def main():
                     temp_ref_flux = {i: None for i in vsp_num}
 
                     # fit without a comparison star
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict, jd_times)
+                    myfit = fit_lightcurve(times, tFlux, np.ones(tFlux.shape[0]), airmass, ld, pDict, jd_times)
 
                     if myfit is not None:
                         for k in myfit.bounds.keys():
@@ -2388,8 +2558,8 @@ def main():
                                                comp_star_num=None, comp_star_coords=None,
                                                min_std=res_std, min_aperture=-aper, min_annulus=annulus)
 
-                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                        flux_values.update(flux_tar=myfit.target_flux, flux_ref=myfit.comparison_flux,
+                                           flux_unc_tar=myfit.target_flux ** 0.5, flux_unc_ref=myfit.comparison_flux ** 0.5)
 
                         centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                                   x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
@@ -2400,13 +2570,15 @@ def main():
                         aper_mask = np.isfinite(aper_data[ckey][:, a, an])
                         cFlux = aper_data[ckey][aper_mask][:, a, an]
 
-                        myfit, tFlux1, cFlux1 = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict, jd_times[aper_mask])
+                        myfit = fit_lightcurve(times[aper_mask], tFlux[aper_mask], cFlux, airmass[aper_mask], ld, pDict, jd_times[aper_mask])
 
                         if myfit is not None:
                             if j in vsp_num:
                                 temp_ref_flux[j] = {
                                     'myfit': copy.deepcopy(myfit),
-                                    'pos': exotic_infoDict['comp_stars'][j]
+                                    'pos': exotic_infoDict['comp_stars'][j],
+                                    'photometry_method': 'Aperture',
+                                    'photometry_parameters': {'aperture': a, 'annulus': an}
                                 }
 
                             for k in myfit.bounds.keys():
@@ -2425,8 +2597,8 @@ def main():
                                                    comp_star_coords=exotic_infoDict['comp_stars'][j],
                                                    min_std=res_std, min_aperture=aper, min_annulus=annulus)
 
-                            flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                               flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                            flux_values.update(flux_tar=myfit.target_flux, flux_ref=myfit.comparison_flux,
+                                               flux_unc_tar=myfit.target_flux ** 0.5, flux_unc_ref=myfit.comparison_flux ** 0.5)
 
                             centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
                                                       x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
@@ -2435,7 +2607,9 @@ def main():
                             if j in vsp_num:
                                 ref_flux[j] = {
                                     'myfit': copy.deepcopy(myfit),
-                                    'pos': exotic_infoDict['comp_stars'][j]
+                                    'pos': exotic_infoDict['comp_stars'][j],
+                                    'photometry_method': 'Aperture',
+                                    'photometry_parameters': {'aperture': a, 'annulus': an}
                                 }
 
                             if backtrack:
@@ -2559,15 +2733,16 @@ def main():
             # standardDev1 = np.std(goodFluxes)
 
             if vsp_comp_stars:
-                if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
-                                                     vsp_comp_stars, vsp_num, None, exotic_infoDict['save'],
-                                                     pDict['sName'])
-                else:
-                    vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
-                                                     vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
-                                                     pDict['sName'])
+                comp_star_position = None if not bestCompStar else bestCompStar - 1
 
+                vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
+                                                 vsp_comp_stars, vsp_num, comp_star_position, exotic_infoDict['save'],
+                                                 pDict['sName'], vsx_id)
+
+                if exotic_infoDict['fortuitous_stars']:
+                    fortuitous_stars_output = process_fortuitous_stars(exotic_infoDict['fortuitous_stars'], jd_times, ref_flux, aper_data,
+                                                                       psf_data, vsp_comp_stars, vsp_list, vsp_params,
+                                                                       exotic_infoDict['save'], fortuitous_stars_id)
             log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
@@ -2714,8 +2889,6 @@ def main():
         fig.savefig(Path(exotic_infoDict['save']) / "temp" /
                     f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
 
-        if vsp_params:
-            AIDoutput_files = AIDOutputFiles(myfit, pDict, exotic_infoDict, auid, chart_id, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
 
@@ -2742,9 +2915,19 @@ def main():
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
         try:
             if vsp_params:
-                AIDoutput_files.aavso()
+                AIDoutput_files = AIDOutputFiles(pDict, exotic_infoDict, chart_id, vsp_params)
+                AIDoutput_files.aavso([exotic_UIprevTPX, exotic_UIprevTPY])
         except Exception as e:
             log_info(f"\nError: Could not create AID_AAVSO.txt. {error_txt}\n\t{e}", error=True)
+        if exotic_infoDict['fortuitous_stars']:
+            for star_key in fortuitous_stars_output:
+                if fortuitous_stars_output[star_key]:
+                    try:
+                        AIDoutput_files = AIDOutputFiles(pDict, exotic_infoDict, chart_id, fortuitous_stars_output[star_key])
+                        AIDoutput_files.aavso(star_key)
+                    except Exception as e:
+                        log_info(f"\nError: Could not create AID_AAVSO.txt for star at {star_key}. "
+                                 f"{error_txt}\n\t{e}", error=True)
         try:
             output_files.plate_status(plateStatus)
         except Exception as e:

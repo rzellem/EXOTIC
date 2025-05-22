@@ -272,7 +272,7 @@ def main():
 
             comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    "
                                                 "(Note: You can use the AAVSO's VSP to help you find\n    "
-                                                "good comparison stars: https://app.aavso.org/vsp/)",
+                                                "good comparison stars: https://apps.aavso.org/vsp/)",
                                      justify=tk.LEFT)
             comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             comppos_entry.insert(tk.END, "[x, y]")
@@ -811,7 +811,7 @@ def main():
 
                 comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    "
                                                     "(Note: You can use the AAVSO's VSP to help you find\n    "
-                                                    "good comparison stars: https://app.aavso.org/vsp/)",
+                                                    "good comparison stars: https://apps.aavso.org/vsp/)",
                                          justify=tk.LEFT)
                 comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")

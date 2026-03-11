@@ -42,6 +42,7 @@
 from astropy.time import Time
 import copy
 from itertools import cycle
+import bottleneck as bn
 import matplotlib.pyplot as plt
 import numpy as np
 from pylightcurve.models.exoplanet_lc import transit as pytransit
@@ -60,6 +61,11 @@ try:
     from plotting import corner
 except ImportError:
     from .plotting import corner
+
+try:
+    from ultranest_utils import run_reactive_sampler
+except ImportError:
+    from .ultranest_utils import run_reactive_sampler
 
 
 def weightedflux(flux, gw, nearest):
@@ -127,9 +133,9 @@ def time_bin(time, flux, dt=1. / (60 * 24)):
     for i in range(bins):
         mask = (time >= (min(time) + i * dt)) & (time < (min(time) + (i + 1) * dt))
         if mask.sum() > 0:
-            bflux[i] = np.nanmean(flux[mask])
-            btime[i] = np.nanmean(time[mask])
-            bstds[i] = np.nanstd(flux[mask]) / (mask.sum() ** 0.5)
+            bflux[i] = bn.nanmean(flux[mask])
+            btime[i] = bn.nanmean(time[mask])
+            bstds[i] = bn.nanstd(flux[mask]) / (mask.sum() ** 0.5)
     zmask = (bflux == 0) | (btime == 0) | np.isnan(bflux) | np.isnan(btime)
     return btime[~zmask], bflux[~zmask], bstds[~zmask]
 
@@ -139,7 +145,7 @@ def binner(arr, n, err=''):
     if len(err) == 0:
         ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant',
                       constant_values=np.NaN).reshape(-1, n)
-        arr = np.nanmean(ecks, axis=1)
+        arr = bn.nanmean(ecks, axis=1)
         return arr
     else:
         ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant',
@@ -148,8 +154,8 @@ def binner(arr, n, err=''):
             -1, n)
         weights = 1. / (why ** 2.)
         # Calculate the weighted average
-        arr = np.nansum(ecks * weights, axis=1) / np.nansum(weights, axis=1)
-        err = np.array([np.sqrt(1. / np.nansum(1. / (np.array(i) ** 2.))) for i in why])
+        arr = bn.nansum(ecks * weights, axis=1) / bn.nansum(weights, axis=1)
+        err = np.array([np.sqrt(1. / bn.nansum(1. / (np.array(i) ** 2.))) for i in why])
         return arr, err
 
 
@@ -308,11 +314,11 @@ class lc_fitter(object):
             self.ns_type = 'ultranest'
             test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
 
-            noop = lambda *args, **kwargs: None
-            if self.verbose is True:
-                self.results = test.run(max_ncalls=int(self.max_ncalls))
-            else:
-                self.results = test.run(max_ncalls=int(self.max_ncalls), show_status=False, viz_callback=noop)
+            self.results = run_reactive_sampler(
+                test,
+                run_kwargs={"max_ncalls": int(self.max_ncalls)},
+                verbose=self.verbose,
+            )
 
             for i, key in enumerate(freekeys):
                 self.parameters[key] = self.results['maximum_likelihood']['point'][i]
@@ -679,11 +685,12 @@ class glc_fitter(lc_fitter):
                 #clean_name = self.lc_data[n].get('name', n).replace(' ','_').replace('(','').replace(')','').replace('[','').replace(']','').replace('-','_').split('-')[0]
                 freekeys.append(f"local_{k}_{n}")
 
-        noop = lambda *args, **kwargs: None
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e6, show_status=True)
-        else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e6, show_status=False, viz_callback=noop)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs={"max_ncalls": int(1e6)},
+            verbose=self.verbose,
+        )
 
         self.quantiles = {}
         self.errors = {}

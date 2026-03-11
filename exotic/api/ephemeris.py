@@ -56,6 +56,11 @@ try:
 except ImportError:
     from .plotting import corner
 
+try:
+    from ultranest_utils import run_reactive_sampler
+except ImportError:
+    from .ultranest_utils import run_reactive_sampler
+
 
 class ephemeris_fitter(object):
 
@@ -111,17 +116,12 @@ class ephemeris_fitter(object):
             # transform unit cube to prior volume
             return (boundarray[:, 0] + bounddiff * upars)
 
-        # estimate slope and intercept
-        noop = lambda *args, **kwargs: None
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
-                                                                                         min_num_live_points=420,
-                                                                                         show_status=True)
-        else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
-                                                                                         min_num_live_points=420,
-                                                                                         show_status=False,
-                                                                                         viz_callback=noop)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs={"max_ncalls": int(4e5), "min_num_live_points": 420},
+            verbose=self.verbose,
+        )
         # alloc data for best fit + error
         self.errors = {}
         self.quantiles = {}
@@ -705,17 +705,12 @@ class decay_fitter(object):
             # transform unit cube to prior volume
             return (boundarray[:, 0] + bounddiff * upars)
 
-        # estimate slope and intercept
-        noop = lambda *args, **kwargs: None
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
-                                                                                         min_num_live_points=420,
-                                                                                         show_status=True)
-        else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=4e5,
-                                                                                         min_num_live_points=420,
-                                                                                         show_status=False,
-                                                                                         viz_callback=noop)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs={"max_ncalls": int(4e5), "min_num_live_points": 420},
+            verbose=self.verbose,
+        )
         # alloc data for best fit + error
         self.errors = {}
         self.quantiles = {}

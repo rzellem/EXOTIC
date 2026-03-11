@@ -65,7 +65,8 @@ class LimbDarkening:
     # lookup table: fwhm_lookup references filters irrespective of spacing and punctuation
     # 1 - combine optimized str lookups in lookup table
     fwhm_lookup = {k.strip().replace(' ', '').lower(): k for k in fwhm.keys()}
-    fwhm_lookup.update({k.strip().replace(' ', '').lower(): v for k, v in fwhm_alias.items()})
+    for k, v in fwhm_alias.items():
+        fwhm_lookup.setdefault(k.strip().replace(' ', '').lower(), v)
     # 2 - ignore punctuation in lookup table
     fwhm_lookup = {re.sub(ld_re_punct_p, '', k): v for k, v in fwhm_lookup.items()}
     # lookup set: filter_desc_nonspecific_lookup_set references descriptions that do not represent a specific filter
@@ -143,13 +144,20 @@ class LimbDarkening:
                     if k == 'name' and filter_[k]:  # format 'name' (if exists) to uppercase, no spaces
                         filter_[k] = filter_[k].upper().replace(' ', '')
             if filter_['filter']:  # make matcher by removing spaces, remove punctuation and lowercase
+                if filter_['filter'] in LimbDarkening.fwhm_alias:
+                    filter_['filter'] = LimbDarkening.fwhm_alias[filter_['filter']]
                 filter_matcher = filter_['filter'].lower().replace(' ', '')
                 filter_matcher = re.sub(ld_re_punct_p, '', filter_matcher)
             # names that do not represent a specific filter combined into one tuple
             filter_names_nonspecific = set(LimbDarkening.fwhm_names_nonspecific.keys())
             filter_names_nonspecific.update(LimbDarkening.filter_names_undefined)
+            # prefer explicit all-uppercase abbreviations (e.g. 'SU') before loose lookup aliases
+            if (filter_['filter'] and filter_['filter'] == filter_['filter'].upper() and
+                    filter_['filter'].strip() not in filter_names_nonspecific):
+                filter_alias = next((f for f in LimbDarkening.fwhm.values()
+                                     if filter_['filter'].strip() == f['name'].strip().upper()), None)
             # identify defined filters via optimized lookup table
-            if (filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup and
+            if (not filter_alias and filter_matcher and filter_matcher in LimbDarkening.fwhm_lookup and
                     filter_matcher not in LimbDarkening.filter_desc_nonspecific_lookup_set):
                 filter_['filter'] = LimbDarkening.fwhm_lookup[filter_matcher]  # sets to actual filter reference key
             for f in LimbDarkening.fwhm.values():

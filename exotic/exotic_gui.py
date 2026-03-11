@@ -77,6 +77,11 @@ try:  # simple version
 except ImportError:  # package import
     from version import __version__
 
+try:
+    from .inputs import parse_aavso_comp_star
+except ImportError:
+    from inputs import parse_aavso_comp_star
+
 animate_toggle()
 
 
@@ -363,6 +368,9 @@ def main():
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
+                "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
+                "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
+                "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -376,6 +384,11 @@ def main():
             }
             new_inits['planetary_parameters'] = {
                 "Planet Name": input_data['pName'],
+            }
+            new_inits['optional_info'] = {
+                "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                "Use target-driven comp selection rather than comp-driven comp selection": "n",
+                "require_comp_star": "y"
             }
 
             now = datetime.now()
@@ -498,41 +511,19 @@ def main():
             exp_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
-            comp_star_label = tk.Label(root, text="Comparison Star used in Photometry (leave blank if none):",
-                                       justify=tk.LEFT)
-            comp_star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_ra_label = tk.Label(root, text="Comparison Star RA", justify=tk.LEFT)
-            comp_star_ra_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_ra_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_ra_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_dec_label = tk.Label(root, text="Comparison Star DEC", justify=tk.LEFT)
-            comp_star_dec_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_dec_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_dec_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_x_label = tk.Label(root, text="Comparison Star X Pixel Coordinate", justify=tk.LEFT)
-            comp_star_x_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_x_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_x_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_y_label = tk.Label(root, text="Comparison Star Y Pixel Coordinate", justify=tk.LEFT)
-            comp_star_y_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_y_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_y_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            comp_star_note = tk.Label(
+                root,
+                text="Comparison star metadata will be loaded from an AAVSO #COMP_STAR-XC header when available.",
+                justify=tk.LEFT
+            )
+            comp_star_note.grid(row=i, column=j, columnspan=2, sticky=tk.W, pady=2)
             i += 1
 
             def save_input():
                 input_data['file_time'] = pretime_entry.get()
                 input_data['file_units'] = preunit_entry.get()
                 input_data['exp'] = float(exp_entry.get())
-                input_data['phot_comp_star'] = {'ra': comp_star_ra_entry.get(), 'dec': comp_star_dec_entry.get(),
-                                                'x': comp_star_x_entry.get(), 'y': comp_star_y_entry.get()}
+                input_data['phot_comp_star'] = parse_aavso_comp_star(prered_file.file_path)
                 root.destroy()
 
             # Button for closing
@@ -689,23 +680,33 @@ def main():
             i += 1
             #
             # #             "Obs. Latitude": "+32.41638889",
-            lat_label = tk.Label(root, text="Obs. Latitude (+ = North; - = South; e.g. +32.41)", justify=tk.LEFT)
+            lat_label_text = "Obs. Latitude (+ = North; - = South; e.g. +32.41)"
+            if fitsortext.get() == 2:
+                lat_label_text += " [optional for pre-reduced runs]"
+            lat_label = tk.Label(root, text=lat_label_text, justify=tk.LEFT)
             lat_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             lat_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             lat_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
             #
             # #             "Obs. Longitude": "-110.73444444",
-            long_label = tk.Label(root, text="Obs. Longitude (+ = East; - = West; e.g. -110.74) ", justify=tk.LEFT)
+            long_label_text = "Obs. Longitude (+ = East; - = West; e.g. -110.74)"
+            if fitsortext.get() == 2:
+                long_label_text += " [optional for pre-reduced runs]"
+            long_label = tk.Label(root, text=long_label_text, justify=tk.LEFT)
             long_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             long_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             long_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
             #
             # #             "Obs. Elevation (meters)": 2616,
-            elevation_label = tk.Label(root, text="Obs. Elevation [meters]", justify=tk.LEFT)
+            elevation_label_text = "Obs. Elevation [meters]"
+            if fitsortext.get() == 2:
+                elevation_label_text += " [optional for pre-reduced runs]"
+            elevation_label = tk.Label(root, text=elevation_label_text, justify=tk.LEFT)
             elevation_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            elevation_entry.insert(tk.END, "0")
+            if fitsortext.get() == 1:
+                elevation_entry.insert(tk.END, "0")
             elevation_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             elevation_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -837,9 +838,13 @@ def main():
                 input_data['obscode'] = obscode_entry.get()
                 input_data['secondobscode'] = secondobscode_entry.get()
                 input_data['obsdate'] = obsdate_entry.get()
-                input_data['lat'] = lat_entry.get()
-                input_data['long'] = long_entry.get()
-                input_data['elevation'] = float(elevation_entry.get())
+                input_data['lat'] = lat_entry.get().strip()
+                input_data['long'] = long_entry.get().strip()
+                elevation_value = elevation_entry.get().strip()
+                if fitsortext.get() == 1 or elevation_value:
+                    input_data['elevation'] = float(elevation_value)
+                else:
+                    input_data['elevation'] = None
                 input_data['pixscale'] = pixscale_entry.get()
                 if fitsortext.get() == 1:
                     input_data['comppos'] = str(list(ast.literal_eval(comppos_entry.get())))
@@ -1387,6 +1392,9 @@ def main():
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
+                "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
+                "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
+                "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -1404,6 +1412,7 @@ def main():
 
                         "AAVSO Observer Code (blank if none)": input_data['obscode'],
                         "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
+                        "Observatory Full Title": "",
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
@@ -1447,7 +1456,11 @@ def main():
 
                 new_inits['optional_info'] = {
                     "Filter Minimum Wavelength (nm)": input_data.get('filtermin', null),
-                    "Filter Maximum Wavelength (nm)": input_data.get('filtermax', null)
+                    "Filter Maximum Wavelength (nm)": input_data.get('filtermax', null),
+                    "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+                    "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                    "Use target-driven comp selection rather than comp-driven comp selection": "n",
+                    "require_comp_star": "y"
                 }
 
                 if 'pixscale' not in input_data.keys():
@@ -1465,11 +1478,12 @@ def main():
 
                         "AAVSO Observer Code (blank if none)": input_data['obscode'],
                         "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
+                        "Observatory Full Title": "",
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
                         "Obs. Longitude": input_data['long'],
-                        "Obs. Elevation (meters)": float(input_data.get('elevation', 0)),
+                        "Obs. Elevation (meters; Note: leave blank if unknown)": input_data.get('elevation'),
                         "Camera Type (CCD or DSLR)": input_data['cameratype'],
                         "Pixel Binning": input_data['pixbin'],
                         "Filter Name (aavso.org/filters)": input_data['obsfilter'],
@@ -1487,7 +1501,11 @@ def main():
                     "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
                     "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
                     "Comparison Star used in Photometry (blank if none)": input_data['phot_comp_star'],
-                    "Exposure Time (s)": input_data['exp']
+                    "Exposure Time (s)": input_data['exp'],
+                    "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+                    "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                    "Use target-driven comp selection rather than comp-driven comp selection": "n",
+                    "require_comp_star": "y"
                 }
 
             if planetparams.get() in ["manual", "nea"]:

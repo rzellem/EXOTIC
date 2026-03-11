@@ -56,6 +56,11 @@ try:
 except ImportError:
     from .elca import glc_fitter, lc_fitter
 
+try:
+    from ultranest_utils import run_reactive_sampler
+except ImportError:
+    from .ultranest_utils import run_reactive_sampler
+
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value
 Msun = const.M_sun.to(u.kg).value
@@ -421,10 +426,12 @@ class joint_fitter(glc_fitter):
             for k in lfreekeys[n]:
                 freekeys.append(f"local_{n}_{k}")
 
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=2e5)
-        else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=2e5, show_status=self.verbose, viz_callback=self.verbose)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs={"max_ncalls": int(2e5)},
+            verbose=self.verbose,
+        )
 
         try:
             self.parameters = deepcopy(self.lc_data[0]['priors'])

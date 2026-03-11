@@ -78,6 +78,8 @@ class OutputFiles:
     def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3, epw_md5):
         priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                              ld0, ld1, ld2, ld3)
+        obs_name = format_aavso_header_value(self.i_dict.get('obs_name'))
+        obs_name_header = f"#OBSNAME={obs_name}\n" if obs_name else ""
 
         params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
 
@@ -88,11 +90,16 @@ class OutputFiles:
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
                     "#DATE_TYPE=BJD_TDB\n"  # fixed
+                    f"#OBSDATE={format_aavso_header_value(self.i_dict.get('date'))}\n"
+                    f"{obs_name_header}"
                     f"#OBSTYPE={self.i_dict['camera']}\n"
                     f"#STAR_NAME={self.p_dict['sName']}\n"  # code yields
                     f"#EXOPLANET_NAME={self.p_dict['pName']}\n"  # code yields
                     f"#BINNING={self.i_dict['pixel_bin']}\n"  # user input
                     f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI
+                    f"#OBSLAT={format_aavso_header_value(self.i_dict.get('lat'))}\n"
+                    f"#OBSLON={format_aavso_header_value(self.i_dict.get('long'))}\n"
+                    f"#OBSELEV={format_aavso_header_value(self.i_dict.get('elev'))}\n"
                     f"#COMP_STAR-XC={dumps(comp_star)}\n"
                     f"#NOTES={self.i_dict['notes']}\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
@@ -157,7 +164,11 @@ class AIDOutputFiles:
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
                     "#DATE=JD\n"  # fixed
-                    f"#OBSTYPE={self.i_dict['camera']}\n")
+                    f"#OBSDATE={format_aavso_header_value(self.i_dict.get('date'))}\n"
+                    f"#OBSTYPE={self.i_dict['camera']}\n"
+                    f"#OBSLAT={format_aavso_header_value(self.i_dict.get('lat'))}\n"
+                    f"#OBSLON={format_aavso_header_value(self.i_dict.get('long'))}\n"
+                    f"#OBSELEV={format_aavso_header_value(self.i_dict.get('elev'))}\n")
             f.write(
                 "# EXOTIC is developed by Exoplanet Watch (exoplanets.nasa.gov/exoplanet-watch/), a citizen science "
                 "project managed by NASA's Jet Propulsion Laboratory on behalf of NASA's Universe of Learning. "
@@ -218,8 +229,16 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     filter_type = {
         'name': info_dict['filter'],
         'desc': info_dict['filter_desc'],
-        'fwhm': [{'value': str(info_dict['wl_min']) if info_dict['wl_min'] else info_dict['wl_min'], 'units': "nm"},
-                 {'value': str(info_dict['wl_max']) if info_dict['wl_max'] else info_dict['wl_max'], 'units': "nm"}],
+        'filter_width': {
+            'left_side_wavelength': {
+                'value': str(info_dict['wl_min']) if info_dict['wl_min'] else info_dict['wl_min'],
+                'units': "nm"
+            },
+            'right_side_wavelength': {
+                'value': str(info_dict['wl_max']) if info_dict['wl_max'] else info_dict['wl_max'],
+                'units': "nm"
+            }
+        },
     }
 
     results = {
@@ -252,3 +271,48 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     }
 
     return priors, filter_type, results
+
+
+def format_aavso_header_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return "" if stripped.lower() in ('', 'n/a', 'na', 'null', 'none') else stripped
+    return str(value)
+
+
+def save_comp_star_calibration_summary(save_dir, target_name, date, method_label, field_score,
+                                       comp_summaries, best_comp_index):
+    temp_dir = Path(save_dir) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    summary_file = temp_dir / f"CompStarCalibrationSummary_{target_name}_{date}.csv"
+
+    with summary_file.open('w') as handle:
+        handle.write(f"# Comparison-star calibration summary for {target_name}\n")
+        handle.write(f"# Method,{method_label}\n")
+        if field_score is not None and field_score == field_score:
+            handle.write(f"# Field suitability score,{field_score}\n")
+        else:
+            handle.write("# Field suitability score,\n")
+        handle.write(f"# Selected comparison star,{'' if best_comp_index is None else best_comp_index + 1}\n")
+        handle.write("comp_star,x_pixel,y_pixel,selected,suitability_score,ensemble_score,pairwise_median_score,"
+                     "pairwise_max_score,self_score,valid_pair_count\n")
+
+        for summary in comp_summaries:
+            position = summary.get('position') or [None, None]
+            values = [
+                summary.get('label', ''),
+                position[0],
+                position[1],
+                str(bool(summary.get('selected'))).lower(),
+                summary.get('aggregate_score'),
+                summary.get('ensemble_score'),
+                summary.get('pairwise_median_score'),
+                summary.get('pairwise_max_score'),
+                summary.get('self_score'),
+                summary.get('valid_pair_count'),
+            ]
+            handle.write(",".join("" if value is None else str(value) for value in values) + "\n")
+
+    return summary_file

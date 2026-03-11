@@ -3,6 +3,7 @@ import sys
 import json
 from pathlib import Path
 from astropy.io import fits
+from astropy.time import Time
 import re
 
 try:
@@ -25,6 +26,22 @@ consoleHandler.setFormatter(consoleFormatter)
 consoleHandler.setLevel(logging.INFO)
 log.addHandler(consoleHandler)
 
+PHOT_COMP_STAR_KEYS = ("ra", "dec", "x", "y")
+AAVSO_OBSDATE_HEADER_KEYS = ('OBSDATE',)
+AAVSO_LOCATION_HEADER_KEYS = {
+    'lat': ('OBSLAT', 'LATITUDE', 'OBS_LATITUDE', 'LAT'),
+    'long': ('OBSLON', 'OBSLONG', 'LONGITUDE', 'OBS_LONGITUDE', 'LONG'),
+    'elev': ('OBSELEV', 'OBSALT', 'ELEVATION', 'ALTITUDE', 'HEIGHT'),
+}
+
+
+def is_blank_value(value):
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in ('', 'n/a', 'na', 'null', 'none')
+    return False
+
 
 class Inputs:
 
@@ -32,12 +49,14 @@ class Inputs:
         self.init_opt = init_opt
         self.info_dict = {
             'images': None, 'save': None, 'flats': None, 'darks': None, 'biases': None,
-            'aavso_num': None, 'second_obs': None, 'date': None, 'lat': None, 'long': None,
+            'aavso_num': None, 'second_obs': None, 'obs_name': '', 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
-            'random_seed': None, "demosaic_fmt": None, "demosaic_out": None
+            'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
+            'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
+            'target_driven_comp_selection': 'n'
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -81,12 +100,18 @@ class Inputs:
         return self.info_dict, planet
 
     def prereduced(self, planet):
-        rem_list = ['images', 'plate_opt', 'tar_coords', 'comp_stars']
+        rem_list = ['images', 'plate_opt', 'aavso_comp', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
+        self.info_dict['aavso_comp'] = 'n'
 
         self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time,
                             'phot_comp_star': phot_comp_star})
         self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
+        aavso_location = parse_aavso_location(self.info_dict['prered_file'])
+
+        for key in ('lat', 'long', 'elev'):
+            if is_blank_value(self.info_dict.get(key)) and aavso_location[key] is not None:
+                self.info_dict[key] = aavso_location[key]
 
         if not planet:
             planet = planet_name(planet)
@@ -94,9 +119,23 @@ class Inputs:
         for key, value in list(self.params.items()):
             if key == 'elev':
                 self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
-                                                       self.info_dict['long'])
+                                                       self.info_dict['long'], required=False)
+            elif key == 'lat':
+                self.info_dict[key] = self.params[key](self.info_dict[key], required=False)
+            elif key == 'long':
+                self.info_dict[key] = self.params[key](self.info_dict[key], required=False)
+            elif key == 'phot_comp_star':
+                self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['prered_file'])
+            elif key == 'date':
+                continue
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
+
+        self.info_dict['date'] = prereduced_obs_date(
+            self.info_dict.get('date'),
+            self.info_dict['prered_file'],
+            self.info_dict.get('file_time'),
+        )
 
         return self.info_dict, planet
 
@@ -158,9 +197,15 @@ class Inputs:
             'demosaic_fmt': 'Demosaic Format', 'demosaic_out': 'Demosaic Output',
             'aavso_num': ('AAVSO Observer Code (N/A if none)', 'AAVSO Observer Code (blank if none)'),
             'second_obs': ('Secondary Observer Codes (N/A if none)', 'Secondary Observer Codes (blank if none)'),
+            'obs_name': 'Observatory Full Title',
             'date': 'Observation date', 'lat': 'Obs. Latitude', 'long': 'Obs. Longitude',
             'elev': ('Obs. Elevation (meters)', 'Obs. Elevation (meters; Note: leave blank if unknown)'),
-            'camera': 'Camera Type (CCD or DSLR)',
+            'camera': (
+                'Camera Type (CCD or DSLR)',
+                'Camera Type',
+                'Camera Type (e.g., CCD or DSLR)',
+                'Camera Type (e.g., CCD or DSLR; Note: if you are using a CMOS, please enter CCD here and then note your actual camera type in "Observing Notes")'
+            ),
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
             'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)',
             'aavso_comp': 'Add Comparison Stars from AAVSO? (y/n)',
@@ -191,9 +236,26 @@ class Inputs:
         opt_info = {
             'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
             'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
-            'phot_comp_star': "Comparison Star used in Photometry (leave blank if none)",
+            'phot_comp_star': (
+                "Comparison Star used in Photometry (leave blank if none)",
+                "Comparison Star used in Photometry (blank if none)"
+            ),
             'wl_min': 'Filter Minimum Wavelength (nm)', 'wl_max': 'Filter Maximum Wavelength (nm)',
-            'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)'),
+            'ld_uncertainties': 'Calculate Limb Darkening Coefficients with Uncertainties? (y/n)',
+            'fast_aperture_mask': ('Fast Aperture Mask (y/n)', 'Use Fast Aperture Mask (y/n)'),
+            'require_comp_star': ('require_comp_star', 'Require Comparison Star? (y/n)'),
+            'target_driven_comp_selection': (
+                'Use target-driven comp selection rather than comp-driven comp selection',
+                'target_driven_comp_selection',
+            ),
+            'ignore_header_wcs': (
+                'Ignore WCS in Header and Do Manual Alignment? (y/n)',
+                'Ignore WCS in Header and Do Manual Alignment',
+                'Ignore WCS in header and do manual alignment',
+                'ignore_header_wcs',
+            ),
+            'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)',
+                            'Pixel Scale (arsec/pixel)'),
             'exposure': 'Exposure Time (s)',
             'random_seed': 'Random Seed'
         }
@@ -361,17 +423,29 @@ def obs_date(date):
     return date
 
 
-def latitude(lat, hdr=None):
+def normalize_obs_date(date):
+    if is_blank_value(date):
+        return None
+
+    date = str(date).strip()
+    if '/' in date:
+        date = date.replace('/', '-')
+    return date
+
+
+def latitude(lat, hdr=None, required=True):
     while True:
-        if not lat:
+        if is_blank_value(lat):
             if hdr:
                 lat = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
                 if lat:
                     return lat
+            if not required:
+                return None
             lat = user_input("Enter the latitude (in degrees) of where you observed. "
                              "(Don't forget the sign where North is '+' and South is '-')! "
                              "(Example: -32.12): ", type_=str)
-        lat = lat.strip()
+        lat = str(lat).strip()
 
         if lat[0] == '+' or lat[0] == '-':
             # Convert to float if latitude in decimal. If latitude is in +/-HH:MM:SS format, convert to a float.
@@ -391,17 +465,19 @@ def latitude(lat, hdr=None):
         lat = None
 
 
-def longitude(long, hdr=None):
+def longitude(long, hdr=None, required=True):
     while True:
-        if not long:
+        if is_blank_value(long):
             if hdr:
                 long = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
                 if long:
                     return long
+            if not required:
+                return None
             long = user_input("Enter the longitude (in degrees) of where you observed. "
                               "(Don't forget the sign where East is '+' and West is '-')! "
                               "(Example: +152.51): ", type_=str)
-        long = long.strip()
+        long = str(long).strip()
 
         if long[0] == '+' or long[0] == '-':
             # Convert to float if longitude in decimal. If longitude is in +/-HH:MM:SS format, convert to a float.
@@ -421,21 +497,29 @@ def longitude(long, hdr=None):
         long = None
 
 
-def elevation(elev, lat, long, hdr=None):
+def elevation(elev, lat, long, hdr=None, required=True):
     while True:
         try:
-            elev = typecast_check(type_=float, val=elev)
-            if not elev:
+            if is_blank_value(elev):
+                elev = None
+            else:
+                elev = typecast_check(type_=float, val=elev)
+                if elev is False:
+                    raise ValueError
+
+            if elev is None:
                 if hdr:
                     elev = find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'])
-                    if elev:
-                        return int(elev)
+                    if not is_blank_value(elev):
+                        return float(elev)
+                if not required:
+                    return None
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
                 animate_toggle(True)
                 elev = open_elevation(lat, long)
                 animate_toggle()
-                if not elev:
+                if elev is False:
                     log_info("\nWarning: EXOTIC could not retrieve elevation.", warn=True)
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
             return elev
@@ -445,16 +529,9 @@ def elevation(elev, lat, long, hdr=None):
 
 
 def camera(c_type):
-    while True:
-        if not c_type:
-            c_type = user_input("\nPlease enter the camera type (e.g., CCD or DSLR;\n"
-                                "Note: if you are using a CMOS, please enter CCD here and\n"
-                                "then note your actual camera type in \"Observing Notes\"): ", type_=str)
-        c_type = c_type.strip().upper()
-        if c_type not in ["CCD", "DSLR"]:
-            c_type = None
-        else:
-            return c_type
+    if isinstance(c_type, str) and "DSLR" in c_type.strip().upper():
+        return "DSLR"
+    return "CCD"
 
 
 def pixel_bin(pix_bin):
@@ -566,19 +643,141 @@ def prereduced_file(file):
             file = None
 
 
-def phot_comp_star(comp_star):
+def blank_phot_comp_star():
+    return {key: '' for key in PHOT_COMP_STAR_KEYS}
+
+
+def normalize_phot_comp_star(comp_star):
+    normalized_comp_star = blank_phot_comp_star()
+
     if not isinstance(comp_star, dict):
-        comp_star_opt = user_input("Was a Comparison Star used during Photometry? (y/n): ",
-                                   type_=str, values=['y', 'n'])
+        return normalized_comp_star
 
-        comp_star = {
-            'ra': user_input("\nEnter Comparison Star RA: ", type_=str) if comp_star_opt == 'y' else '',
-            'dec': user_input("Enter Comparison Star DEC: ", type_=str) if comp_star_opt == 'y' else '',
-            'x': user_input("\nEnter Comparison Star X Pixel Coordinate: ", type_=str) if comp_star_opt == 'y' else '',
-            'y': user_input("Enter Comparison Star Y Pixel Coordinate: ", type_=str) if comp_star_opt == 'y' else ''
-        }
+    for key in PHOT_COMP_STAR_KEYS:
+        value = comp_star.get(key, '')
+        if value is None:
+            continue
 
-    return comp_star
+        value = str(value).strip()
+        normalized_comp_star[key] = '' if value.lower() in ('null', 'none') else value
+
+    return normalized_comp_star
+
+
+def parse_aavso_metadata(prereduced_file_path):
+    if not prereduced_file_path:
+        return {}
+
+    try:
+        with Path(prereduced_file_path).open('r', encoding='utf-8') as file:
+            for line in file:
+                metadata_line = line.strip()
+                if not metadata_line:
+                    continue
+                if not metadata_line.startswith('#'):
+                    break
+                if '=' not in metadata_line:
+                    continue
+
+                key, value = metadata_line[1:].split('=', 1)
+                yield key.strip().upper(), value.strip()
+    except (FileNotFoundError, OSError, TypeError):
+        return
+
+
+def first_aavso_metadata_value(metadata, aliases):
+    for key in aliases:
+        value = metadata.get(key)
+        if not is_blank_value(value):
+            return value
+    return None
+
+
+def parse_aavso_location(prereduced_file_path):
+    metadata = dict(parse_aavso_metadata(prereduced_file_path) or [])
+    return {
+        key: first_aavso_metadata_value(metadata, aliases)
+        for key, aliases in AAVSO_LOCATION_HEADER_KEYS.items()
+    }
+
+
+def parse_aavso_obsdate(prereduced_file_path):
+    metadata = dict(parse_aavso_metadata(prereduced_file_path) or [])
+    return normalize_obs_date(first_aavso_metadata_value(metadata, AAVSO_OBSDATE_HEADER_KEYS))
+
+
+def parse_aavso_comp_star(prereduced_file_path):
+    metadata = dict(parse_aavso_metadata(prereduced_file_path) or [])
+    comp_star_json = metadata.get('COMP_STAR-XC')
+    if is_blank_value(comp_star_json):
+        return blank_phot_comp_star()
+
+    try:
+        return normalize_phot_comp_star(json.loads(comp_star_json))
+    except (TypeError, json.JSONDecodeError):
+        return blank_phot_comp_star()
+
+
+def phot_comp_star(comp_star, prereduced_file_path=None):
+    if isinstance(comp_star, dict):
+        return normalize_phot_comp_star(comp_star)
+    return parse_aavso_comp_star(prereduced_file_path)
+
+
+def first_prereduced_timestamp(prereduced_file_path):
+    if not prereduced_file_path:
+        return None
+
+    try:
+        with Path(prereduced_file_path).open('r', encoding='utf-8') as file:
+            for line in file:
+                data_line = line.strip()
+                if not data_line or data_line.startswith('#'):
+                    continue
+
+                first_column = re.split(r'[\s,]+', data_line, maxsplit=1)[0]
+                try:
+                    return float(first_column)
+                except ValueError:
+                    continue
+    except (FileNotFoundError, OSError, TypeError):
+        return None
+
+    return None
+
+
+def obs_date_from_first_prereduced_entry(prereduced_file_path, time_format):
+    first_timestamp = first_prereduced_timestamp(prereduced_file_path)
+    if first_timestamp is None:
+        return None
+
+    try:
+        if time_format == 'MJD_UTC':
+            return Time(first_timestamp, format='mjd', scale='utc').to_value('iso', subfmt='date')
+        if time_format == 'BJD_TDB':
+            return Time(first_timestamp, format='jd', scale='tdb').to_value('iso', subfmt='date')
+        if time_format == 'JD_UTC':
+            return Time(first_timestamp, format='jd', scale='utc').to_value('iso', subfmt='date')
+    except (TypeError, ValueError):
+        return None
+
+    return None
+
+
+def prereduced_obs_date(date, prereduced_file_path=None, time_format=None):
+    aavso_obsdate = parse_aavso_obsdate(prereduced_file_path)
+    if aavso_obsdate is not None:
+        return aavso_obsdate
+
+    derived_obsdate = obs_date_from_first_prereduced_entry(prereduced_file_path, time_format)
+    if derived_obsdate is not None:
+        return derived_obsdate
+
+    normalized_date = normalize_obs_date(date)
+    if normalized_date is not None:
+        return normalized_date
+
+    return ""
 
 
 def data_file_time(time_format):

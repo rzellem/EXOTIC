@@ -110,6 +110,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
             "AAVSO Observer Code (blank if none)": "RTZ",
             "Secondary Observer Codes (blank if none)": "",
+            "Observatory Full Title": "",
 
             "Observation date": "17-December-2017",
             "Obs. Latitude": "+32.41638889",
@@ -158,6 +159,10 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
             "Filter Minimum Wavelength (nm)": null,
             "Filter Maximum Wavelength (nm)": null,
+
+            "Fast Aperture Mask (y/n)": true,
+            "Use target-driven comp selection rather than comp-driven comp selection": "n",
+            "require_comp_star": "y",
 
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
 

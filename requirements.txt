@@ -2,6 +2,7 @@ astroalign~=2.6.0
 astropy~=6.1
 astroquery~=0.4.7
 barycorrpy~=0.4.4
+bottleneck~=1.4.2
 colour_demosaicing~=0.2.6
 dynesty~=1.2.3;platform_system=='Windows'
 holoviews~=1.19.1

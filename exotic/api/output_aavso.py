@@ -270,8 +270,16 @@ def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
 
     filter_type = {
         'name': "I",
-        'fwhm': [{'value': 600, 'units': "nm"},
-                {'value': 1000, 'units': "nm"}],
+        'filter_width': {
+            'left_side_wavelength': {
+                'value': 600,
+                'units': "nm"
+            },
+            'right_side_wavelength': {
+                'value': 1000,
+                'units': "nm"
+            }
+        },
     }
 
     results = {

@@ -109,6 +109,7 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
         - If you do not have any of these calibrations, enter `null`
     - AAVSO Observer Code - if you do not have one, leave as N/A
     - Secondary Observer Codes - the AAVSO observer codes of anyone who helped out with your observations; if you do not have one, leave as N/A
+    - Observatory Full Title - optional full observatory name; if provided, EXOTIC writes it to the AAVSO header as `OBSNAME`
     - Observation date - the date of your observation in DAY-MONTH-YEAR format
     - Obs. Latitude - the latitude of your observations, where North is denoted with a + and South is denoted with a -
     - Obs. Longitude - the longitude of your observations, where East is denoted with a + and West is denoted with a -
@@ -167,6 +168,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
             "AAVSO Observer Code (N/A if none)": "RTZ",
             "Secondary Observer Codes (N/A if none)": "N/A",
+            "Observatory Full Title": "",
 
             "Observation date": "December 17, 2017",
             "Obs. Latitude": "+31.68",
@@ -211,7 +213,9 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
     "optional_info": {
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
             "Filter Minimum Wavelength (nm)": null,
-            "Filter Maximum Wavelength (nm)": null
+            "Filter Maximum Wavelength (nm)": null,
+            "Fast Aperture Mask (y/n)": true,
+            "require_comp_star": "y"
     }
 }
 ```

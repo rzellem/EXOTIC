@@ -538,6 +538,7 @@ def create_inits_file(parameters, file_name):
             "Directory of Biases": parameters.get("Directory of Biases", None),
             "AAVSO Observer Code (N/A if none)": parameters.get("AAVSO Observer Code (N/A if none)", "N/A"),
             "Secondary Observer Codes (N/A if none)": parameters.get("Secondary Observer Codes (N/A if none)", "N/A"),
+            "Observatory Full Title": parameters.get("Observatory Full Title", ""),
             "Observation date": parameters.get("Observation date", None),
             "Obs. Latitude": parameters.get("Obs. Latitude", None),
             "Obs. Longitude": parameters.get("Obs. Longitude", None),
@@ -547,14 +548,14 @@ def create_inits_file(parameters, file_name):
             "Filter Name (aavso.org/filters)": parameters.get("Filter Name (aavso.org/filters)", None),
             "Observing Notes": parameters.get("Observing Notes", "N/A"),
             "Plate Solution? (y/n)": parameters.get("Plate Solution? (y/n)", None),
-            "Align Images? (y/n)": parameters.get("Align Images? (y/n)", None),
             "Target Star X & Y Pixel": parameters.get("Target Star X & Y Pixel", None),
             "Comparison Star(s) X & Y Pixel": parameters.get("Comparison Star(s) X & Y Pixel", None)
         },    
         "optional_info": {
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": parameters.get("Pixel Scale (Ex: 5.21 arcsecs/pixel)", None),
             "Filter Minimum Wavelength (nm)": parameters.get("Filter Minimum Wavelength (nm)", None),
-            "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None)
+            "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None),
+            "require_comp_star": parameters.get("require_comp_star", "y")
         }
     }
     # Update the filename to include the planet name
@@ -669,7 +670,6 @@ if observer_info == 'y':
     filter_name = input("Enter filter name: ").strip()
     observing_notes = input("Enter observing notes (or 'N/A' if none): ").strip()
     plate_solution = input("Plate solution? (y/n): ").strip()
-    align_images = input("Align images? (y/n): ").strip()
     target_star_xy = [int(coord) for coord in input("Enter target star X & Y Pixel (comma separated): ").strip().split(',')]
     comparison_stars_xy = [
         [int(coord) for coord in star.strip().split(',')]
@@ -695,7 +695,6 @@ if observer_info == 'y':
     stored_parameters["Filter Name (aavso.org/filters)"] = filter_name
     stored_parameters["Observing Notes"] = observing_notes
     stored_parameters["Plate Solution? (y/n)"] = plate_solution
-    stored_parameters["Align Images? (y/n)"] = align_images
     stored_parameters["Target Star X & Y Pixel"] = target_star_xy
     stored_parameters["Comparison Star(s) X & Y Pixel"] = comparison_stars_xy
     stored_parameters["Pixel Scale (Ex: 5.21 arcsecs/pixel)"] = pixel_scale

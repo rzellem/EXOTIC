@@ -359,6 +359,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
 
             "AAVSO Observer Code (N/A if none)": "%s",
             "Secondary Observer Codes (N/A if none)": "%s",
+            "Observatory Full Title": "",
 
             "Observation date": "%s",
             "Obs. Latitude": "%s",
@@ -381,7 +382,9 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
     "optional_info": {
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
             "Filter Minimum Wavelength (nm)": %s,
-            "Filter Maximum Wavelength (nm)": %s
+            "Filter Maximum Wavelength (nm)": %s,
+            "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+            "require_comp_star": "y"
     }
 }
 """ % (planetary_params, image_dir, output_dir, flats_dir, darks_dir, biases_dir, 

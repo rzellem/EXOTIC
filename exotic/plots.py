@@ -164,6 +164,126 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
             f.write(f"{round(ti, 8)},{round(fi, 7)},{round(erri, 6)},{round(ami, 2)}\n")
 
 
+def plot_comp_star_pairwise_matrix(pairwise_matrix, best_comp_index, targ_name, save, date, method_label):
+    matrix = np.asarray(pairwise_matrix, dtype=float)
+    if matrix.size == 0:
+        return
+
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(max(6, matrix.shape[0] * 1.3), max(5, matrix.shape[0] * 1.1)))
+    plot_matrix = np.ma.masked_invalid(matrix * 100.0)
+    im = ax.imshow(plot_matrix, origin='upper', cmap='viridis')
+    fig.colorbar(im, ax=ax, label="Residual Scatter [%]")
+
+    labels = [f"Comp {index + 1}" for index in range(matrix.shape[0])]
+    ax.set_xticks(np.arange(matrix.shape[0]))
+    ax.set_yticks(np.arange(matrix.shape[0]))
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.set_yticklabels(labels)
+    ax.set_title(f"{targ_name} Comparison-Star Pairwise Scatter\n{method_label}")
+
+    for row in range(matrix.shape[0]):
+        for col in range(matrix.shape[1]):
+            value = matrix[row, col]
+            if np.isfinite(value):
+                ax.text(col, row, f"{value * 100.0:.3f}", ha='center', va='center', color='white', fontsize=8)
+
+    if best_comp_index is not None and 0 <= best_comp_index < matrix.shape[0]:
+        ax.add_patch(plt.Rectangle((best_comp_index - 0.5, best_comp_index - 0.5), 1, 1,
+                                   fill=False, edgecolor='tomato', linewidth=2.5))
+
+    ax.set_xlabel("Reference Comparison Star")
+    ax.set_ylabel("Candidate Comparison Star")
+    fig.tight_layout()
+    fig.savefig(temp_dir / f"CompStarPairwiseScatter_{targ_name}_{date}.png", bbox_inches="tight")
+    fig.savefig(temp_dir / f"CompStarPairwiseScatter_{targ_name}_{date}.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_comp_star_calibration_series(times, comp_summaries, targ_name, save, date, method_label):
+    if not comp_summaries:
+        return
+
+    times = np.asarray(times, dtype=float)
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    colors = plt.cm.tab10(np.linspace(0.0, 1.0, 10))
+
+    fig_height = max(3.2, 2.4 * len(comp_summaries))
+    fig, axes = plt.subplots(len(comp_summaries), 1, figsize=(12, fig_height), sharex=True)
+    if len(comp_summaries) == 1:
+        axes = [axes]
+
+    for axis, summary in zip(axes, comp_summaries):
+        axis.axhline(1.0, color='lightgray', lw=1.0, zorder=1)
+        pairwise_series = summary.get('pairwise_ratio_series', {})
+        for color_index, (other_label, ratio_series) in enumerate(pairwise_series.items()):
+            ratio_series = np.asarray(ratio_series, dtype=float)
+            valid = np.isfinite(times) & np.isfinite(ratio_series)
+            if np.any(valid):
+                axis.plot(times[valid], ratio_series[valid], color=colors[color_index % len(colors)],
+                          alpha=0.55, lw=1.0, label=other_label)
+
+        ensemble_ratio = np.asarray(summary.get('ensemble_ratio_series'), dtype=float)
+        ensemble_valid = np.isfinite(times) & np.isfinite(ensemble_ratio)
+        if np.any(ensemble_valid):
+            axis.plot(times[ensemble_valid], ensemble_ratio[ensemble_valid], color='black', lw=1.8,
+                      label='Ensemble')
+
+        selected_text = " selected" if summary.get('selected') else ""
+        aggregate = summary.get('aggregate_score', np.nan)
+        aggregate_text = "n/a" if not np.isfinite(aggregate) else f"{aggregate * 100.0:.3f}%"
+        axis.set_ylabel("Norm Ratio")
+        axis.set_title(f"{summary['label']}{selected_text} | suitability={aggregate_text}", loc='left', fontsize=10)
+        axis.grid(alpha=0.2)
+        axis.legend(ncol=4, fontsize=8, loc='upper right')
+
+    axes[-1].set_xlabel("Time [BJD_TDB]")
+    fig.suptitle(f"{targ_name} Comparison-Star Calibration Curves\n{method_label}", y=1.01)
+    fig.tight_layout()
+    fig.savefig(temp_dir / f"CompStarCalibrationCurves_{targ_name}_{date}.png", bbox_inches="tight")
+    fig.savefig(temp_dir / f"CompStarCalibrationCurves_{targ_name}_{date}.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_label):
+    if not comp_summaries:
+        return
+
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    labels = [summary['label'] for summary in comp_summaries]
+    positions = np.arange(len(labels))
+    aggregate = np.array([summary.get('aggregate_score', np.nan) for summary in comp_summaries], dtype=float) * 100.0
+    ensemble = np.array([summary.get('ensemble_score', np.nan) for summary in comp_summaries], dtype=float) * 100.0
+    pairwise = np.array([summary.get('pairwise_median_score', np.nan) for summary in comp_summaries], dtype=float) * 100.0
+
+    fig, ax = plt.subplots(figsize=(max(7, 1.5 * len(labels)), 5))
+    width = 0.25
+    ax.bar(positions - width, aggregate, width=width, label='Suitability')
+    ax.bar(positions, ensemble, width=width, label='Vs ensemble')
+    ax.bar(positions + width, pairwise, width=width, label='Pairwise median')
+
+    for position, summary in zip(positions, comp_summaries):
+        if summary.get('selected'):
+            ax.text(position - width, aggregate[position] if np.isfinite(aggregate[position]) else 0.0, 'selected',
+                    rotation=90, va='bottom', ha='center', fontsize=8, color='tomato')
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Residual Scatter [%]")
+    ax.set_title(f"{targ_name} Comparison-Star Suitability Summary\n{method_label}")
+    ax.legend()
+    ax.grid(axis='y', alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(temp_dir / f"CompStarSuitability_{targ_name}_{date}.png", bbox_inches="tight")
+    fig.savefig(temp_dir / f"CompStarSuitability_{targ_name}_{date}.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_variable_residuals(save):
     plt.title("Stellar Variability Residuals")
     plt.ylabel("Residuals (flux)")
@@ -185,7 +305,31 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
 
 
 # Observation statistics from PSF data
-def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date):
+def _select_psf_rows(psf_rows, sort_index=None, sigma_mask=None, relative_flux_mask=None):
+    rows = np.asarray(psf_rows)
+
+    if sort_index is not None:
+        rows = rows[np.asarray(sort_index)]
+
+    if sigma_mask is not None:
+        sigma_mask = np.asarray(sigma_mask)
+        if sigma_mask.dtype == bool and rows.shape[0] == sigma_mask.shape[0]:
+            rows = rows[sigma_mask]
+
+    if relative_flux_mask is not None:
+        relative_flux_mask = np.asarray(relative_flux_mask)
+        if relative_flux_mask.dtype == bool and rows.shape[0] == relative_flux_mask.shape[0]:
+            rows = rows[relative_flux_mask]
+
+    return rows
+
+
+def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relative_flux_mask=None):
+    fit_time = np.asarray(fit.time)
+    fit_airmass = np.asarray(fit.airmass)
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
     for i in range(len(comp_stars) + 1):
         if i == 0:
             title, key = target_name, "target"
@@ -195,29 +339,41 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date):
         fig, axs = plt.subplots(3, 2, figsize=(12, 10))
         fig.suptitle(f"Observing Statistics - {title} - {date}")
 
+        star_stats = _select_psf_rows(psf[key], sort_index=si, sigma_mask=gi,
+                                      relative_flux_mask=relative_flux_mask)
+
+        plot_len = min(fit_time.shape[0], fit_airmass.shape[0], star_stats.shape[0])
+        if plot_len == 0:
+            plt.close(fig)
+            continue
+
+        time_data = fit_time[:plot_len]
+        airmass_data = fit_airmass[:plot_len]
+        star_stats = star_stats[:plot_len]
+
         axs[0, 0].set(xlabel="Time [BJD_TDB]", ylabel="X-Centroid [px]")
-        axs[0, 0].plot(fit.time, psf[key][si, 0][gi], 'k.')
+        axs[0, 0].plot(time_data, star_stats[:, 0], 'k.')
 
         axs[0, 1].set(xlabel="Time [BJD_TDB]", ylabel="Y-Centroid [px]")
-        axs[0, 1].plot(fit.time, psf[key][si, 1][gi], 'k.')
+        axs[0, 1].plot(time_data, star_stats[:, 1], 'k.')
 
         axs[1, 0].set(xlabel="Time [BJD_TDB]", ylabel="Seeing [px]")
-        axs[1, 0].plot(fit.time, 2.355 * 0.5 * (psf[key][si, 3][gi] + psf[key][si, 4][gi]), 'k.')
+        axs[1, 0].plot(time_data, 2.355 * 0.5 * (star_stats[:, 3] + star_stats[:, 4]), 'k.')
 
         axs[1, 1].set(xlabel="Time [BJD_TDB]", ylabel="Airmass")
-        axs[1, 1].plot(fit.time, fit.airmass, 'k.')
+        axs[1, 1].plot(time_data, airmass_data, 'k.')
 
         axs[2, 0].set(xlabel="Time [BJD_TDB]", ylabel="Amplitude [ADU]")
-        axs[2, 0].plot(fit.time, psf[key][si, 2][gi], 'k.')
+        axs[2, 0].plot(time_data, star_stats[:, 2], 'k.')
 
         axs[2, 1].set(xlabel="Time [BJD_TDB]", ylabel="Background [ADU]")
-        axs[2, 1].plot(fit.time, psf[key][si, 6][gi], 'k.')
+        axs[2, 1].plot(time_data, star_stats[:, 6], 'k.')
 
         plt.tight_layout()
 
         try:
-            fig.savefig(Path(save) / "temp" / f"Observing_Statistics_{key}_{date}.png", bbox_inches="tight")
-            fig.savefig(Path(save) / "temp" / f"Observing_Statistics_{key}_{date}.pdf", bbox_inches="tight")
+            fig.savefig(temp_dir / f"Observing_Statistics_{key}_{date}.png", bbox_inches="tight")
+            fig.savefig(temp_dir / f"Observing_Statistics_{key}_{date}.pdf", bbox_inches="tight")
         except Exception:
             pass
         plt.close()

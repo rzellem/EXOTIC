@@ -213,3 +213,38 @@ def test_invalid_fwhm_range_2() -> None:
     ld_obj = LimbDarkening(stellar_params)
 
     assert ld_obj.check_fwhm(observed_filter) == False
+
+
+def test_additional_standard_filter_aliases_in_filter_column() -> None:
+    alias_cases = [
+        ("bu", "Johnson U", "U", "333.8", "398.8"),
+        ("pb", "Johnson B", "B", "391.6", "480.6"),
+        ("pg", "Johnson V", "V", "502.8", "586.8"),
+        ("pr", "Johnson R", "RJ", "590.0", "810.0"),
+        ("bi", "Johnson I", "IJ", "780.0", "1020.0"),
+        ("up", "Sloan u", "SU", "321.8", "386.8"),
+        ("gp", "Sloan g", "SG", "402.5", "551.5"),
+        ("rp", "Sloan r", "SR", "553.1", "693.1"),
+        ("ip", "Sloan i", "SI", "697.5", "827.5"),
+        ("zp", "Sloan z", "SZ", "841.2", "978.2"),
+        ("su", "Stromgren u", "STU", "336.3", "367.7"),
+        ("sv", "Stromgren v", "STV", "401.5", "418.5"),
+        ("sb", "Stromgren b", "STB", "459.55", "478.05"),
+        ("sy", "Stromgren y", "STY", "536.7", "559.3"),
+        ("hb", "Stromgren Hbw", "STHBW", "481.5", "496.5"),
+        ("zs", "PanSTARRS z-short", "ZS", "826.0", "920.0"),
+        ("clearV", "MObs CV", "CV", "350.0", "850.0"),
+        ("w", "MObs CV", "CV", "350.0", "850.0"),
+        ("pl", "MObs CV", "CV", "350.0", "850.0"),
+        ("exo", "Astrodon ExoPlanet-BB", "CBB", "500.0", "1000.0"),
+    ]
+
+    for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+        setting_filter_values(observed_filter)
+        assert observed_filter == {
+            'filter': expected_filter,
+            'name': expected_name,
+            'wl_min': expected_min,
+            'wl_max': expected_max,
+        }

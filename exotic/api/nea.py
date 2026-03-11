@@ -47,7 +47,7 @@ import re
 import requests
 import time
 import urllib.parse
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, \
+from tenacity import RetryError, retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
 
 # constants
@@ -114,7 +114,14 @@ class NASAExoplanetArchive:
 
             return json.dumps(flabels, indent=4)
         else:
-            self.planet, candidate = self._new_scrape(filename="eaConf.json")
+            try:
+                self.planet, candidate = self._new_scrape(filename="eaConf.json")
+            except (RetryError, requests.exceptions.RequestException, ConnectionError):
+                if not self._load_params_from_nextastro_cache():
+                    raise
+                candidate = False
+                print(f"Successfully found {self.planet} in NextAstro cached NASA Exoplanet Archive parameters!")
+                return self.planet, candidate, self.pl_dict
 
             if not candidate:
                 with open("eaConf.json", "r") as confirmed:
@@ -125,6 +132,88 @@ class NASAExoplanetArchive:
                     print(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
 
             return self.planet, candidate, self.pl_dict
+
+    @staticmethod
+    def _extract_value_and_errors(payload):
+        if not isinstance(payload, dict):
+            return payload, None, None
+
+        value = payload.get('value')
+        err_plus = payload.get('errPlus')
+        err_minus = payload.get('errMinus')
+        return value, err_plus, err_minus
+
+    @staticmethod
+    def _negative_error(value):
+        if value is None:
+            return None
+        return -abs(value)
+
+    def _load_params_from_nextastro_cache(self):
+        if not self.planet:
+            return False
+
+        endpoint = "https://archive.nextastro.org/api/exoplanet_params"
+        response = requests.get(
+            endpoint,
+            params={'name': self.planet},
+            timeout=self.requests_timeout
+        )
+        response.raise_for_status()
+        payload = response.json()
+        params = payload.get('params') if isinstance(payload, dict) else None
+
+        if not isinstance(params, dict):
+            return False
+
+        period, period_ep, period_em = self._extract_value_and_errors(params.get('orbitalPeriodDays'))
+        midt, midt_ep, midt_em = self._extract_value_and_errors(params.get('midTransitTimeDays'))
+        rprs, rprs_ep, rprs_em = self._extract_value_and_errors(params.get('rpOverRs'))
+        ars, ars_ep, ars_em = self._extract_value_and_errors(params.get('aOverRs'))
+        incl, incl_ep, incl_em = self._extract_value_and_errors(params.get('inclinationDeg'))
+        teff, teff_ep, teff_em = self._extract_value_and_errors(params.get('starTeffK'))
+        feh, feh_ep, feh_em = self._extract_value_and_errors(params.get('starFeh'))
+        logg, logg_ep, logg_em = self._extract_value_and_errors(params.get('starLogg'))
+
+        mapped_data = {
+            'pl_name': params.get('name', self.planet),
+            'hostname': params.get('hostStarName'),
+            'ra': params.get('raDeg'),
+            'dec': params.get('decDeg'),
+            'pl_orbper': period,
+            'pl_orbpererr1': period_ep,
+            'pl_orbpererr2': self._negative_error(period_em),
+            'pl_tranmid': midt,
+            'pl_tranmiderr1': midt_ep,
+            'pl_tranmiderr2': self._negative_error(midt_em),
+            'pl_ratror': rprs,
+            'pl_ratrorerr1': rprs_ep,
+            'pl_ratrorerr2': self._negative_error(rprs_em),
+            'pl_ratdor': ars,
+            'pl_ratdorerr1': ars_ep,
+            'pl_ratdorerr2': self._negative_error(ars_em),
+            'pl_orbincl': incl,
+            'pl_orbinclerr1': incl_ep,
+            'pl_orbinclerr2': self._negative_error(incl_em),
+            'pl_orbeccen': params.get('eccentricity'),
+            'pl_orblper': params.get('argPeriastronDeg'),
+            'st_teff': teff,
+            'st_tefferr1': teff_ep,
+            'st_tefferr2': self._negative_error(teff_em),
+            'st_met': feh,
+            'st_meterr1': feh_ep,
+            'st_meterr2': self._negative_error(feh_em),
+            'st_logg': logg,
+            'st_loggerr1': logg_ep,
+            'st_loggerr2': self._negative_error(logg_em),
+            'sy_dist': None,
+            'sy_pmra': None,
+            'sy_pmdec': None,
+        }
+
+        self.planet = mapped_data['pl_name']
+        self._get_params(mapped_data)
+        return True
 
     @staticmethod
     def dataframe_to_jsonfile(dataframe, filename):

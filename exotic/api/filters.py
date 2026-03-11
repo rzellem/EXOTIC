@@ -45,6 +45,7 @@ __fwhm = {
 
         # MObs Clear Filter; Source(s): Martin Fowler
         "MObs CV": {"name": "CV", "fwhm": ("350.0", "850.0")},
+        "ClearV": {"name": "CV", "fwhm": ("350.0", "1000.0")},
 
         # Astrodon CBB; Source(s): George Silvis; https://astrodon.com/products/astrodon-exo-planet-filter/
         "Astrodon ExoPlanet-BB": {"name": "CBB", "fwhm": ("500.0", "1000.0")},
@@ -77,6 +78,33 @@ fwhm_alias = {
 
         "Clear with blue-blocking": "Astrodon ExoPlanet-BB",
         "Exop": "Astrodon ExoPlanet-BB",
+
+        # additional short aliases found in FILTER column values
+        "bu": "Johnson U",
+        "bb": "Johnson B",
+        "pb": "Johnson B",
+        "bv": "Johnson V",
+        "pg": "Johnson V",
+        "br": "Johnson R",
+        "pr": "Johnson R",
+        "bi": "Johnson I",
+        "up": "Sloan u",
+        "gp": "Sloan g",
+        "rp": "Sloan r",
+        "ip": "Sloan i",
+        "zp": "Sloan z",
+        "su": "Stromgren u",
+        "sv": "Stromgren v",
+        "sb": "Stromgren b",
+        "sy": "Stromgren y",
+        "hb": "Stromgren Hbw",
+        "zs": "PanSTARRS z-short",
+        "clearV": "ClearV",
+        "clear": "ClearV",
+        "lum": "ClearV",
+        "w": "ClearV",
+        "pl": "ClearV",
+        "exo": "Astrodon ExoPlanet-BB"
 }
 
 # standard filters w/o precisely defined FWHM values

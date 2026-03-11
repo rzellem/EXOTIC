@@ -37,11 +37,13 @@
 # ########################################################################### #
 from astropy import constants as const
 from astropy import units as u
+import builtins
 from copy import deepcopy
+from contextlib import redirect_stderr, redirect_stdout
+import io
 from itertools import cycle
 import matplotlib.pyplot as plt
 import numpy as np
-from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit_flux_drop
 from scipy import stats
 try:
     from ultranest import ReactiveNestedSampler
@@ -60,6 +62,13 @@ try:
     from ultranest_utils import run_reactive_sampler
 except ImportError:
     from .ultranest_utils import run_reactive_sampler
+
+if not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False):
+    print("Importing modules. Please wait.......")
+    builtins._EXOTIC_IMPORTING_MODULES_PRINTED = True
+
+with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+    from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit as _pylightcurve_transit
 
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value
@@ -116,15 +125,8 @@ def planet_orbit(period, sma_over_rs, eccentricity, inclination, periastron, mid
 
 def pytransit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity, inclination, periastron,
             mid_time, time_array, method='claret', precision=3):
-
-    position_vector = planet_orbit(period, sma_over_rs, eccentricity, inclination, periastron, mid_time, time_array)
-
-    projected_distance = np.where(
-        position_vector[0] < 0, 1.0 + 5.0 * rp_over_rs,
-        np.sqrt(position_vector[1] * position_vector[1] + position_vector[2] * position_vector[2]))
-
-    return transit_flux_drop(limb_darkening_coefficients, rp_over_rs, projected_distance,
-                             method=method, precision=precision)
+    return _pylightcurve_transit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity,
+                                 inclination, periastron, mid_time, time_array, method=method, precision=precision)
 
 def transit(times, values):
     model = pytransit([values['u0'], values['u1'], values['u2'], values['u3']], 
@@ -132,9 +134,6 @@ def transit(times, values):
                     values['ecc'], values['inc'], values['omega'],
                     values['tmid'], times, method='claret', precision=3)
     return model
-
-from pylightcurve.models.exoplanet_lc import transit as pytransit
-from pylightcurve.models.exoplanet_lc import eclipse_mid_time
 
 def eclipse(times, values):
     tme = eclipse_mid_time(values['per'], values['ars'], values['ecc'], values['inc'], values['omega'], values['tmid'])

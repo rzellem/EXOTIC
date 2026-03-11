@@ -73,15 +73,12 @@ from astropy.io import fits
 from astropy.time import Time
 from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
-from astroquery.simbad import Simbad
-from astroquery.gaia import Gaia
 # UTC to BJD converter import
 from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 # julian conversion imports
 import dateutil.parser as dup
 import imreg_dft as ird
 from pathlib import Path
-import pyvo as vo
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from matplotlib.animation import FuncAnimation
@@ -91,7 +88,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 # photometry
 from photutils.aperture import CircularAperture
-import pandas as pd
 import re
 import requests
 # scipy imports
@@ -100,16 +96,15 @@ from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion, gaussian_filter
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
-from skimage.color import rgb2gray
 # error handling for scraper
 from tenacity import retry, stop_after_delay
 # color, color_demosaicing
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 # ########## EXOTIC imports ##########
 try:  # light curve numerics
-    from .api.elca import lc_fitter, binner, transit, get_phase
+    from .api.elca import lc_fitter, transit, get_phase
 except ImportError:  # package import
-    from api.elca import lc_fitter, binner, transit, get_phase
+    from api.elca import lc_fitter, transit, get_phase
 try:  # output files
     from inputs import Inputs, comparison_star_coords
 except ImportError:  # package import
@@ -1169,27 +1164,6 @@ def query_variable_star_apis(ra, dec):
     # Convert comparison star coordinates from pixel to WCS
     sample = SkyCoord(ra * u.deg, dec * u.deg, frame='fk5')
     return vsx_variable(sample.ra.deg, sample.dec.deg)
-    # radius = u.Quantity(20.0, u.arcsec)
-    # # Query GAIA first to check for variability using the phot_variable_flag trait
-    # gaia_result = gaia_query(sample, radius)
-    # if not gaia_result:
-    #     log_info("Warning: Your comparison star cannot be resolved in the Gaia star database; "
-    #              "EXOTIC cannot check if it is variable or not. "
-    #              "\nEXOTIC will still include this star in the reduction. "
-    #              "\nPlease proceed with caution as we cannot check for stellar variability.\n", warn=True)
-    # else:
-    #     # Individually go through the phot_variable_flag indicator for each star to see if variable or not
-    #     variableFlagList = gaia_result.columns["phot_variable_flag"]
-    #     constantCounter = 0
-    #     for currFlag in variableFlagList:
-    #         if currFlag == "VARIABLE":
-    #             return True
-    #         elif currFlag == "NOT_AVAILABLE":
-    #             continue
-    #         elif currFlag == "CONSTANT":
-    #             constantCounter += 1
-    #     if constantCounter == len(variableFlagList):
-    #         return False
     #
     # # Query SIMBAD and search identifier result table to determine if comparison star is variable in any form
     # # This is a secondary check if GAIA query returns inconclusive results
@@ -1337,25 +1311,6 @@ def check_for_variable_stars(ra_wcs, dec_wcs, comp_stars, use_nextastro_variabil
                  f"\n\tPixel X: {comp_star[0]} Pixel Y: {comp_star[1]}")
         if query_variable_star_apis(ra, dec):
             comp_stars.remove(comp_star)
-
-
-@retry(stop=stop_after_delay(30))
-def gaia_query(sample, radius):
-    try:
-        gaia_query = Gaia.cone_search(sample, radius)
-        return gaia_query.get_results()
-    except Exception:
-        return False
-
-
-@retry(stop=stop_after_delay(30))
-def simbad_query(sample):
-    try:
-        simbad_result = Simbad.query_region(sample, radius=20 * u.arcsec)
-        return simbad_result['MAIN_ID'][0].decode("utf-8")
-    except Exception:
-        return False
-
 
 # Apply calibrations if applicable
 def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
@@ -1613,9 +1568,14 @@ def log_reduction_timing_overview(prefix='Reduction timing overview'):
     )
 
 
+def _display_filename(file_name):
+    return str(file_name).replace("\\", "/").rsplit("/", 1)[-1]
+
+
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, file_name, roi=1, report_failure=True, reference_image=None):
     start_time = perf_counter()
+    display_file_name = _display_filename(file_name)
 
     if report_failure:
         plateStatus.setCurrentFilename(file_name)
@@ -1634,7 +1594,10 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
     roi_current = current_image[roiy, roix]
 
     if roi_reference.shape != roi_current.shape or roi_reference.size == 0:
-        log.debug(f"Warning: Following image failed pre-alignment checks in {perf_counter() - start_time:.2f}s - {file_name}")
+        log.debug(
+            f"Warning: Following image failed pre-alignment checks in "
+            f"{perf_counter() - start_time:.2f}s - {display_file_name}"
+        )
         if report_failure:
             plateStatus.alignmentError()
         return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
@@ -1655,7 +1618,10 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
                 fft_high_confidence = error <= 0.1 and max_shift <= max(roi_current.shape) * 0.25
                 _record_transform_stage_timing('fft_translation', perf_counter() - stage_start, True)
                 if fft_high_confidence:
-                    log.debug(f"Transformation solved via high-confidence FFT in {perf_counter() - start_time:.2f}s for {file_name}")
+                    log.debug(
+                        f"Transformation solved via high-confidence FFT in "
+                        f"{perf_counter() - start_time:.2f}s for {display_file_name}"
+                    )
                     return fft_tform
             else:
                 _record_transform_stage_timing('fft_translation', perf_counter() - stage_start, False)
@@ -1669,7 +1635,10 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
     try:
         results = aa.find_transform(roi_reference, roi_current)
         _record_transform_stage_timing('astroalign_direct', perf_counter() - stage_start, True)
-        log.debug(f"Transformation solved via astroalign direct pass in {perf_counter() - start_time:.2f}s for {file_name}")
+        log.debug(
+            f"Transformation solved via astroalign direct pass in "
+            f"{perf_counter() - start_time:.2f}s for {display_file_name}"
+        )
         return results[0]
     except Exception:
         _record_transform_stage_timing('astroalign_direct', perf_counter() - stage_start, False)
@@ -1682,7 +1651,10 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
     try:
         results = aa.find_transform(filtered_reference, filtered_current)
         _record_transform_stage_timing('astroalign_filtered', perf_counter() - stage_start, True)
-        log.debug(f"Transformation solved via filtered astroalign in {perf_counter() - start_time:.2f}s for {file_name}")
+        log.debug(
+            f"Transformation solved via filtered astroalign in "
+            f"{perf_counter() - start_time:.2f}s for {display_file_name}"
+        )
         return results[0]
     except Exception:
         _record_transform_stage_timing('astroalign_filtered', perf_counter() - stage_start, False)
@@ -1705,7 +1677,10 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
             try:
                 results = aa.find_transform(mask1, mask0)
                 _record_transform_stage_timing('astroalign_mask', perf_counter() - stage_start, True)
-                log.debug(f"Transformation solved via mask astroalign (p={p}, erode={it}) in {perf_counter() - start_time:.2f}s for {file_name}")
+                log.debug(
+                    f"Transformation solved via mask astroalign (p={p}, erode={it}) in "
+                    f"{perf_counter() - start_time:.2f}s for {display_file_name}"
+                )
                 return results[0]
             except Exception:
                 _record_transform_stage_timing('astroalign_mask', perf_counter() - stage_start, False)
@@ -1714,17 +1689,26 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
     try:
         result1 = ird.similarity(roi_reference, roi_current, numiter=3)
         _record_transform_stage_timing('imreg_dft', perf_counter() - stage_start, True)
-        log.debug(f"Transformation solved via imreg_dft fallback in {perf_counter() - start_time:.2f}s for {file_name}")
+        log.debug(
+            f"Transformation solved via imreg_dft fallback in "
+            f"{perf_counter() - start_time:.2f}s for {display_file_name}"
+        )
         return SimilarityTransform(scale=result1['scale'], rotation=np.radians(result1['angle']),
                                    translation=[-1 * result1['tvec'][1], -1 * result1['tvec'][0]])
     except Exception:
         _record_transform_stage_timing('imreg_dft', perf_counter() - stage_start, False)
 
     if fft_tform is not None:
-        log.debug(f"Transformation fell back to FFT translation in {perf_counter() - start_time:.2f}s for {file_name}")
+        log.debug(
+            f"Transformation fell back to FFT translation in "
+            f"{perf_counter() - start_time:.2f}s for {display_file_name}"
+        )
         return fft_tform
 
-    log.debug(f"Warning: Following image failed to align in {perf_counter() - start_time:.2f}s - {file_name}")
+    log.debug(
+        f"Warning: Following image failed to align in "
+        f"{perf_counter() - start_time:.2f}s - {display_file_name}"
+    )
     if report_failure:
         plateStatus.alignmentError()
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
@@ -1864,8 +1848,9 @@ def log_finding_transformation_progress(i, total_jobs, file_name, use_multiproce
             log_info(f"Multiprocessing finding transformations progress: {completed}/{total_jobs}")
         return
 
-    sys.stdout.write(f"Finding transformation {i + 1} of {total_jobs} : {file_name}\n")
-    log.debug(f"Finding transformation {i + 1} of {total_jobs} : {file_name}\n")
+    display_file_name = _display_filename(file_name)
+    sys.stdout.write(f"Finding transformation {i + 1} of {total_jobs} : {display_file_name}\n")
+    log.debug(f"Finding transformation {i + 1} of {total_jobs} : {display_file_name}\n")
     sys.stdout.flush()
 
 

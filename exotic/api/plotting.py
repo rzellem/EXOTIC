@@ -37,12 +37,9 @@
 # ########################################################################### #
 from astropy.io import fits
 # from astroscrappy import detect_cosmics
-from bokeh.io import output_notebook
-from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LinearColorMapper, LogColorMapper, \
+from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LogColorMapper, \
   LogTicker, PanTool, ResetTool, WheelZoomTool
-from bokeh.palettes import Viridis256
 from bokeh.plotting import figure, output_file, show
-from io import BytesIO
 import json
 import logging
 import matplotlib.pyplot as plt

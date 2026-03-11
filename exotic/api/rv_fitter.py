@@ -43,7 +43,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from ultranest import ReactiveNestedSampler
-from scipy.optimize import least_squares
 
 try:
     from elca import lc_fitter

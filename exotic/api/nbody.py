@@ -46,7 +46,6 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 import rebound
-from exotic.api.plotting import corner
 from exotic.api.ultranest_utils import run_reactive_sampler
 from ultranest import ReactiveNestedSampler
 from astropy.io import fits

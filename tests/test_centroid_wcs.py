@@ -1,3 +1,4 @@
+import io
 import sys
 import types
 import importlib.util
@@ -200,6 +201,34 @@ def test_should_ignore_header_wcs_defaults_to_false():
     assert exotic_module.should_ignore_header_wcs(None) is False
     assert exotic_module.should_ignore_header_wcs("n") is False
     assert exotic_module.should_ignore_header_wcs("y") is True
+
+
+def test_display_filename_returns_basename_for_unix_and_windows_paths():
+    assert (
+        exotic_module._display_filename(
+            "/content/drive/MyDrive/0.Exoplanets/2.Transits/run/frame_001.fits.fz"
+        )
+        == "frame_001.fits.fz"
+    )
+    assert exotic_module._display_filename(r"C:\data\run\frame_002.fits.fz") == "frame_002.fits.fz"
+
+
+def test_log_finding_transformation_progress_prints_basename(monkeypatch):
+    stdout = io.StringIO()
+    debug_messages = []
+
+    monkeypatch.setattr(exotic_module.sys, "stdout", stdout)
+    monkeypatch.setattr(exotic_module.log, "debug", lambda message: debug_messages.append(message))
+
+    exotic_module.log_finding_transformation_progress(
+        144,
+        220,
+        "/content/drive/MyDrive/0.Exoplanets/2.Transits/run/frame_145.fits.fz",
+        False,
+    )
+
+    assert stdout.getvalue() == "Finding transformation 145 of 220 : frame_145.fits.fz\n"
+    assert debug_messages == ["Finding transformation 145 of 220 : frame_145.fits.fz\n"]
 
 
 def test_check_wcs_ignores_header_wcs_when_override_enabled(monkeypatch):

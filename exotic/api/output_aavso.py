@@ -38,10 +38,8 @@
 import hashlib
 from json import dump, dumps
 from numpy import mean, median, std
-import os
 from pathlib import Path
 import re
-from tkinter import NONE
 
 try:
     from .utils import round_to_2

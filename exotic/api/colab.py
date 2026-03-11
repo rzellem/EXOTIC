@@ -53,27 +53,21 @@
 #########################################################
 from astropy.io import fits
 from astropy.time import Time
-from barycorrpy import utc_tdb
 # import bokeh.io
 # from bokeh.io import output_notebook
-from bokeh.palettes import Viridis256
-from bokeh.plotting import figure, output_file, show
-from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LinearColorMapper, LogColorMapper, \
+from bokeh.plotting import figure, show
+from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LogColorMapper, \
   LogTicker, PanTool, ResetTool, WheelZoomTool
 # import copy
-from io import BytesIO
 from IPython.display import display, HTML
 # from IPython.display import Image
 # from ipywidgets import widgets, HBox
 import json
 import numpy as np
 import os
-from pprint import pprint
 import re
-from scipy.ndimage import label
-from skimage.transform import rescale, resize, downscale_local_mean
+from skimage.transform import downscale_local_mean
 # import subprocess
-import time
 
 
 def display_image(filename):

@@ -40,12 +40,14 @@
 # Fit an exoplanet transit model to time series data.
 # ########################################################################### #
 from astropy.time import Time
+import builtins
 import copy
+from contextlib import redirect_stderr, redirect_stdout
+import io
 from itertools import cycle
 import bottleneck as bn
 import matplotlib.pyplot as plt
 import numpy as np
-from pylightcurve.models.exoplanet_lc import transit as pytransit
 from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
@@ -66,6 +68,13 @@ try:
     from ultranest_utils import run_reactive_sampler
 except ImportError:
     from .ultranest_utils import run_reactive_sampler
+
+if not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False):
+    print("Importing modules. Please wait.......")
+    builtins._EXOTIC_IMPORTING_MODULES_PRINTED = True
+
+with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+    from pylightcurve.models.exoplanet_lc import transit as pytransit
 
 
 def weightedflux(flux, gw, nearest):

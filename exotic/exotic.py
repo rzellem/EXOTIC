@@ -169,7 +169,7 @@ def log_info(string, warn=False, error=False):
     if error:
         print(f"\033[31m {string}\033[0m")
     elif warn:
-        print(f"\033[33m {string}\033[0m")
+        print(f"\033[34m {string}\033[0m")
     else:
         print(string)
     log.debug(string)
@@ -1213,11 +1213,34 @@ def query_variable_star_apis(ra, dec):
 def vsx_auid(ra, dec, radius=0.01, maglimit=14):
     try:
         url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
-        result = requests.get(url)
-        return result.json()['VSXObjects']['VSXObject'][0]['AUID']
+        result = requests.get(url, timeout=30)
+        result.raise_for_status()
+        vsx_objects = extract_vsx_objects(result.json())
+        if not vsx_objects:
+            return False
+        return vsx_objects[0].get('AUID', False) or False
     except Exception:
         log.info("\nThe target star does not have an AUID.")
         return False
+
+
+def extract_vsx_objects(payload):
+    if not isinstance(payload, dict):
+        return []
+
+    vsx_objects = payload.get('VSXObjects', [])
+    if isinstance(vsx_objects, dict):
+        vsx_object = vsx_objects.get('VSXObject', [])
+        if isinstance(vsx_object, dict):
+            return [vsx_object]
+        if isinstance(vsx_object, list):
+            return vsx_object
+        return []
+
+    if isinstance(vsx_objects, list):
+        return vsx_objects
+
+    return []
 
 
 @retry(stop=stop_after_delay(30))
@@ -1227,12 +1250,17 @@ def vsx_variable(ra, dec, radius=0.01, maglimit=14):
         url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
         result = requests.get(url, timeout=30)
         result.raise_for_status()
-        var = result.json()['VSXObjects']['VSXObject'][0]['Category']
+        vsx_objects = extract_vsx_objects(result.json())
+        if not vsx_objects:
+            return False
 
-        if var.lower() == "variable":
-            vname = result.json()['VSXObjects']['VSXObject'][0]['Name']
-            vdec = result.json()['VSXObjects']['VSXObject'][0]['Declination2000']
-            vra = result.json()['VSXObjects']['VSXObject'][0]['RA2000']
+        first_vsx_object = vsx_objects[0]
+        var = first_vsx_object.get('Category', '')
+
+        if isinstance(var, str) and var.lower() == "variable":
+            vname = first_vsx_object.get('Name')
+            vdec = first_vsx_object.get('Declination2000')
+            vra = first_vsx_object.get('RA2000')
             log_info(f"\nVSX variable check found {vname} at RA {vra}, DEC {vdec}\n"
                      f"and will be removed from reduction.", warn=True)
             return True
@@ -2705,7 +2733,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         airmass_sorted = airmass[si]
 
     if len(times_sorted) <= 1:
-        log_info('No data left after filtering', warn=True)
         return None, None, None
 
     dt = np.mean(np.diff(times_sorted))
@@ -2735,7 +2762,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         arrayAirmass)
 
     if np.sum(~nanmask) <= 1:
-        log_info('No data left after filtering', warn=True)
         return None, None, None
     else:
         arrayFinalFlux = arrayFinalFlux[~nanmask]
@@ -3425,6 +3451,12 @@ def main():
             exotic_infoDict, userpDict['pName'] = inputs_obj.complete_red(userpDict['pName'])
         else:
             exotic_infoDict, userpDict['pName'] = inputs_obj.prereduced(userpDict['pName'])
+            for motion_key in ('dist', 'pm_ra', 'pm_dec'):
+                current_motion_value = userpDict.get(motion_key)
+                if current_motion_value is None or (isinstance(current_motion_value, str) and not current_motion_value.strip()):
+                    header_motion_value = exotic_infoDict.get(motion_key)
+                    if header_motion_value is not None:
+                        userpDict[motion_key] = header_motion_value
 
         # Make a temp directory of helpful files
         Path(Path(exotic_infoDict['save']) / "temp").mkdir(exist_ok=True)

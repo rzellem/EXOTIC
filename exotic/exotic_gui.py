@@ -48,6 +48,7 @@ import json
 import os
 import platform
 import python_version
+import re
 import subprocess
 import sys
 
@@ -78,9 +79,9 @@ except ImportError:  # package import
     from version import __version__
 
 try:
-    from .inputs import parse_aavso_comp_star
+    from .inputs import parse_aavso_comp_star, parse_aavso_prereduced_overrides
 except ImportError:
-    from inputs import parse_aavso_comp_star
+    from inputs import parse_aavso_comp_star, parse_aavso_prereduced_overrides
 
 animate_toggle()
 
@@ -125,6 +126,49 @@ class FileSelect(tk.Frame):
     @property
     def file_path(self):
         return self.filePath.get()
+
+
+def stringify_prefill(value):
+    if value is None:
+        return ""
+    return str(value)
+
+
+def normalize_filter_option_lookup(value):
+    if value is None:
+        return None
+    return re.sub(r'[\W_]+', '', str(value).strip().lower())
+
+
+def preselected_filter_option(prefill, choices):
+    if not isinstance(prefill, dict):
+        return choices[0]
+
+    filter_desc = prefill.get('filter_desc')
+    filter_value = prefill.get('filter')
+    if filter_desc in photometric_filters:
+        return filter_desc
+    if filter_value in photometric_filters:
+        return filter_value
+
+    normalized_candidates = {
+        normalize_filter_option_lookup(filter_desc),
+        normalize_filter_option_lookup(filter_value),
+    }
+    normalized_candidates.discard(None)
+
+    for option in choices:
+        if option == "N/A":
+            continue
+        option_metadata = photometric_filters.get(option, {})
+        if normalize_filter_option_lookup(option) in normalized_candidates:
+            return option
+        if normalize_filter_option_lookup(option_metadata.get('name')) in normalized_candidates:
+            return option
+
+    if prefill.get('wl_min') and prefill.get('wl_max'):
+        return "N/A"
+    return choices[0]
 
 
 def main():
@@ -263,7 +307,10 @@ def main():
             #         "Planet Name": "HAT-P-32 b",
             planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
             planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('planet')) or "HAT-P-32 b",
+            )
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -513,17 +560,27 @@ def main():
 
             comp_star_note = tk.Label(
                 root,
-                text="Comparison star metadata will be loaded from an AAVSO #COMP_STAR-XC header when available.",
+                text="Leave these blank to load time, units, exposure, filter, and comparison-star metadata from an AAVSO header when available.",
                 justify=tk.LEFT
             )
             comp_star_note.grid(row=i, column=j, columnspan=2, sticky=tk.W, pady=2)
             i += 1
 
             def save_input():
-                input_data['file_time'] = pretime_entry.get()
-                input_data['file_units'] = preunit_entry.get()
-                input_data['exp'] = float(exp_entry.get())
+                aavso_prefill = parse_aavso_prereduced_overrides(prered_file.file_path)
+                exposure_text = exp_entry.get().strip()
+
+                input_data['aavso_prefill'] = aavso_prefill
+                input_data['file_time'] = pretime_entry.get().strip() or stringify_prefill(aavso_prefill.get('file_time'))
+                input_data['file_units'] = preunit_entry.get().strip() or stringify_prefill(aavso_prefill.get('file_units'))
+                input_data['exp'] = float(exposure_text) if exposure_text else aavso_prefill.get('exposure')
                 input_data['phot_comp_star'] = parse_aavso_comp_star(prered_file.file_path)
+                input_data['filtermin'] = aavso_prefill.get('wl_min')
+                input_data['filtermax'] = aavso_prefill.get('wl_max')
+                input_data['obs_name'] = stringify_prefill(aavso_prefill.get('obs_name'))
+                input_data['dist'] = aavso_prefill.get('dist')
+                input_data['pm_ra'] = aavso_prefill.get('pm_ra')
+                input_data['pm_dec'] = aavso_prefill.get('pm_dec')
                 root.destroy()
 
             # Button for closing
@@ -583,6 +640,7 @@ def main():
             # Set up rows + columns
             i = 1
             j = 0
+            aavso_prefill = input_data.get('aavso_prefill', {}) if fitsortext.get() == 2 else {}
 
             folderPath = tk.StringVar()
 
@@ -658,7 +716,7 @@ def main():
             #             # "AAVSO Observer Code (blank if none)": "RTZ",
             obscode_label = tk.Label(root, text="AAVSO Observer Code (leave blank if none)", justify=tk.LEFT)
             obscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            obscode_entry.insert(tk.END, "")
+            obscode_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('aavso_num')))
             obscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -667,7 +725,7 @@ def main():
             #             # "Secondary Observer Codes (blank if none)": "",
             secondobscode_label = tk.Label(root, text="Secondary Observer Codes (leave blank if none)", justify=tk.LEFT)
             secondobscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            secondobscode_entry.insert(tk.END, "")
+            secondobscode_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('second_obs')))
             secondobscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             secondobscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -675,6 +733,7 @@ def main():
             #             # "Observation date": "17-December-2017",
             obsdate_label = tk.Label(root, text="Observation date (e.g. DAY-MONTH-YEAR)", justify=tk.LEFT)
             obsdate_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            obsdate_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('date')))
             obsdate_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obsdate_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -685,6 +744,7 @@ def main():
                 lat_label_text += " [optional for pre-reduced runs]"
             lat_label = tk.Label(root, text=lat_label_text, justify=tk.LEFT)
             lat_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            lat_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('lat')))
             lat_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             lat_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -695,6 +755,7 @@ def main():
                 long_label_text += " [optional for pre-reduced runs]"
             long_label = tk.Label(root, text=long_label_text, justify=tk.LEFT)
             long_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            long_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('long')))
             long_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             long_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -707,6 +768,8 @@ def main():
             elevation_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             if fitsortext.get() == 1:
                 elevation_entry.insert(tk.END, "0")
+            elif aavso_prefill.get('elev') is not None:
+                elevation_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('elev')))
             elevation_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             elevation_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -718,6 +781,7 @@ def main():
                                              "then note your actual camera type under \"Observing Notes\" below)",
                                         justify=tk.LEFT)
             cameratype_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            cameratype_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('camera')))
             cameratype_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             cameratype_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -725,6 +789,7 @@ def main():
             # #             "Pixel Binning": "1x1",
             pixbin_label = tk.Label(root, text="Pixel Binning  (e.g 1x1)", justify=tk.LEFT)
             pixbin_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            pixbin_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('pixel_bin')))
             pixbin_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             pixbin_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -748,7 +813,7 @@ def main():
             choices = [item for item in photometric_filters.keys()] + ["N/A"]
             choices = sorted(set(choices))  # sort and list unique values
             filteroptions = tk.StringVar(root)
-            filteroptions.set(choices[0])  # default value
+            filteroptions.set(preselected_filter_option(aavso_prefill, choices))
 
             l3 = tk.Label(root, text='Filter (use N/A for custom)', justify=tk.LEFT)
             l3.grid(row=i, column=j, sticky=tk.W, pady=2)
@@ -769,6 +834,7 @@ def main():
             #              "Observing Notes": "Weather, seeing was nice.",
             obsnotes_label = tk.Label(root, text="Observing Notes", justify=tk.LEFT)
             obsnotes_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            obsnotes_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('notes')))
             obsnotes_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obsnotes_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -828,23 +894,24 @@ def main():
                 # root.mainloop()
 
             def save_input():
-                input_data['obsnotes'] = obsnotes_entry.get()
+                input_data['obsnotes'] = obsnotes_entry.get().strip() or stringify_prefill(aavso_prefill.get('notes'))
                 if filteroptions.get() == "N/A":
-                    input_data['obsfilter'] = "N/A"
+                    input_data['obsfilter'] = stringify_prefill(aavso_prefill.get('filter')) or "N/A"
                 else:
                     input_data['obsfilter'] = photometric_filters[filteroptions.get()]["name"]
-                input_data['pixbin'] = pixbin_entry.get()
-                input_data['cameratype'] = cameratype_entry.get()
-                input_data['obscode'] = obscode_entry.get()
-                input_data['secondobscode'] = secondobscode_entry.get()
-                input_data['obsdate'] = obsdate_entry.get()
-                input_data['lat'] = lat_entry.get().strip()
-                input_data['long'] = long_entry.get().strip()
+                input_data['pixbin'] = pixbin_entry.get().strip() or stringify_prefill(aavso_prefill.get('pixel_bin'))
+                input_data['cameratype'] = cameratype_entry.get().strip() or stringify_prefill(aavso_prefill.get('camera'))
+                input_data['obscode'] = obscode_entry.get().strip() or stringify_prefill(aavso_prefill.get('aavso_num'))
+                input_data['secondobscode'] = secondobscode_entry.get().strip() or stringify_prefill(aavso_prefill.get('second_obs'))
+                input_data['obsdate'] = obsdate_entry.get().strip() or stringify_prefill(aavso_prefill.get('date'))
+                input_data['lat'] = lat_entry.get().strip() or stringify_prefill(aavso_prefill.get('lat'))
+                input_data['long'] = long_entry.get().strip() or stringify_prefill(aavso_prefill.get('long'))
                 elevation_value = elevation_entry.get().strip()
                 if fitsortext.get() == 1 or elevation_value:
                     input_data['elevation'] = float(elevation_value)
                 else:
-                    input_data['elevation'] = None
+                    input_data['elevation'] = aavso_prefill.get('elev')
+                input_data['obs_name'] = stringify_prefill(aavso_prefill.get('obs_name'))
                 input_data['pixscale'] = pixscale_entry.get()
                 if fitsortext.get() == 1:
                     input_data['comppos'] = str(list(ast.literal_eval(comppos_entry.get())))
@@ -872,7 +939,7 @@ def main():
             pass
 
         try:
-            if filteroptions.get() == "N/A":
+            if filteroptions.get() == "N/A" and (input_data.get('filtermin') is None or input_data.get('filtermax') is None):
                 root=tk.Tk() 
                 root.protocol("WM_DELETE_WINDOW", exit)
                 root.title(f"EXOTIC v{__version__}")
@@ -891,6 +958,8 @@ def main():
                 # "Filter Minimum Wavelength (nm)": null,
                 filtermin_label = tk.Label(root, text="Filter Minimum Wavelength (nm)", justify=tk.LEFT)
                 filtermin_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+                if input_data.get('filtermin') is not None:
+                    filtermin_entry.insert(tk.END, stringify_prefill(input_data.get('filtermin')))
                 filtermin_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 filtermin_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
@@ -898,13 +967,17 @@ def main():
                 # "Filter Maximum Wavelength (nm)": null
                 filtermax_label = tk.Label(root, text="Filter Maximum Wavelength (nm)", justify=tk.LEFT)
                 filtermax_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+                if input_data.get('filtermax') is not None:
+                    filtermax_entry.insert(tk.END, stringify_prefill(input_data.get('filtermax')))
                 filtermax_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 filtermax_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
 
                 def save_input():
-                    input_data['filtermax'] = float(filtermax_entry.get())
-                    input_data['filtermin'] = float(filtermin_entry.get())
+                    filtermax_value = filtermax_entry.get().strip()
+                    filtermin_value = filtermin_entry.get().strip()
+                    input_data['filtermax'] = float(filtermax_value) if filtermax_value else input_data.get('filtermax')
+                    input_data['filtermin'] = float(filtermin_value) if filtermin_value else input_data.get('filtermin')
                     root.destroy()
 
                 # Button for closing
@@ -975,7 +1048,10 @@ def main():
             #         "Planet Name": "HAT-P-32 b",
             planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
             planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('planet')) or "HAT-P-32 b",
+            )
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -983,7 +1059,10 @@ def main():
             #         "Host Star Name": "HAT-P-32",
             star_label = tk.Label(root, text="Host Star Name", justify=tk.LEFT)
             star_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            star_entry.insert(tk.END, "HAT-P-32")
+            star_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('host_star')) or "HAT-P-32",
+            )
             star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             star_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -1232,7 +1311,10 @@ def main():
             #         "Planet Name": "HAT-P-32 b",
             planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
             planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('planet')) or "HAT-P-32 b",
+            )
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -1240,7 +1322,10 @@ def main():
             #         "Host Star Name": "HAT-P-32",
             star_label = tk.Label(root, text="Host Star Name", justify=tk.LEFT)
             star_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            star_entry.insert(tk.END, "HAT-P-32")
+            star_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('host_star')) or "HAT-P-32",
+            )
             star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             star_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -1412,7 +1497,7 @@ def main():
 
                         "AAVSO Observer Code (blank if none)": input_data['obscode'],
                         "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
-                        "Observatory Full Title": "",
+                        "Observatory Full Title": input_data.get('obs_name', ""),
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
@@ -1478,7 +1563,7 @@ def main():
 
                         "AAVSO Observer Code (blank if none)": input_data['obscode'],
                         "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
-                        "Observatory Full Title": "",
+                        "Observatory Full Title": input_data.get('obs_name', ""),
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
@@ -1534,7 +1619,10 @@ def main():
                     "Star Metallicity (-) Uncertainty": float(input_data['metUncNeg']),
                     "Star Surface Gravity (log(g))": float(input_data['logg']),
                     "Star Surface Gravity (+) Uncertainty": float(input_data['loggUncPos']),
-                    "Star Surface Gravity (-) Uncertainty": float(input_data['loggUncNeg'])
+                    "Star Surface Gravity (-) Uncertainty": float(input_data['loggUncNeg']),
+                    "Star Distance (pc)": null if input_data.get('dist') in (None, "") else float(input_data['dist']),
+                    "Star Proper Motion RA (mas/yr)": null if input_data.get('pm_ra') in (None, "") else float(input_data['pm_ra']),
+                    "Star Proper Motion DEC (mas/yr)": null if input_data.get('pm_dec') in (None, "") else float(input_data['pm_dec'])
                 }
 
             elif planetparams.get() == "inits":

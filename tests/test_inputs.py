@@ -1,6 +1,9 @@
 import json
+import requests
+import pytest
 
-from exotic.inputs import Inputs, camera
+import exotic.inputs as inputs_module
+from exotic.inputs import Inputs, camera, parse_aavso_prereduced_overrides
 
 
 def test_camera_accepts_cmos_as_ccd_without_prompt():
@@ -108,6 +111,123 @@ def test_comp_params_reads_ignore_header_wcs_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ignore_header_wcs"] == "y"
+
+
+class DummyResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def test_comp_params_fetches_missing_gaia_astrometry_from_nextastro(tmp_path, monkeypatch):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {
+            "Target Star RA": "01:02:03",
+            "Target Star Dec": "+04:05:06",
+            "Star Distance (pc)": None,
+            "Star Proper Motion RA (mas/yr)": "",
+            "Star Proper Motion DEC (mas/yr)": "null",
+        },
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    called = {}
+
+    def fake_get(url, params, timeout):
+        called["url"] = url
+        called["params"] = params
+        called["timeout"] = timeout
+        return DummyResponse({
+            "gaia": {
+                "distance_pc": 200.0,
+                "pmra_mas_per_year": 10.0,
+                "pmdec_mas_per_year": -20.0,
+            }
+        })
+
+    monkeypatch.setattr(inputs_module.requests, "get", fake_get)
+
+    inputs = Inputs(init_opt="y")
+    planet_dict = inputs.comp_params(init_file, {})
+
+    assert called["url"] == "https://archive.nextastro.org/single_star_gaia_distpm"
+    assert called["timeout"] == 30
+    assert called["params"]["ra"] == pytest.approx(15.5125)
+    assert called["params"]["dec"] == pytest.approx(4.085)
+    assert planet_dict["dist"] == 200.0
+    assert planet_dict["pm_ra"] == 10.0
+    assert planet_dict["pm_dec"] == -20.0
+
+
+def test_comp_params_only_backfills_missing_gaia_fields(tmp_path, monkeypatch):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {
+            "Target Star RA": 123.4501,
+            "Target Star Dec": -12.3402,
+            "Star Distance (pc)": 111.0,
+            "Star Proper Motion RA (mas/yr)": None,
+            "Star Proper Motion DEC (mas/yr)": "",
+        },
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    monkeypatch.setattr(
+        inputs_module.requests,
+        "get",
+        lambda url, params, timeout: DummyResponse({
+            "gaia": {
+                "distance_pc": 222.0,
+                "pmra_mas_per_year": 8.5,
+                "pmdec_mas_per_year": -4.25,
+            }
+        }),
+    )
+
+    inputs = Inputs(init_opt="y")
+    planet_dict = inputs.comp_params(init_file, {})
+
+    assert planet_dict["dist"] == 111.0
+    assert planet_dict["pm_ra"] == 8.5
+    assert planet_dict["pm_dec"] == -4.25
+
+
+def test_comp_params_continues_when_nextastro_gaia_lookup_fails(tmp_path, monkeypatch):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {
+            "Target Star RA": 123.4501,
+            "Target Star Dec": -12.3402,
+            "Star Distance (pc)": None,
+            "Star Proper Motion RA (mas/yr)": "",
+            "Star Proper Motion DEC (mas/yr)": None,
+        },
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    def raise_request_exception(*args, **kwargs):
+        raise requests.exceptions.RequestException("service unavailable")
+
+    monkeypatch.setattr(inputs_module.requests, "get", raise_request_exception)
+
+    inputs = Inputs(init_opt="y")
+    planet_dict = inputs.comp_params(init_file, {})
+
+    assert planet_dict["dist"] is None
+    assert planet_dict["pm_ra"] == ""
+    assert planet_dict["pm_dec"] is None
 
 
 def test_prereduced_mode_forces_aavso_comp_to_no(tmp_path):
@@ -296,6 +416,97 @@ def test_prereduced_uses_aavso_obsdate_metadata_without_prompt(tmp_path):
     info_dict, _ = inputs.prereduced("HAT-P-32 b")
 
     assert info_dict["date"] == "2026-03-08"
+
+
+def test_prereduced_uses_aavso_filter_and_observing_metadata_without_prompt(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#OBSCODE=\n"
+        "#SECONDARY_OBSCODES=\n"
+        "#OBSNAME=Backyard Dome\n"
+        "#OBSDATE=20260303\n"
+        "#OBSTYPE=CCD\n"
+        "#BINNING=1x1\n"
+        "#EXPOSURE_TIME=30.0\n"
+        "#OBSLAT=35.554298\n"
+        "#OBSLON=-105.870197\n"
+        "#OBSELEV=2194.0\n"
+        "#GAIADIST=512.4\n"
+        "#GAIAPMRA=13.25\n"
+        "#GAIAPMDEC=-7.5\n"
+        "#NOTES=na\n"
+        "#DATE_TYPE=BJD_TDB\n"
+        "#MEASUREMENT_TYPE=Rnflux\n"
+        "#EXOPLANET_NAME=TOI-1259 A b\n"
+        "#FILTER=CBB\n"
+        "#FILTER-XC={\"name\": \"CBB\", \"desc\": \"Astrodon ExoPlanet-BB\", \"fwhm\": [{\"value\": \"500.0\", \"units\": \"nm\"}, {\"value\": \"1000.0\", \"units\": \"nm\"}]}\n"
+        "#DATE,DIFF,ERR,DETREND_1\n"
+        "2461102.76092732,0.979108,0.0386426,1.3811172\n"
+    )
+
+    inputs = Inputs(init_opt="y")
+    inputs.info_dict.update({
+        "save": str(tmp_path),
+        "aavso_num": None,
+        "second_obs": None,
+        "date": "",
+        "lat": "",
+        "long": "",
+        "elev": "",
+        "camera": None,
+        "pixel_bin": None,
+        "filter": None,
+        "notes": None,
+        "aavso_comp": "y",
+        "prered_file": str(pre_reduced_file),
+        "exposure": None,
+        "file_units": None,
+        "file_time": None,
+        "phot_comp_star": None,
+        "wl_min": None,
+        "wl_max": None,
+    })
+
+    info_dict, planet = inputs.prereduced(None)
+
+    assert planet == "TOI-1259 A b"
+    assert info_dict["aavso_num"] == ""
+    assert info_dict["second_obs"] == ""
+    assert info_dict["obs_name"] == "Backyard Dome"
+    assert info_dict["date"] == "2026-03-03"
+    assert info_dict["lat"] == 35.554298
+    assert info_dict["long"] == -105.870197
+    assert info_dict["elev"] == 2194.0
+    assert info_dict["camera"] == "CCD"
+    assert info_dict["pixel_bin"] == "1x1"
+    assert info_dict["notes"] == "na"
+    assert info_dict["file_time"] == "BJD_TDB"
+    assert info_dict["file_units"] == "flux"
+    assert info_dict["exposure"] == 30.0
+    assert info_dict["dist"] == "512.4"
+    assert info_dict["pm_ra"] == "13.25"
+    assert info_dict["pm_dec"] == "-7.5"
+    assert info_dict["filter"] == "CBB"
+    assert info_dict["wl_min"] == "500.0"
+    assert info_dict["wl_max"] == "1000.0"
+
+
+def test_parse_aavso_prereduced_overrides_uses_known_filter_lookup_when_filter_xc_missing(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#FILTER=CBB\n"
+        "#DATE,DIFF,ERR\n"
+        "2461102.76092732,0.979108,0.0386426\n"
+    )
+
+    overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
+
+    assert overrides["filter"] == "CBB"
+    assert overrides["filter_desc"] == "Astrodon ExoPlanet-BB"
+    assert overrides["wl_min"] == "500.0"
+    assert overrides["wl_max"] == "1000.0"
 
 
 def test_prereduced_prefers_aavso_obsdate_metadata_over_init_date(tmp_path):

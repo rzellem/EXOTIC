@@ -113,6 +113,12 @@ class OutputFiles:
     def aavso(self, airmasses, ld0, ld1, ld2, ld3, tmidstr):
         priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                              ld0, ld1, ld2, ld3)
+        gaia_dist = "" if self.p_dict.get('dist') is None else str(self.p_dict.get('dist'))
+        gaia_pmra = "" if self.p_dict.get('pm_ra') is None else str(self.p_dict.get('pm_ra'))
+        gaia_pmdec = "" if self.p_dict.get('pm_dec') is None else str(self.p_dict.get('pm_dec'))
+        gaia_dist_header = f"#GAIADIST={gaia_dist}\n" if gaia_dist else ""
+        gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
+        gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
         # compute 32 character hash of the results_dict
         hash_object = hashlib.sha256(dumps(results_dict).encode())
@@ -134,6 +140,9 @@ class OutputFiles:
                     f"#EXOPLANET_NAME={self.p_dict['pl_name']}\n"  # code yields
                     f"#BINNING=1x1\n"  # uhhh i just put One. 
                     f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI 
+                    f"{gaia_dist_header}"
+                    f"{gaia_pmra_header}"
+                    f"{gaia_pmdec_header}"
                     f"#COMP_STAR-XC=null\n"
                     f"#NOTES=TESS Data\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
@@ -176,6 +185,12 @@ class OutputFiles:
     def aavso_csv(self, airmasses, ld0, ld1, ld2, ld3,tmidstr):
             priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                                 ld0, ld1, ld2, ld3)
+            gaia_dist = "" if self.p_dict.get('dist') is None else str(self.p_dict.get('dist'))
+            gaia_pmra = "" if self.p_dict.get('pm_ra') is None else str(self.p_dict.get('pm_ra'))
+            gaia_pmdec = "" if self.p_dict.get('pm_dec') is None else str(self.p_dict.get('pm_dec'))
+            gaia_dist_header = f"#GAIADIST={gaia_dist}\n" if gaia_dist else ""
+            gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
+            gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
             params_file = self.dir / f"TESS_{tmidstr}_{self.p_dict['pl_name']}_lightcurve.csv"
 
@@ -191,6 +206,9 @@ class OutputFiles:
                         f"#EXOPLANET_NAME={self.p_dict['pl_name']}\n"  # code yields
                         f"#BINNING=1x1\n"  # uhhh i just put One. 
                         f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI 
+                        f"{gaia_dist_header}"
+                        f"{gaia_pmra_header}"
+                        f"{gaia_pmdec_header}"
                         f"#COMP_STAR-XC=null\n"
                         f"#NOTES=TESS Data\n"
                         "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed

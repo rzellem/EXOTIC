@@ -37,6 +37,9 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         "inc": 88.98,
         "incUnc": 0.7602,
         "ecc": 0.159,
+        "dist": 245.7,
+        "pm_ra": 14.25,
+        "pm_dec": -9.5,
     }
     i_dict = {
         "save": str(tmp_path),
@@ -75,6 +78,9 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
     assert "#OBSLAT=+32.41638889" in output_text
     assert "#OBSLON=-110.73444444" in output_text
     assert "#OBSELEV=2616" in output_text
+    assert "#GAIADIST=245.7" in output_text
+    assert "#GAIAPMRA=14.25" in output_text
+    assert "#GAIAPMDEC=-9.5" in output_text
 
 
 def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
@@ -91,6 +97,9 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
         "inc": 88.98,
         "incUnc": 0.7602,
         "ecc": 0.159,
+        "dist": None,
+        "pm_ra": None,
+        "pm_dec": None,
     }
     i_dict = {
         "save": str(tmp_path),
@@ -125,6 +134,9 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "#OBSNAME=" not in output_text
+    assert "#GAIADIST=" not in output_text
+    assert "#GAIAPMRA=" not in output_text
+    assert "#GAIAPMDEC=" not in output_text
 
 
 def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):

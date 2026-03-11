@@ -80,6 +80,12 @@ class OutputFiles:
                                                              ld0, ld1, ld2, ld3)
         obs_name = format_aavso_header_value(self.i_dict.get('obs_name'))
         obs_name_header = f"#OBSNAME={obs_name}\n" if obs_name else ""
+        gaia_dist = format_aavso_header_value(self.p_dict.get('dist'))
+        gaia_pmra = format_aavso_header_value(self.p_dict.get('pm_ra'))
+        gaia_pmdec = format_aavso_header_value(self.p_dict.get('pm_dec'))
+        gaia_dist_header = f"#GAIADIST={gaia_dist}\n" if gaia_dist else ""
+        gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
+        gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
         params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
 
@@ -100,6 +106,9 @@ class OutputFiles:
                     f"#OBSLAT={format_aavso_header_value(self.i_dict.get('lat'))}\n"
                     f"#OBSLON={format_aavso_header_value(self.i_dict.get('long'))}\n"
                     f"#OBSELEV={format_aavso_header_value(self.i_dict.get('elev'))}\n"
+                    f"{gaia_dist_header}"
+                    f"{gaia_pmra_header}"
+                    f"{gaia_pmdec_header}"
                     f"#COMP_STAR-XC={dumps(comp_star)}\n"
                     f"#NOTES={self.i_dict['notes']}\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed

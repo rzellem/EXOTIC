@@ -1,9 +1,13 @@
 import logging
 import sys
 import json
+import math
 from pathlib import Path
+import requests
 from astropy.io import fits
 from astropy.time import Time
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 import re
 
 try:
@@ -16,6 +20,10 @@ try:
     from animate import animate_toggle
 except ImportError:
     from .animate import animate_toggle
+try:
+    from api.filters import fwhm as photometric_filters, fwhm_alias as photometric_filter_aliases
+except ImportError:
+    from .api.filters import fwhm as photometric_filters, fwhm_alias as photometric_filter_aliases
 
 
 log = logging.getLogger(__name__)
@@ -33,6 +41,43 @@ AAVSO_LOCATION_HEADER_KEYS = {
     'long': ('OBSLON', 'OBSLONG', 'LONGITUDE', 'OBS_LONGITUDE', 'LONG'),
     'elev': ('OBSELEV', 'OBSALT', 'ELEVATION', 'ALTITUDE', 'HEIGHT'),
 }
+AAVSO_FILTER_HEADER_KEYS = ('FILTER',)
+AAVSO_FILTER_XC_HEADER_KEYS = ('FILTER-XC',)
+AAVSO_TEXT_HEADER_KEYS = {
+    'aavso_num': ('OBSCODE',),
+    'second_obs': ('SECONDARY_OBSCODES',),
+    'obs_name': ('OBSNAME',),
+    'camera': ('OBSTYPE',),
+    'pixel_bin': ('BINNING',),
+    'notes': ('NOTES',),
+    'planet': ('EXOPLANET_NAME',),
+    'host_star': ('STAR_NAME',),
+}
+AAVSO_GAIA_HEADER_KEYS = {
+    'dist': ('GAIADIST',),
+    'pm_ra': ('GAIAPMRA',),
+    'pm_dec': ('GAIAPMDEC', 'GAIADEC'),
+}
+AAVSO_EXPOSURE_HEADER_KEYS = ('EXPOSURE_TIME', 'EXPTIME', 'EXPOSURE', 'EXP')
+AAVSO_TIME_FORMAT_HEADER_KEYS = ('DATE_TYPE',)
+AAVSO_MEASUREMENT_TYPE_HEADER_KEYS = ('MEASUREMENT_TYPE',)
+AAVSO_ALLOWED_FILE_TIME_FORMATS = {'BJD_TDB', 'JD_UTC', 'MJD_UTC'}
+AAVSO_WAVELENGTH_UNIT_FACTORS_TO_NM = {
+    'a': 0.1,
+    'angstrom': 0.1,
+    'angstroms': 0.1,
+    'nm': 1.0,
+    'nanometer': 1.0,
+    'nanometers': 1.0,
+    'um': 1000.0,
+    'micron': 1000.0,
+    'microns': 1000.0,
+    'micrometer': 1000.0,
+    'micrometers': 1000.0,
+    'mum': 1000.0,
+}
+NEXTASTRO_GAIA_DISTPM_ENDPOINT = 'https://archive.nextastro.org/single_star_gaia_distpm'
+NEXTASTRO_REQUEST_TIMEOUT = 30
 
 
 def is_blank_value(value):
@@ -41,6 +86,111 @@ def is_blank_value(value):
     if isinstance(value, str):
         return value.strip().lower() in ('', 'n/a', 'na', 'null', 'none')
     return False
+
+
+def normalize_aavso_filter_lookup_key(value):
+    if is_blank_value(value):
+        return None
+    return re.sub(r'[\W_]+', '', str(value).strip().lower())
+
+
+def coerce_finite_float(value):
+    if is_blank_value(value):
+        return None
+
+    try:
+        numeric_value = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(numeric_value):
+        return None
+
+    return numeric_value
+
+
+def radec_to_decimal_degrees(ra, dec):
+    if is_blank_value(ra) or is_blank_value(dec):
+        return None, None
+
+    ra_value = str(ra).strip()
+    dec_value = str(dec).strip()
+    ra_unit = u.hourangle if any(separator in ra_value for separator in (':', ' ')) else u.deg
+
+    if ra_unit is u.hourangle:
+        ra_value = ra_value.replace(':', ' ')
+    if any(separator in dec_value for separator in (':', ' ')):
+        dec_value = dec_value.replace(':', ' ')
+
+    try:
+        coords = SkyCoord(ra=ra_value, dec=dec_value, unit=(ra_unit, u.deg))
+    except ValueError:
+        return None, None
+
+    if not math.isfinite(coords.ra.degree) or not math.isfinite(coords.dec.degree):
+        return None, None
+
+    return coords.ra.degree, coords.dec.degree
+
+
+def fetch_nextastro_gaia_distpm(ra_deg, dec_deg):
+    response = requests.get(
+        NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        params={'ra': ra_deg, 'dec': dec_deg},
+        timeout=NEXTASTRO_REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+
+    payload = response.json()
+    gaia = payload.get('gaia') if isinstance(payload, dict) else None
+    if not isinstance(gaia, dict):
+        return {}
+
+    return {
+        'dist': coerce_finite_float(gaia.get('distance_pc')),
+        'pm_ra': coerce_finite_float(gaia.get('pmra_mas_per_year')),
+        'pm_dec': coerce_finite_float(gaia.get('pmdec_mas_per_year')),
+    }
+
+
+def populate_missing_gaia_astrometry(planet_dict):
+    missing_keys = [key for key in ('dist', 'pm_ra', 'pm_dec') if is_blank_value(planet_dict.get(key))]
+    if not missing_keys:
+        return planet_dict
+
+    ra_deg, dec_deg = radec_to_decimal_degrees(planet_dict.get('ra'), planet_dict.get('dec'))
+    if ra_deg is None or dec_deg is None:
+        return planet_dict
+
+    try:
+        gaia_values = fetch_nextastro_gaia_distpm(ra_deg, dec_deg)
+    except requests.exceptions.RequestException as exc:
+        log_info(f"\nWarning: NextAstro Gaia astrometry lookup failed ({exc}); continuing without missing Gaia values.",
+                 warn=True)
+        return planet_dict
+
+    filled_keys = []
+    for key in missing_keys:
+        if gaia_values.get(key) is None:
+            continue
+        planet_dict[key] = gaia_values[key]
+        filled_keys.append(key)
+
+    if filled_keys:
+        log_info("\nRetrieved missing Gaia distance/proper motion from NextAstro archive lookup.")
+
+    return planet_dict
+
+
+AAVSO_FILTER_LOOKUP = {}
+for filter_desc, filter_metadata in photometric_filters.items():
+    AAVSO_FILTER_LOOKUP[normalize_aavso_filter_lookup_key(filter_desc)] = filter_metadata
+    AAVSO_FILTER_LOOKUP[normalize_aavso_filter_lookup_key(filter_metadata.get('name'))] = filter_metadata
+
+for alias, canonical in photometric_filter_aliases.items():
+    filter_metadata = photometric_filters.get(canonical)
+    if filter_metadata is not None:
+        AAVSO_FILTER_LOOKUP[normalize_aavso_filter_lookup_key(alias)] = filter_metadata
 
 
 class Inputs:
@@ -54,6 +204,7 @@ class Inputs:
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
+            'dist': None, 'pm_ra': None, 'pm_dec': None,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'target_driven_comp_selection': 'n'
@@ -107,12 +258,18 @@ class Inputs:
         self.params.update({'exposure': exposure, 'file_units': data_file_units, 'file_time': data_file_time,
                             'phot_comp_star': phot_comp_star})
         self.info_dict['prered_file'] = prereduced_file(self.info_dict['prered_file'])
-        aavso_location = parse_aavso_location(self.info_dict['prered_file'])
+        aavso_overrides = parse_aavso_prereduced_overrides(self.info_dict['prered_file'])
 
-        for key in ('lat', 'long', 'elev'):
-            if is_blank_value(self.info_dict.get(key)) and aavso_location[key] is not None:
-                self.info_dict[key] = aavso_location[key]
+        for key in (
+            'aavso_num', 'second_obs', 'obs_name', 'lat', 'long', 'elev', 'camera', 'pixel_bin',
+            'filter', 'notes', 'wl_min', 'wl_max', 'exposure', 'file_time', 'file_units',
+            'dist', 'pm_ra', 'pm_dec'
+        ):
+            if is_blank_value(self.info_dict.get(key)) and aavso_overrides.get(key) is not None:
+                self.info_dict[key] = aavso_overrides[key]
 
+        if not planet and not is_blank_value(aavso_overrides.get('planet')):
+            planet = aavso_overrides['planet']
         if not planet:
             planet = planet_name(planet)
 
@@ -262,7 +419,8 @@ class Inputs:
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
         self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])
-        return init_params(planet_params, planet_dict, data['planetary_parameters'])
+        planet_dict = init_params(planet_params, planet_dict, data['planetary_parameters'])
+        return populate_missing_gaia_astrometry(planet_dict)
 
 
 def check_imaging_files(directory, img_type):
@@ -428,6 +586,8 @@ def normalize_obs_date(date):
         return None
 
     date = str(date).strip()
+    if re.fullmatch(r'\d{8}', date):
+        date = f"{date[0:4]}-{date[4:6]}-{date[6:8]}"
     if '/' in date:
         date = date.replace('/', '-')
     return date
@@ -664,6 +824,10 @@ def normalize_phot_comp_star(comp_star):
     return normalized_comp_star
 
 
+def read_aavso_metadata(prereduced_file_path):
+    return dict(parse_aavso_metadata(prereduced_file_path) or [])
+
+
 def parse_aavso_metadata(prereduced_file_path):
     if not prereduced_file_path:
         return {}
@@ -693,29 +857,266 @@ def first_aavso_metadata_value(metadata, aliases):
     return None
 
 
-def parse_aavso_location(prereduced_file_path):
-    metadata = dict(parse_aavso_metadata(prereduced_file_path) or [])
+def first_aavso_metadata_text(metadata, aliases, allow_blank=False):
+    for key in aliases:
+        if key not in metadata:
+            continue
+
+        value = metadata.get(key)
+        if value is None:
+            return '' if allow_blank else None
+
+        value = str(value).strip()
+        if allow_blank:
+            return '' if value.lower() in ('null', 'none') else value
+        if not is_blank_value(value):
+            return value
+    return None
+
+
+def normalize_aavso_code(value):
+    if value is None:
+        return None
+    value = str(value).strip()
+    return '' if value.lower() in ('', 'n/a', 'na', 'null', 'none') else value
+
+
+def normalize_aavso_blankable_text(value):
+    if value is None:
+        return None
+    value = str(value).strip()
+    return '' if value.lower() in ('null', 'none') else value
+
+
+def normalize_aavso_coordinate_text(value):
+    if is_blank_value(value):
+        return None
+
+    value = str(value).strip()
+    if value[0] in ('+', '-'):
+        return value
+
+    try:
+        numeric_value = float(value)
+    except ValueError:
+        return value
+
+    if numeric_value >= 0:
+        return f"+{value}"
+    return value
+
+
+def format_aavso_numeric_string(value):
+    value = float(value)
+    if value.is_integer():
+        return f"{value:.1f}"
+    return str(value)
+
+
+def convert_aavso_wavelength_to_nm(value, units='nm'):
+    if is_blank_value(value):
+        return None
+
+    units_key = 'nm' if units is None else str(units).strip().lower()
+    units_key = units_key.replace('µ', 'u').replace('μ', 'u')
+    factor = AAVSO_WAVELENGTH_UNIT_FACTORS_TO_NM.get(units_key)
+    if factor is None:
+        return None
+
+    try:
+        return format_aavso_numeric_string(float(str(value).strip()) * factor)
+    except ValueError:
+        return None
+
+
+def parse_aavso_json(value):
+    if is_blank_value(value):
+        return None
+
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def parse_aavso_comp_star_from_metadata(metadata):
+    comp_star_json = metadata.get('COMP_STAR-XC')
+    comp_star = parse_aavso_json(comp_star_json)
+    if comp_star is None:
+        return blank_phot_comp_star()
+    return normalize_phot_comp_star(comp_star)
+
+
+def lookup_aavso_filter_metadata(*candidates):
+    for candidate in candidates:
+        lookup_key = normalize_aavso_filter_lookup_key(candidate)
+        if lookup_key and lookup_key in AAVSO_FILTER_LOOKUP:
+            return AAVSO_FILTER_LOOKUP[lookup_key]
+    return None
+
+
+def parse_aavso_filter_xc_fwhm(filter_metadata):
+    if not isinstance(filter_metadata, dict):
+        return None, None
+
+    fwhm = filter_metadata.get('fwhm')
+    if isinstance(fwhm, dict):
+        values = [
+            convert_aavso_wavelength_to_nm(fwhm.get('min'), fwhm.get('units', 'nm')),
+            convert_aavso_wavelength_to_nm(fwhm.get('max'), fwhm.get('units', 'nm')),
+        ]
+    elif isinstance(fwhm, (list, tuple)):
+        values = []
+        for item in fwhm[:2]:
+            if isinstance(item, dict):
+                values.append(convert_aavso_wavelength_to_nm(item.get('value'), item.get('units', 'nm')))
+            else:
+                values.append(convert_aavso_wavelength_to_nm(item))
+    else:
+        values = []
+
+    values = [value for value in values if value is not None]
+    if len(values) < 2:
+        return None, None
+
+    values = sorted(values[:2], key=float)
+    return values[0], values[1]
+
+
+def parse_aavso_filter_metadata_from_metadata(metadata):
+    filter_value = first_aavso_metadata_text(metadata, AAVSO_FILTER_HEADER_KEYS)
+    filter_xc = parse_aavso_json(first_aavso_metadata_text(metadata, AAVSO_FILTER_XC_HEADER_KEYS))
+
+    parsed_filter = {
+        'filter': filter_value,
+        'filter_desc': None,
+        'wl_min': None,
+        'wl_max': None,
+    }
+
+    if isinstance(filter_xc, dict):
+        filter_name = normalize_aavso_blankable_text(filter_xc.get('name'))
+        filter_desc = normalize_aavso_blankable_text(filter_xc.get('desc'))
+        if is_blank_value(parsed_filter['filter']):
+            parsed_filter['filter'] = filter_name or filter_desc
+        if filter_desc:
+            parsed_filter['filter_desc'] = filter_desc
+
+        wl_min, wl_max = parse_aavso_filter_xc_fwhm(filter_xc)
+        if wl_min is not None and wl_max is not None:
+            parsed_filter['wl_min'] = wl_min
+            parsed_filter['wl_max'] = wl_max
+
+    filter_record = lookup_aavso_filter_metadata(
+        parsed_filter['filter'],
+        parsed_filter['filter_desc'],
+    )
+    if filter_record is not None:
+        if is_blank_value(parsed_filter['filter']):
+            parsed_filter['filter'] = filter_record.get('name') or filter_record.get('desc')
+        if is_blank_value(parsed_filter['filter_desc']):
+            parsed_filter['filter_desc'] = filter_record.get('desc')
+        if parsed_filter['wl_min'] is None:
+            parsed_filter['wl_min'] = filter_record['fwhm'][0]
+        if parsed_filter['wl_max'] is None:
+            parsed_filter['wl_max'] = filter_record['fwhm'][1]
+
+    return parsed_filter
+
+
+def parse_aavso_time_format_from_metadata(metadata):
+    value = first_aavso_metadata_text(metadata, AAVSO_TIME_FORMAT_HEADER_KEYS)
+    if is_blank_value(value):
+        return None
+
+    normalized = value.upper().strip().replace('-', '_').replace(' ', '_')
+    if normalized in AAVSO_ALLOWED_FILE_TIME_FORMATS:
+        return normalized
+    if normalized == 'BJD':
+        return 'BJD_TDB'
+    if normalized == 'JD':
+        return 'JD_UTC'
+    if normalized == 'MJD':
+        return 'MJD_UTC'
+    return None
+
+
+def parse_aavso_measurement_units_from_metadata(metadata):
+    value = first_aavso_metadata_text(metadata, AAVSO_MEASUREMENT_TYPE_HEADER_KEYS)
+    if is_blank_value(value):
+        return None
+
+    normalized = re.sub(r'[\W_]+', '', value.lower())
+    if 'millimag' in normalized or normalized == 'mmag':
+        return 'millimagnitude'
+    if 'flux' in normalized:
+        return 'flux'
+    if 'mag' in normalized:
+        return 'magnitude'
+    return None
+
+
+def parse_aavso_exposure_from_metadata(metadata):
+    value = first_aavso_metadata_text(metadata, AAVSO_EXPOSURE_HEADER_KEYS)
+    if is_blank_value(value):
+        return None
+
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
+
+
+def parse_aavso_prereduced_overrides(prereduced_file_path):
+    metadata = read_aavso_metadata(prereduced_file_path)
+    filter_metadata = parse_aavso_filter_metadata_from_metadata(metadata)
+
     return {
-        key: first_aavso_metadata_value(metadata, aliases)
-        for key, aliases in AAVSO_LOCATION_HEADER_KEYS.items()
+        'aavso_num': normalize_aavso_code(first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['aavso_num'], allow_blank=True)),
+        'second_obs': normalize_aavso_code(first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['second_obs'], allow_blank=True)),
+        'obs_name': normalize_aavso_blankable_text(first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['obs_name'], allow_blank=True)),
+        'date': normalize_obs_date(first_aavso_metadata_value(metadata, AAVSO_OBSDATE_HEADER_KEYS)),
+        'lat': normalize_aavso_coordinate_text(first_aavso_metadata_value(metadata, AAVSO_LOCATION_HEADER_KEYS['lat'])),
+        'long': normalize_aavso_coordinate_text(first_aavso_metadata_value(metadata, AAVSO_LOCATION_HEADER_KEYS['long'])),
+        'elev': first_aavso_metadata_value(metadata, AAVSO_LOCATION_HEADER_KEYS['elev']),
+        'camera': first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['camera']),
+        'pixel_bin': first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['pixel_bin']),
+        'filter': filter_metadata['filter'],
+        'filter_desc': filter_metadata['filter_desc'],
+        'wl_min': filter_metadata['wl_min'],
+        'wl_max': filter_metadata['wl_max'],
+        'notes': normalize_aavso_blankable_text(first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['notes'], allow_blank=True)),
+        'file_time': parse_aavso_time_format_from_metadata(metadata),
+        'file_units': parse_aavso_measurement_units_from_metadata(metadata),
+        'exposure': parse_aavso_exposure_from_metadata(metadata),
+        'dist': first_aavso_metadata_text(metadata, AAVSO_GAIA_HEADER_KEYS['dist']),
+        'pm_ra': first_aavso_metadata_text(metadata, AAVSO_GAIA_HEADER_KEYS['pm_ra']),
+        'pm_dec': first_aavso_metadata_text(metadata, AAVSO_GAIA_HEADER_KEYS['pm_dec']),
+        'phot_comp_star': parse_aavso_comp_star_from_metadata(metadata),
+        'planet': first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['planet']),
+        'host_star': first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['host_star']),
     }
 
 
+def parse_aavso_location(prereduced_file_path):
+    metadata = read_aavso_metadata(prereduced_file_path)
+    parsed_location = {
+        key: first_aavso_metadata_value(metadata, aliases)
+        for key, aliases in AAVSO_LOCATION_HEADER_KEYS.items()
+    }
+    parsed_location['lat'] = normalize_aavso_coordinate_text(parsed_location['lat'])
+    parsed_location['long'] = normalize_aavso_coordinate_text(parsed_location['long'])
+    return parsed_location
+
+
 def parse_aavso_obsdate(prereduced_file_path):
-    metadata = dict(parse_aavso_metadata(prereduced_file_path) or [])
+    metadata = read_aavso_metadata(prereduced_file_path)
     return normalize_obs_date(first_aavso_metadata_value(metadata, AAVSO_OBSDATE_HEADER_KEYS))
 
 
 def parse_aavso_comp_star(prereduced_file_path):
-    metadata = dict(parse_aavso_metadata(prereduced_file_path) or [])
-    comp_star_json = metadata.get('COMP_STAR-XC')
-    if is_blank_value(comp_star_json):
-        return blank_phot_comp_star()
-
-    try:
-        return normalize_phot_comp_star(json.loads(comp_star_json))
-    except (TypeError, json.JSONDecodeError):
-        return blank_phot_comp_star()
+    metadata = read_aavso_metadata(prereduced_file_path)
+    return parse_aavso_comp_star_from_metadata(metadata)
 
 
 def phot_comp_star(comp_star, prereduced_file_path=None):
@@ -819,7 +1220,7 @@ def log_info(string, warn=False, error=False):
     if error:
         print(f"\033[91m {string}\033[00m")
     elif warn:
-        print(f"\033[93m {string}\033[00m")
+        print(f"\033[34m {string}\033[00m")
     else:
         print(string)
     log.debug(string)

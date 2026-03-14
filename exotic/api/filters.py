@@ -9,6 +9,11 @@ __fwhm = {
         "Johnson R": {"name": "RJ", "fwhm": ("590.0", "810.0")},
         "Johnson I": {"name": "IJ", "fwhm": ("780.0", "1020.0")},
 
+        # Photographic
+        "Photographic B": {"name": "PB", "fwhm": ("391.6", "480.6")},
+        "Photographic G": {"name": "PG", "fwhm": ("502.8", "586.8")},
+        "Photographic R": {"name": "PR", "fwhm": ("590.0", "810.0")},
+
         # Cousins
         "Cousins R": {"name": "R", "fwhm": ("561.7", "719.7")},
         "Cousins I": {"name": "I", "fwhm": ("721.0", "875.0")},
@@ -82,11 +87,11 @@ fwhm_alias = {
         # additional short aliases found in FILTER column values
         "bu": "Johnson U",
         "bb": "Johnson B",
-        "pb": "Johnson B",
+        "pb": "Photographic B",
         "bv": "Johnson V",
-        "pg": "Johnson V",
+        "pg": "Photographic G",
         "br": "Johnson R",
-        "pr": "Johnson R",
+        "pr": "Photographic R",
         "bi": "Johnson I",
         "up": "Sloan u",
         "gp": "Sloan g",
@@ -104,7 +109,14 @@ fwhm_alias = {
         "lum": "ClearV",
         "w": "ClearV",
         "pl": "ClearV",
-        "exo": "Astrodon ExoPlanet-BB"
+        "exo": "Astrodon ExoPlanet-BB",
+
+        # OSC split-channel aliases
+        "b1": "Photographic B",
+        "g1": "Photographic G",
+        "g2": "Photographic G",
+        "r1": "Photographic R",
+        "r2": "Photographic R",
 }
 
 # standard filters w/o precisely defined FWHM values

@@ -215,12 +215,27 @@ def test_invalid_fwhm_range_2() -> None:
     assert ld_obj.check_fwhm(observed_filter) == False
 
 
+def test_photographic_filter_aliases_in_filter_column() -> None:
+    alias_cases = [
+        ("pb", "Photographic B", "PB", "391.6", "480.6"),
+        ("pg", "Photographic G", "PG", "502.8", "586.8"),
+        ("pr", "Photographic R", "PR", "590.0", "810.0"),
+    ]
+
+    for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+        setting_filter_values(observed_filter)
+        assert observed_filter == {
+            'filter': expected_filter,
+            'name': expected_name,
+            'wl_min': expected_min,
+            'wl_max': expected_max,
+        }
+
+
 def test_additional_standard_filter_aliases_in_filter_column() -> None:
     alias_cases = [
         ("bu", "Johnson U", "U", "333.8", "398.8"),
-        ("pb", "Johnson B", "B", "391.6", "480.6"),
-        ("pg", "Johnson V", "V", "502.8", "586.8"),
-        ("pr", "Johnson R", "RJ", "590.0", "810.0"),
         ("bi", "Johnson I", "IJ", "780.0", "1020.0"),
         ("up", "Sloan u", "SU", "321.8", "386.8"),
         ("gp", "Sloan g", "SG", "402.5", "551.5"),
@@ -237,6 +252,26 @@ def test_additional_standard_filter_aliases_in_filter_column() -> None:
         ("w", "MObs CV", "CV", "350.0", "850.0"),
         ("pl", "MObs CV", "CV", "350.0", "850.0"),
         ("exo", "Astrodon ExoPlanet-BB", "CBB", "500.0", "1000.0"),
+    ]
+
+    for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+        setting_filter_values(observed_filter)
+        assert observed_filter == {
+            'filter': expected_filter,
+            'name': expected_name,
+            'wl_min': expected_min,
+            'wl_max': expected_max,
+        }
+
+
+def test_osc_split_filter_aliases_in_filter_column() -> None:
+    alias_cases = [
+        ("B1", "Photographic B", "PB", "391.6", "480.6"),
+        ("G1", "Photographic G", "PG", "502.8", "586.8"),
+        ("G2", "Photographic G", "PG", "502.8", "586.8"),
+        ("R1", "Photographic R", "PR", "590.0", "810.0"),
+        ("R2", "Photographic R", "PR", "590.0", "810.0"),
     ]
 
     for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:

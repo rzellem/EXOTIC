@@ -266,6 +266,15 @@ def test_check_wcs_keeps_plate_solution_when_override_enabled(monkeypatch):
     assert wcs_file == "solved_wcs.fits"
 
 
+def test_should_log_plate_solution_path_suppresses_posix_tmp_paths():
+    assert exotic_module.should_log_plate_solution_path("/tmp/tmp42fmzrv8/temp/wcs.fits") is False
+
+
+def test_should_log_plate_solution_path_keeps_non_tmp_paths():
+    assert exotic_module.should_log_plate_solution_path("/data/session/temp/wcs.fits") is True
+    assert exotic_module.should_log_plate_solution_path("/tmp_backup/temp/wcs.fits") is True
+
+
 def test_should_use_multiprocess_transform_precompute_respects_header_wcs_override():
     assert exotic_module.should_use_multiprocess_transform_precompute(
         ["frame1.fits", "frame2.fits"],

@@ -509,6 +509,23 @@ def test_parse_aavso_prereduced_overrides_uses_known_filter_lookup_when_filter_x
     assert overrides["wl_max"] == "1000.0"
 
 
+def test_parse_aavso_prereduced_overrides_uses_osc_split_filter_alias_lookup(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#FILTER=G2\n"
+        "#DATE,DIFF,ERR\n"
+        "2461102.76092732,0.979108,0.0386426\n"
+    )
+
+    overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
+
+    assert overrides["filter"] == "G2"
+    assert overrides["filter_desc"] == "Photographic G"
+    assert overrides["wl_min"] == "502.8"
+    assert overrides["wl_max"] == "586.8"
+
+
 def test_prereduced_prefers_aavso_obsdate_metadata_over_init_date(tmp_path):
     pre_reduced_file = tmp_path / "aavso_prereduced.txt"
     pre_reduced_file.write_text(

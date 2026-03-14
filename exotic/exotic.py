@@ -171,6 +171,14 @@ def log_info(string, warn=False, error=False):
     return True
 
 
+def should_log_plate_solution_path(wcs_file):
+    if not wcs_file:
+        return False
+
+    normalized_path = os.fspath(wcs_file).replace("\\", "/")
+    return normalized_path != "/tmp" and not normalized_path.startswith("/tmp/")
+
+
 def log_mid_transit_range_warning_once(array_times, tmid_prior):
     global _mid_transit_warning_reported
     if _mid_transit_warning_reported:
@@ -3610,7 +3618,8 @@ def main():
             chart_id, vsp_comp_stars, vsp_list = None, None, []
 
             if wcs_file:
-                log_info(f"\nHere is the path to your plate solution: {wcs_file}")
+                if should_log_plate_solution_path(wcs_file):
+                    log_info(f"\nHere is the path to your plate solution: {wcs_file}")
                 wcs_header = fits.getheader(filename=wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header)
 

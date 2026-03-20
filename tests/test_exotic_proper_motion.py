@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 import numpy as np
+import pytest
 
 
 def _module_available(name: str) -> bool:
@@ -89,6 +90,7 @@ from exotic.exotic import (
     is_comp_star_required,
     is_target_driven_comp_selection_enabled,
     phase_bin_sigma_clip,
+    should_skip_airmass_fit,
     update_coordinates_with_proper_motion,
 )
 
@@ -228,6 +230,12 @@ def test_cheap_lightcurve_prescore_keeps_target_only_mode_unfiltered():
     assert np.isfinite(score)
 
 
+def test_should_skip_airmass_fit_when_airmass_span_is_small():
+    airmass = np.array([1.10, 1.12, 1.14, 1.15])
+
+    assert should_skip_airmass_fit(airmass)
+
+
 def test_phase_bin_sigma_clip_flags_local_phase_outlier():
     phase_centers = np.linspace(-0.045, 0.045, 10)
     phase = np.concatenate([center + np.linspace(-1e-4, 1e-4, 5) for center in phase_centers])
@@ -342,3 +350,163 @@ def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
     assert len(captured_calls[1]["times"]) == 7
     assert len(fit_tflux) == 7
     assert len(fit_cflux) == 7
+
+
+def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatch):
+    captured = {}
+
+    def fake_lc_fitter(times, fluxes, flux_unc, airmass, prior, bounds, jd_times=None, mode=None):
+        captured["bounds"] = dict(bounds)
+        captured["airmass"] = np.array(airmass)
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.sigma_clip", lambda data, sigma=3, dt=21, po=2: np.zeros(len(data), dtype=bool))
+
+    times = np.linspace(0.0, 0.05, 6)
+    tflux = np.full(times.shape[0], 2.0)
+    cflux = np.full(times.shape[0], 2.0)
+    airmass = np.array([1.10, 1.11, 1.12, 1.13, 1.14, 1.15])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+
+    myfit, _, _ = fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times)
+
+    assert myfit is not None
+    assert "a2" not in captured["bounds"]
+    assert myfit.airmass_fit_skipped is True
+
+
+def _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_flux_normalization=Ellipsis):
+    import exotic.exotic as exotic_module
+
+    class BoundReached(Exception):
+        pass
+
+    prered_file = tmp_path / "prereduced.csv"
+    prered_file.write_text(
+        "\n".join(
+            [
+                "2450000.00,1.00,0.01,1.10",
+                "2450000.10,1.01,0.01,1.12",
+                "2450000.20,0.99,0.01,1.14",
+                "2450000.30,1.00,0.01,1.16",
+                "2450000.40,1.02,0.01,1.18",
+                "2450000.50,1.01,0.01,1.20",
+            ]
+        )
+    )
+
+    user_pdict = {
+        "ra": 10.0,
+        "dec": 20.0,
+        "pName": "Test Planet b",
+        "sName": "Test Star",
+        "pPer": 1.0,
+        "pPerUnc": 0.001,
+        "midT": 2450000.25,
+        "midTUnc": 0.001,
+        "rprs": 0.1,
+        "rprsUnc": 0.01,
+        "aRs": 15.0,
+        "aRsUnc": 0.1,
+        "inc": 89.0,
+        "incUnc": 0.1,
+        "omega": 0.0,
+        "ecc": 0.0,
+        "teff": 5500.0,
+        "teffUncPos": 100.0,
+        "teffUncNeg": 100.0,
+        "met": 0.0,
+        "metUncPos": 0.1,
+        "metUncNeg": 0.1,
+        "logg": 4.4,
+        "loggUncPos": 0.1,
+        "loggUncNeg": 0.1,
+        "dist": 100.0,
+        "pm_ra": 0.0,
+        "pm_dec": 0.0,
+    }
+    exotic_info = {
+        "save": tmp_path,
+        "prered_file": prered_file,
+        "file_time": "BJD_TDB",
+        "file_units": "flux",
+        "airmass_already_corrected": False,
+        "random_seed": 123,
+        "date": "2026-03-19",
+    }
+    if disable_vertical_flux_normalization is not Ellipsis:
+        exotic_info["disable_vertical_flux_normalization"] = disable_vertical_flux_normalization
+
+    args = types.SimpleNamespace(
+        multiprocess_transformations=None,
+        multiprocess_lightcurve_fits=None,
+        realtime=None,
+        reduce=None,
+        prereduced=str(tmp_path / "inits.json"),
+        photometry=None,
+        override=True,
+        nasaexoarch=False,
+        non_interactive_run=True,
+        use_nextastro_astrometry=False,
+        use_nextastro_variability_server=False,
+    )
+
+    class FakeInputs:
+        def __init__(self, init_opt):
+            self.init_opt = init_opt
+
+        def search_init(self, init_path, planet_dict):
+            return init_path, dict(user_pdict)
+
+        def prereduced(self, planet):
+            return dict(exotic_info), planet or user_pdict["pName"]
+
+    captured = {}
+
+    monkeypatch.setattr(exotic_module, "parse_args", lambda: args)
+    monkeypatch.setattr(exotic_module, "Inputs", FakeInputs)
+    monkeypatch.setattr(
+        exotic_module,
+        "get_ld_values",
+        lambda *_args, **_kwargs: ([0.1, 0.1, 0.1, 0.1], [0.1], [0.1], [0.1], [0.1]),
+    )
+
+    def fake_apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled):
+        captured["disabled"] = disabled
+        raise BoundReached()
+
+    monkeypatch.setattr(
+        exotic_module,
+        "apply_vertical_flux_normalization_bound",
+        fake_apply_vertical_flux_normalization_bound,
+    )
+
+    with pytest.raises(BoundReached):
+        exotic_module.main()
+
+    return captured["disabled"]
+
+
+def test_main_prereduced_defaults_vertical_flux_normalization_to_enabled(monkeypatch, tmp_path):
+    disabled = _run_main_until_vertical_flux_bound(monkeypatch, tmp_path)
+
+    assert disabled is False
+
+
+def test_main_prereduced_respects_disable_vertical_flux_normalization_option(monkeypatch, tmp_path):
+    disabled = _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_flux_normalization=True)
+
+    assert disabled is True

@@ -159,6 +159,41 @@ plt.style.use(astropy_mpl_style)
 log = logging.getLogger(__name__)
 _mid_transit_warning_reported = False
 RELATIVE_FLUX_MAX = 2.0
+AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
+
+
+def airmass_span(airmass):
+    values = np.asarray(airmass, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return np.nan
+    return float(np.nanmax(finite) - np.nanmin(finite))
+
+
+def should_skip_airmass_fit(airmass, max_span=AIRMASS_FLAT_RANGE_THRESHOLD):
+    span = airmass_span(airmass)
+    return np.isfinite(span) and span <= max_span
+
+
+def annotate_airmass_fit(fit, airmass, skipped, max_span=AIRMASS_FLAT_RANGE_THRESHOLD, note=None):
+    if fit is None:
+        return
+
+    span = airmass_span(airmass)
+    fit.airmass_span = span
+    fit.airmass_fit_threshold = max_span
+    fit.airmass_fit_skipped = bool(skipped)
+    fit.airmass_correction_note = None
+    if fit.airmass_fit_skipped:
+        if note:
+            fit.airmass_correction_note = note
+        elif np.isfinite(span):
+            fit.airmass_correction_note = (
+                f"Skipped (airmass span {span:.4f} <= {max_span:.2f}); no airmass correction applied."
+            )
+        else:
+            fit.airmass_correction_note = "Skipped; no airmass correction applied."
+
 
 def log_info(string, warn=False, error=False):
     if error:
@@ -270,6 +305,37 @@ def should_ignore_header_wcs(config_value):
     log_info("Warning: Invalid 'Ignore WCS in Header and Do Manual Alignment? (y/n)' value; "
              "using header WCS when available.", warn=True)
     return False
+
+
+def is_vertical_flux_normalization_disabled(config_value):
+    if config_value is None:
+        return False
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info("Warning: Invalid 'disable vertical flux normalization' value; using default enabled normalization.", warn=True)
+    return False
+
+
+def apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled):
+    finite_flux = np.asarray(flux_values, dtype=float)
+    finite_flux = finite_flux[np.isfinite(finite_flux) & (finite_flux > 0)]
+    baseline_guess = 1.0 if finite_flux.size == 0 else float(np.nanmedian(finite_flux))
+    baseline_guess = float(np.clip(baseline_guess, 0.95, 1.05))
+
+    prior['a0'] = baseline_guess
+    prior['a1'] = baseline_guess
+
+    if not disabled:
+        bounds['a0'] = [0.95, 1.05]
 
 
 # Initialze plate status log
@@ -2703,7 +2769,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 
 
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
-                   allow_mid_transit_range_warning=True):
+                   allow_mid_transit_range_warning=True, disable_vertical_flux_normalization=False):
     # remove outliers
     si = np.argsort(times)
     times_sorted = times[si]
@@ -2765,6 +2831,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         f1 = f1[~nanmask]
         f2 = f2[~nanmask]
 
+    skip_airmass_fit = should_skip_airmass_fit(arrayAirmass)
+
 
     # -----LM LIGHTCURVE FIT--------------------------------------
     prior = {
@@ -2776,7 +2844,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         'ecc': pDict['ecc'],  # Eccentricity
         'omega': pDict['omega'],  # Arg of periastron
         'tmid': pDict['midT'],  # time of mid transit [day]
-        'a1': arrayFinalFlux.mean(),  # max() - arrayFinalFlux.min(), #mid Flux
         'a2': 0,  # Flux lower bound
     }
 
@@ -2801,9 +2868,15 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         'rprs': [0, prior['rprs'] * 1.25],
         'tmid': [lower, upper],
         'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
-        'a1': [0.5 * min(arrayFinalFlux), 2 * max(arrayFinalFlux)],
-        'a2': [-1, 1]
     }
+    apply_vertical_flux_normalization_bound(
+        prior,
+        mybounds,
+        arrayFinalFlux,
+        disable_vertical_flux_normalization,
+    )
+    if not skip_airmass_fit:
+        mybounds['a2'] = [-1, 1]
 
     if np.isnan(arrayTimes).any() or np.isnan(arrayFinalFlux).any() or np.isnan(arrayNormUnc).any():
         log_info("\nWarning: NANs in time, flux or error", warn=True)
@@ -2818,6 +2891,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         jd_times=arrayJDTimes,
         mode='lm'
     )
+    annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
 
     if (
         myfit is not None
@@ -2847,6 +2921,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                 jd_times=arrayJDTimes,
                 mode='lm'
             )
+            annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
 
     return myfit, f1, f2
 
@@ -2864,7 +2939,7 @@ def cheap_lightcurve_prescore(tFlux, cFlux, airmass):
     x_vals = airmass[finite_mask]
     y_vals = flux_ratio[finite_mask]
 
-    if np.ptp(x_vals) == 0:
+    if should_skip_airmass_fit(x_vals):
         detrended = y_vals / bn.nanmedian(y_vals)
     else:
         slope, intercept = np.polyfit(x_vals, y_vals, 1)
@@ -2876,7 +2951,7 @@ def cheap_lightcurve_prescore(tFlux, cFlux, airmass):
 
 
 def evaluate_lightcurve_candidate(task):
-    times, tflux, cflux, airmass, ld, p_dict, jd_times = task
+    times, tflux, cflux, airmass, ld, p_dict, jd_times, disable_vertical_flux_normalization = task
     myfit, tflux_fit, cflux_fit = fit_lightcurve(
         times,
         tflux,
@@ -2886,6 +2961,7 @@ def evaluate_lightcurve_candidate(task):
         p_dict,
         jd_times,
         allow_mid_transit_range_warning=False,
+        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
     )
     if myfit is None:
         return None, tflux_fit, cflux_fit
@@ -3450,6 +3526,9 @@ def main():
                     header_motion_value = exotic_infoDict.get(motion_key)
                     if header_motion_value is not None:
                         userpDict[motion_key] = header_motion_value
+        disable_vertical_flux_normalization = is_vertical_flux_normalization_disabled(
+            exotic_infoDict.get('disable_vertical_flux_normalization', False)
+        )
 
         # Make a temp directory of helpful files
         Path(Path(exotic_infoDict['save']) / "temp").mkdir(exist_ok=True)
@@ -4113,7 +4192,10 @@ def main():
                     selected_target_flux = aper_data['target'][:, best_a, best_an]
                     selected_comp_flux = aper_data[selected_ckey][:, best_a, best_an]
 
-                myfit, tFlux1, cFlux1 = fit_lightcurve(times, selected_target_flux, selected_comp_flux, airmass, ld, pDict, jd_times)
+                myfit, tFlux1, cFlux1 = fit_lightcurve(
+                    times, selected_target_flux, selected_comp_flux, airmass, ld, pDict, jd_times,
+                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                )
                 if myfit is not None:
                     res_std = myfit.residuals.std() / np.median(myfit.data)
                     photometry_info.update(best_fit_lc=myfit,
@@ -4142,7 +4224,10 @@ def main():
                             for j in vsp_num:
                                 ckey = f"comp{j + 1}"
                                 cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                                vsp_fit, _, _ = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
+                                vsp_fit, _, _ = fit_lightcurve(
+                                    times, tFlux, cFlux, airmass, ld, pDict, jd_times,
+                                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                                )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
                                     'pos': exotic_infoDict['comp_stars'][j]
@@ -4155,8 +4240,11 @@ def main():
                                 ckey = f"comp{j + 1}"
                                 aper_mask = np.isfinite(aper_data[ckey][:, best_a, best_an])
                                 cFlux = aper_data[ckey][aper_mask][:, best_a, best_an]
-                                vsp_fit, _, _ = fit_lightcurve(times[aper_mask], best_target_flux[aper_mask], cFlux,
-                                                               airmass[aper_mask], ld, pDict, jd_times[aper_mask])
+                                vsp_fit, _, _ = fit_lightcurve(
+                                    times[aper_mask], best_target_flux[aper_mask], cFlux,
+                                    airmass[aper_mask], ld, pDict, jd_times[aper_mask],
+                                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                                )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
                                     'pos': exotic_infoDict['comp_stars'][j]
@@ -4171,7 +4259,10 @@ def main():
                     ckey = f"comp{j + 1}"
 
                     cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times)
+                    myfit, tFlux1, cFlux1 = fit_lightcurve(
+                        times, tFlux, cFlux, airmass, ld, pDict, jd_times,
+                        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                    )
                     res_std = np.inf
 
                     if myfit is not None:
@@ -4265,6 +4356,7 @@ def main():
                         ld,
                         pDict,
                         jd_times[candidate_mask],
+                        disable_vertical_flux_normalization,
                     ))
 
                 fit_results = []
@@ -4314,8 +4406,11 @@ def main():
                         ckey = f"comp{j + 1}"
                         aper_mask = np.isfinite(aper_data[ckey][:, best_a, best_an])
                         cFlux = aper_data[ckey][aper_mask][:, best_a, best_an]
-                        vsp_fit, _, _ = fit_lightcurve(times[aper_mask], best_target_flux[aper_mask], cFlux,
-                                                       airmass[aper_mask], ld, pDict, jd_times[aper_mask])
+                        vsp_fit, _, _ = fit_lightcurve(
+                            times[aper_mask], best_target_flux[aper_mask], cFlux,
+                            airmass[aper_mask], ld, pDict, jd_times[aper_mask],
+                            disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                        )
                         ref_flux[j] = {
                             'myfit': vsp_fit,
                             'pos': exotic_infoDict['comp_stars'][j]
@@ -4569,12 +4664,38 @@ def main():
             log_info(f"  end:{np.max(goodTimes)}", error=True)
             log_info(f"prior:{prior['tmid']}", error=True)
 
+        final_airmass_span = airmass_span(goodAirmasses)
+        airmass_skip_note = None
+        skip_final_airmass_fit = bool(exotic_infoDict.get('airmass_already_corrected'))
+        if skip_final_airmass_fit:
+            airmass_skip_note = (
+                "Skipped (input AAVSO file already reports AIRMASS, AIRMASS CORRECTION FUNCTION); "
+                "no airmass correction applied."
+            )
+            log_info(
+                "Input AAVSO file reports AIRMASS, AIRMASS CORRECTION FUNCTION; "
+                "skipping airmass fitting and applying no airmass correction."
+            )
+        elif should_skip_airmass_fit(goodAirmasses):
+            skip_final_airmass_fit = True
+            log_info(
+                f"Airmass span {final_airmass_span:.4f} <= {AIRMASS_FLAT_RANGE_THRESHOLD:.2f}; "
+                "skipping airmass fitting and applying no airmass correction."
+            )
+
         mybounds = {
             'rprs': [0, prior['rprs'] * 1.25],
             'tmid': [lower, upper],
             'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
-            'a2': [-3, 3],
         }
+        apply_vertical_flux_normalization_bound(
+            prior,
+            mybounds,
+            goodFluxes,
+            disable_vertical_flux_normalization,
+        )
+        if not skip_final_airmass_fit:
+            mybounds['a2'] = [-3, 3]
 
         if np.isnan(goodFluxes).all():
             log_info("Error: No valid photometry data found.", error=True)
@@ -4582,6 +4703,7 @@ def main():
 
         # final light curve fit
         myfit = lc_fitter(goodTimes, goodFluxes, goodNormUnc, goodAirmasses, prior, mybounds, mode='ns')
+        annotate_airmass_fit(myfit, goodAirmasses, skip_final_airmass_fit, note=airmass_skip_note)
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 
@@ -4617,8 +4739,11 @@ def main():
         log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log_info(f"           Transit depth [(Rp/R*)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
         log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
-        log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
-        log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
+        if getattr(myfit, 'airmass_fit_skipped', False):
+            log_info(f"                 Airmass correction: {myfit.airmass_correction_note}")
+        else:
+            log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
+            log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
         log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
         if fitsortext == 1:
             if np.isfinite(photometry_info.get('calibration_field_score', np.inf)):

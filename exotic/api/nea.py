@@ -149,6 +149,23 @@ class NASAExoplanetArchive:
             return None
         return -abs(value)
 
+    @staticmethod
+    def _candidate_name_reason(name):
+        if not isinstance(name, str):
+            return None
+
+        normalized = name.strip().upper()
+        if not normalized:
+            return None
+
+        if normalized.startswith('TIC'):
+            return "the name starts with 'TIC'"
+
+        if re.search(r'\.\d{2,}$', normalized):
+            return "the name ends with a decimal suffix"
+
+        return None
+
     def _load_params_from_nextastro_cache(self):
         if not self.planet:
             return False
@@ -336,6 +353,12 @@ class NASAExoplanetArchive:
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
+            candidate_reason = self._candidate_name_reason(self.planet)
+            if candidate_reason:
+                print(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
+                      f"\nAssuming {self.planet} is a planet candidate because {candidate_reason}.")
+                return self.planet, True
+
             self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
                                 f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"
                                 "\nre-enter the planet's name or type 'candidate' if this is a planet candidate: ")

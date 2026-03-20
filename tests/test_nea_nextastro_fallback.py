@@ -1,3 +1,5 @@
+import pandas
+import pytest
 import requests
 
 from exotic.api.nea import NASAExoplanetArchive
@@ -66,3 +68,32 @@ def test_planet_info_uses_nextastro_fallback_when_nasa_archive_unavailable(monke
     assert pl_dict['midT'] == 2450000.5
     assert pl_dict['rprs'] == 0.12
     assert pl_dict['aRs'] == 3.0
+
+
+@pytest.mark.parametrize(
+    ("planet_name", "reason"),
+    [
+        ("TOI-3889.01", "the name ends with a decimal suffix"),
+        ("TIC 123456789", "the name starts with 'TIC'"),
+    ],
+)
+def test_new_scrape_auto_marks_candidate_like_names_without_prompt(monkeypatch, tmp_path, capsys,
+                                                                   planet_name, reason):
+    nea = NASAExoplanetArchive(planet_name)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nea, 'planet_names', lambda filename="pl_names.json": None)
+    monkeypatch.setattr(nea, '_tap_query', lambda *args, **kwargs: pandas.DataFrame())
+    monkeypatch.setattr(
+        'builtins.input',
+        lambda prompt: pytest.fail("interactive prompt should not run for candidate-like targets"),
+    )
+
+    resolved_name, candidate = nea._new_scrape()
+
+    assert resolved_name == planet_name
+    assert candidate is True
+
+    output = capsys.readouterr().out
+    assert f"Cannot find target ({planet_name}) in NASA Exoplanet Archive." in output
+    assert f"Assuming {planet_name} is a planet candidate because {reason}." in output

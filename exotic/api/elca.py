@@ -110,11 +110,112 @@ def get_phase(times, per, tmid):
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
 
-def mc_a1(m_a2, sig_a2, transit, airmass, data, n=10000):
+def fallback_flux_baseline():
+    return 1.0
+
+
+def has_explicit_flux_baseline(bounds):
+    return any(key in bounds for key in ('a0', 'a1'))
+
+
+def get_flux_baseline(values, fallback=1.0):
+    if 'a0' in values:
+        return values['a0']
+    if 'a1' in values:
+        return values['a1']
+    return fallback
+
+
+def solve_flux_baseline(model, data, dataerr=None):
+    model = np.asarray(model, dtype=float)
+    data = np.asarray(data, dtype=float)
+    weights = np.ones(model.shape, dtype=float)
+
+    if dataerr is not None:
+        dataerr = np.asarray(dataerr, dtype=float)
+        weights = np.zeros(model.shape, dtype=float)
+        valid_err = np.isfinite(dataerr) & (dataerr > 0)
+        weights[valid_err] = 1.0 / (dataerr[valid_err] ** 2)
+
+    mask = np.isfinite(model) & np.isfinite(data) & (model != 0)
+    if dataerr is not None:
+        mask &= np.isfinite(weights) & (weights > 0)
+
+    if not np.any(mask):
+        return fallback_flux_baseline()
+
+    masked_model = model[mask]
+    masked_data = data[mask]
+    masked_weights = weights[mask]
+    denom = np.sum(masked_weights * masked_model ** 2)
+
+    if not np.isfinite(denom) or denom <= 0:
+        ratio = masked_data / masked_model
+        ratio = ratio[np.isfinite(ratio)]
+        if ratio.size == 0:
+            return fallback_flux_baseline()
+        baseline = np.nanmedian(ratio)
+        return baseline if np.isfinite(baseline) else fallback_flux_baseline()
+
+    baseline = np.sum(masked_weights * masked_data * masked_model) / denom
+    return baseline if np.isfinite(baseline) else fallback_flux_baseline()
+
+
+def solve_flux_baseline_uncertainty(model, dataerr):
+    if dataerr is None:
+        return 0.0
+    model = np.asarray(model, dtype=float)
+    dataerr = np.asarray(dataerr, dtype=float)
+    mask = np.isfinite(model) & np.isfinite(dataerr) & (dataerr > 0)
+    if not np.any(mask):
+        return 0.0
+    denom = np.sum((model[mask] / dataerr[mask]) ** 2)
+    if not np.isfinite(denom) or denom <= 0:
+        return 0.0
+    return (1.0 / denom) ** 0.5
+
+
+def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
+    n = int(n)
     a2 = np.random.normal(m_a2, sig_a2, n)
-    model = transit * np.exp(np.repeat(np.expand_dims(a2, 0), airmass.shape[0], 0).T * airmass)
-    detrend = data / model
-    return np.mean(np.median(detrend, 0)), np.std(np.median(detrend, 0))
+    model = transit * np.exp(np.outer(a2, airmass))
+    weights = np.ones(transit.shape[0], dtype=float)
+
+    if dataerr is not None:
+        dataerr = np.asarray(dataerr, dtype=float)
+        weights = np.zeros(transit.shape[0], dtype=float)
+        valid_err = np.isfinite(dataerr) & (dataerr > 0)
+        weights[valid_err] = 1.0 / (dataerr[valid_err] ** 2)
+
+    mask = np.isfinite(data) & np.isfinite(transit)
+    if dataerr is not None:
+        mask &= np.isfinite(weights) & (weights > 0)
+
+    if not np.any(mask):
+        return fallback_flux_baseline(), 0.0
+
+    masked_model = model[:, mask]
+    masked_data = np.asarray(data, dtype=float)[mask]
+    masked_weights = weights[mask]
+
+    numer = np.sum(masked_weights * masked_data * masked_model, axis=1)
+    denom = np.sum(masked_weights * masked_model ** 2, axis=1)
+    valid = np.isfinite(numer) & np.isfinite(denom) & (denom > 0)
+
+    if not np.any(valid):
+        best_model = transit * np.exp(m_a2 * airmass)
+        baseline = solve_flux_baseline(best_model, data, dataerr)
+        return baseline, solve_flux_baseline_uncertainty(best_model, dataerr)
+
+    baselines = numer[valid] / denom[valid]
+    baseline = float(np.nanmean(baselines))
+    baseline_unc = float(np.nanstd(baselines))
+
+    if baseline_unc == 0.0:
+        best_model = transit * np.exp(m_a2 * airmass)
+        baseline_unc = solve_flux_baseline_uncertainty(best_model, dataerr)
+
+    return baseline, baseline_unc
 
 
 def round_to_2(*args):
@@ -188,9 +289,27 @@ class lc_fitter(object):
         elif self.mode == "ns":
             self.fit_nested()
 
+    def _validate_flux_baseline_keys(self):
+        free_flux_keys = [key for key in self.bounds if key in ('a0', 'a1')]
+        if len(free_flux_keys) > 1:
+            raise ValueError("Use only one of 'a0' or 'a1' as a free baseline parameter.")
+
+    def _has_free_flux_baseline(self):
+        return has_explicit_flux_baseline(self.bounds)
+
+    def _set_flux_baseline(self, value, error=0.0):
+        self.parameters['a0'] = value
+        self.errors['a0'] = error
+        self.parameters['a1'] = value
+        self.errors['a1'] = error
+
+    def _build_systematics_model(self, values):
+        return get_flux_baseline(values) * np.exp(values.get('a2', 0) * self.airmass)
+
     def fit_LM(self):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
+        self._validate_flux_baseline_keys()
 
         # trim data around predicted transit/eclipse time
         if np.ndim(self.airmass) == 2:
@@ -210,7 +329,11 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= self.prior['a1'] * np.exp(self.prior['a2'] * self.airmass)
+            model *= np.exp(self.prior.get('a2', 0) * self.airmass)
+            if self._has_free_flux_baseline():
+                model *= get_flux_baseline(self.prior)
+            else:
+                model *= solve_flux_baseline(model, self.data, self.dataerr)
             return ((self.data - model) / self.dataerr) ** 2
 
         try:
@@ -252,9 +375,21 @@ class lc_fitter(object):
         self.time_upsample = np.linspace(min(self.time), max(self.time), 1000)
         self.transit_upsample = transit(self.time_upsample, self.parameters)
         self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
-        if self.mode == "ns":
-            self.parameters['a1'], self.errors['a1'] = mc_a1(self.parameters.get('a2', 0), self.errors.get('a2', 1e-6),
-                                                             self.transit, self.airmass, self.data)
+        if np.ndim(self.airmass) != 2:
+            if self.mode == "ns" and not self._has_free_flux_baseline():
+                flux_scale, flux_scale_err = mc_a1(
+                    self.parameters.get('a2', 0),
+                    self.errors.get('a2', 1e-6),
+                    self.transit,
+                    self.airmass,
+                    self.data,
+                    self.dataerr,
+                )
+            else:
+                systematics = self.transit * np.exp(self.parameters.get('a2', 0) * self.airmass)
+                flux_scale = solve_flux_baseline(systematics, self.data, self.dataerr)
+                flux_scale_err = self.errors.get('a0', self.errors.get('a1', solve_flux_baseline_uncertainty(systematics, self.dataerr)))
+            self._set_flux_baseline(flux_scale, flux_scale_err)
         if np.ndim(self.airmass) == 2:
             detrended = self.data / self.transit
             self.wf = weightedflux(detrended, self.gw, self.nearest)
@@ -262,7 +397,7 @@ class lc_fitter(object):
             self.detrended = self.data / self.wf
             self.detrendederr = self.dataerr / self.wf
         else:
-            self.airmass_model = self.parameters['a1'] * np.exp(self.parameters.get('a2', 0) * self.airmass)
+            self.airmass_model = self._build_systematics_model(self.parameters)
             self.model = self.transit * self.airmass_model
             self.detrended = self.data / self.airmass_model
             self.detrendederr = self.dataerr / self.airmass_model
@@ -299,6 +434,7 @@ class lc_fitter(object):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
         bounddiff = np.diff(boundarray, 1).reshape(-1)
+        self._validate_flux_baseline_keys()
 
         # alloc data for best fit + error
         self.errors = {}
@@ -310,9 +446,11 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= np.exp(self.prior['a2'] * self.airmass)
-            detrend = self.data / model  # used to estimate a1
-            model *= np.median(detrend)
+            model *= np.exp(self.prior.get('a2', 0) * self.airmass)
+            if self._has_free_flux_baseline():
+                model *= get_flux_baseline(self.prior)
+            else:
+                model *= solve_flux_baseline(model, self.data, self.dataerr)
             return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
 
         def prior_transform(upars):
@@ -384,9 +522,20 @@ class lc_fitter(object):
             chis = []
             for i in range(len(tests)):
                 lightcurve = transit(self.time, tests[i])
-                tests[i]['a1'] = mc_a1(tests[i].get('a2', 0), self.errors.get('a2', 1e-6),
-                                       lightcurve, self.airmass, self.data)[0]
-                airmass = tests[i]['a1'] * np.exp(tests[i].get('a2', 0) * self.airmass)
+                if self._has_free_flux_baseline():
+                    flux_scale = get_flux_baseline(tests[i])
+                else:
+                    flux_scale = mc_a1(
+                        tests[i].get('a2', 0),
+                        self.errors.get('a2', 1e-6),
+                        lightcurve,
+                        self.airmass,
+                        self.data,
+                        self.dataerr,
+                    )[0]
+                tests[i]['a0'] = flux_scale
+                tests[i]['a1'] = flux_scale
+                airmass = flux_scale * np.exp(tests[i].get('a2', 0) * self.airmass)
                 residuals = self.data - (lightcurve * airmass)
                 chis.append(np.sum(residuals ** 2))
 
@@ -420,6 +569,12 @@ class lc_fitter(object):
         )
 
         lclabel = lclabel1 + "\n" + lclabel2
+        if 'a0' in self.parameters:
+            lclabel3 = r"$a_0$ = %s $\pm$ %s" % (
+                str(round_to_2(self.parameters['a0'], self.errors.get('a0', 0))),
+                str(round_to_2(self.errors.get('a0', 0)))
+            )
+            lclabel += "\n" + lclabel3
 
         if zoom:
             axs[0].set_ylim([1 - 1.25 * self.parameters['rprs'] ** 2, 1 + 0.5 * self.parameters['rprs'] ** 2])
@@ -510,7 +665,7 @@ class lc_fitter(object):
                     self.parameters[key] + 5 * self.errors[key]
                 ])
 
-                if key == 'a2' or key == 'a1':
+                if key in ('a0', 'a1', 'a2'):
                     continue
 
                 mask3 = mask3 & \
@@ -678,9 +833,11 @@ class glc_fitter(lc_fitter):
 
                 # compute model
                 model = transit(self.lc_data[i]['time'], self.lc_data[i]['priors'])
-                model *= np.exp(self.lc_data[i]['priors']['a2']*self.lc_data[i]['airmass'])
-                detrend = self.lc_data[i]['flux']/model
-                model *= np.mean(detrend)
+                model *= np.exp(self.lc_data[i]['priors'].get('a2', 0) * self.lc_data[i]['airmass'])
+                if has_explicit_flux_baseline(self.global_bounds) or has_explicit_flux_baseline(self.local_bounds[i]):
+                    model *= get_flux_baseline(self.lc_data[i]['priors'])
+                else:
+                    model *= solve_flux_baseline(model, self.lc_data[i]['flux'], self.lc_data[i]['ferr'])
 
                 # add to chi2
                 chi2 += np.sum( ((self.lc_data[i]['flux']-model)/self.lc_data[i]['ferr'])**2 )
@@ -750,13 +907,21 @@ class glc_fitter(lc_fitter):
                     local_rprs.append(self.lc_data[n]['priors'][k])
                     local_rprs_err.append(self.lc_data[n]['errors'][k])
 
-            # solve for a1
+            # solve for the local baseline flux scale
             model = transit(self.lc_data[n]['time'], self.lc_data[n]['priors'])
-            airmass = np.exp(self.lc_data[n]['airmass']*self.lc_data[n]['priors']['a2'])
-            detrend = self.lc_data[n]['flux']/(model*airmass)
-            self.lc_data[n]['priors']['a1'] = np.mean(detrend)
-            self.lc_data[n]['residuals'] = self.lc_data[n]['flux'] - model*airmass*self.lc_data[n]['priors']['a1']
-            self.lc_data[n]['detrend'] = self.lc_data[n]['flux']/(airmass*self.lc_data[n]['priors']['a1'])
+            airmass = np.exp(self.lc_data[n]['airmass'] * self.lc_data[n]['priors'].get('a2', 0))
+            if has_explicit_flux_baseline(self.global_bounds) or has_explicit_flux_baseline(self.local_bounds[n]):
+                flux_scale = get_flux_baseline(self.lc_data[n]['priors'])
+                flux_scale_err = self.lc_data[n]['errors'].get('a0', self.lc_data[n]['errors'].get('a1', 0))
+            else:
+                flux_scale = solve_flux_baseline(model * airmass, self.lc_data[n]['flux'], self.lc_data[n]['ferr'])
+                flux_scale_err = solve_flux_baseline_uncertainty(model * airmass, self.lc_data[n]['ferr'])
+            self.lc_data[n]['priors']['a0'] = flux_scale
+            self.lc_data[n]['priors']['a1'] = flux_scale
+            self.lc_data[n]['errors']['a0'] = flux_scale_err
+            self.lc_data[n]['errors']['a1'] = flux_scale_err
+            self.lc_data[n]['residuals'] = self.lc_data[n]['flux'] - model * airmass * flux_scale
+            self.lc_data[n]['detrend'] = self.lc_data[n]['flux'] / (airmass * flux_scale)
 
             # phase
             self.lc_data[n]['phase'] = get_phase(self.lc_data[n]['time'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
@@ -799,8 +964,8 @@ class glc_fitter(lc_fitter):
             nmarker = next(markers)
 
             model = transit(self.lc_data[i]['time'], self.lc_data[i]['priors'])
-            airmass = np.exp(self.lc_data[i]['airmass']*self.lc_data[i]['priors']['a2'])
-            detrend = self.lc_data[i]['flux']/(model*airmass)
+            airmass = np.exp(self.lc_data[i]['airmass'] * self.lc_data[i]['priors'].get('a2', 0))
+            detrend = self.lc_data[i]['flux'] / (model * airmass)
 
             if ax.ndim == 1:
                 ax[i].axis('on')
@@ -1076,8 +1241,8 @@ if __name__ == "__main__":
         'ecc': 0.5,  # Eccentricity
         'omega': 120,  # Arg of periastron
         'tmid': 0.75,  # Time of mid transit [day],
-        'a1': 50,  # Airmass coefficients
-        'a2': 0.,  # trend = a1 * np.exp(a2 * airmass)
+        'a0': 50,  # Baseline flux normalization
+        'a2': 0.,  # trend = a0 * np.exp(a2 * airmass)
 
         'teff': 5000,
         'tefferr': 50,
@@ -1104,8 +1269,8 @@ if __name__ == "__main__":
     airmass = np.zeros(time.shape[0])
 
     # GENERATE NOISY DATA
-    data = transit(time, prior) * prior['a1'] * np.exp(prior['a2'] * airmass)
-    data += np.random.normal(0, prior['a1'] * 250e-6, len(time))
+    data = transit(time, prior) * prior['a0'] * np.exp(prior['a2'] * airmass)
+    data += np.random.normal(0, prior['a0'] * 250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time)) + np.random.normal(300e-6, 50e-6, len(time))
 
     # add bounds for free parameters only
@@ -1113,9 +1278,10 @@ if __name__ == "__main__":
         'rprs': [0, 0.1],
         'tmid': [prior['tmid'] - 0.01, prior['tmid'] + 0.01],
         'ars': [13, 15],
+        # 'a0': [0.95 * prior['a0'], 1.05 * prior['a0']],  # optional explicit baseline offset
         # 'a2': [0, 0.3] # uncomment if you want to fit for airmass
-        # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
-        # and is solved for during the fit
+        # if a0 is omitted, the normalization is solved analytically during the fit
+        # never list both 'a0' and 'a1' in bounds because they are the same scale term
     }
 
     myfit = lc_fitter(time, data, dataerr, airmass, prior, mybounds, mode='ns')

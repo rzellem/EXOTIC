@@ -68,6 +68,21 @@ def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):
     assert inputs.info_dict["ignore_header_wcs"] == "n"
 
 
+def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["disable_vertical_flux_normalization"] is False
+
+
 def test_comp_params_reads_observatory_full_title_from_user_info(tmp_path):
     init_data = {
         "user_info": {"Observatory Full Title": "Whipple Observatory"},
@@ -111,6 +126,21 @@ def test_comp_params_reads_ignore_header_wcs_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ignore_header_wcs"] == "y"
+
+
+def test_comp_params_reads_disable_vertical_flux_normalization_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"disable vertical flux normalization": True},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["disable_vertical_flux_normalization"] is True
 
 
 class DummyResponse:
@@ -526,6 +556,20 @@ def test_parse_aavso_prereduced_overrides_uses_osc_split_filter_alias_lookup(tmp
     assert overrides["wl_max"] == "586.8"
 
 
+def test_parse_aavso_prereduced_overrides_marks_airmass_as_already_corrected(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"
+        "#DATE,DIFF,ERR,DETREND_1,DETREND_2\n"
+        "2461102.76092732,0.979108,0.0386426,1.3811172,0.998\n"
+    )
+
+    overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
+
+    assert overrides["airmass_already_corrected"] is True
+
+
 def test_prereduced_prefers_aavso_obsdate_metadata_over_init_date(tmp_path):
     pre_reduced_file = tmp_path / "aavso_prereduced.txt"
     pre_reduced_file.write_text(
@@ -623,3 +667,37 @@ def test_prereduced_leaves_phot_comp_star_blank_when_missing_from_aavso_metadata
     info_dict, _ = inputs.prereduced("HAT-P-32 b")
 
     assert info_dict["phot_comp_star"] == {"ra": "", "dec": "", "x": "", "y": ""}
+
+
+def test_prereduced_carries_aavso_airmass_corrected_flag(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"
+        "#DATE,DIFF,ERR,DETREND_1,DETREND_2\n"
+        "2461102.76092732,0.979108,0.0386426,1.3811172,0.998\n"
+    )
+
+    inputs = Inputs(init_opt="y")
+    inputs.info_dict.update({
+        "save": str(tmp_path),
+        "aavso_num": "RTZ",
+        "second_obs": "",
+        "date": "2020-01-01",
+        "lat": "+0.0",
+        "long": "+0.0",
+        "elev": 1.0,
+        "camera": "CCD",
+        "pixel_bin": "1x1",
+        "notes": "na",
+        "aavso_comp": "y",
+        "prered_file": str(pre_reduced_file),
+        "exposure": 60.0,
+        "file_units": "flux",
+        "file_time": "BJD_TDB",
+        "phot_comp_star": None,
+    })
+
+    info_dict, _ = inputs.prereduced("HAT-P-32 b")
+
+    assert info_dict["airmass_already_corrected"] is True

@@ -184,10 +184,8 @@ class _UltraNestSimpleProgress:
         )
 
     def start(self):
-        interval_label = f"{self.interval_seconds:g}s"
         self._write(
-            "[ultranest] Using simple progress updates "
-            f"({interval_label} heartbeat, set EXOTIC_ULTRANEST_RICH_PROGRESS=1 for native status)."
+            "[ultranest] Using simple progress updates."
         )
 
     def update(self, *args, **kwargs):

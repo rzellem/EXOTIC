@@ -20,6 +20,7 @@ class DummyFit:
         self.time = [2450000.123456]
         self.data = [1.0]
         self.dataerr = [0.01]
+        self.residuals = 0.01
         self.airmass_model = [1.0]
 
 
@@ -176,3 +177,83 @@ def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
     text = summary_path.read_text()
     assert "# Selected comparison star,1" in text
     assert "Comp 1,101,202,true" in text
+
+
+def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
+    fit = DummyFit()
+    fit.airmass_fit_skipped = True
+    fit.airmass_correction_note = "Skipped (airmass span 0.0400 <= 0.05); no airmass correction applied."
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_text = output_file.read_text(encoding="utf-8")
+
+    assert "Airmass correction" in output_text
+    assert "no airmass correction applied" in output_text
+    assert "Airmass coefficient 1 (a1)" not in output_text
+
+
+def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_path):
+    fit = DummyFit()
+    fit.airmass_fit_skipped = True
+    fit.airmass_correction_note = "Skipped (input AAVSO file already reports AIRMASS, AIRMASS CORRECTION FUNCTION); no airmass correction applied."
+
+    p_dict = {
+        "pName": "HAT-P-32 b",
+        "sName": "HAT-P-32",
+        "pPer": 2.1500082,
+        "pPerUnc": 1.3e-07,
+        "rprs": 0.1488623525,
+        "rprsUnc": 0.0005539487,
+        "aRs": 5.344,
+        "aRsUnc": 0.03949,
+        "inc": 88.98,
+        "incUnc": 0.7602,
+        "ecc": 0.159,
+        "dist": None,
+        "pm_ra": None,
+        "pm_dec": None,
+    }
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "aavso_num": "RTZ",
+        "second_obs": "",
+        "obs_name": "",
+        "camera": "CCD",
+        "pixel_bin": "1x1",
+        "exposure": 60.0,
+        "lat": "+32.41638889",
+        "long": "-110.73444444",
+        "elev": 2616,
+        "notes": "na",
+        "filter": "CV",
+        "filter_desc": "Clear with V zero-point",
+        "wl_min": None,
+        "wl_max": None,
+    }
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).aavso(
+        {"ra": "", "dec": "", "x": "493", "y": "202"},
+        [1.0],
+        (0.1, 0.01),
+        (0.2, 0.01),
+        (0.3, 0.01),
+        (0.4, 0.01),
+        None,
+    )
+
+    output_file = tmp_path / "AAVSO_HAT-P-32 b_2020-01-01.txt"
+    output_text = output_file.read_text(encoding="utf-8")
+
+    assert "Am1=0 +/- 0" in output_text
+    assert "Am2=0 +/- 0" in output_text
+    assert output_text.strip().endswith("1.0")

@@ -555,6 +555,7 @@ def create_inits_file(parameters, file_name):
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": parameters.get("Pixel Scale (Ex: 5.21 arcsecs/pixel)", None),
             "Filter Minimum Wavelength (nm)": parameters.get("Filter Minimum Wavelength (nm)", None),
             "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None),
+            "disable vertical flux normalization": parameters.get("disable vertical flux normalization", False),
             "require_comp_star": parameters.get("require_comp_star", "y")
         }
     }

@@ -1,6 +1,7 @@
 from json import dump, dumps
 from numpy import mean, median, std
 from pathlib import Path
+import numpy as np
 
 try:
     from utils import round_to_2
@@ -14,6 +15,42 @@ try:
     from plate_status import PlateStatus
 except ImportError:
     from .plate_status import PlateStatus
+
+
+def aavso_airmass_results(fit):
+    if getattr(fit, 'airmass_fit_skipped', False):
+        return (
+            ('Am1', '0', '0'),
+            ('Am2', '0', '0'),
+        )
+
+    if 'a0' in fit.parameters:
+        first_result = (
+            'A0',
+            str(round_to_2(fit.parameters['a0'], fit.errors['a0'])),
+            str(round_to_2(fit.errors['a0'])),
+        )
+    else:
+        first_result = (
+            'Am1',
+            str(round_to_2(fit.parameters['a1'], fit.errors['a1'])),
+            str(round_to_2(fit.errors['a1'])),
+        )
+
+    return (
+        first_result,
+        (
+            'Am2',
+            str(round_to_2(fit.parameters.get('a2', 0), fit.errors.get('a2', 0))),
+            str(round_to_2(fit.errors.get('a2', 0))),
+        ),
+    )
+
+
+def aavso_detrend_model(fit):
+    if getattr(fit, 'airmass_fit_skipped', False):
+        return np.ones(len(fit.time), dtype=float)
+    return np.asarray(fit.airmass_model, dtype=float)
 
 
 class OutputFiles:
@@ -47,13 +84,30 @@ class OutputFiles:
             "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
                                        f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
             "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
-                                                  f"{round_to_2(self.fit.errors['inc'])} ",
-            "Airmass coefficient 1 (a1)": f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
-                                          f"{round_to_2(self.fit.errors['a1'])}",
-            "Airmass coefficient 2 (a2)": f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
-                                          f"{round_to_2(self.fit.errors['a2'])}",
+                                                   f"{round_to_2(self.fit.errors['inc'])} ",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * std(self.fit.residuals / median(self.fit.data)))} %",
         }
+        if getattr(self.fit, 'airmass_fit_skipped', False):
+            params_num["Airmass correction"] = getattr(
+                self.fit,
+                'airmass_correction_note',
+                "Skipped; no airmass correction applied.",
+            )
+        else:
+            if 'a0' in self.fit.parameters:
+                params_num["Baseline flux (a0)"] = (
+                    f"{round_to_2(self.fit.parameters['a0'], self.fit.errors['a0'])} +/- "
+                    f"{round_to_2(self.fit.errors['a0'])}"
+                )
+            else:
+                params_num["Flux normalization (a1)"] = (
+                    f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
+                    f"{round_to_2(self.fit.errors['a1'])}"
+                )
+            params_num["Airmass coefficient 2 (a2)"] = (
+                f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
+                f"{round_to_2(self.fit.errors['a2'])}"
+            )
 
         if vsp_params:
             params_num["Variable Reference Star"] = f"AAVSO Label: {vsp_params[0]['cname']}, " + \
@@ -78,6 +132,8 @@ class OutputFiles:
     def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3, epw_md5):
         priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                              ld0, ld1, ld2, ld3)
+        aavso_airmass_terms = aavso_airmass_results(self.fit)
+        detrend_model = aavso_detrend_model(self.fit)
         obs_name = format_aavso_header_value(self.i_dict.get('obs_name'))
         obs_name_header = f"#OBSNAME={obs_name}\n" if obs_name else ""
         gaia_dist = format_aavso_header_value(self.p_dict.get('dist'))
@@ -128,8 +184,8 @@ class OutputFiles:
                     f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
                     f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
                     f",inc={round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- {round_to_2(self.fit.errors['inc'])}"
-                    f",Am1={round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- {round_to_2(self.fit.errors['a1'])}"
-                    f",Am2={round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- {round_to_2(self.fit.errors['a2'])}\n"
+                    f",{aavso_airmass_terms[0][0]}={aavso_airmass_terms[0][1]} +/- {aavso_airmass_terms[0][2]}"
+                    f",{aavso_airmass_terms[1][0]}={aavso_airmass_terms[1][1]} +/- {aavso_airmass_terms[1][2]}\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
 
             if epw_md5:
@@ -150,7 +206,7 @@ class OutputFiles:
                 #         f"{round(self.fit.airmass_model[aavsoC] / self.fit.parameters['a1'], 7)}\n")
                 f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC], 7)},"
                         f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
-                        f"{round(self.fit.airmass_model[aavsoC], 7)}\n")
+                        f"{round(detrend_model[aavsoC], 7)}\n")
     def plate_status(self, plate_status: PlateStatus):
         plate_status_file = self.dir / "temp" / f"PlateStatus_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
         plate_status.writePlateStatus(plate_status_file)
@@ -194,6 +250,7 @@ class AIDOutputFiles:
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
+    aavso_airmass_terms = aavso_airmass_results(fit)
     priors = {
         'Period': {
             'value': str(round_to_2(planet_dict['pPer'], planet_dict['pPerUnc'])),
@@ -264,19 +321,20 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
             'uncertainty': str(round_to_2(fit.errors['inc'])),
         },
-        'Am1': {
-            'value': str(round_to_2(fit.parameters['a1'], fit.errors['a1'])),
-            'uncertainty': str(round_to_2(fit.errors['a1']))
-        },
         'Am2': {
-            'value': str(round_to_2(fit.parameters['a2'], fit.errors['a2'])),
-            'uncertainty': str(round_to_2(fit.errors['a2']))
+            'value': aavso_airmass_terms[1][1],
+            'uncertainty': aavso_airmass_terms[1][2]
         },
         'Duration': {
             'value': str(round_to_2(mean(durs))),
             'uncertainty': str(round_to_2(std(durs))),
             'units': "days"
         }
+    }
+
+    results[aavso_airmass_terms[0][0]] = {
+        'value': aavso_airmass_terms[0][1],
+        'uncertainty': aavso_airmass_terms[0][2]
     }
 
     return priors, filter_type, results

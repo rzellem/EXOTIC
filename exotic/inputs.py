@@ -61,6 +61,7 @@ AAVSO_GAIA_HEADER_KEYS = {
 AAVSO_EXPOSURE_HEADER_KEYS = ('EXPOSURE_TIME', 'EXPTIME', 'EXPOSURE', 'EXP')
 AAVSO_TIME_FORMAT_HEADER_KEYS = ('DATE_TYPE',)
 AAVSO_MEASUREMENT_TYPE_HEADER_KEYS = ('MEASUREMENT_TYPE',)
+AAVSO_DETREND_PARAMETER_HEADER_KEYS = ('DETREND_PARAMETERS',)
 AAVSO_ALLOWED_FILE_TIME_FORMATS = {'BJD_TDB', 'JD_UTC', 'MJD_UTC'}
 AAVSO_WAVELENGTH_UNIT_FACTORS_TO_NM = {
     'a': 0.1,
@@ -204,10 +205,10 @@ class Inputs:
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
-            'dist': None, 'pm_ra': None, 'pm_dec': None,
+            'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
-            'target_driven_comp_selection': 'n'
+            'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -267,6 +268,7 @@ class Inputs:
         ):
             if is_blank_value(self.info_dict.get(key)) and aavso_overrides.get(key) is not None:
                 self.info_dict[key] = aavso_overrides[key]
+        self.info_dict['airmass_already_corrected'] = bool(aavso_overrides.get('airmass_already_corrected'))
 
         if not planet and not is_blank_value(aavso_overrides.get('planet')):
             planet = aavso_overrides['planet']
@@ -410,6 +412,10 @@ class Inputs:
                 'Ignore WCS in Header and Do Manual Alignment',
                 'Ignore WCS in header and do manual alignment',
                 'ignore_header_wcs',
+            ),
+            'disable_vertical_flux_normalization': (
+                'disable vertical flux normalization',
+                'Disable vertical flux normalization',
             ),
             'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)',
                             'Pixel Scale (arsec/pixel)'),
@@ -1067,6 +1073,22 @@ def parse_aavso_exposure_from_metadata(metadata):
         return None
 
 
+def parse_aavso_airmass_detrend_from_metadata(metadata):
+    value = first_aavso_metadata_text(metadata, AAVSO_DETREND_PARAMETER_HEADER_KEYS, allow_blank=True)
+    if is_blank_value(value):
+        return False
+
+    detrend_parameters = {
+        re.sub(r'\s+', ' ', item.strip()).upper()
+        for item in re.split(r'[;,]', value)
+        if item.strip()
+    }
+    return (
+        'AIRMASS' in detrend_parameters
+        and 'AIRMASS CORRECTION FUNCTION' in detrend_parameters
+    )
+
+
 def parse_aavso_prereduced_overrides(prereduced_file_path):
     metadata = read_aavso_metadata(prereduced_file_path)
     filter_metadata = parse_aavso_filter_metadata_from_metadata(metadata)
@@ -1092,6 +1114,7 @@ def parse_aavso_prereduced_overrides(prereduced_file_path):
         'dist': first_aavso_metadata_text(metadata, AAVSO_GAIA_HEADER_KEYS['dist']),
         'pm_ra': first_aavso_metadata_text(metadata, AAVSO_GAIA_HEADER_KEYS['pm_ra']),
         'pm_dec': first_aavso_metadata_text(metadata, AAVSO_GAIA_HEADER_KEYS['pm_dec']),
+        'airmass_already_corrected': parse_aavso_airmass_detrend_from_metadata(metadata),
         'phot_comp_star': parse_aavso_comp_star_from_metadata(metadata),
         'planet': first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['planet']),
         'host_star': first_aavso_metadata_text(metadata, AAVSO_TEXT_HEADER_KEYS['host_star']),

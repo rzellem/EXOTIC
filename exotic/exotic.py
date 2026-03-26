@@ -1943,6 +1943,10 @@ def main():
         if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+            if not pDict.get('ra') or not pDict.get('dec'):
+                log_info("NASA Archive coords missing. Falling back to inits.json RA/DEC.")
+                pDict['ra'] = userpDict.get('ra')
+                pDict['dec'] = userpDict.get('dec')
         else:
             pDict = userpDict
             CandidatePlanetBool = False

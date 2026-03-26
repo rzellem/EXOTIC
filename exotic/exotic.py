@@ -1943,8 +1943,11 @@ def main():
         if not args.override:
             nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
-            # --- Fallback to user-provided RA/Dec from inits.json if NASA Exoplanet Archive
-            # returns empty coordinates (e.g., for candidate planets or API failures). ---
+            
+            # --- V2 SOTA FALLBACK (FIXED FOR CANDIDATES) ---
+            if pDict is None:
+                pDict = {}
+
             if not pDict.get('ra') or not pDict.get('dec'):
                 user_ra = userpDict.get('ra')
                 user_dec = userpDict.get('dec')
@@ -1954,8 +1957,8 @@ def main():
                     pDict['ra'] = user_ra
                     pDict['dec'] = user_dec
                 else:
-                    log_info("WARNING: NASA Archive coords missing AND no RA/DEC provided in inits.json. FOV plot may fail.")
-            # ---------------------------------
+                    log_info("WARNING: NASA Archive coords missing AND no RA/DEC provided. FOV plot may fail.")
+            # -----------------------------------------------
         else:
             pDict = userpDict
             CandidatePlanetBool = False

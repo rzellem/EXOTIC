@@ -7,11 +7,15 @@ from exotic.api.plate_solution import NextAstroPlateSolution, PlateSolution
 
 
 class DummyResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload=None, status_code=200, text=None, json_error=None):
         self._payload = payload
         self.status_code = status_code
+        self.text = text if text is not None else ("" if payload is None else str(payload))
+        self._json_error = json_error
 
     def json(self):
+        if self._json_error is not None:
+            raise self._json_error
         return self._payload
 
 
@@ -141,6 +145,53 @@ def test_poll_for_solution_logs_unexpected_status(tmp_path, monkeypatch, capsys)
     output = capsys.readouterr().out
     assert "Status response (unexpected)" in output
     assert "'status': 'processing'" in output
+
+
+def test_submit_solve_request_handles_non_json_response(tmp_path, monkeypatch, capsys):
+    fits_path = _create_test_fits(tmp_path)
+    solver = NextAstroPlateSolution(file=fits_path, directory=tmp_path)
+
+    monkeypatch.setattr(
+        'exotic.api.plate_solution.requests.post',
+        lambda url, json, timeout: DummyResponse(
+            status_code=502,
+            text='<html>bad gateway</html>',
+            json_error=ValueError('not json')
+        )
+    )
+
+    request_id = solver._submit_solve_request({
+        'x': [25.0],
+        'y': [30.0],
+        'flux': [10000.0],
+        'pixel_indexing': '0-based'
+    })
+
+    assert request_id is False
+    output = capsys.readouterr().out
+    assert "Solve response returned non-JSON response" in output
+    assert "bad gateway" in output.lower()
+
+
+def test_poll_for_solution_handles_non_json_response(tmp_path, monkeypatch, capsys):
+    fits_path = _create_test_fits(tmp_path)
+    solver = NextAstroPlateSolution(file=fits_path, directory=tmp_path)
+
+    monkeypatch.setattr(
+        'exotic.api.plate_solution.requests.get',
+        lambda url, timeout: DummyResponse(
+            status_code=200,
+            text='',
+            json_error=ValueError('not json')
+        )
+    )
+
+    header = solver._poll_for_solution('abc123')
+
+    assert header is False
+    output = capsys.readouterr().out
+    assert "Status response returned non-JSON response" in output
+    assert "<empty response body>" in output
 
 
 def test_nova_upload_includes_astrometry_hints(tmp_path, monkeypatch):

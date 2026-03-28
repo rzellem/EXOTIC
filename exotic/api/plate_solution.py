@@ -289,6 +289,28 @@ class NextAstroPlateSolution:
             "flux": fluxes[sorted_indices].tolist()
         }
 
+    @staticmethod
+    def _response_body_preview(response, max_chars=240):
+        body = getattr(response, 'text', None)
+        if body is None:
+            content = getattr(response, 'content', b'')
+            body = content.decode(errors='replace') if isinstance(content, bytes) else str(content)
+
+        body = " ".join(str(body).split())
+        if not body:
+            return "<empty response body>"
+        if len(body) > max_chars:
+            return body[:max_chars - 3] + "..."
+        return body
+
+    def _decode_response_json(self, response, context):
+        try:
+            return response.json()
+        except ValueError:
+            print(f"[NextAstro] {context} returned non-JSON response "
+                  f"(HTTP {response.status_code}): {self._response_body_preview(response)}")
+            return None
+
     def _submit_solve_request(self, source_list):
         image_data = getdata(filename=self.file)
         payload = {
@@ -309,11 +331,11 @@ class NextAstroPlateSolution:
 
         print(f"[NextAstro] Solve request payload: {payload}")
         response = requests.post(f"{self.api_url}/solve", json=payload, timeout=_RQ_TIMEOUT)
-        print(f"[NextAstro] Solve response: {response.json()}")
-        if response.status_code >= 400:
+        response_json = self._decode_response_json(response, 'Solve response')
+        if response_json is not None:
+            print(f"[NextAstro] Solve response: {response_json}")
+        if response.status_code >= 400 or response_json is None:
             return False
-
-        response_json = response.json()
         if response_json.get('status') in {'queued', 'running'}:
             return response_json.get('request_id')
         return False
@@ -336,11 +358,13 @@ class NextAstroPlateSolution:
         latest_status = None
         for _ in range(_NEXTASTRO_STATUS_MAX_POLLS):
             response = requests.get(f"{self.api_url}/status/{request_id}", timeout=_RQ_TIMEOUT)
+            response_json = self._decode_response_json(response, 'Status response')
+            if response_json is None:
+                return False
             if response.status_code >= 400:
-                print(f"[NextAstro] Status response (HTTP {response.status_code}): {response.json()}")
+                print(f"[NextAstro] Status response (HTTP {response.status_code}): {response_json}")
                 return False
 
-            response_json = response.json()
             status = str(response_json.get('status', '')).lower()
             latest_status = response_json.get('status')
             if status == 'solved':

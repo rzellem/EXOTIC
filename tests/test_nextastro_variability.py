@@ -173,6 +173,75 @@ def test_get_wcs_falls_back_to_nextastro_when_nova_fails(monkeypatch):
     assert service_calls == ['nova', 'nextastro']
 
 
+def test_get_wcs_logs_nextastro_bad_gateway_before_nova_fallback(monkeypatch):
+    logged = []
+    service_calls = []
+
+    class DummyPlateSolution:
+        def __init__(self, **kwargs):
+            self.last_error_type = None
+
+        def plate_solution(self):
+            service_calls.append('nova')
+            return 'nova-wcs'
+
+    class DummyNextAstroSolution:
+        def __init__(self, **kwargs):
+            self.last_http_status = 502
+            self.last_error_type = 'NextAstro solve submission'
+            self.api_url = 'https://astrometry.nextastro.org'
+
+        def plate_solution(self):
+            service_calls.append('nextastro')
+            return False
+
+    monkeypatch.setattr(exotic_module, 'PlateSolution', DummyPlateSolution)
+    monkeypatch.setattr(exotic_module, 'NextAstroPlateSolution', DummyNextAstroSolution)
+    monkeypatch.setattr(exotic_module, 'animate_toggle', lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+
+    solved_wcs = exotic_module.get_wcs('frame.fits', directory='.', use_nextastro_astrometry=True)
+
+    assert solved_wcs == 'nova-wcs'
+    assert service_calls == ['nextastro', 'nova']
+    assert any(message == 'NextAstro Server not responding. Will try nova.astrometry.net' for message in logged)
+
+
+def test_get_wcs_logs_nextastro_bad_gateway_after_both_methods_fail(monkeypatch):
+    logged = []
+    service_calls = []
+
+    class DummyPlateSolution:
+        def __init__(self, **kwargs):
+            self.last_error_type = 'Upload'
+
+        def plate_solution(self):
+            service_calls.append('nova')
+            return False
+
+    class DummyNextAstroSolution:
+        def __init__(self, **kwargs):
+            self.last_http_status = 502
+            self.last_error_type = 'NextAstro solve submission'
+            self.api_url = 'https://astrometry.nextastro.org'
+
+        def plate_solution(self):
+            service_calls.append('nextastro')
+            return False
+
+    monkeypatch.setattr(exotic_module, 'PlateSolution', DummyPlateSolution)
+    monkeypatch.setattr(exotic_module, 'NextAstroPlateSolution', DummyNextAstroSolution)
+    monkeypatch.setattr(exotic_module, 'animate_toggle', lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+
+    solved_wcs = exotic_module.get_wcs('frame.fits', directory='.')
+
+    assert solved_wcs is False
+    assert service_calls == ['nova', 'nextastro']
+    assert any(message == 'NextAstro Server not responding. Both astrometry methods trialed, pushing forward without astrometry solution'
+               for message in logged)
+
+
 def test_vsx_variable_falls_back_to_nextastro(monkeypatch):
     class DummyFailedResponse:
         def raise_for_status(self):

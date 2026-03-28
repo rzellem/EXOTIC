@@ -169,8 +169,10 @@ def test_submit_solve_request_handles_non_json_response(tmp_path, monkeypatch, c
 
     assert request_id is False
     output = capsys.readouterr().out
-    assert "Solve response returned non-JSON response" in output
-    assert "bad gateway" in output.lower()
+    assert "Solve request payload" in output
+    assert "Solve response returned non-JSON response" not in output
+    assert "bad gateway" not in output.lower()
+    assert solver.last_http_status == 502
 
 
 def test_poll_for_solution_handles_non_json_response(tmp_path, monkeypatch, capsys):

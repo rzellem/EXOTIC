@@ -68,7 +68,7 @@ class PlateSolution:
 
     def __init__(self, file=None, directory=None, api_key=None,
                  api_url='http://nova.astrometry.net/api/', ra=None, dec=None,
-                 pixel_scale=None, radius=2.0, scale_err=25.0):
+                 pixel_scale=None, radius=2.0, scale_err=25.0, suppress_fail_warning=False):
         if api_key is None:
             api_key = {'apikey': 'vfsyxlmdxfryhprq'}
         self.api_url = api_url
@@ -80,33 +80,42 @@ class PlateSolution:
         self.pixel_scale = pixel_scale
         self.radius = radius
         self.scale_err = scale_err
+        self.suppress_fail_warning = suppress_fail_warning
+        self.last_error_type = None
 
     def plate_solution(self):
+        self.last_error_type = None
         session = self._login()
         if not session:
-            return PlateSolution.fail('Login')
+            return self._fail('Login')
 
         sub_id = self._upload(session)
         if not sub_id:
-            return PlateSolution.fail('Upload')
+            return self._fail('Upload')
 
         sub_url = self._get_url(f"submissions/{sub_id}")
         job_id = self._sub_status(sub_url)
         if not job_id:
-            return PlateSolution.fail('Submission ID')
+            return self._fail('Submission ID')
 
         job_url = self._get_url(f"jobs/{job_id}")
         download_url = self.api_url.replace("/api/", f"/wcs_file/{job_id}/")
         wcs_file = Path(self.directory) / "temp" / "wcs.fits"
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
-            return PlateSolution.fail('Job Status')
+            return self._fail('Job Status')
         else:
             print("WCS file creation successful.")
             return wcs_file
 
     def _get_url(self, service):
         return self.api_url + service
+
+    def _fail(self, error_type, service_name='nova.astrometry.net'):
+        self.last_error_type = error_type
+        if self.suppress_fail_warning:
+            return False
+        return PlateSolution.fail(error_type, service_name=service_name)
 
     @retry(stop=stop_after_attempt(_R_MAX_STOPS_LOW), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
@@ -184,34 +193,48 @@ class PlateSolution:
 class NextAstroPlateSolution:
 
     def __init__(self, file=None, directory=None, api_url='https://astrometry.nextastro.org/', ra=None, dec=None,
-                 pixel_scale=None):
+                 pixel_scale=None, suppress_fail_warning=False):
         self.api_url = api_url.rstrip('/')
         self.file = file
         self.directory = directory
         self.ra = ra
         self.dec = dec
         self.pixel_scale = pixel_scale
+        self.suppress_fail_warning = suppress_fail_warning
+        self.last_error_type = None
+        self.last_http_status = None
 
     def plate_solution(self):
-        print(f"Using NextAstro astrometry server at {self.api_url} for plate solving.")
+        self.last_error_type = None
+        self.last_http_status = None
+        self._emit_debug(f"Using NextAstro astrometry server at {self.api_url} for plate solving.")
         source_list = self._generate_source_list()
         if not source_list:
-            return PlateSolution.fail('Source extraction for NextAstro astrometry server',
-                                      service_name=f'NextAstro ({self.api_url})')
+            return self._fail('Source extraction for NextAstro astrometry server')
 
         request_id = self._submit_solve_request(source_list)
         if not request_id:
-            return PlateSolution.fail('NextAstro solve submission', service_name=f'NextAstro ({self.api_url})')
+            return self._fail('NextAstro solve submission')
 
         wcs_header = self._poll_for_solution(request_id)
         if not wcs_header:
-            return PlateSolution.fail('NextAstro solve status', service_name=f'NextAstro ({self.api_url})')
+            return self._fail('NextAstro solve status')
 
         wcs_file = Path(self.directory) / "temp" / "wcs.fits"
         hdu = PrimaryHDU(data=getdata(filename=self.file), header=wcs_header)
         hdu.writeto(wcs_file, overwrite=True)
-        print("WCS file creation successful.")
+        self._emit_debug("WCS file creation successful.")
         return wcs_file
+
+    def _emit_debug(self, message):
+        if not self.suppress_fail_warning:
+            print(message)
+
+    def _fail(self, error_type):
+        self.last_error_type = error_type
+        if self.suppress_fail_warning:
+            return False
+        return PlateSolution.fail(error_type, service_name=f'NextAstro ({self.api_url})')
 
     def _generate_source_list(self):
         image_data = np.asarray(getdata(filename=self.file), dtype=float)
@@ -304,11 +327,13 @@ class NextAstroPlateSolution:
         return body
 
     def _decode_response_json(self, response, context):
+        self.last_http_status = getattr(response, 'status_code', None)
         try:
             return response.json()
         except ValueError:
-            print(f"[NextAstro] {context} returned non-JSON response "
-                  f"(HTTP {response.status_code}): {self._response_body_preview(response)}")
+            if response.status_code != 502:
+                self._emit_debug(f"[NextAstro] {context} returned non-JSON response "
+                                 f"(HTTP {response.status_code}): {self._response_body_preview(response)}")
             return None
 
     def _submit_solve_request(self, source_list):
@@ -329,11 +354,11 @@ class NextAstroPlateSolution:
         if hints is not None:
             payload["hints"] = hints
 
-        print(f"[NextAstro] Solve request payload: {payload}")
+        self._emit_debug(f"[NextAstro] Solve request payload: {payload}")
         response = requests.post(f"{self.api_url}/solve", json=payload, timeout=_RQ_TIMEOUT)
         response_json = self._decode_response_json(response, 'Solve response')
-        if response_json is not None:
-            print(f"[NextAstro] Solve response: {response_json}")
+        if response_json is not None and response.status_code != 502:
+            self._emit_debug(f"[NextAstro] Solve response: {response_json}")
         if response.status_code >= 400 or response_json is None:
             return False
         if response_json.get('status') in {'queued', 'running'}:
@@ -362,26 +387,27 @@ class NextAstroPlateSolution:
             if response_json is None:
                 return False
             if response.status_code >= 400:
-                print(f"[NextAstro] Status response (HTTP {response.status_code}): {response_json}")
+                if response.status_code != 502:
+                    self._emit_debug(f"[NextAstro] Status response (HTTP {response.status_code}): {response_json}")
                 return False
 
             status = str(response_json.get('status', '')).lower()
             latest_status = response_json.get('status')
             if status == 'solved':
-                print(f"[NextAstro] Status response (solved): {response_json}")
+                self._emit_debug(f"[NextAstro] Status response (solved): {response_json}")
                 header_dict = response_json.get('solution', {}).get('wcs_header')
                 if isinstance(header_dict, dict):
                     return Header(header_dict)
                 return False
             if status == 'failed':
-                print(f"[NextAstro] Status response (failed): {response_json}")
+                self._emit_debug(f"[NextAstro] Status response (failed): {response_json}")
                 return False
 
             if status not in _NEXTASTRO_IN_PROGRESS_STATUSES:
-                print(f"[NextAstro] Status response (unexpected): {response_json}")
+                self._emit_debug(f"[NextAstro] Status response (unexpected): {response_json}")
                 return False
 
             time.sleep(_NEXTASTRO_STATUS_POLL_SEC)
 
-        print(f"[NextAstro] Polling timed out waiting for terminal status; latest status={latest_status!r}")
+        self._emit_debug(f"[NextAstro] Polling timed out waiting for terminal status; latest status={latest_status!r}")
         return False

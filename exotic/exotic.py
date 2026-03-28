@@ -1063,28 +1063,61 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
 
     if use_nextastro_astrometry:
         print("Contacting NextAstro Astrometry Server")
-        wcs_file = NextAstroPlateSolution(file=file, directory=directory, ra=ra, dec=dec, pixel_scale=pixel_scale).plate_solution()
+        nextastro_solver = NextAstroPlateSolution(
+            file=file,
+            directory=directory,
+            ra=ra,
+            dec=dec,
+            pixel_scale=pixel_scale,
+            suppress_fail_warning=True
+        )
+        wcs_file = nextastro_solver.plate_solution()
         if wcs_file:
             return wcs_file
 
-        log_info("NextAstro astrometry server did not return a solution; falling back to nova.astrometry.net.")
+        nextastro_bad_gateway = nextastro_solver.last_http_status == 502
+        if nextastro_bad_gateway:
+            log_info("NextAstro Server not responding. Will try nova.astrometry.net")
+        else:
+            log_info("NextAstro astrometry server did not return a solution; falling back to nova.astrometry.net.")
         print("Communication with nova.astrometry.net")
-        return PlateSolution(file=file, directory=directory, ra=ra, dec=dec,
-                             pixel_scale=pixel_scale).plate_solution()
+        nova_solver = PlateSolution(file=file, directory=directory, ra=ra, dec=dec,
+                                    pixel_scale=pixel_scale, suppress_fail_warning=True)
+        wcs_file = nova_solver.plate_solution()
+        if wcs_file:
+            return wcs_file
+        if nextastro_bad_gateway:
+            log_info("NextAstro Server not responding. Both astrometry methods trialed, pushing forward without astrometry solution")
+            return False
+        return PlateSolution.fail(nova_solver.last_error_type or 'plate solution lookup')
 
     animate_toggle(True)
-    wcs_file = PlateSolution(file=file, directory=directory, ra=ra, dec=dec,
-                             pixel_scale=pixel_scale).plate_solution()
+    nova_solver = PlateSolution(file=file, directory=directory, ra=ra, dec=dec,
+                                pixel_scale=pixel_scale, suppress_fail_warning=True)
+    wcs_file = nova_solver.plate_solution()
     if wcs_file:
         animate_toggle()
         return wcs_file
 
     log_info("nova.astrometry.net did not return a solution; falling back to NextAstro astrometry server.")
     print("Contacting NextAstro Astrometry Server")
-    wcs_file = NextAstroPlateSolution(file=file, directory=directory, ra=ra, dec=dec,
-                                      pixel_scale=pixel_scale).plate_solution()
+    nextastro_solver = NextAstroPlateSolution(
+        file=file,
+        directory=directory,
+        ra=ra,
+        dec=dec,
+        pixel_scale=pixel_scale,
+        suppress_fail_warning=True
+    )
+    wcs_file = nextastro_solver.plate_solution()
     animate_toggle()
-    return wcs_file
+    if wcs_file:
+        return wcs_file
+    if nextastro_solver.last_http_status == 502:
+        log_info("NextAstro Server not responding. Both astrometry methods trialed, pushing forward without astrometry solution")
+        return False
+    return PlateSolution.fail(nextastro_solver.last_error_type or 'plate solution lookup',
+                              service_name=f'NextAstro ({nextastro_solver.api_url})')
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution

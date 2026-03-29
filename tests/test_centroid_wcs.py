@@ -266,6 +266,29 @@ def test_check_wcs_keeps_plate_solution_when_override_enabled(monkeypatch):
     assert wcs_file == "solved_wcs.fits"
 
 
+def test_check_wcs_prefers_header_wcs_over_plate_solution(monkeypatch):
+    monkeypatch.setattr(
+        exotic_module,
+        "search_wcs",
+        lambda *_args, **_kwargs: types.SimpleNamespace(is_celestial=True),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "get_wcs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("plate solution should be skipped when header WCS exists")
+        ),
+    )
+
+    wcs_file = exotic_module.check_wcs(
+        "frame.fits",
+        ".",
+        "y",
+    )
+
+    assert wcs_file == "frame.fits"
+
+
 def test_should_log_plate_solution_path_suppresses_posix_tmp_paths():
     assert exotic_module.should_log_plate_solution_path("/tmp/tmp42fmzrv8/temp/wcs.fits") is False
 

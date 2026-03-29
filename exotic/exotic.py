@@ -1043,6 +1043,17 @@ def check_wcs(fits_file, save_directory, plate_opt, rt=False, use_nextastro_astr
               ra=None, dec=None, pixel_scale=None, ignore_header_wcs=False):
     wcs_file = None
 
+    if not ignore_header_wcs and search_wcs(fits_file).is_celestial:
+        if plate_opt == 'y' and not rt:
+            log_info("Your FITS files already have WCS (World Coordinate System) information in their headers. "
+                     "EXOTIC will use the existing header WCS and skip external plate solving.")
+        else:
+            log_info("Your FITS files have WCS (World Coordinate System) information in their headers. "
+                     "EXOTIC will proceed to use these. "
+                     "NOTE: If you do not trust your WCS coordinates, "
+                     "please restart EXOTIC after enabling plate solutions via astrometry.net.")
+        return fits_file
+
     if plate_opt == 'y' and not rt:
         wcs_file = get_wcs(fits_file, save_directory, use_nextastro_astrometry=use_nextastro_astrometry, ra=ra, dec=dec, pixel_scale=pixel_scale)
     if ignore_header_wcs:
@@ -1051,13 +1062,6 @@ def check_wcs(fits_file, save_directory, plate_opt, rt=False, use_nextastro_astr
         else:
             log_info("Ignoring FITS header WCS and using the legacy image-to-image alignment path.")
         return wcs_file
-    if not wcs_file:
-        if search_wcs(fits_file).is_celestial:
-            log_info("Your FITS files have WCS (World Coordinate System) information in their headers. "
-                     "EXOTIC will proceed to use these. "
-                     "NOTE: If you do not trust your WCS coordinates, "
-                     "please restart EXOTIC after enabling plate solutions via astrometry.net.")
-            wcs_file = fits_file
 
     return wcs_file
 

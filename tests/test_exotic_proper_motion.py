@@ -87,9 +87,12 @@ from exotic.exotic import (
     cheap_lightcurve_prescore,
     comparison_star_stability_summary,
     fit_lightcurve,
+    is_adaptive_aperture_mode_enabled,
     is_comp_star_required,
     is_target_driven_comp_selection_enabled,
     phase_bin_sigma_clip,
+    representative_psf_sigma,
+    resolve_frame_aperture_radii,
     should_skip_airmass_fit,
     update_coordinates_with_proper_motion,
 )
@@ -169,6 +172,37 @@ def test_is_target_driven_comp_selection_enabled_parses_values():
     assert is_target_driven_comp_selection_enabled(None) is False
     assert is_target_driven_comp_selection_enabled("y") is True
     assert is_target_driven_comp_selection_enabled("n") is False
+
+
+def test_is_adaptive_aperture_mode_enabled_parses_values():
+    assert is_adaptive_aperture_mode_enabled(None) is False
+    assert is_adaptive_aperture_mode_enabled("y") is True
+    assert is_adaptive_aperture_mode_enabled("n") is False
+    assert is_adaptive_aperture_mode_enabled(True) is True
+
+
+def test_resolve_frame_aperture_radii_scales_sigma_grid():
+    apertures, annuli = resolve_frame_aperture_radii(
+        np.array([2.0, 3.0]),
+        np.array([8.0, 10.0]),
+        adaptive_apertures=True,
+        frame_sigma=1.5,
+        fallback_sigma=1.0,
+    )
+
+    assert np.allclose(apertures, np.array([3.0, 4.5]))
+    assert np.allclose(annuli, np.array([12.0, 15.0]))
+
+
+def test_representative_psf_sigma_uses_valid_frames_and_fallback():
+    psf_rows = np.array([
+        [0.0, 0.0, 1.0, 2.0, 2.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 2.2, 1.8, 0.0, 0.0],
+        [0.0, 0.0, 1.0, np.nan, np.nan, 0.0, 0.0],
+    ])
+
+    assert np.isclose(representative_psf_sigma(psf_rows, fallback_sigma=1.0), 2.0)
+    assert np.isclose(representative_psf_sigma(np.full((0, 7), np.nan), fallback_sigma=1.25), 1.25)
 
 
 def test_auto_tune_aperture_grid_uses_comparison_field_consistency():

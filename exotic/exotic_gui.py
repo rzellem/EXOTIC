@@ -417,6 +417,7 @@ def main():
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
                 "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
+                "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
                 "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
@@ -436,6 +437,7 @@ def main():
             new_inits['optional_info'] = {
                 "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
                 "disable vertical flux normalization": False,
+                "use_adaptive_apertures": False,
                 "Use target-driven comp selection rather than comp-driven comp selection": "n",
                 "require_comp_star": "y"
             }
@@ -1481,6 +1483,7 @@ def main():
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
                 "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
+                "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
                 "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
@@ -1548,6 +1551,7 @@ def main():
                     "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
                     "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
                     "disable vertical flux normalization": False,
+                    "use_adaptive_apertures": False,
                     "Use target-driven comp selection rather than comp-driven comp selection": "n",
                     "require_comp_star": "y"
                 }
@@ -1594,6 +1598,7 @@ def main():
                     "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
                     "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
                     "disable vertical flux normalization": False,
+                    "use_adaptive_apertures": False,
                     "Use target-driven comp selection rather than comp-driven comp selection": "n",
                     "require_comp_star": "y"
                 }

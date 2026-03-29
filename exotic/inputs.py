@@ -208,7 +208,8 @@ class Inputs:
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
-            'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False
+            'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
+            'use_adaptive_apertures': False
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -416,6 +417,11 @@ class Inputs:
             'disable_vertical_flux_normalization': (
                 'disable vertical flux normalization',
                 'Disable vertical flux normalization',
+            ),
+            'use_adaptive_apertures': (
+                'use_adaptive_apertures',
+                'Use Adaptive Apertures? (y/n)',
+                'Use Adaptive Apertures (y/n)',
             ),
             'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)',
                             'Pixel Scale (arsec/pixel)'),

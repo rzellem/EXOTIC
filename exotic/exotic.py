@@ -288,6 +288,24 @@ def is_target_driven_comp_selection_enabled(config_value):
     return False
 
 
+def is_adaptive_aperture_mode_enabled(config_value):
+    if config_value is None:
+        return False
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info("Warning: Invalid 'use_adaptive_apertures' value; using fixed apertures.", warn=True)
+    return False
+
+
 def should_ignore_header_wcs(config_value):
     if config_value is None:
         return False
@@ -336,6 +354,59 @@ def apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled
 
     if not disabled:
         bounds['a0'] = [0.95, 1.05]
+
+
+def psf_sigma_from_fit(psf_row, fallback_sigma=np.nan):
+    try:
+        sigx = float(psf_row[3])
+        sigy = float(psf_row[4])
+        sigma = 0.5 * (sigx + sigy)
+    except (IndexError, TypeError, ValueError):
+        sigma = np.nan
+
+    if np.isfinite(sigma) and sigma > 0:
+        return float(sigma)
+
+    if np.isfinite(fallback_sigma) and fallback_sigma > 0:
+        return float(fallback_sigma)
+
+    return np.nan
+
+
+def representative_psf_sigma(psf_rows, fallback_sigma=np.nan):
+    try:
+        sigmas = np.asarray(psf_rows[:, 3], dtype=float) + np.asarray(psf_rows[:, 4], dtype=float)
+    except (IndexError, TypeError, ValueError):
+        sigmas = np.array([], dtype=float)
+
+    if sigmas.size:
+        sigmas *= 0.5
+        sigmas[~np.isfinite(sigmas) | (sigmas <= 0)] = np.nan
+        center, _ = sigma_clipped_nanmedian(sigmas)
+        if np.isfinite(center) and center > 0:
+            return float(center)
+
+    if np.isfinite(fallback_sigma) and fallback_sigma > 0:
+        return float(fallback_sigma)
+
+    return np.nan
+
+
+def resolve_frame_aperture_radii(apertures, annuli, adaptive_apertures=False, frame_sigma=np.nan,
+                                 fallback_sigma=np.nan):
+    aperture_values = np.asarray(apertures, dtype=float)
+    annulus_values = np.asarray(annuli, dtype=float)
+
+    if not adaptive_apertures:
+        return aperture_values, annulus_values
+
+    sigma_to_use = float(frame_sigma) if np.isfinite(frame_sigma) and frame_sigma > 0 else np.nan
+    if (not np.isfinite(sigma_to_use) or sigma_to_use <= 0) and np.isfinite(fallback_sigma) and fallback_sigma > 0:
+        sigma_to_use = float(fallback_sigma)
+    if not np.isfinite(sigma_to_use) or sigma_to_use <= 0:
+        sigma_to_use = 1.0
+
+    return aperture_values * sigma_to_use, annulus_values * sigma_to_use
 
 
 # Initialze plate status log
@@ -2627,10 +2698,16 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     first_image = fits.getdata(inputfiles[0])
     targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)[3:5]
 
-    # aperture size in stdev (sigma) of PSF
-    aper = 3 * max(targ_sig_xy)
-    annulus = 10
+    # aperture and annulus scale factors in PSF sigma units
+    aper_sigma = 3 * max(targ_sig_xy)
+    annulus_sigma = 10
     fast_aperture_mask = is_fast_aperture_mask_enabled(info_dict.get('fast_aperture_mask'))
+    use_adaptive_apertures = is_adaptive_aperture_mode_enabled(info_dict.get('use_adaptive_apertures'))
+    aper = np.nan
+    annulus = np.nan
+    sigma = np.nan
+    if use_adaptive_apertures:
+        log_info("Adaptive aperture scaling enabled for realtime photometry.")
 
     # alloc psf fitting param
     psf_data = {
@@ -2773,10 +2850,33 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
 
         # aperture photometry
+        frame_sigma = psf_sigma_from_fit(psf_data['target'][i], fallback_sigma=sigma)
         if i == 0:
-            sigma = float((psf_data['target'][0][3] + psf_data['target'][0][4]) * 0.5)
-            aper *= sigma
-            annulus *= sigma
+            sigma = frame_sigma
+            if not np.isfinite(sigma) or sigma <= 0:
+                log_info("Warning: Initial PSF sigma is invalid; using sigma=1.0 for aperture photometry.", warn=True)
+                sigma = 1.0
+
+        if use_adaptive_apertures:
+            frame_aper, frame_annulus = resolve_frame_aperture_radii(
+                [aper_sigma],
+                [annulus_sigma],
+                adaptive_apertures=True,
+                frame_sigma=frame_sigma,
+                fallback_sigma=sigma,
+            )
+            aper = float(frame_aper[0])
+            annulus = float(frame_annulus[0])
+        elif i == 0:
+            aper, annulus = resolve_frame_aperture_radii(
+                [aper_sigma],
+                [annulus_sigma],
+                adaptive_apertures=True,
+                frame_sigma=sigma,
+                fallback_sigma=sigma,
+            )
+            aper = float(aper[0])
+            annulus = float(annulus[0])
 
         tFlux = aperPhot(imageData, 0, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus,
                          fast_mode=fast_aperture_mask)[0]
@@ -3192,14 +3292,23 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
 
 
 def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_star_count, aper_data, apertures, annuli,
-                                     fast_aperture_mask):
+                                     fast_aperture_mask, adaptive_apertures=False, fallback_sigma=np.nan):
+    frame_sigma = psf_sigma_from_fit(psf_data['target'][frame_index], fallback_sigma=fallback_sigma)
+    frame_apertures, frame_annuli = resolve_frame_aperture_radii(
+        apertures,
+        annuli,
+        adaptive_apertures=adaptive_apertures,
+        frame_sigma=frame_sigma,
+        fallback_sigma=fallback_sigma,
+    )
+
     target_flux, target_bg = compute_star_aperture_grid(
         image_data,
         0,
         psf_data['target'][frame_index, 0],
         psf_data['target'][frame_index, 1],
-        apertures,
-        annuli,
+        frame_apertures,
+        frame_annuli,
         fast_mode=fast_aperture_mask,
     )
     aper_data['target'][frame_index] = target_flux
@@ -3212,8 +3321,8 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
             comp_idx + 1,
             psf_data[ckey][frame_index, 0],
             psf_data[ckey][frame_index, 1],
-            apertures,
-            annuli,
+            frame_apertures,
+            frame_annuli,
             fast_mode=fast_aperture_mask,
         )
         aper_data[ckey][frame_index] = comp_flux
@@ -3778,6 +3887,9 @@ def main():
             target_driven_comp_selection = is_target_driven_comp_selection_enabled(
                 exotic_infoDict.get('target_driven_comp_selection', 'n')
             )
+            use_adaptive_apertures = is_adaptive_aperture_mode_enabled(
+                exotic_infoDict.get('use_adaptive_apertures', False)
+            )
 
             for i, coord in enumerate(exotic_infoDict['comp_stars']):
                 ckey = f"comp{i + 1}"
@@ -3798,8 +3910,10 @@ def main():
             )
 
             sigma = None
-            coarse_apertures = None
-            coarse_annuli = None
+            coarse_aperture_values = None
+            coarse_annulus_values = None
+            aperture_values = None
+            annulus_values = None
             apers = None
             annuli = None
             aperture_grid_tuned = False
@@ -3827,6 +3941,8 @@ def main():
                 dtype=float,
             )
             fast_aperture_mask = is_fast_aperture_mask_enabled(exotic_infoDict.get('fast_aperture_mask'))
+            if use_adaptive_apertures:
+                log_info("Adaptive aperture scaling enabled: evaluating aperture candidates in PSF sigma units per frame.")
 
             # open files, calibrate, align, photometry
             reset_transform_timing_stats()
@@ -3979,12 +4095,16 @@ def main():
 
                 # aperture photometry
                 if i == 0:
-                    sigma = float((psf_data['target'][0][3] + psf_data['target'][0][4]) * 0.5)
+                    sigma = psf_sigma_from_fit(psf_data['target'][0])
                     if not np.isfinite(sigma) or sigma <= 0:
                         log_info("Warning: Initial PSF sigma is invalid; using sigma=1.0 for automatic aperture tuning.", warn=True)
                         sigma = 1.0
-                    coarse_apertures = coarse_apertures_sigma * sigma
-                    coarse_annuli = coarse_annuli_sigma * sigma
+                    if use_adaptive_apertures:
+                        coarse_aperture_values = coarse_apertures_sigma
+                        coarse_annulus_values = coarse_annuli_sigma
+                    else:
+                        coarse_aperture_values = coarse_apertures_sigma * sigma
+                        coarse_annulus_values = coarse_annuli_sigma * sigma
 
                 if i < coarse_tune_frames:
                     coarse_frame_cache[i] = np.array(imageData, copy=True)
@@ -3994,9 +4114,11 @@ def main():
                         psf_data,
                         comp_star_count,
                         coarse_aper_data,
-                        coarse_apertures,
-                        coarse_annuli,
+                        coarse_aperture_values,
+                        coarse_annulus_values,
                         fast_aperture_mask,
+                        adaptive_apertures=use_adaptive_apertures,
+                        fallback_sigma=sigma,
                     )
 
                     if i == coarse_tune_frames - 1:
@@ -4009,6 +4131,12 @@ def main():
                             subset_airmass,
                             require_comp_star=require_comp_star,
                         )
+                        if use_adaptive_apertures:
+                            aperture_values = refined_apertures_sigma
+                            annulus_values = refined_annuli_sigma
+                        else:
+                            aperture_values = refined_apertures_sigma * sigma
+                            annulus_values = refined_annuli_sigma * sigma
                         apers = refined_apertures_sigma * sigma
                         annuli = refined_annuli_sigma * sigma
                         aper_data = initialize_aperture_data_store(len(inputfiles), len(apers), len(annuli), comp_star_count)
@@ -4047,9 +4175,11 @@ def main():
                                     psf_data,
                                     comp_star_count,
                                     aper_data,
-                                    apers,
-                                    annuli,
+                                    aperture_values,
+                                    annulus_values,
                                     fast_aperture_mask,
+                                    adaptive_apertures=use_adaptive_apertures,
+                                    fallback_sigma=sigma,
                                 )
                             finally:
                                 if loaded_from_disk:
@@ -4058,8 +4188,14 @@ def main():
                 else:
                     if not aperture_grid_tuned:
                         # Defensive fallback for unexpected control flow.
-                        apers = coarse_apertures
-                        annuli = coarse_annuli
+                        aperture_values = coarse_aperture_values
+                        annulus_values = coarse_annulus_values
+                        if use_adaptive_apertures:
+                            apers = coarse_apertures_sigma * sigma
+                            annuli = coarse_annuli_sigma * sigma
+                        else:
+                            apers = coarse_aperture_values
+                            annuli = coarse_annulus_values
                         aper_data = initialize_aperture_data_store(len(inputfiles), len(apers), len(annuli), comp_star_count)
                         aperture_grid_tuned = True
 
@@ -4069,9 +4205,11 @@ def main():
                         psf_data,
                         comp_star_count,
                         aper_data,
-                        apers,
-                        annuli,
+                        aperture_values,
+                        annulus_values,
                         fast_aperture_mask,
+                        adaptive_apertures=use_adaptive_apertures,
+                        fallback_sigma=sigma,
                     )
 
                 # close file + delete from memory
@@ -4102,6 +4240,18 @@ def main():
                 psf_data[ckey] = psf_data[ckey][goodmask]
                 aper_data[ckey] = aper_data[ckey][goodmask]
                 aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
+
+            sigma_display = representative_psf_sigma(psf_data['target'], fallback_sigma=sigma)
+            if not np.isfinite(sigma_display) or sigma_display <= 0:
+                sigma_display = 1.0
+
+            if aperture_values is not None and annulus_values is not None:
+                if use_adaptive_apertures:
+                    apers = np.asarray(aperture_values, dtype=float) * sigma_display
+                    annuli = np.asarray(annulus_values, dtype=float) * sigma_display
+                else:
+                    apers = np.asarray(aperture_values, dtype=float)
+                    annuli = np.asarray(annulus_values, dtype=float)
 
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
@@ -4154,7 +4304,7 @@ def main():
                     annuli,
                     airmass,
                     exotic_infoDict['comp_stars'],
-                    sigma,
+                    sigma_display,
                 )
 
             if comparison_calibration is not None:
@@ -4311,7 +4461,7 @@ def main():
                     if photometry_info['min_std'] > res_std and myfit is not None:
                         photometry_info.update(best_fit_lc=myfit,
                                                comp_star_num=j + 1, comp_star_coords=exotic_infoDict['comp_stars'][j],
-                                               min_std=res_std, min_aperture=0, min_annulus=15 * sigma,
+                                               min_std=res_std, min_aperture=0, min_annulus=15 * sigma_display,
                                                selection_basis='target_fit')
 
                         flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
@@ -4564,7 +4714,7 @@ def main():
                 min_aper_fov = float(photometry_info['min_aperture'])
                 min_annulus_fov = float(photometry_info['min_annulus'])
             
-            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma,
+            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma_display,
                      centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                      centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
                      firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov)

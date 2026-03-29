@@ -83,6 +83,21 @@ def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_p
     assert inputs.info_dict["disable_vertical_flux_normalization"] is False
 
 
+def test_comp_params_defaults_use_adaptive_apertures_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_adaptive_apertures"] is False
+
+
 def test_comp_params_reads_observatory_full_title_from_user_info(tmp_path):
     init_data = {
         "user_info": {"Observatory Full Title": "Whipple Observatory"},
@@ -141,6 +156,21 @@ def test_comp_params_reads_disable_vertical_flux_normalization_from_optional_inf
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["disable_vertical_flux_normalization"] is True
+
+
+def test_comp_params_reads_use_adaptive_apertures_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_adaptive_apertures": True},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_adaptive_apertures"] is True
 
 
 class DummyResponse:

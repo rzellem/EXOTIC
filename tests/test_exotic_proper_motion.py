@@ -93,6 +93,7 @@ from exotic.exotic import (
     phase_bin_sigma_clip,
     representative_psf_sigma,
     resolve_frame_aperture_radii,
+    summarize_adaptive_aperture_usage,
     should_skip_airmass_fit,
     update_coordinates_with_proper_motion,
 )
@@ -203,6 +204,26 @@ def test_representative_psf_sigma_uses_valid_frames_and_fallback():
 
     assert np.isclose(representative_psf_sigma(psf_rows, fallback_sigma=1.0), 2.0)
     assert np.isclose(representative_psf_sigma(np.full((0, 7), np.nan), fallback_sigma=1.25), 1.25)
+
+
+def test_summarize_adaptive_aperture_usage_reports_frame_scaled_stats():
+    psf_rows = np.array([
+        [0.0, 0.0, 1.0, 2.0, 2.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 3.0, 3.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 4.0, 4.0, 0.0, 0.0],
+    ])
+
+    summary = summarize_adaptive_aperture_usage(psf_rows, aperture_scale=2.5, annulus_scale=9.0, fallback_sigma=1.0)
+
+    np.testing.assert_allclose(summary["aperture_series"], np.array([5.0, 7.5, 10.0]))
+    np.testing.assert_allclose(summary["annulus_series"], np.array([18.0, 27.0, 36.0]))
+    np.testing.assert_allclose(summary["fwhm_series"], np.array([4.71, 7.065, 9.42]))
+    assert np.isclose(summary["aperture_median"], 7.5)
+    assert np.isclose(summary["aperture_std"], np.std([5.0, 7.5, 10.0]))
+    assert np.isclose(summary["aperture_min"], 5.0)
+    assert np.isclose(summary["aperture_max"], 10.0)
+    assert summary["aperture_sigma"] == 2.5
+    assert summary["annulus_sigma"] == 9.0
 
 
 def test_auto_tune_aperture_grid_uses_comparison_field_consistency():

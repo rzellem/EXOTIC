@@ -132,11 +132,11 @@ except ImportError:
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
         plot_stellar_variability, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
-        plot_comp_star_calibration_series, plot_comp_star_suitability
+        plot_comp_star_calibration_series, plot_comp_star_suitability, plot_adaptive_aperture_diagnostics
 except ImportError:  # package import
     from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
         plot_stellar_variability, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
-        plot_comp_star_calibration_series, plot_comp_star_suitability
+        plot_comp_star_calibration_series, plot_comp_star_suitability, plot_adaptive_aperture_diagnostics
 try:  # tools
     from utils import round_to_2, user_input
 except ImportError: # package import
@@ -390,6 +390,88 @@ def representative_psf_sigma(psf_rows, fallback_sigma=np.nan):
         return float(fallback_sigma)
 
     return np.nan
+
+
+def summarize_adaptive_aperture_usage(psf_rows, aperture_scale, annulus_scale, fallback_sigma=np.nan):
+    try:
+        aperture_scale = float(aperture_scale)
+        annulus_scale = float(annulus_scale)
+    except (TypeError, ValueError):
+        return None
+
+    if not np.isfinite(aperture_scale) or not np.isfinite(annulus_scale):
+        return None
+
+    rows = np.asarray(psf_rows)
+    if rows.ndim != 2 or rows.shape[0] == 0:
+        return None
+
+    frame_sigma = np.array(
+        [psf_sigma_from_fit(row, fallback_sigma=fallback_sigma) for row in rows],
+        dtype=float,
+    )
+    frame_sigma[~np.isfinite(frame_sigma) | (frame_sigma <= 0)] = np.nan
+
+    aperture_series = aperture_scale * frame_sigma
+    annulus_series = annulus_scale * frame_sigma
+    fwhm_series = 2.355 * frame_sigma
+
+    if not np.any(np.isfinite(aperture_series)) or not np.any(np.isfinite(annulus_series)):
+        return None
+
+    return {
+        'aperture_sigma': aperture_scale,
+        'annulus_sigma': annulus_scale,
+        'frame_sigma': frame_sigma,
+        'fwhm_series': fwhm_series,
+        'aperture_series': aperture_series,
+        'annulus_series': annulus_series,
+        'aperture_median': float(np.nanmedian(aperture_series)),
+        'aperture_std': float(np.nanstd(aperture_series)),
+        'aperture_min': float(np.nanmin(aperture_series)),
+        'aperture_max': float(np.nanmax(aperture_series)),
+        'annulus_median': float(np.nanmedian(annulus_series)),
+        'annulus_std': float(np.nanstd(annulus_series)),
+        'annulus_min': float(np.nanmin(annulus_series)),
+        'annulus_max': float(np.nanmax(annulus_series)),
+    }
+
+
+def update_photometry_adaptive_summary(photometry_info, use_adaptive_apertures, aperture_values, annulus_values,
+                                       psf_rows, fallback_sigma=np.nan):
+    photometry_info['adaptive_summary'] = None
+
+    if (not use_adaptive_apertures) or photometry_info.get('min_aperture') in (None, 0):
+        return None
+
+    a_idx = photometry_info.get('aperture_index')
+    an_idx = photometry_info.get('annulus_index')
+    if a_idx is None or an_idx is None or aperture_values is None or annulus_values is None:
+        return None
+
+    aperture_grid = np.asarray(aperture_values, dtype=float)
+    annulus_grid = np.asarray(annulus_values, dtype=float)
+    if a_idx >= aperture_grid.size or an_idx >= annulus_grid.size:
+        return None
+
+    photometry_info['adaptive_summary'] = summarize_adaptive_aperture_usage(
+        psf_rows,
+        aperture_grid[a_idx],
+        annulus_grid[an_idx],
+        fallback_sigma=fallback_sigma,
+    )
+    return photometry_info['adaptive_summary']
+
+
+def reported_photometry_aperture_radii(photometry_info):
+    adaptive_summary = photometry_info.get('adaptive_summary')
+    if adaptive_summary is None:
+        return photometry_info.get('min_aperture'), photometry_info.get('min_annulus')
+
+    aperture = adaptive_summary['aperture_median']
+    if photometry_info.get('min_aperture') is not None and photometry_info['min_aperture'] < 0:
+        aperture = -aperture
+    return aperture, adaptive_summary['annulus_median']
 
 
 def resolve_frame_aperture_radii(apertures, annuli, adaptive_apertures=False, frame_sigma=np.nan,
@@ -4293,6 +4375,9 @@ def main():
                 'min_std': 100000,
                 'min_aperture': None,
                 'min_annulus': None,
+                'aperture_index': None,
+                'annulus_index': None,
+                'adaptive_summary': None,
                 'calibration_field_score': np.inf,
                 'selection_basis': 'target_fit',
             }
@@ -4367,6 +4452,8 @@ def main():
                 selected_comp_coords = exotic_infoDict['comp_stars'][selected_comp_index]
                 selected_min_aperture = 0 if comparison_calibration['method'] == 'psf' else comparison_calibration['aper']
                 selected_min_annulus = comparison_calibration['annulus']
+                selected_a = None if comparison_calibration['method'] == 'psf' else comparison_calibration['a']
+                selected_an = None if comparison_calibration['method'] == 'psf' else comparison_calibration['an']
 
                 if comparison_calibration['method'] == 'psf':
                     selected_target_flux = tFlux
@@ -4391,6 +4478,8 @@ def main():
                                            min_std=res_std,
                                            min_aperture=selected_min_aperture,
                                            min_annulus=selected_min_annulus,
+                                           aperture_index=selected_a,
+                                           annulus_index=selected_an,
                                            calibration_field_score=comparison_calibration['field_score'],
                                            selection_basis='comparison_field')
 
@@ -4466,6 +4555,7 @@ def main():
                         photometry_info.update(best_fit_lc=myfit,
                                                comp_star_num=j + 1, comp_star_coords=exotic_infoDict['comp_stars'][j],
                                                min_std=res_std, min_aperture=0, min_annulus=15 * sigma_display,
+                                               aperture_index=None, annulus_index=None,
                                                selection_basis='target_fit')
 
                         flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
@@ -4571,6 +4661,8 @@ def main():
                                                min_std=res_std,
                                                min_aperture=(-candidate['aper'] if candidate['comp_index'] is None else candidate['aper']),
                                                min_annulus=candidate['annulus'],
+                                               aperture_index=candidate['a'],
+                                               annulus_index=candidate['an'],
                                                selection_basis='target_fit')
 
                         flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
@@ -4603,6 +4695,15 @@ def main():
                             'pos': exotic_infoDict['comp_stars'][j]
                         }
 
+            update_photometry_adaptive_summary(
+                photometry_info,
+                use_adaptive_apertures,
+                aperture_values,
+                annulus_values,
+                psf_data['target'],
+                fallback_sigma=sigma,
+            )
+
             if require_comp_star and photometry_info['comp_star_num'] is None:
                 log_info("Error: require_comp_star is enabled, but no valid comparison star could be selected.", error=True)
                 return
@@ -4610,6 +4711,8 @@ def main():
             log_info("\n\n*********************************************")
             if np.isfinite(photometry_info['calibration_field_score']):
                 log_info(f"Comparison-Star Field Score: {round(photometry_info['calibration_field_score'] * 100, 4)}%")
+            display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
+            adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] == 0:  # psf
                 log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
                 log_info(f"Target-Fit Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
@@ -4617,13 +4720,29 @@ def main():
             elif photometry_info['min_aperture'] < 0:  # no comp star
                 log_info("Best Comparison Star: None")
                 log_info(f"Target-Fit Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
-                log_info(f"Optimal Aperture: {abs(np.round(photometry_info['min_aperture'], 2))}")
-                log_info(f"Optimal Annulus: {np.round(photometry_info['min_annulus'], 2)}")
+                if adaptive_summary is not None:
+                    log_info(f"Optimal Aperture: {abs(display_aperture):.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
+                    log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
+                    log_info(f"Adaptive Aperture Scale: {adaptive_summary['aperture_sigma']:.2f} sigma")
+                    log_info(f"Adaptive Annulus Scale: {adaptive_summary['annulus_sigma']:.2f} sigma")
+                    log_info(f"Aperture Range: {adaptive_summary['aperture_min']:.2f} to {adaptive_summary['aperture_max']:.2f} px")
+                    log_info(f"Annulus Range: {adaptive_summary['annulus_min']:.2f} to {adaptive_summary['annulus_max']:.2f} px")
+                else:
+                    log_info(f"Optimal Aperture: {abs(np.round(display_aperture, 2))}")
+                    log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             else:
                 log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
                 log_info(f"Target-Fit Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
-                log_info(f"Optimal Aperture: {np.round(photometry_info['min_aperture'], 2)}")
-                log_info(f"Optimal Annulus: {np.round(photometry_info['min_annulus'], 2)}")
+                if adaptive_summary is not None:
+                    log_info(f"Optimal Aperture: {display_aperture:.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
+                    log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
+                    log_info(f"Adaptive Aperture Scale: {adaptive_summary['aperture_sigma']:.2f} sigma")
+                    log_info(f"Adaptive Annulus Scale: {adaptive_summary['annulus_sigma']:.2f} sigma")
+                    log_info(f"Aperture Range: {adaptive_summary['aperture_min']:.2f} to {adaptive_summary['aperture_max']:.2f} px")
+                    log_info(f"Annulus Range: {adaptive_summary['annulus_min']:.2f} to {adaptive_summary['annulus_max']:.2f} px")
+                else:
+                    log_info(f"Optimal Aperture: {np.round(display_aperture, 2)}")
+                    log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             log_info("*********************************************\n")
 
             best_fit_lc = photometry_info['best_fit_lc']
@@ -4706,6 +4825,16 @@ def main():
                                flux_unc_tar=flux_values['flux_unc_tar'][relative_flux_mask],
                                flux_unc_ref=flux_values['flux_unc_ref'][relative_flux_mask])
 
+            update_photometry_adaptive_summary(
+                photometry_info,
+                use_adaptive_apertures,
+                aperture_values,
+                annulus_values,
+                psf_data['target'][si][gi][relative_flux_mask],
+                fallback_sigma=sigma,
+            )
+            display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
+
 
             if photometry_info['min_aperture'] == 0:
                 opt_method = "PSF"
@@ -4715,10 +4844,10 @@ def main():
                 min_annulus_fov = float(15 * stdev_fov.mean())
             else:
                 opt_method = "Aperture"
-                min_aper_fov = float(photometry_info['min_aperture'])
-                min_annulus_fov = float(photometry_info['min_annulus'])
+                min_aper_fov = float(display_aperture)
+                min_annulus_fov = float(display_annulus)
             
-            plot_fov(photometry_info['min_aperture'], photometry_info['min_annulus'], sigma_display,
+            plot_fov(display_aperture, display_annulus, sigma_display,
                      centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                      centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
                      firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov)
@@ -4731,6 +4860,21 @@ def main():
                       flux_values['flux_ref'], flux_values['flux_unc_ref'],
                       goodFluxes, goodNormUnc, goodAirmasses, pDict['pName'], exotic_infoDict['save'],
                       exotic_infoDict['date'])
+
+            adaptive_summary = photometry_info.get('adaptive_summary')
+            if adaptive_summary is not None:
+                plot_adaptive_aperture_diagnostics(
+                    goodTimes,
+                    adaptive_summary['aperture_series'],
+                    adaptive_summary['annulus_series'],
+                    adaptive_summary['fwhm_series'],
+                    goodAirmasses,
+                    pDict['pName'],
+                    exotic_infoDict['save'],
+                    exotic_infoDict['date'],
+                    adaptive_summary['aperture_sigma'],
+                    adaptive_summary['annulus_sigma'],
+                )
 
             # TODO: convert the exoplanet archive mid transit time to bjd - need to take into account observatory location listed in Exoplanet Archive
             # tMidtoC = astropy.time.Time(timeMidTransit, format='jd', scale='utc')
@@ -4935,6 +5079,8 @@ def main():
         if fitsortext == 1:
             if np.isfinite(photometry_info.get('calibration_field_score', np.inf)):
                 log_info(f"        Comparison-Star Field Score: {round_to_2(100. * photometry_info['calibration_field_score'])} %")
+            display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
+            adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] >= 0:
                 log_info(f"                Best Comparison Star: #{bestCompStar} - {comp_coords}")
             else:
@@ -4942,8 +5088,16 @@ def main():
             if photometry_info['min_aperture'] == 0:
                 log_info("                       Optimal Method: PSF photometry")
             else:
-                log_info(f"                    Optimal Aperture: {abs(np.round(photometry_info['min_aperture'], 2))}")
-                log_info(f"                     Optimal Annulus: {np.round(photometry_info['min_annulus'], 2)}")
+                if adaptive_summary is not None:
+                    log_info(f"                    Optimal Aperture: {abs(display_aperture):.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
+                    log_info(f"                     Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
+                    log_info(f"              Adaptive Aperture Scale: {adaptive_summary['aperture_sigma']:.2f} sigma")
+                    log_info(f"               Adaptive Annulus Scale: {adaptive_summary['annulus_sigma']:.2f} sigma")
+                    log_info(f"                     Aperture Range: {adaptive_summary['aperture_min']:.2f} to {adaptive_summary['aperture_max']:.2f} px")
+                    log_info(f"                      Annulus Range: {adaptive_summary['annulus_min']:.2f} to {adaptive_summary['annulus_max']:.2f} px")
+                else:
+                    log_info(f"                    Optimal Aperture: {abs(np.round(display_aperture, 2))}")
+                    log_info(f"                     Optimal Annulus: {np.round(display_annulus, 2)}")
         log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs), np.std(durs))} +/- {round_to_2(np.std(durs))}")
         log_info("*********************************************************")
 
@@ -4967,10 +5121,12 @@ def main():
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
         try:
             if fitsortext == 1:
+                display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
                 output_files.final_planetary_params(phot_opt=True, vsp_params=vsp_params,
                                                     comp_star=bestCompStar, comp_coords=comp_coords,
-                                                    min_aper=np.round(photometry_info['min_aperture'], 2),
-                                                    min_annul=np.round(photometry_info['min_annulus'], 2))
+                                                    min_aper=np.round(display_aperture, 2),
+                                                    min_annul=np.round(display_annulus, 2),
+                                                    adaptive_summary=photometry_info.get('adaptive_summary'))
             else:
                 output_files.final_planetary_params(phot_opt=False, vsp_params=vsp_params)
         except Exception as e:

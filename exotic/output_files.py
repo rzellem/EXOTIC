@@ -73,7 +73,8 @@ class OutputFiles:
                                                             self.fit.transit, self.fit.airmass_model):
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
-    def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None, min_annul=None):
+    def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
+                               min_annul=None, adaptive_summary=None):
         params_file = self.dir / "temp" / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         params_num = {
@@ -118,8 +119,24 @@ class OutputFiles:
             if min_aper == 0:
                 phot_ext["Optimal Method"] = "PSF photometry"
             else:
-                phot_ext["Optimal Aperture"] = f"{abs(min_aper)}"
-                phot_ext["Optimal Annulus"] = f"{min_annul}"
+                if adaptive_summary:
+                    phot_ext["Adaptive Aperture Scale"] = f"{adaptive_summary['aperture_sigma']:.2f} sigma"
+                    phot_ext["Adaptive Annulus Scale"] = f"{adaptive_summary['annulus_sigma']:.2f} sigma"
+                    phot_ext["Optimal Aperture"] = (
+                        f"{adaptive_summary['aperture_median']:.2f} +/- {adaptive_summary['aperture_std']:.2f} px"
+                    )
+                    phot_ext["Aperture Range"] = (
+                        f"{adaptive_summary['aperture_min']:.2f} to {adaptive_summary['aperture_max']:.2f} px"
+                    )
+                    phot_ext["Optimal Annulus"] = (
+                        f"{adaptive_summary['annulus_median']:.2f} +/- {adaptive_summary['annulus_std']:.2f} px"
+                    )
+                    phot_ext["Annulus Range"] = (
+                        f"{adaptive_summary['annulus_min']:.2f} to {adaptive_summary['annulus_max']:.2f} px"
+                    )
+                else:
+                    phot_ext["Optimal Aperture"] = f"{abs(min_aper)}"
+                    phot_ext["Optimal Annulus"] = f"{min_annul}"
             params_num.update(phot_ext)
 
         params_num["Transit Duration (day)"] = (f"{round_to_2(mean(self.durs), std(self.durs))} +/- "

@@ -201,6 +201,46 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
     assert "Airmass coefficient 1 (a1)" not in output_text
 
 
+def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+    adaptive_summary = {
+        "aperture_sigma": 2.62,
+        "annulus_sigma": 9.00,
+        "aperture_median": 7.98,
+        "aperture_std": 0.41,
+        "aperture_min": 7.12,
+        "aperture_max": 8.76,
+        "annulus_median": 27.43,
+        "annulus_std": 1.39,
+        "annulus_min": 25.11,
+        "annulus_max": 30.08,
+    }
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=True,
+        vsp_params=[],
+        comp_star=9,
+        comp_coords=[1446.0, 2399.0],
+        min_aper=7.98,
+        min_annul=27.43,
+        adaptive_summary=adaptive_summary,
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_text = output_file.read_text(encoding="utf-8")
+
+    assert "Adaptive Aperture Scale" in output_text
+    assert "2.62 sigma" in output_text
+    assert "Optimal Aperture" in output_text
+    assert "7.98 +/- 0.41 px" in output_text
+    assert "Aperture Range" in output_text
+    assert "7.12 to 8.76 px" in output_text
+
+
 def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_path):
     fit = DummyFit()
     fit.airmass_fit_skipped = True

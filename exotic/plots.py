@@ -284,6 +284,86 @@ def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_lab
     plt.close(fig)
 
 
+def plot_adaptive_aperture_diagnostics(times, aperture_series, annulus_series, fwhm_series, airmass,
+                                       targ_name, save, date, aperture_sigma, annulus_sigma):
+    times = np.asarray(times, dtype=float)
+    aperture_series = np.asarray(aperture_series, dtype=float)
+    annulus_series = np.asarray(annulus_series, dtype=float)
+    fwhm_series = np.asarray(fwhm_series, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+
+    plot_len = min(times.size, aperture_series.size, annulus_series.size, fwhm_series.size, airmass.size)
+    if plot_len == 0:
+        return
+
+    times = times[:plot_len]
+    aperture_series = aperture_series[:plot_len]
+    annulus_series = annulus_series[:plot_len]
+    fwhm_series = fwhm_series[:plot_len]
+    airmass = airmass[:plot_len]
+
+    valid_time = np.isfinite(times)
+    valid_aperture = np.isfinite(aperture_series)
+    valid_annulus = np.isfinite(annulus_series)
+    valid_fwhm = np.isfinite(fwhm_series)
+    valid_airmass = np.isfinite(airmass)
+
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8.5))
+    fig.suptitle(
+        f"{targ_name} Adaptive Aperture Diagnostics\n"
+        f"aper={aperture_sigma:.2f} sigma, annulus={annulus_sigma:.2f} sigma"
+    )
+
+    time_mask = valid_time & valid_aperture
+    time_zero = np.nanmin(times[time_mask]) if np.any(time_mask) else 0.0
+    axes[0, 0].set_title("Aperture Radius vs Time")
+    axes[0, 0].set_xlabel(f"Time [BJD_TDB-{time_zero:.5f}]")
+    axes[0, 0].set_ylabel("Aperture Radius [px]")
+    if np.any(time_mask):
+        axes[0, 0].plot(times[time_mask] - time_zero, aperture_series[time_mask], color='tab:blue',
+                        marker='o', ms=3, lw=1.1)
+    axes[0, 0].grid(alpha=0.25)
+
+    annulus_mask = valid_time & valid_annulus
+    axes[0, 1].set_title("Annulus Radius vs Time")
+    axes[0, 1].set_xlabel(f"Time [BJD_TDB-{time_zero:.5f}]")
+    axes[0, 1].set_ylabel("Annulus Radius [px]")
+    if np.any(annulus_mask):
+        axes[0, 1].plot(times[annulus_mask] - time_zero, annulus_series[annulus_mask], color='tab:orange',
+                        marker='o', ms=3, lw=1.1)
+    axes[0, 1].grid(alpha=0.25)
+
+    fwhm_mask = valid_aperture & valid_fwhm
+    axes[1, 0].set_title("Aperture Radius vs Target FWHM")
+    axes[1, 0].set_xlabel("Target PSF FWHM [px]")
+    axes[1, 0].set_ylabel("Aperture Radius [px]")
+    if np.any(fwhm_mask):
+        axes[1, 0].scatter(fwhm_series[fwhm_mask], aperture_series[fwhm_mask], color='tab:green', s=18, alpha=0.8)
+        order = np.argsort(fwhm_series[fwhm_mask])
+        axes[1, 0].plot(fwhm_series[fwhm_mask][order], aperture_series[fwhm_mask][order], color='tab:green',
+                        alpha=0.35, lw=1.0)
+    axes[1, 0].grid(alpha=0.25)
+
+    airmass_mask = valid_aperture & valid_airmass
+    axes[1, 1].set_title("Aperture Radius vs Airmass")
+    axes[1, 1].set_xlabel("Airmass")
+    axes[1, 1].set_ylabel("Aperture Radius [px]")
+    if np.any(airmass_mask):
+        axes[1, 1].scatter(airmass[airmass_mask], aperture_series[airmass_mask], color='tab:red', s=18, alpha=0.8)
+        order = np.argsort(airmass[airmass_mask])
+        axes[1, 1].plot(airmass[airmass_mask][order], aperture_series[airmass_mask][order], color='tab:red',
+                        alpha=0.35, lw=1.0)
+    axes[1, 1].grid(alpha=0.25)
+
+    fig.tight_layout()
+    fig.savefig(temp_dir / f"AdaptiveApertureDiagnostics_{targ_name}_{date}.png", bbox_inches="tight")
+    fig.savefig(temp_dir / f"AdaptiveApertureDiagnostics_{targ_name}_{date}.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_variable_residuals(save):
     plt.title("Stellar Variability Residuals")
     plt.ylabel("Residuals (flux)")

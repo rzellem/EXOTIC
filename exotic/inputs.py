@@ -209,7 +209,7 @@ class Inputs:
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
-            'use_adaptive_apertures': False
+            'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -422,6 +422,10 @@ class Inputs:
                 'use_adaptive_apertures',
                 'Use Adaptive Apertures? (y/n)',
                 'Use Adaptive Apertures (y/n)',
+            ),
+            'bad_wcs_threshold_percent': (
+                'bad_wcs_threshold_percent',
+                'Bad WCS Threshold Percent',
             ),
             'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)',
                             'Pixel Scale (arsec/pixel)'),

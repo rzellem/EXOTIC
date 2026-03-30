@@ -4,6 +4,7 @@ import types
 import importlib.util
 
 import numpy as np
+import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
 
@@ -252,6 +253,23 @@ def test_should_ignore_header_wcs_defaults_to_false():
     assert exotic_module.should_ignore_header_wcs("y") is True
 
 
+def test_get_bad_wcs_threshold_fraction_defaults_to_three_percent():
+    assert exotic_module.get_bad_wcs_threshold_fraction(None) == pytest.approx(0.03)
+    assert exotic_module.get_bad_wcs_threshold_fraction("") == pytest.approx(0.03)
+
+
+def test_get_bad_wcs_threshold_fraction_reads_numeric_percent_values():
+    assert exotic_module.get_bad_wcs_threshold_fraction(5.5) == pytest.approx(0.055)
+    assert exotic_module.get_bad_wcs_threshold_fraction("7.25") == pytest.approx(0.0725)
+    assert exotic_module.get_bad_wcs_threshold_fraction("4%") == pytest.approx(0.04)
+
+
+def test_get_bad_wcs_threshold_fraction_falls_back_for_invalid_values():
+    assert exotic_module.get_bad_wcs_threshold_fraction("not-a-number") == pytest.approx(0.03)
+    assert exotic_module.get_bad_wcs_threshold_fraction(-1) == pytest.approx(0.03)
+    assert exotic_module.get_bad_wcs_threshold_fraction(101) == pytest.approx(0.03)
+
+
 def test_display_filename_returns_basename_for_unix_and_windows_paths():
     assert (
         exotic_module._display_filename(
@@ -353,3 +371,39 @@ def test_should_use_multiprocess_transform_precompute_respects_header_wcs_overri
         requested_processes=2,
         ignore_header_wcs=True,
     ) is True
+
+
+def test_filter_sparse_missing_wcs_frames_drops_files_below_three_percent(monkeypatch):
+    frames = [f"frame_{i}.fits" for i in range(34)]
+    missing_frame = frames[7]
+
+    monkeypatch.setattr(exotic_module, "get_first_image_header", lambda file_name: str(file_name))
+    monkeypatch.setattr(
+        exotic_module,
+        "search_wcs_from_header",
+        lambda header: types.SimpleNamespace(is_celestial=header != missing_frame),
+    )
+
+    filtered, keep_mask, dropped = exotic_module.filter_sparse_missing_wcs_frames(frames)
+
+    assert filtered.tolist() == [frame for frame in frames if frame != missing_frame]
+    assert keep_mask.tolist() == [frame != missing_frame for frame in frames]
+    assert dropped == [missing_frame]
+
+
+def test_filter_sparse_missing_wcs_frames_keeps_files_at_three_percent_or_higher(monkeypatch):
+    frames = [f"frame_{i}.fits" for i in range(33)]
+    missing_frame = frames[5]
+
+    monkeypatch.setattr(exotic_module, "get_first_image_header", lambda file_name: str(file_name))
+    monkeypatch.setattr(
+        exotic_module,
+        "search_wcs_from_header",
+        lambda header: types.SimpleNamespace(is_celestial=header != missing_frame),
+    )
+
+    filtered, keep_mask, dropped = exotic_module.filter_sparse_missing_wcs_frames(frames)
+
+    assert filtered.tolist() == frames
+    assert keep_mask.tolist() == [True] * len(frames)
+    assert dropped == []

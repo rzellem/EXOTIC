@@ -325,6 +325,36 @@ def should_ignore_header_wcs(config_value):
     return False
 
 
+def get_bad_wcs_threshold_fraction(config_value):
+    default_fraction = SPARSE_MISSING_WCS_DROP_THRESHOLD
+    default_percent = default_fraction * 100.0
+    if config_value is None:
+        return default_fraction
+
+    if isinstance(config_value, str):
+        normalized = config_value.strip()
+        if normalized == "":
+            return default_fraction
+        if normalized.endswith('%'):
+            normalized = normalized[:-1].strip()
+    else:
+        normalized = config_value
+
+    try:
+        threshold_percent = float(normalized)
+    except (TypeError, ValueError):
+        log_info(f"Warning: Invalid 'bad_wcs_threshold_percent' value; using default {default_percent:g}%.",
+                 warn=True)
+        return default_fraction
+
+    if not np.isfinite(threshold_percent) or threshold_percent < 0 or threshold_percent > 100:
+        log_info(f"Warning: Invalid 'bad_wcs_threshold_percent' value; using default {default_percent:g}%.",
+                 warn=True)
+        return default_fraction
+
+    return threshold_percent / 100.0
+
+
 def is_vertical_flux_normalization_disabled(config_value):
     if config_value is None:
         return False
@@ -1169,19 +1199,70 @@ def get_first_image_header(file_name):
     return header
 
 
-def evaluate_celestial_wcs_coverage(inputfiles):
+def collect_celestial_wcs_coverage(inputfiles):
+    has_celestial_wcs = []
     missing_wcs_files = []
     for file_name in inputfiles:
+        file_has_celestial_wcs = False
         try:
             image_header = get_first_image_header(file_name)
-            if not search_wcs_from_header(image_header).is_celestial:
-                missing_wcs_files.append(str(file_name))
+            file_has_celestial_wcs = search_wcs_from_header(image_header).is_celestial
         except Exception:
+            file_has_celestial_wcs = False
+
+        has_celestial_wcs.append(file_has_celestial_wcs)
+        if not file_has_celestial_wcs:
             missing_wcs_files.append(str(file_name))
 
+    return np.array(has_celestial_wcs, dtype=bool), missing_wcs_files
+
+
+def evaluate_celestial_wcs_coverage(inputfiles):
+    has_celestial_wcs, missing_wcs_files = collect_celestial_wcs_coverage(inputfiles)
     total_files = len(inputfiles)
-    all_have_celestial_wcs = total_files > 0 and len(missing_wcs_files) == 0
+    all_have_celestial_wcs = total_files > 0 and bool(has_celestial_wcs.all())
     return all_have_celestial_wcs, missing_wcs_files
+
+
+def log_missing_celestial_wcs_preview(missing_wcs_files):
+    if not missing_wcs_files:
+        return
+
+    preview = ", ".join(missing_wcs_files[:3])
+    remainder = len(missing_wcs_files) - 3
+    if remainder > 0:
+        preview = f"{preview}, ... (+{remainder} more)"
+    log.debug(f"Files without usable celestial WCS: {preview}")
+
+
+def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_missing_fraction=None):
+    inputfiles = np.array(inputfiles)
+    keep_mask = np.ones(len(inputfiles), dtype=bool)
+    if ignore_header_wcs or len(inputfiles) == 0:
+        return inputfiles, keep_mask, []
+
+    if max_missing_fraction is None:
+        max_missing_fraction = SPARSE_MISSING_WCS_DROP_THRESHOLD
+
+    keep_mask, missing_wcs_files = collect_celestial_wcs_coverage(inputfiles)
+    missing_count = len(missing_wcs_files)
+    total_files = len(inputfiles)
+    if missing_count == 0:
+        return inputfiles, keep_mask, []
+
+    missing_fraction = missing_count / total_files
+    if missing_count < total_files and missing_fraction < max_missing_fraction:
+        retained_files = inputfiles[keep_mask]
+        threshold_percent = max_missing_fraction * 100.0
+        log_info(
+            f"WCS precheck: {len(retained_files)}/{total_files} files have celestial WCS. "
+            f"Dropping {missing_count} file(s) without celestial WCS because they are below the "
+            f"{threshold_percent:g}% threshold."
+        )
+        log_missing_celestial_wcs_preview(missing_wcs_files)
+        return retained_files, keep_mask, missing_wcs_files
+
+    return inputfiles, np.ones(total_files, dtype=bool), []
 
 
 def should_use_multiprocess_transform_precompute(inputfiles, requested_processes, ignore_header_wcs=False):
@@ -1202,12 +1283,7 @@ def should_use_multiprocess_transform_precompute(inputfiles, requested_processes
     missing_count = len(missing_wcs_files)
     log_info(f"WCS precheck: {total_files - missing_count}/{total_files} files have celestial WCS. "
              "Keeping multiprocessing transformation precompute for fallback alignment.")
-    if missing_count > 0:
-        preview = ", ".join(missing_wcs_files[:3])
-        remainder = missing_count - 3
-        if remainder > 0:
-            preview = f"{preview}, ... (+{remainder} more)"
-        log.debug(f"Files without usable celestial WCS: {preview}")
+    log_missing_celestial_wcs_preview(missing_wcs_files)
 
     return True
 
@@ -2076,6 +2152,7 @@ def transformation_task_with_cached_reference(i, file_name):
 
 
 MAX_MULTIPROCESS_TRANSFORM_WORKERS = 8
+SPARSE_MISSING_WCS_DROP_THRESHOLD = 0.03
 
 # Automatic aperture-grid tuning constants (in PSF sigma units)
 APERTURE_SIGMA_MIN = 1.5
@@ -2748,6 +2825,7 @@ def save_comp_ra_dec(wcs_file, ra_file, dec_file, comp_coords):
 def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astrometry=False, multiprocess_transformations=None):
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
     ignore_header_wcs = should_ignore_header_wcs(info_dict.get('ignore_header_wcs'))
+    bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(info_dict.get('bad_wcs_threshold_percent'))
 
     plateStatus.initializeFilenames(info_dict['images'])
     inputfiles = corruption_check(info_dict['images'])
@@ -2766,6 +2844,13 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 
     si = np.argsort(times)
     inputfiles = np.array(inputfiles)[si]
+    inputfiles, _, dropped_wcs_files = filter_sparse_missing_wcs_frames(
+        inputfiles,
+        ignore_header_wcs=ignore_header_wcs,
+        max_missing_fraction=bad_wcs_threshold_fraction,
+    )
+    if dropped_wcs_files:
+        plateStatus.initializeFilenames(list(inputfiles))
 
     use_multiprocess_transform_precompute = should_use_multiprocess_transform_precompute(
         inputfiles, multiprocess_transformations, ignore_header_wcs=ignore_header_wcs
@@ -3902,6 +3987,19 @@ def main():
             times = np.array(times)[si]
             jd_times = np.array(jd_times)[si]
             inputfiles = np.array(inputfiles)[si]
+            ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
+            bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(
+                exotic_infoDict.get('bad_wcs_threshold_percent')
+            )
+            inputfiles, wcs_keep_mask, dropped_wcs_files = filter_sparse_missing_wcs_frames(
+                inputfiles,
+                ignore_header_wcs=ignore_header_wcs,
+                max_missing_fraction=bad_wcs_threshold_fraction,
+            )
+            if dropped_wcs_files:
+                times = times[wcs_keep_mask]
+                jd_times = jd_times[wcs_keep_mask]
+                plateStatus.initializeFilenames(list(inputfiles))
             
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
@@ -3928,12 +4026,12 @@ def main():
                 times = times[inc:]
                 jd_times = jd_times[inc:]
             plateStatus.setCurrentFilename(inputfiles[0])
+            header = get_first_image_header(inputfiles[0])
 
             # For astrometry hints, prioritize coordinates explicitly provided by the user
             # (from inits.json / CLI) over values scraped from NASA Exoplanet Archive.
             hint_ra = userpDict.get('ra', pDict.get('ra'))
             hint_dec = userpDict.get('dec', pDict.get('dec'))
-            ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
 
             wcs_file = check_wcs(inputfiles[0], exotic_infoDict['save'], exotic_infoDict['plate_opt'],
                                  use_nextastro_astrometry=args.use_nextastro_astrometry,

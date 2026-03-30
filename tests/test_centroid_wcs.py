@@ -280,6 +280,17 @@ def test_display_filename_returns_basename_for_unix_and_windows_paths():
     assert exotic_module._display_filename(r"C:\data\run\frame_002.fits.fz") == "frame_002.fits.fz"
 
 
+def test_format_plate_solution_reference_uses_basename_only():
+    assert (
+        exotic_module.format_plate_solution_reference(
+            "/mnt/md0/ftp/user_data/psyfitz/DATA_INBOX/Z.good.TOI 2969 b_2026-03-05_ECO1/"
+            "NxAst-TOI2969b_rp_2461105d05262731_20260305_1a016_30_eco1.fits.fz"
+        )
+        == "Here is the filename where we got the WCS from: "
+        "NxAst-TOI2969b_rp_2461105d05262731_20260305_1a016_30_eco1.fits.fz"
+    )
+
+
 def test_log_finding_transformation_progress_prints_basename(monkeypatch):
     stdout = io.StringIO()
     debug_messages = []

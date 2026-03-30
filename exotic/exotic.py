@@ -1988,6 +1988,10 @@ def _display_filename(file_name):
     return str(file_name).replace("\\", "/").rsplit("/", 1)[-1]
 
 
+def format_plate_solution_reference(wcs_file):
+    return f"Here is the filename where we got the WCS from: {_display_filename(wcs_file)}"
+
+
 # Aligns imaging data from .fits file to easily track the host and comparison star's positions
 def transformation(image_data, file_name, roi=1, report_failure=True, reference_image=None):
     start_time = perf_counter()
@@ -4105,7 +4109,7 @@ def main():
 
             if wcs_file:
                 if should_log_plate_solution_path(wcs_file):
-                    log_info(f"\nHere is the path to your plate solution: {wcs_file}")
+                    log_info(f"\n{format_plate_solution_reference(wcs_file)}")
                 reference_image = fits.getdata(inputfiles[0])
                 wcs_header = get_first_image_header(wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header, image_shape=reference_image.shape)

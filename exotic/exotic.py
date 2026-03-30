@@ -542,6 +542,62 @@ def sigma_clip(ogdata, sigma=3, dt=21, po=2):
     return nanmask
 
 
+def adaptive_aperture_outlier_mask(aperture_series, annulus_series=None, sigma=4.5, window=15, polyorder=2):
+    aperture_series = np.asarray(aperture_series, dtype=float)
+    combined_mask = _adaptive_series_outlier_mask(
+        aperture_series,
+        sigma=sigma,
+        window=window,
+        polyorder=polyorder,
+    )
+
+    if annulus_series is None:
+        return combined_mask
+
+    annulus_series = np.asarray(annulus_series, dtype=float)
+    annulus_mask = _adaptive_series_outlier_mask(
+        annulus_series,
+        sigma=sigma,
+        window=window,
+        polyorder=polyorder,
+    )
+    return combined_mask | annulus_mask
+
+
+def _adaptive_series_outlier_mask(series, sigma=4.5, window=15, polyorder=2):
+    values = np.asarray(series, dtype=float)
+    nanmask = ~np.isfinite(values)
+    valid_indices = np.flatnonzero(~nanmask)
+    if valid_indices.size < max(polyorder + 3, 7):
+        return nanmask
+
+    valid_values = values[valid_indices]
+    window_length = min(int(window), valid_values.size)
+    if window_length % 2 == 0:
+        window_length -= 1
+
+    if window_length >= polyorder + 2:
+        trend = savgol_filter(valid_values, window_length=window_length, polyorder=polyorder, mode='interp')
+        residuals = valid_values - trend
+        scatter = robust_scatter(residuals)
+        center = trend
+    else:
+        scatter = np.nan
+        center = np.full(valid_values.shape, bn.nanmedian(valid_values))
+
+    if not np.isfinite(scatter) or scatter <= 0:
+        center = np.full(valid_values.shape, bn.nanmedian(valid_values))
+        residuals = valid_values - center
+        scatter = robust_scatter(residuals)
+        if not np.isfinite(scatter) or scatter <= 0:
+            return nanmask
+
+    local_mask = np.abs(valid_values - center) > sigma * scatter
+    outlier_mask = nanmask.copy()
+    outlier_mask[valid_indices] = local_mask
+    return outlier_mask
+
+
 def robust_scatter(data):
     values = np.asarray(data, dtype=float)
     finite = values[np.isfinite(values)]
@@ -2333,6 +2389,10 @@ def should_use_fast_centroid(frame_index):
     return frame_index % CENTROID_FULL_FIT_CADENCE != 0
 
 
+def should_use_fast_target_centroid(frame_index, adaptive_apertures=False):
+    return should_use_fast_centroid(frame_index) and not adaptive_apertures
+
+
 def _fit_centroid_moments(subarray, xv, yv, pos, box):
     background = bn.nanmedian(subarray)
     weights = subarray - background
@@ -2918,6 +2978,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                          ignore_missing_end=True)
         frame_fast_centroid = should_use_fast_centroid(i)
+        target_fast_centroid = should_use_fast_target_centroid(i, adaptive_apertures=use_adaptive_apertures)
 
         extension = 0
         image_header = hdul[extension].header
@@ -2972,7 +3033,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                     imageData,
                     [tx, ty],
                     0,
-                    fast_mode=frame_fast_centroid,
+                    fast_mode=target_fast_centroid,
                 )
                 psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
                     imageData,
@@ -3025,7 +3086,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 imageData,
                 [tx, ty],
                 0,
-                fast_mode=frame_fast_centroid,
+                fast_mode=target_fast_centroid,
             )
 
             cx, cy = transformed_coords[1]
@@ -4157,6 +4218,10 @@ def main():
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                                  ignore_missing_end=True)
                 frame_fast_centroid = should_use_fast_centroid(i)
+                target_fast_centroid = should_use_fast_target_centroid(
+                    i,
+                    adaptive_apertures=use_adaptive_apertures,
+                )
 
                 extension = 0
                 image_header = hdul[extension].header
@@ -4221,7 +4286,7 @@ def main():
                             imageData,
                             [tx, ty],
                             0,
-                            fast_mode=frame_fast_centroid,
+                            fast_mode=target_fast_centroid,
                         )
 
                         # TODO: Add check for flux on target/comp stars relative to others in the field
@@ -4280,7 +4345,7 @@ def main():
                         imageData,
                         [tx, ty],
                         0,
-                        fast_mode=frame_fast_centroid,
+                        fast_mode=target_fast_centroid,
                     )
 
                     for j, coord in enumerate(exotic_infoDict['comp_stars']):
@@ -4882,10 +4947,20 @@ def main():
             phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
             if hasattr(best_fit_lc, 'residuals') and hasattr(best_fit_lc, 'phase'):
                 phase_clip_mask = phase_bin_sigma_clip(best_fit_lc.residuals[si], best_fit_lc.phase[si], sigma=3, bins=10)
-            gi = ~(time_clip_mask | phase_clip_mask)  # good indexs
+            adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
+            if use_adaptive_apertures and adaptive_summary is not None:
+                sorted_apertures = np.asarray(adaptive_summary['aperture_series'], dtype=float)[si]
+                sorted_annuli = np.asarray(adaptive_summary['annulus_series'], dtype=float)[si]
+                retained_mask = adaptive_aperture_outlier_mask(sorted_apertures[~time_clip_mask & ~phase_clip_mask],
+                                                               sorted_annuli[~time_clip_mask & ~phase_clip_mask])
+                adaptive_clip_mask[~time_clip_mask & ~phase_clip_mask] = retained_mask
+            gi = ~(time_clip_mask | phase_clip_mask | adaptive_clip_mask)  # good indexs
             phase_clip_removed = np.count_nonzero(phase_clip_mask & ~time_clip_mask)
             if phase_clip_removed:
                 log_info(f"Removed {phase_clip_removed} phase-binned residual outlier(s) before final fit.")
+            adaptive_clip_removed = np.count_nonzero(adaptive_clip_mask)
+            if adaptive_clip_removed:
+                log_info(f"Removed {adaptive_clip_removed} adaptive-aperture radius outlier(s) before final fit.")
 
             # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
             OOT = (best_fit_lc.transit == 1)  # find out-of-transit portion of the lightcurve

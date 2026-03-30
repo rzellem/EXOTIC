@@ -82,6 +82,7 @@ sys.modules.setdefault("exotic.api.elca", fake_elca)
 sys.modules.setdefault("exotic.api.ld", fake_ld)
 
 from exotic.exotic import (
+    adaptive_aperture_outlier_mask,
     auto_tune_aperture_sigma_grid,
     check_coordinates,
     cheap_lightcurve_prescore,
@@ -95,6 +96,7 @@ from exotic.exotic import (
     resolve_frame_aperture_radii,
     summarize_adaptive_aperture_usage,
     should_skip_airmass_fit,
+    should_use_fast_target_centroid,
     update_coordinates_with_proper_motion,
 )
 
@@ -182,6 +184,12 @@ def test_is_adaptive_aperture_mode_enabled_parses_values():
     assert is_adaptive_aperture_mode_enabled(True) is True
 
 
+def test_should_use_fast_target_centroid_disables_fast_sigma_path_for_adaptive_runs():
+    assert should_use_fast_target_centroid(1, adaptive_apertures=False) is True
+    assert should_use_fast_target_centroid(6, adaptive_apertures=False) is False
+    assert should_use_fast_target_centroid(1, adaptive_apertures=True) is False
+
+
 def test_resolve_frame_aperture_radii_scales_sigma_grid():
     apertures, annuli = resolve_frame_aperture_radii(
         np.array([2.0, 3.0]),
@@ -224,6 +232,17 @@ def test_summarize_adaptive_aperture_usage_reports_frame_scaled_stats():
     assert np.isclose(summary["aperture_max"], 10.0)
     assert summary["aperture_sigma"] == 2.5
     assert summary["annulus_sigma"] == 9.0
+
+
+def test_adaptive_aperture_outlier_mask_rejects_isolated_spike_but_keeps_repeated_lower_mode():
+    aperture_series = np.array([10.0, 10.1, 9.4, 10.0, 9.4, 10.1, 10.0, 15.2, 10.1, 9.4, 10.0, 10.1])
+    annulus_series = aperture_series * 3.0
+
+    mask = adaptive_aperture_outlier_mask(aperture_series, annulus_series)
+
+    expected = np.zeros_like(aperture_series, dtype=bool)
+    expected[7] = True
+    np.testing.assert_array_equal(mask, expected)
 
 
 def test_auto_tune_aperture_grid_uses_comparison_field_consistency():

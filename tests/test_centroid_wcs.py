@@ -4,6 +4,7 @@ import types
 import importlib.util
 
 import numpy as np
+from astropy.io import fits
 from astropy.wcs import WCS
 
 
@@ -84,6 +85,22 @@ def _gaussian_image(shape=(80, 80), center=(40.0, 35.0), amplitude=5000.0, sigma
     cx, cy = center
     image = background + amplitude * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2.0 * sigma ** 2))
     return image
+
+
+def _write_extension_wcs_fits(tmp_path, shape=(100, 120)):
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [shape[1] / 2.0, shape[0] / 2.0]
+    wcs.wcs.crval = [210.0, 54.0]
+    wcs.wcs.cdelt = np.array([-0.01, 0.01])
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+
+    path = tmp_path / "extension_wcs.fits"
+    hdul = fits.HDUList([
+        fits.PrimaryHDU(),
+        fits.ImageHDU(data=np.zeros(shape, dtype=float), header=wcs.to_header(), name="SCI"),
+    ])
+    hdul.writeto(path, overwrite=True)
+    return path
 
 
 def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch):
@@ -195,6 +212,38 @@ def test_check_target_pixel_wcs_keeps_input_coords_when_wcs_target_is_off_frame(
 
     assert x_pixel == 25.0
     assert y_pixel == 30.0
+
+
+def test_get_ra_dec_uses_image_shape_when_header_lacks_naxis():
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [60.0, 50.0]
+    wcs.wcs.crval = [210.0, 54.0]
+    wcs.wcs.cdelt = np.array([-0.01, 0.01])
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+
+    ra_list, dec_list = exotic_module.get_ra_dec(wcs.to_header(), image_shape=(100, 120))
+
+    assert ra_list.shape == (100, 120)
+    assert dec_list.shape == (100, 120)
+
+
+def test_get_first_image_header_skips_empty_primary_hdu(tmp_path):
+    wcs_path = _write_extension_wcs_fits(tmp_path)
+
+    header = exotic_module.get_first_image_header(wcs_path)
+
+    assert header["NAXIS1"] == 120
+    assert header["NAXIS2"] == 100
+    assert header["CTYPE1"] == "RA---TAN"
+
+
+def test_get_img_scale_uses_first_image_extension_header(tmp_path):
+    wcs_path = _write_extension_wcs_fits(tmp_path)
+
+    img_scale_str, img_scale = exotic_module.get_img_scale(fits.Header(), wcs_path, None)
+
+    assert img_scale_str == "Image scale in arcsec/pixel: 36.0"
+    assert img_scale == 36.0
 
 
 def test_should_ignore_header_wcs_defaults_to_false():

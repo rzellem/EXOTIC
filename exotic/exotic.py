@@ -1278,10 +1278,30 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
-def get_ra_dec(header):
+def _resolve_wcs_image_dimensions(header, image_shape=None):
+    width = header.get('NAXIS1', header.get('ZNAXIS1'))
+    height = header.get('NAXIS2', header.get('ZNAXIS2'))
+    if width is not None and height is not None:
+        return int(width), int(height)
+
+    if image_shape is not None and len(image_shape) >= 2:
+        return int(image_shape[-1]), int(image_shape[-2])
+
     wcs_header = WCS(header)
-    xaxis = np.arange(header['NAXIS1'])
-    yaxis = np.arange(header['NAXIS2'])
+    if wcs_header.pixel_shape is not None and len(wcs_header.pixel_shape) >= 2:
+        return int(wcs_header.pixel_shape[0]), int(wcs_header.pixel_shape[1])
+
+    if wcs_header.array_shape is not None and len(wcs_header.array_shape) >= 2:
+        return int(wcs_header.array_shape[1]), int(wcs_header.array_shape[0])
+
+    raise KeyError("Keyword 'NAXIS1' not found.")
+
+
+def get_ra_dec(header, image_shape=None):
+    wcs_header = WCS(header)
+    width, height = _resolve_wcs_image_dimensions(header, image_shape=image_shape)
+    xaxis = np.arange(width)
+    yaxis = np.arange(height)
     x, y = np.meshgrid(xaxis, yaxis)
     return wcs_header.all_pix2world(x, y, 1)
 
@@ -2120,7 +2140,7 @@ def log_finding_transformation_progress(i, total_jobs, file_name, use_multiproce
 
 def get_img_scale(hdr, wcs_file, pixel_init):
     if wcs_file:
-        wcs_hdr = fits.getheader(wcs_file)
+        wcs_hdr = get_first_image_header(wcs_file)
         astrometry_scale = [key.value.split(' ') for key in wcs_hdr._cards if 'scale:' in str(key.value)]
 
         if astrometry_scale:
@@ -2764,11 +2784,12 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                          ignore_header_wcs=ignore_header_wcs)
     comp_star = info_dict['comp_stars']
     tar_radec, comp_radec = None, []
+    first_image = fits.getdata(inputfiles[0])
 
     if wcs_file:
-        wcs_header = fits.getheader(filename=wcs_file)
+        wcs_header = get_first_image_header(wcs_file)
 
-        ra_file, dec_file = get_ra_dec(wcs_header)
+        ra_file, dec_file = get_ra_dec(wcs_header, image_shape=first_image.shape)
         tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                      dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
@@ -2781,7 +2802,6 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     if tar_radec is not None and comp_radec:
         target_and_comp_radec = np.array([tar_radec, comp_radec[0]], dtype=float)
 
-    first_image = fits.getdata(inputfiles[0])
     targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)[3:5]
 
     # aperture and annulus scale factors in PSF sigma units
@@ -3927,12 +3947,13 @@ def main():
             if wcs_file:
                 if should_log_plate_solution_path(wcs_file):
                     log_info(f"\nHere is the path to your plate solution: {wcs_file}")
-                wcs_header = fits.getheader(filename=wcs_file)
-                ra_wcs, dec_wcs = get_ra_dec(wcs_header)
+                reference_image = fits.getdata(inputfiles[0])
+                wcs_header = get_first_image_header(wcs_file)
+                ra_wcs, dec_wcs = get_ra_dec(wcs_header, image_shape=reference_image.shape)
 
                 exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(exotic_UIprevTPX, exotic_UIprevTPY,
                                                                             pDict, ra_wcs, dec_wcs,
-                                                                            fits.getdata(inputfiles[0]),
+                                                                            reference_image,
                                                                             jd_times[0],
                                                                             non_interactive_run=args.non_interactive_run,
                                                                             wcs_header=wcs_header)

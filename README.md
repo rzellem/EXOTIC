@@ -1,5 +1,7 @@
 # EXOTIC (EXOplanet Transit Interpretation Code)
 
+### HI THIS IS ROB
+
 [![PyPI](https://img.shields.io/pypi/v/exotic)](https://pypi.python.org/pypi/exotic/)
 [![Caltech](http://img.shields.io/badge/license-Caltech-blue)](https://github.com/rzellem/EXOTIC/blob/main/LICENSE)
 [![NASA ADS](https://img.shields.io/badge/NASA%20ADS-2020PASP..132e4401Z-blue)](https://ui.adsabs.harvard.edu/abs/2020PASP..132e4401Z/abstract/)

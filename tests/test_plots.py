@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
 from exotic.plots import (
+    plot_fov,
     plot_adaptive_aperture_diagnostics,
     plot_comp_star_candidate_lightcurve_fits,
     plot_individual_comp_star_calibration_series,
@@ -106,6 +107,40 @@ def test_plot_adaptive_aperture_diagnostics_writes_outputs(tmp_path):
 
     assert (tmp_path / "temp" / "AdaptiveApertureDiagnostics_Target_2026-03-09.png").exists()
     assert (tmp_path / "temp" / "AdaptiveApertureDiagnostics_Target_2026-03-09.pdf").exists()
+
+
+def test_plot_fov_psf_legend_omits_aperture_annulus_text(tmp_path, monkeypatch):
+    labels = []
+
+    original_legend = plt.legend
+
+    def spy_legend(*args, **kwargs):
+        legend = original_legend(*args, **kwargs)
+        labels.extend(text.get_text() for text in legend.get_texts())
+        return legend
+
+    monkeypatch.setattr(plt, "legend", spy_legend)
+
+    plot_fov(
+        aper=20.0,
+        annulus=60.0,
+        sigma=4.0,
+        x_targ=50.0,
+        y_targ=60.0,
+        x_ref=90.0,
+        y_ref=100.0,
+        image=np.ones((200, 200)),
+        image_scale="Image scale in arcsec/pixel: 0.53",
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+        opt_method="PSF",
+        min_aper_fov=20.44,
+        min_annulus_fov=61.31,
+    )
+
+    assert labels
+    assert set(labels) == {"PSF Photometry"}
 
 
 def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):

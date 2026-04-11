@@ -96,7 +96,14 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
         handles = []
-        label_aper = f"{opt_method} Photometry\n(Min Aper: {abs(min_aper_fov):.2f} px)\n(Min Annulus: {min_annulus_fov:.2f} px)"
+        if opt_method == "PSF":
+            label_aper = "PSF Photometry"
+        else:
+            label_aper = (
+                f"{opt_method} Photometry\n"
+                f"(Min Aper: {abs(min_aper_fov):.2f} px)\n"
+                f"(Min Annulus: {min_annulus_fov:.2f} px)"
+            )
         
         if opt_method == "Aperture":
             aperture_line = Line2D([], [], color=outer_circle_color, linestyle='-', label=label_aper)

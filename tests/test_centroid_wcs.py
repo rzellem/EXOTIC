@@ -127,6 +127,17 @@ def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch):
     assert low_flux_warnings == []
 
 
+def test_fit_centroid_reports_consistent_background_between_fast_and_full_modes():
+    image = _gaussian_image(center=(40.3, 35.7), amplitude=5000.0, sigma=2.0, background=123.4)
+
+    fast_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=True)
+    full_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=False)
+
+    assert np.isfinite(fast_result[6])
+    assert np.isfinite(full_result[6])
+    assert full_result[6] == pytest.approx(fast_result[6], abs=1e-8)
+
+
 def test_fit_centroid_or_warn_out_of_frame_skips_centroid_fit(monkeypatch):
     image = np.zeros((40, 50), dtype=float)
     out_of_frame_warnings = []

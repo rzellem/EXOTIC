@@ -217,28 +217,7 @@ def plot_comp_star_calibration_series(times, comp_summaries, targ_name, save, da
         axes = [axes]
 
     for axis, summary in zip(axes, comp_summaries):
-        axis.axhline(1.0, color='lightgray', lw=1.0, zorder=1)
-        pairwise_series = summary.get('pairwise_ratio_series', {})
-        for color_index, (other_label, ratio_series) in enumerate(pairwise_series.items()):
-            ratio_series = np.asarray(ratio_series, dtype=float)
-            valid = np.isfinite(times) & np.isfinite(ratio_series)
-            if np.any(valid):
-                axis.plot(times[valid], ratio_series[valid], color=colors[color_index % len(colors)],
-                          alpha=0.55, lw=1.0, label=other_label)
-
-        ensemble_ratio = np.asarray(summary.get('ensemble_ratio_series'), dtype=float)
-        ensemble_valid = np.isfinite(times) & np.isfinite(ensemble_ratio)
-        if np.any(ensemble_valid):
-            axis.plot(times[ensemble_valid], ensemble_ratio[ensemble_valid], color='black', lw=1.8,
-                      label='Ensemble')
-
-        selected_text = " selected" if summary.get('selected') else ""
-        aggregate = summary.get('aggregate_score', np.nan)
-        aggregate_text = "n/a" if not np.isfinite(aggregate) else f"{aggregate * 100.0:.3f}%"
-        axis.set_ylabel("Norm Ratio")
-        axis.set_title(f"{summary['label']}{selected_text} | suitability={aggregate_text}", loc='left', fontsize=10)
-        axis.grid(alpha=0.2)
-        axis.legend(ncol=4, fontsize=8, loc='upper right')
+        _draw_comp_star_calibration_axis(axis, times, summary, colors)
 
     axes[-1].set_xlabel("Time [BJD_TDB]")
     fig.suptitle(f"{targ_name} Comparison-Star Calibration Curves\n{method_label}", y=1.01)
@@ -246,6 +225,79 @@ def plot_comp_star_calibration_series(times, comp_summaries, targ_name, save, da
     fig.savefig(temp_dir / f"CompStarCalibrationCurves_{targ_name}_{date}.png", bbox_inches="tight")
     fig.savefig(temp_dir / f"CompStarCalibrationCurves_{targ_name}_{date}.pdf", bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_individual_comp_star_calibration_series(times, comp_summaries, targ_name, save, date, method_label):
+    if not comp_summaries:
+        return
+
+    times = np.asarray(times, dtype=float)
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    colors = plt.cm.tab10(np.linspace(0.0, 1.0, 10))
+
+    for summary in comp_summaries:
+        fig, axis = plt.subplots(figsize=(12, 4))
+        _draw_comp_star_calibration_axis(axis, times, summary, colors)
+        axis.set_xlabel("Time [BJD_TDB]")
+        fig.suptitle(f"{targ_name} {summary['label']} Calibration Curves\n{method_label}")
+        fig.tight_layout()
+        label_slug = summary['label'].replace(" ", "")
+        fig.savefig(temp_dir / f"CompStarCalibrationCurve_{label_slug}_{targ_name}_{date}.png", bbox_inches="tight")
+        fig.savefig(temp_dir / f"CompStarCalibrationCurve_{label_slug}_{targ_name}_{date}.pdf", bbox_inches="tight")
+        plt.close(fig)
+
+
+def plot_comp_star_candidate_lightcurve_fits(candidate_fit_summaries, targ_name, save, date, method_label):
+    if not candidate_fit_summaries:
+        return
+
+    temp_dir = Path(save) / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    for summary in candidate_fit_summaries:
+        fit = summary.get('fit')
+        if fit is None:
+            continue
+
+        fig, (ax_lc, ax_res) = fit.plot_bestfit(phase=False)
+        selected_text = " selected" if summary.get('selected') else ""
+        res_std = summary.get('res_std', np.nan)
+        res_std_text = "n/a" if not np.isfinite(res_std) else f"{res_std * 100.0:.3f}%"
+        ax_lc.set_title(f"{targ_name} vs {summary['label']}{selected_text}\n{method_label} | scatter={res_std_text}")
+        ax_res.set_title("")
+
+        label_slug = summary['label'].replace(" ", "")
+        fig.savefig(temp_dir / f"CompStarLightCurveFit_{label_slug}_{targ_name}_{date}.png", bbox_inches="tight")
+        fig.savefig(temp_dir / f"CompStarLightCurveFit_{label_slug}_{targ_name}_{date}.pdf", bbox_inches="tight")
+        plt.close(fig)
+
+
+def _draw_comp_star_calibration_axis(axis, times, summary, colors):
+    axis.axhline(1.0, color='lightgray', lw=1.0, zorder=1)
+    pairwise_series = summary.get('pairwise_ratio_series', {})
+    for color_index, (other_label, ratio_series) in enumerate(pairwise_series.items()):
+        ratio_series = np.asarray(ratio_series, dtype=float)
+        valid = np.isfinite(times) & np.isfinite(ratio_series)
+        if np.any(valid):
+            axis.plot(times[valid], ratio_series[valid], color=colors[color_index % len(colors)],
+                      alpha=0.55, lw=1.0, label=other_label)
+
+    ensemble_ratio = np.asarray(summary.get('ensemble_ratio_series'), dtype=float)
+    ensemble_valid = np.isfinite(times) & np.isfinite(ensemble_ratio)
+    if np.any(ensemble_valid):
+        axis.plot(times[ensemble_valid], ensemble_ratio[ensemble_valid], color='black', lw=1.8,
+                  label='Ensemble')
+
+    selected_text = " selected" if summary.get('selected') else ""
+    aggregate = summary.get('aggregate_score', np.nan)
+    aggregate_text = "n/a" if not np.isfinite(aggregate) else f"{aggregate * 100.0:.3f}%"
+    axis.set_ylabel("Norm Ratio")
+    axis.set_title(f"{summary['label']}{selected_text} | suitability={aggregate_text}", loc='left', fontsize=10)
+    axis.grid(alpha=0.2)
+    handles, labels = axis.get_legend_handles_labels()
+    if handles and labels:
+        axis.legend(ncol=4, fontsize=8, loc='upper right')
 
 
 def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_label):
@@ -384,9 +436,9 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     plt.close()
 
 
-# Observation statistics from PSF data
-def _select_psf_rows(psf_rows, sort_index=None, sigma_mask=None, relative_flux_mask=None):
-    rows = np.asarray(psf_rows)
+# Observation statistics series selection
+def _select_plot_rows(rows, sort_index=None, sigma_mask=None, relative_flux_mask=None):
+    rows = np.asarray(rows)
 
     if sort_index is not None:
         rows = rows[np.asarray(sort_index)]
@@ -404,7 +456,8 @@ def _select_psf_rows(psf_rows, sort_index=None, sigma_mask=None, relative_flux_m
     return rows
 
 
-def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relative_flux_mask=None):
+def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relative_flux_mask=None,
+                   background_series=None):
     fit_time = np.asarray(fit.time)
     fit_airmass = np.asarray(fit.airmass)
     temp_dir = Path(save) / "temp"
@@ -419,10 +472,21 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
         fig, axs = plt.subplots(3, 2, figsize=(12, 10))
         fig.suptitle(f"Observing Statistics - {title} - {date}")
 
-        star_stats = _select_psf_rows(psf[key], sort_index=si, sigma_mask=gi,
-                                      relative_flux_mask=relative_flux_mask)
+        star_stats = _select_plot_rows(psf[key], sort_index=si, sigma_mask=gi,
+                                       relative_flux_mask=relative_flux_mask)
+        background_data = None
+        if background_series is not None and key in background_series:
+            background_data = _select_plot_rows(
+                background_series[key],
+                sort_index=si,
+                sigma_mask=gi,
+                relative_flux_mask=relative_flux_mask,
+            )
 
-        plot_len = min(fit_time.shape[0], fit_airmass.shape[0], star_stats.shape[0])
+        plot_len_inputs = [fit_time.shape[0], fit_airmass.shape[0], star_stats.shape[0]]
+        if background_data is not None:
+            plot_len_inputs.append(background_data.shape[0])
+        plot_len = min(plot_len_inputs)
         if plot_len == 0:
             plt.close(fig)
             continue
@@ -430,6 +494,10 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
         time_data = fit_time[:plot_len]
         airmass_data = fit_airmass[:plot_len]
         star_stats = star_stats[:plot_len]
+        if background_data is None:
+            background_data = star_stats[:, 6]
+        else:
+            background_data = np.asarray(background_data)[:plot_len]
 
         axs[0, 0].set(xlabel="Time [BJD_TDB]", ylabel="X-Centroid [px]")
         axs[0, 0].plot(time_data, star_stats[:, 0], 'k.')
@@ -447,7 +515,7 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
         axs[2, 0].plot(time_data, star_stats[:, 2], 'k.')
 
         axs[2, 1].set(xlabel="Time [BJD_TDB]", ylabel="Background [ADU]")
-        axs[2, 1].plot(time_data, star_stats[:, 6], 'k.')
+        axs[2, 1].plot(time_data, background_data, 'k.')
 
         plt.tight_layout()
 

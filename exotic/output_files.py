@@ -381,7 +381,8 @@ def save_comp_star_calibration_summary(save_dir, target_name, date, method_label
             handle.write("# Field suitability score,\n")
         handle.write(f"# Selected comparison star,{'' if best_comp_index is None else best_comp_index + 1}\n")
         handle.write("comp_star,x_pixel,y_pixel,selected,suitability_score,ensemble_score,pairwise_median_score,"
-                     "pairwise_max_score,self_score,valid_pair_count\n")
+                     "pairwise_max_score,self_score,valid_pair_count,coverage_count,coverage_peer_median,"
+                     "coverage_min_required,coverage_rejected\n")
 
         for summary in comp_summaries:
             position = summary.get('position') or [None, None]
@@ -396,6 +397,10 @@ def save_comp_star_calibration_summary(save_dir, target_name, date, method_label
                 summary.get('pairwise_max_score'),
                 summary.get('self_score'),
                 summary.get('valid_pair_count'),
+                summary.get('coverage_count'),
+                summary.get('coverage_reference_count'),
+                summary.get('coverage_min_required_count'),
+                summary.get('coverage_rejected'),
             ]
             handle.write(",".join("" if value is None else str(value) for value in values) + "\n")
 

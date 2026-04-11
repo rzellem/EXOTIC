@@ -83,6 +83,36 @@ def test_comp_params_defaults_bad_wcs_threshold_percent_to_three(tmp_path):
     assert inputs.info_dict["bad_wcs_threshold_percent"] == 3.0
 
 
+def test_comp_params_defaults_skip_low_comparison_coverage_rejection_to_no(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["skip_low_comparison_coverage_rejection"] == "n"
+
+
+def test_comp_params_defaults_fit_lightcurve_to_every_comparison_candidate_to_no(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["fit_lightcurve_to_every_comparison_candidate"] == "n"
+
+
 def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_path):
     init_data = {
         "user_info": {},
@@ -96,6 +126,66 @@ def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_p
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["disable_vertical_flux_normalization"] is False
+
+
+def test_comp_params_defaults_detrend_on_outoftransit_baseline_to_true(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["detrend_on_outoftransit_baseline"] is True
+
+
+def test_comp_params_defaults_use_impactparameter_fit_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_impactparameter_rather_than_inclination_to_fit"] == "y"
+
+
+def test_comp_params_defaults_use_psf_photometry_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_psf_photometry"] == "y"
+
+
+def test_comp_params_defaults_use_aperture_photometry_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_aperture_photometry"] == "y"
 
 
 def test_comp_params_defaults_use_adaptive_apertures_to_false(tmp_path):
@@ -173,6 +263,36 @@ def test_comp_params_reads_bad_wcs_threshold_percent_from_optional_info(tmp_path
     assert inputs.info_dict["bad_wcs_threshold_percent"] == 5.5
 
 
+def test_comp_params_reads_skip_low_comparison_coverage_rejection_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"skip_low_comparison_coverage_rejection": "y"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["skip_low_comparison_coverage_rejection"] == "y"
+
+
+def test_comp_params_reads_fit_lightcurve_to_every_comparison_candidate_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"fit_lightcurve_to_every_comparison_candidate": "y"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["fit_lightcurve_to_every_comparison_candidate"] == "y"
+
+
 def test_comp_params_reads_disable_vertical_flux_normalization_from_optional_info(tmp_path):
     init_data = {
         "user_info": {},
@@ -186,6 +306,81 @@ def test_comp_params_reads_disable_vertical_flux_normalization_from_optional_inf
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["disable_vertical_flux_normalization"] is True
+
+
+def test_comp_params_reads_detrend_on_outoftransit_baseline_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"detrend_on_outoftransit_baseline": True},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["detrend_on_outoftransit_baseline"] is True
+
+
+def test_comp_params_reads_detrend_on_outoftransit_baseline_false_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"detrend_on_outoftransit_baseline": False},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["detrend_on_outoftransit_baseline"] is False
+
+
+def test_comp_params_reads_use_impactparameter_fit_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_impactparameter_rather_than_inclination_to_fit": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_impactparameter_rather_than_inclination_to_fit"] == "n"
+
+
+def test_comp_params_reads_use_psf_photometry_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_psf_photometry": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_psf_photometry"] == "n"
+
+
+def test_comp_params_reads_use_aperture_photometry_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_aperture_photometry": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_aperture_photometry"] == "n"
 
 
 def test_comp_params_reads_use_adaptive_apertures_from_optional_info(tmp_path):

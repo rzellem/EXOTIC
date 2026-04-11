@@ -215,6 +215,11 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Minimum Wavelength (nm)": null,
             "Filter Maximum Wavelength (nm)": null,
             "Fast Aperture Mask (y/n)": true,
+            "use_psf_photometry": "y",
+            "use_aperture_photometry": "y",
+            "detrend_on_outoftransit_baseline": true,
+            "use_impactparameter_rather_than_inclination_to_fit": "y",
+            "skip_low_comparison_coverage_rejection": "n",
             "require_comp_star": "y"
     }
 }

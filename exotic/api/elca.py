@@ -106,6 +106,27 @@ def transit(times, values):
     return model
 
 
+def impact_parameter_scale(values):
+    ecc = values.get('ecc', 0.0)
+    omega = np.deg2rad(values.get('omega', 0.0))
+    denom = 1.0 + ecc * np.sin(omega)
+    if np.any(np.isclose(denom, 0.0)):
+        denom = np.where(np.isclose(denom, 0.0), np.finfo(float).eps, denom)
+    return values['ars'] * (1.0 - ecc ** 2) / denom
+
+
+def impact_parameter_from_inclination(values, inclination):
+    return impact_parameter_scale(values) * np.cos(np.deg2rad(inclination))
+
+
+def inclination_from_impact_parameter(values, impact_parameter):
+    scale = impact_parameter_scale(values)
+    if np.any(np.isclose(scale, 0.0)):
+        scale = np.where(np.isclose(scale, 0.0), np.finfo(float).eps, scale)
+    cosi = np.clip(np.asarray(impact_parameter, dtype=float) / scale, -1.0, 1.0)
+    return np.rad2deg(np.arccos(cosi))
+
+
 def get_phase(times, per, tmid):
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
@@ -271,7 +292,20 @@ def binner(arr, n, err=''):
 
 class lc_fitter(object):
 
-    def __init__(self, time, data, dataerr, airmass, prior, bounds, neighbors=200, mode='ns', jd_times=None, verbose=True):
+    def __init__(
+        self,
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior,
+        bounds,
+        neighbors=200,
+        mode='ns',
+        jd_times=None,
+        verbose=True,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
         self.time = time
         self.data = data
         self.dataerr = dataerr
@@ -283,7 +317,13 @@ class lc_fitter(object):
         self.jd_times = jd_times
         self.mode = mode
         self.neighbors = neighbors
+        self.use_impactparameter_rather_than_inclination_to_fit = use_impactparameter_rather_than_inclination_to_fit
         self.results = None
+        self.sampled_keys = list(bounds.keys())
+        self.sample_bounds = copy.deepcopy(bounds)
+        self.sample_parameters = {}
+        self.sample_errors = {}
+        self.sample_quantiles = {}
         if self.mode == "lm":
             self.fit_LM()
         elif self.mode == "ns":
@@ -305,6 +345,229 @@ class lc_fitter(object):
 
     def _build_systematics_model(self, values):
         return get_flux_baseline(values) * np.exp(values.get('a2', 0) * self.airmass)
+
+    def _uses_internal_impact_parameter(self):
+        return (
+            self.use_impactparameter_rather_than_inclination_to_fit
+            and self.mode == "ns"
+            and 'inc' in self.bounds
+            and 'b' not in self.bounds
+        )
+
+    def _get_sampled_keys(self, bound_keys=None):
+        bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
+        if not self._uses_internal_impact_parameter():
+            return bound_keys
+        return ['b' if key == 'inc' else key for key in bound_keys]
+
+    def _get_sample_bounds(self, bound_keys=None, values=None):
+        bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
+        sampled_keys = self._get_sampled_keys(bound_keys)
+        values = self.prior if values is None else values
+        sample_bounds = {}
+        for key, sampled_key in zip(bound_keys, sampled_keys):
+            if key == 'inc' and sampled_key == 'b':
+                inc_lower, inc_upper = self.bounds[key]
+                lower = float(np.min(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
+                upper = float(np.max(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
+                sample_bounds[sampled_key] = [lower, upper]
+            else:
+                sample_bounds[sampled_key] = list(self.bounds[key])
+        return sample_bounds
+
+    def _sample_point_from_unit_cube(self, upars, bound_keys=None):
+        bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
+        boundarray = np.array([self.bounds[k] for k in bound_keys], dtype=float)
+        physical = copy.deepcopy(self.prior)
+        sample_point = np.zeros(len(bound_keys), dtype=float)
+
+        for i, key in enumerate(bound_keys):
+            if key == 'inc' and self._uses_internal_impact_parameter():
+                continue
+            physical[key] = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars[i]
+
+        for i, key in enumerate(bound_keys):
+            if key == 'inc' and self._uses_internal_impact_parameter():
+                inc = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars[i]
+                sample_point[i] = impact_parameter_from_inclination(physical, inc)
+            else:
+                sample_point[i] = physical[key]
+
+        return sample_point
+
+    def _physical_values_from_sample_point(self, sample_point, bound_keys=None, sampled_keys=None):
+        bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
+        sampled_keys = self._get_sampled_keys(bound_keys) if sampled_keys is None else list(sampled_keys)
+        physical = copy.deepcopy(self.prior)
+
+        for value, bound_key, sampled_key in zip(sample_point, bound_keys, sampled_keys):
+            if sampled_key == 'b' and bound_key == 'inc':
+                continue
+            physical[bound_key] = value
+
+        for value, bound_key, sampled_key in zip(sample_point, bound_keys, sampled_keys):
+            if sampled_key == 'b' and bound_key == 'inc':
+                physical['b'] = value
+                physical['inc'] = float(inclination_from_impact_parameter(physical, value))
+
+        return physical
+
+    def _summarize_derived_parameter(self, samples, point_estimate):
+        samples = np.asarray(samples, dtype=float)
+        center = float(point_estimate)
+        std = float(np.nanstd(samples))
+        lower = float(np.nanpercentile(samples, 16))
+        upper = float(np.nanpercentile(samples, 84))
+        return center, std, [lower - center, upper - center]
+
+    def _get_plot_range(self, key):
+        sample_parameters = getattr(self, 'sample_parameters', {})
+        sample_errors = getattr(self, 'sample_errors', {})
+        sample_bounds = getattr(self, 'sample_bounds', self.bounds)
+        center = sample_parameters[key] if key in sample_parameters else self.parameters[key]
+        error = sample_errors[key] if key in sample_errors else self.errors[key]
+        lower = center - 5 * error
+        upper = center + 5 * error
+
+        if key in sample_bounds:
+            bound_lower, bound_upper = sample_bounds[key]
+            lower = max(lower, bound_lower)
+            upper = min(upper, bound_upper)
+
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            if key in sample_bounds:
+                bound_lower, bound_upper = sample_bounds[key]
+                return [bound_lower, bound_upper]
+
+            pad = error if np.isfinite(error) and error > 0 else max(abs(center) * 1e-6, 1e-6)
+            return [center - pad, center + pad]
+
+        return [lower, upper]
+
+    def _get_triangle_plot_samples(self):
+        if self.ns_type == 'ultranest':
+            points = np.asarray(self.results['weighted_samples']['points'], dtype=float)
+            logl = np.asarray(self.results['weighted_samples']['logl'], dtype=float)
+            return points, logl
+
+        points = np.asarray(self.results.samples, dtype=float)
+        weights = np.exp(self.results.logwt - self.results.logz[-1])
+        index_samples = resample_equal(np.arange(points.shape[0], dtype=float)[:, None], weights)
+        index_samples = np.clip(np.rint(index_samples[:, 0]).astype(int), 0, points.shape[0] - 1)
+        return points[index_samples], np.asarray(self.results.logl, dtype=float)[index_samples]
+
+    def _get_triangle_plot_display_spec(self, sampled_keys, sample_parameters, sample_errors, sample_points):
+        if 'b' in sampled_keys:
+            key = 'b'
+            label = 'Distance from fitted b (mirrored)'
+        elif 'inc' in sampled_keys:
+            key = 'inc'
+            label = 'Distance from fitted Inc. [deg] (mirrored)'
+        else:
+            return None
+
+        geometry_index = sampled_keys.index(key)
+        center = float(sample_parameters.get(key, self.parameters.get(key, 0.0)))
+        magnitude_samples = np.abs(np.asarray(sample_points[:, geometry_index], dtype=float) - center)
+        error = float(sample_errors.get(key, np.nanstd(magnitude_samples)))
+        if not np.isfinite(error) or error <= 0:
+            error = float(np.nanstd(magnitude_samples))
+        plot_lower, plot_upper = self._get_plot_range(key)
+        max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
+        if not np.isfinite(max_distance) or max_distance <= 0:
+            max_distance = float(np.nanmax(magnitude_samples))
+        if not np.isfinite(max_distance) or max_distance <= 0:
+            max_distance = max(abs(center) * 1e-6, 1e-6)
+        return {
+            'key': key,
+            'index': geometry_index,
+            'label': label,
+            'mask_center': 0.0,
+            'mask_error': error,
+            'magnitude_samples': magnitude_samples,
+            'range': [-max_distance, max_distance],
+        }
+
+    def _get_triangle_plot_payload(self):
+        sampled_keys = getattr(self, 'sampled_keys', list(self.bounds.keys()))
+        sample_parameters = getattr(self, 'sample_parameters', self.parameters)
+        sample_errors = getattr(self, 'sample_errors', self.errors)
+        sample_points, sample_logl = self._get_triangle_plot_samples()
+        display_spec = self._get_triangle_plot_display_spec(sampled_keys, sample_parameters, sample_errors, sample_points)
+
+        display_points = np.array(sample_points, copy=True)
+        display_logl = np.array(sample_logl, copy=True)
+        mask_values = np.array(sample_points, copy=True)
+
+        if display_spec is not None:
+            geometry_index = display_spec['index']
+            positive_points = np.array(sample_points, copy=True)
+            negative_points = np.array(sample_points, copy=True)
+            positive_points[:, geometry_index] = display_spec['magnitude_samples']
+            negative_points[:, geometry_index] = -display_spec['magnitude_samples']
+            display_points = np.vstack([positive_points, negative_points])
+            display_logl = np.concatenate([sample_logl, sample_logl])
+            mask_values = np.array(display_points, copy=True)
+
+        flabels = {
+            'rprs': r'R$_{p}$/R$_{s}$',
+            'per': r'Period [day]',
+            'tmid': r'T$_{mid}$',
+            'ars': r'a/R$_{s}$',
+            'inc': r'Inc. [deg]',
+            'b': r'Impact parameter',
+            'u1': r'u$_1$',
+            'fpfs': r'F$_{p}$/F$_{s}$',
+            'omega': r'$\omega$ [deg]',
+            'mplanet': r'M$_{p}$ [M$_{\oplus}$]',
+            'mstar': r'M$_{s}$ [M$_{\odot}$]',
+            'ecc': r'$e$',
+            'c0': r'$c_0$',
+            'c1': r'$c_1$',
+            'c2': r'$c_2$',
+            'c3': r'$c_3$',
+            'c4': r'$c_4$',
+            'a0': r'$a_0$',
+            'a1': r'$a_1$',
+            'a2': r'$a_2$'
+        }
+
+        labels = []
+        titles = []
+        ranges = []
+        mask_centers = []
+        mask_errors = []
+
+        for key in sampled_keys:
+            center = sample_parameters.get(key, self.parameters.get(key, 0.0))
+            error = sample_errors.get(key, self.errors.get(key, 0.0))
+            label = flabels.get(key, key)
+            title = f"{center:.5f} +- {error:.5f}"
+            plot_range = self._get_plot_range(key)
+
+            if display_spec is not None and key == display_spec['key']:
+                label = display_spec['label']
+                plot_range = display_spec['range']
+                center = display_spec['mask_center']
+                error = display_spec['mask_error']
+
+            labels.append(label)
+            titles.append(title)
+            ranges.append(plot_range)
+            mask_centers.append(center)
+            mask_errors.append(error)
+
+        return {
+            'sampled_keys': sampled_keys,
+            'display_points': display_points,
+            'display_logl': display_logl,
+            'mask_values': mask_values,
+            'labels': labels,
+            'titles': titles,
+            'ranges': ranges,
+            'mask_centers': mask_centers,
+            'mask_errors': mask_errors,
+        }
 
     def fit_LM(self):
         freekeys = list(self.bounds.keys())
@@ -362,10 +625,18 @@ class lc_fitter(object):
 
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
+        self.quantiles = {}
 
         for i, k in enumerate(freekeys):
             self.parameters[k] = res.x[i]
             self.errors[k] = 0
+            self.quantiles[k] = [0, 0]
+
+        self.sampled_keys = list(freekeys)
+        self.sample_bounds = copy.deepcopy(self.bounds)
+        self.sample_parameters = {k: self.parameters[k] for k in self.sampled_keys}
+        self.sample_errors = {k: self.errors[k] for k in self.sampled_keys}
+        self.sample_quantiles = {k: self.quantiles[k] for k in self.sampled_keys}
 
         self.create_fit_variables()
 
@@ -376,7 +647,10 @@ class lc_fitter(object):
         self.transit_upsample = transit(self.time_upsample, self.parameters)
         self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
         if np.ndim(self.airmass) != 2:
-            if self.mode == "ns" and not self._has_free_flux_baseline():
+            if self._has_free_flux_baseline():
+                flux_scale = get_flux_baseline(self.parameters)
+                flux_scale_err = self.errors.get('a0', self.errors.get('a1', 0.0))
+            elif self.mode == "ns":
                 flux_scale, flux_scale_err = mc_a1(
                     self.parameters.get('a2', 0),
                     self.errors.get('a2', 1e-6),
@@ -431,35 +705,44 @@ class lc_fitter(object):
         self.duration_expected = newdur
 
     def fit_nested(self):
-        freekeys = list(self.bounds.keys())
-        boundarray = np.array([self.bounds[k] for k in freekeys])
-        bounddiff = np.diff(boundarray, 1).reshape(-1)
+        bound_keys = list(self.bounds.keys())
+        sampled_keys = self._get_sampled_keys(bound_keys)
         self._validate_flux_baseline_keys()
+        self.sampled_keys = list(sampled_keys)
+        self.sample_bounds = self._get_sample_bounds(bound_keys, self.prior)
+
+        if len(set(self.sampled_keys)) != len(self.sampled_keys):
+            raise ValueError("Free-parameter labels must be unique after internal parameter transforms.")
 
         # alloc data for best fit + error
+        self.sample_parameters = {}
+        self.sample_errors = {}
+        self.sample_quantiles = {}
         self.errors = {}
         self.quantiles = {}
         self.parameters = copy.deepcopy(self.prior)
 
+        def physical_from_sample_point(sample_point):
+            return self._physical_values_from_sample_point(sample_point, bound_keys, sampled_keys)
+
         def loglike(pars):
             # chi-squared
-            for i in range(len(pars)):
-                self.prior[freekeys[i]] = pars[i]
-            model = transit(self.time, self.prior)
-            model *= np.exp(self.prior.get('a2', 0) * self.airmass)
+            physical = physical_from_sample_point(pars)
+            model = transit(self.time, physical)
+            model *= np.exp(physical.get('a2', 0) * self.airmass)
             if self._has_free_flux_baseline():
-                model *= get_flux_baseline(self.prior)
+                model *= get_flux_baseline(physical)
             else:
                 model *= solve_flux_baseline(model, self.data, self.dataerr)
             return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
 
         def prior_transform(upars):
             # transform unit cube to prior volume
-            return boundarray[:, 0] + bounddiff * upars
+            return self._sample_point_from_unit_cube(upars, bound_keys)
 
         try:
             self.ns_type = 'ultranest'
-            test = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+            test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform)
 
             self.results = run_reactive_sampler(
                 test,
@@ -467,21 +750,43 @@ class lc_fitter(object):
                 verbose=self.verbose,
             )
 
-            for i, key in enumerate(freekeys):
-                self.parameters[key] = self.results['maximum_likelihood']['point'][i]
-                self.errors[key] = self.results['posterior']['stdev'][i]
-                self.quantiles[key] = [
+            ml_point = self.results['maximum_likelihood']['point']
+            self.sample_bounds = self._get_sample_bounds(bound_keys, physical_from_sample_point(ml_point))
+
+            for i, key in enumerate(sampled_keys):
+                self.sample_parameters[key] = ml_point[i]
+                self.sample_errors[key] = self.results['posterior']['stdev'][i]
+                self.sample_quantiles[key] = [
                     self.results['posterior']['errlo'][i],
                     self.results['posterior']['errup'][i]]
+
+            physical_ml = physical_from_sample_point(ml_point)
+            self.parameters.update(physical_ml)
+
+            for bound_key, sampled_key in zip(bound_keys, sampled_keys):
+                if bound_key == 'inc' and sampled_key == 'b':
+                    continue
+                self.errors[bound_key] = self.sample_errors[sampled_key]
+                self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
+
+            if 'inc' in bound_keys and 'b' in sampled_keys:
+                inc_samples = np.array([
+                    physical_from_sample_point(point)['inc']
+                    for point in self.results['weighted_samples']['points']
+                ])
+                center, std, quantiles = self._summarize_derived_parameter(inc_samples, physical_ml['inc'])
+                self.parameters['inc'] = center
+                self.errors['inc'] = std
+                self.quantiles['inc'] = quantiles
         except NameError:
             self.ns_type = 'dynesty'
-            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(freekeys),
+            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(sampled_keys),
                                                     bound='multi', sample='unif')
             dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
                                 maxbatch=10, nlive_batch=100, print_progress=self.verbose)
             self.results = dsampler.results
 
-            tests = [copy.deepcopy(self.prior) for i in range(5)]
+            tests = [np.zeros(len(sampled_keys), dtype=float) for _ in range(5)]
 
             # Derive kernel density estimate for best fit
             weights = np.exp(self.results.logwt - self.results.logz[-1])
@@ -495,52 +800,91 @@ class lc_fitter(object):
             # errors + final values
             mean, cov = dynesty.utils.mean_and_cov(self.results.samples, weights)
             mean2, cov2 = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
-            for i in range(len(freekeys)):
-                self.errors[freekeys[i]] = cov[i, i] ** 0.5
-                tests[0][freekeys[i]] = mean[i]
-                tests[1][freekeys[i]] = mean2[i]
+            for i in range(len(sampled_keys)):
+                self.sample_errors[sampled_keys[i]] = cov[i, i] ** 0.5
+                tests[0][i] = mean[i]
+                tests[1][i] = mean2[i]
 
                 counts, bins = np.histogram(samples[:, i], bins=100, weights=weights)
                 mi = np.argmax(counts)
-                tests[4][freekeys[i]] = bins[mi] + 0.5 * np.mean(np.diff(bins))
+                tests[4][i] = bins[mi] + 0.5 * np.mean(np.diff(bins))
 
                 # finds median and +- 2sigma, will vary from mode if non-gaussian
-                self.quantiles[freekeys[i]] = dynesty.utils.quantile(self.results.samples[:, i], [0.025, 0.5, 0.975],
-                                                                     weights=weights)
-                tests[2][freekeys[i]] = self.quantiles[freekeys[i]][1]
+                self.sample_quantiles[sampled_keys[i]] = dynesty.utils.quantile(
+                    self.results.samples[:, i],
+                    [0.025, 0.5, 0.975],
+                    weights=weights,
+                )
+                tests[2][i] = self.sample_quantiles[sampled_keys[i]][1]
 
             # find minimum near weighted mean
-            mask = (samples[:, 0] < self.parameters[freekeys[0]] + 2 * self.errors[freekeys[0]]) & (
-                    samples[:, 0] > self.parameters[freekeys[0]] - 2 * self.errors[freekeys[0]])
+            mask = (samples[:, 0] < mean[0] + 2 * self.sample_errors[sampled_keys[0]]) & (
+                    samples[:, 0] > mean[0] - 2 * self.sample_errors[sampled_keys[0]])
             bi = np.argmin(self.weights[mask])
 
-            for i in range(len(freekeys)):
-                tests[3][freekeys[i]] = samples[mask][bi, i]
+            for i in range(len(sampled_keys)):
+                tests[3][i] = samples[mask][bi, i]
                 # tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
 
             # find best fit from chi2 minimization
             chis = []
+            physical_tests = []
             for i in range(len(tests)):
-                lightcurve = transit(self.time, tests[i])
+                test_values = physical_from_sample_point(tests[i])
+                lightcurve = transit(self.time, test_values)
                 if self._has_free_flux_baseline():
-                    flux_scale = get_flux_baseline(tests[i])
+                    flux_scale = get_flux_baseline(test_values)
                 else:
                     flux_scale = mc_a1(
-                        tests[i].get('a2', 0),
+                        test_values.get('a2', 0),
                         self.errors.get('a2', 1e-6),
                         lightcurve,
                         self.airmass,
                         self.data,
                         self.dataerr,
                     )[0]
-                tests[i]['a0'] = flux_scale
-                tests[i]['a1'] = flux_scale
-                airmass = flux_scale * np.exp(tests[i].get('a2', 0) * self.airmass)
+                test_values['a0'] = flux_scale
+                test_values['a1'] = flux_scale
+                airmass = flux_scale * np.exp(test_values.get('a2', 0) * self.airmass)
                 residuals = self.data - (lightcurve * airmass)
                 chis.append(np.sum(residuals ** 2))
+                physical_tests.append(test_values)
 
             mi = np.argmin(chis)
-            self.parameters = copy.deepcopy(tests[mi])
+            self.parameters = copy.deepcopy(physical_tests[mi])
+            self.sample_bounds = self._get_sample_bounds(bound_keys, self.parameters)
+            self.sample_parameters = {key: tests[mi][i] for i, key in enumerate(sampled_keys)}
+
+            for bound_key, sampled_key in zip(bound_keys, sampled_keys):
+                if bound_key == 'inc' and sampled_key == 'b':
+                    continue
+                self.errors[bound_key] = self.sample_errors[sampled_key]
+                self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
+
+            if 'inc' in bound_keys and 'b' in sampled_keys:
+                inc_samples = np.array([
+                    physical_from_sample_point(point)['inc']
+                    for point in samples
+                ])
+                center, std, quantiles = self._summarize_derived_parameter(inc_samples, self.parameters['inc'])
+                self.parameters['inc'] = center
+                self.errors['inc'] = std
+                self.quantiles['inc'] = quantiles
+            else:
+                for key in sampled_keys:
+                    self.sample_errors.setdefault(key, 0.0)
+                    self.sample_quantiles.setdefault(key, [0, 0, 0])
+
+        if not self.sample_parameters:
+            self.sample_parameters = {
+                key: self.parameters.get(key, self.sample_parameters.get(key))
+                for key in self.sampled_keys
+            }
+        for bound_key, sampled_key in zip(bound_keys, sampled_keys):
+            if sampled_key not in self.sample_errors and bound_key in self.errors:
+                self.sample_errors[sampled_key] = self.errors[bound_key]
+            if sampled_key not in self.sample_quantiles and bound_key in self.quantiles:
+                self.sample_quantiles[sampled_key] = self.quantiles[bound_key]
 
         # final model
         self.create_fit_variables()
@@ -629,88 +973,55 @@ class lc_fitter(object):
         return f, axs
 
     def plot_triangle(self):
-        if self.ns_type == 'ultranest':
-            ranges = []
-            mask1 = np.ones(len(self.results['weighted_samples']['logl']), dtype=bool)
-            mask2 = np.ones(len(self.results['weighted_samples']['logl']), dtype=bool)
-            mask3 = np.ones(len(self.results['weighted_samples']['logl']), dtype=bool)
-            titles = []
-            labels = []
-            flabels = {
-                'rprs': r'R$_{p}$/R$_{s}$',
-                'per': r'Period [day]',
-                'tmid': r'T$_{mid}$',
-                'ars': r'a/R$_{s}$',
-                'inc': r'Inc. [deg]',
-                'u1': r'u$_1$',
-                'fpfs': r'F$_{p}$/F$_{s}$',
-                'omega': r'$\omega$ [deg]',
-                'mplanet': r'M$_{p}$ [M$_{\oplus}$]',
-                'mstar': r'M$_{s}$ [M$_{\odot}$]',
-                'ecc': r'$e$',
-                'c0': r'$c_0$',
-                'c1': r'$c_1$',
-                'c2': r'$c_2$',
-                'c3': r'$c_3$',
-                'c4': r'$c_4$',
-                'a0': r'$a_0$',
-                'a1': r'$a_1$',
-                'a2': r'$a_2$'
-            }
-            for i, key in enumerate(self.quantiles):
-                labels.append(flabels.get(key, key))
-                titles.append(f"{self.parameters[key]:.5f} +- {self.errors[key]:.5f}")
-                ranges.append([
-                    self.parameters[key] - 5 * self.errors[key],
-                    self.parameters[key] + 5 * self.errors[key]
-                ])
+        payload = self._get_triangle_plot_payload()
+        chi2 = payload['display_logl'] * -2
+        mask1 = np.ones(len(chi2), dtype=bool)
+        mask2 = np.ones(len(chi2), dtype=bool)
+        mask3 = np.ones(len(chi2), dtype=bool)
 
-                if key in ('a0', 'a1', 'a2'):
-                    continue
+        for i, key in enumerate(payload['sampled_keys']):
+            if key in ('a0', 'a1', 'a2'):
+                continue
 
-                mask3 = mask3 & \
-                    (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - 3 * self.errors[key])) & \
-                    (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + 3 * self.errors[key]))
+            center = payload['mask_centers'][i]
+            error = payload['mask_errors'][i]
+            if not np.isfinite(center) or not np.isfinite(error) or error <= 0:
+                continue
 
-                mask1 = mask1 & \
-                    (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - self.errors[key])) & \
-                    (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + self.errors[key]))
+            values = payload['mask_values'][:, i]
+            mask3 = mask3 & (values > (center - 3 * error)) & (values < (center + 3 * error))
+            mask1 = mask1 & (values > (center - error)) & (values < (center + error))
+            mask2 = mask2 & (values > (center - 2 * error)) & (values < (center + 2 * error))
 
-                mask2 = mask2 & \
-                    (self.results['weighted_samples']['points'][:, i] > (self.parameters[key] - 2 * self.errors[key])) & \
-                    (self.results['weighted_samples']['points'][:, i] < (self.parameters[key] + 2 * self.errors[key]))
+        if not np.any(mask1):
+            mask1 = np.ones(len(chi2), dtype=bool)
+        if not np.any(mask2):
+            mask2 = np.ones(len(chi2), dtype=bool)
+        if not np.any(mask3):
+            mask3 = np.ones(len(chi2), dtype=bool)
 
-            chi2 = self.results['weighted_samples']['logl'] * -2
-            fig = corner(self.results['weighted_samples']['points'],
-                         labels=labels,
-                         bins=int(np.sqrt(self.results['samples'].shape[0])),
-                         range=ranges,
-                         # quantiles=(0.1, 0.84),
-                         plot_contours=True,
-                         levels=[np.percentile(chi2[mask1], 95), np.percentile(chi2[mask2], 95),
-                                 np.percentile(chi2[mask3], 95)],
-                         plot_density=False,
-                         titles=titles,
-                         data_kwargs={
-                             'c': chi2,
-                             'vmin': np.percentile(chi2[mask3], 1),
-                             'vmax': np.percentile(chi2[mask3], 95),
-                             'cmap': 'viridis'
-                         },
-                         label_kwargs={
-                             'labelpad': 15,
-                         },
-                         hist_kwargs={
-                             'color': 'black',
-                         }
-                         )
-        else:
-            fig, axs = dynesty.plotting.cornerplot(self.results, labels=list(self.bounds.keys()),
-                                                   quantiles_2d=[0.4, 0.85],
-                                                   smooth=0.015, show_titles=True, use_math_text=True, title_fmt='.2e',
-                                                   hist2d_kwargs={ 'fill_contours': False})
-            dynesty.plotting.cornerpoints(self.results, labels=list(self.bounds.keys()),
-                                          fig=[fig, axs[1:, :-1]], plot_kwargs={'alpha': 0.1, 'zorder': 1, })
+        fig = corner(payload['display_points'],
+                     labels=payload['labels'],
+                     bins=int(np.sqrt(payload['display_points'].shape[0])),
+                     range=payload['ranges'],
+                     plot_contours=True,
+                     levels=[np.percentile(chi2[mask1], 95), np.percentile(chi2[mask2], 95),
+                             np.percentile(chi2[mask3], 95)],
+                     plot_density=False,
+                     titles=payload['titles'],
+                     data_kwargs={
+                         'c': chi2,
+                         'vmin': np.percentile(chi2[mask3], 1),
+                         'vmax': np.percentile(chi2[mask3], 95),
+                         'cmap': 'viridis'
+                     },
+                     label_kwargs={
+                         'labelpad': 15,
+                     },
+                     hist_kwargs={
+                         'color': 'black',
+                     }
+                     )
         return fig
 
 # simultaneously fit multiple data sets with global and local parameters

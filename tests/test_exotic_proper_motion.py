@@ -86,16 +86,26 @@ from exotic.exotic import (
     auto_tune_aperture_sigma_grid,
     check_coordinates,
     cheap_lightcurve_prescore,
+    comparison_star_coverage_summary,
     comparison_star_stability_summary,
+    detrend_flux_on_out_of_transit_baseline,
     fit_lightcurve,
+    fit_final_lightcurve_with_oot_baseline_detrending,
+    fit_lightcurve_to_every_comparison_candidate,
     is_adaptive_aperture_mode_enabled,
     is_comp_star_required,
+    is_out_of_transit_baseline_detrending_enabled,
     is_target_driven_comp_selection_enabled,
+    log_comparison_candidate_fit_summaries,
     phase_bin_sigma_clip,
     representative_psf_sigma,
     resolve_frame_aperture_radii,
     summarize_adaptive_aperture_usage,
     should_skip_airmass_fit,
+    should_fit_lightcurve_to_every_comparison_candidate,
+    should_use_aperture_photometry,
+    should_use_psf_photometry,
+    should_skip_low_comparison_coverage_rejection,
     should_use_fast_target_centroid,
     update_coordinates_with_proper_motion,
 )
@@ -175,6 +185,37 @@ def test_is_target_driven_comp_selection_enabled_parses_values():
     assert is_target_driven_comp_selection_enabled(None) is False
     assert is_target_driven_comp_selection_enabled("y") is True
     assert is_target_driven_comp_selection_enabled("n") is False
+
+
+def test_should_skip_low_comparison_coverage_rejection_parses_values():
+    assert should_skip_low_comparison_coverage_rejection(None) is False
+    assert should_skip_low_comparison_coverage_rejection("y") is True
+    assert should_skip_low_comparison_coverage_rejection("n") is False
+
+
+def test_should_fit_lightcurve_to_every_comparison_candidate_parses_values():
+    assert should_fit_lightcurve_to_every_comparison_candidate(None) is False
+    assert should_fit_lightcurve_to_every_comparison_candidate("y") is True
+    assert should_fit_lightcurve_to_every_comparison_candidate("n") is False
+
+
+def test_is_out_of_transit_baseline_detrending_enabled_parses_values():
+    assert is_out_of_transit_baseline_detrending_enabled(None) is True
+    assert is_out_of_transit_baseline_detrending_enabled("y") is True
+    assert is_out_of_transit_baseline_detrending_enabled("n") is False
+    assert is_out_of_transit_baseline_detrending_enabled(True) is True
+
+
+def test_should_use_psf_photometry_parses_values():
+    assert should_use_psf_photometry(None) is True
+    assert should_use_psf_photometry("y") is True
+    assert should_use_psf_photometry("n") is False
+
+
+def test_should_use_aperture_photometry_parses_values():
+    assert should_use_aperture_photometry(None) is True
+    assert should_use_aperture_photometry("y") is True
+    assert should_use_aperture_photometry("n") is False
 
 
 def test_is_adaptive_aperture_mode_enabled_parses_values():
@@ -268,6 +309,216 @@ def test_auto_tune_aperture_grid_uses_comparison_field_consistency():
     assert best_candidate["comp_index"] in (0, 1)
 
 
+def test_fit_lightcurve_to_every_comparison_candidate_uses_selected_aperture(monkeypatch):
+    calls = []
+
+    class DummyFit:
+        def __init__(self, size):
+            self.residuals = np.full(size, 0.01)
+            self.data = np.ones(size)
+
+    def fake_fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
+        calls.append({
+            "times": np.asarray(times),
+            "tflux": np.asarray(tflux),
+            "cflux": np.asarray(cflux),
+            "jd_times": np.asarray(jd_times),
+            "kwargs": dict(kwargs),
+        })
+        return DummyFit(len(times)), np.asarray(tflux), np.asarray(cflux)
+
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+
+    times = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    jd_times = np.array([11.0, 12.0, 13.0, 14.0, 15.0, 16.0])
+    airmass = np.array([1.1, 1.2, 1.3, 1.4, 1.5, 1.6])
+    aper_data = {
+        "target": np.array([
+            [[1.0], [10.0]],
+            [[2.0], [11.0]],
+            [[3.0], [12.0]],
+            [[4.0], [13.0]],
+            [[5.0], [14.0]],
+            [[6.0], [15.0]],
+        ]),
+        "comp1": np.array([
+            [[4.0], [20.0]],
+            [[5.0], [np.nan]],
+            [[6.0], [22.0]],
+            [[7.0], [23.0]],
+            [[8.0], [24.0]],
+            [[9.0], [25.0]],
+        ]),
+        "comp2": np.array([
+            [[7.0], [30.0]],
+            [[8.0], [31.0]],
+            [[9.0], [32.0]],
+            [[10.0], [33.0]],
+            [[11.0], [34.0]],
+            [[12.0], [35.0]],
+        ]),
+    }
+    photometry_info = {
+        "best_fit_lc": object(),
+        "comp_star_num": 2,
+        "min_aperture": 5.0,
+        "min_annulus": 12.0,
+        "aperture_index": 1,
+        "annulus_index": 0,
+    }
+
+    candidate_fits = fit_lightcurve_to_every_comparison_candidate(
+        times,
+        jd_times,
+        airmass,
+        ld=np.array([0.1, 0.2, 0.3, 0.4]),
+        p_dict={"rprs": 0.1},
+        comp_stars=[[100, 200], [300, 400]],
+        psf_data={},
+        aper_data=aper_data,
+        photometry_info=photometry_info,
+    )
+
+    assert len(candidate_fits) == 2
+    assert candidate_fits[0]["selected"] is False
+    assert candidate_fits[1]["selected"] is True
+    assert calls[0]["kwargs"]["final_fit_mode"] == "ns"
+    assert calls[1]["kwargs"]["final_fit_mode"] == "ns"
+    np.testing.assert_array_equal(calls[0]["times"], np.array([1.0, 3.0, 4.0, 5.0, 6.0]))
+    np.testing.assert_array_equal(calls[0]["tflux"], np.array([10.0, 12.0, 13.0, 14.0, 15.0]))
+    np.testing.assert_array_equal(calls[0]["cflux"], np.array([20.0, 22.0, 23.0, 24.0, 25.0]))
+    np.testing.assert_array_equal(calls[0]["jd_times"], np.array([11.0, 13.0, 14.0, 15.0, 16.0]))
+    np.testing.assert_array_equal(calls[1]["times"], np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
+    np.testing.assert_array_equal(calls[1]["tflux"], np.array([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]))
+    np.testing.assert_array_equal(calls[1]["cflux"], np.array([30.0, 31.0, 32.0, 33.0, 34.0, 35.0]))
+
+
+def test_fit_lightcurve_to_every_comparison_candidate_records_sparse_candidate_failure(monkeypatch):
+    calls = []
+
+    class DummyFit:
+        def __init__(self, size):
+            self.residuals = np.full(size, 0.01)
+            self.data = np.ones(size)
+
+    def fake_fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
+        calls.append({
+            "times": np.asarray(times),
+            "tflux": np.asarray(tflux),
+            "cflux": np.asarray(cflux),
+            "jd_times": np.asarray(jd_times),
+            "kwargs": dict(kwargs),
+        })
+        return DummyFit(len(times)), np.asarray(tflux), np.asarray(cflux)
+
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+
+    times = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    jd_times = np.array([11.0, 12.0, 13.0, 14.0, 15.0, 16.0])
+    airmass = np.array([1.1, 1.2, 1.3, 1.4, 1.5, 1.6])
+    aper_data = {
+        "target": np.array([
+            [[10.0]],
+            [[11.0]],
+            [[12.0]],
+            [[13.0]],
+            [[14.0]],
+            [[15.0]],
+        ]),
+        "comp1": np.array([
+            [[20.0]],
+            [[np.nan]],
+            [[np.nan]],
+            [[np.nan]],
+            [[np.nan]],
+            [[np.nan]],
+        ]),
+        "comp2": np.array([
+            [[30.0]],
+            [[31.0]],
+            [[32.0]],
+            [[33.0]],
+            [[34.0]],
+            [[35.0]],
+        ]),
+    }
+    photometry_info = {
+        "best_fit_lc": object(),
+        "comp_star_num": 2,
+        "min_aperture": 5.0,
+        "min_annulus": 12.0,
+        "aperture_index": 0,
+        "annulus_index": 0,
+    }
+
+    candidate_fits = fit_lightcurve_to_every_comparison_candidate(
+        times,
+        jd_times,
+        airmass,
+        ld=np.array([0.1, 0.2, 0.3, 0.4]),
+        p_dict={"rprs": 0.1},
+        comp_stars=[[100, 200], [300, 400]],
+        psf_data={},
+        aper_data=aper_data,
+        photometry_info=photometry_info,
+    )
+
+    assert len(calls) == 1
+    assert candidate_fits[0]["fit"] is None
+    assert candidate_fits[0]["coverage_rejected"] is True
+    assert candidate_fits[0]["fit_diagnostics"]["failed_stage"] == "coverage"
+    assert "low-coverage clipping" in candidate_fits[0]["failure_reason"]
+    assert candidate_fits[1]["fit"] is not None
+    assert candidate_fits[1]["coverage_rejected"] is False
+    assert candidate_fits[1]["failure_reason"] is None
+    assert calls[0]["kwargs"]["final_fit_mode"] == "ns"
+
+
+def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
+    logged = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, warn=False, error=False: logged.append(message))
+
+    candidate_fit_summaries = [
+        {
+            "label": "Comp 1",
+            "position": [100, 200],
+            "selected": False,
+            "fit": None,
+            "res_std": np.inf,
+            "coverage_count": 1,
+            "coverage_reference_count": 3.0,
+            "coverage_min_required_count": 2,
+            "fit_point_count": 0,
+            "fit_diagnostics": {"usable_point_count": 0},
+            "failure_reason": "comparison candidate rejected after iterative low-coverage clipping (1 < 2 valid frame(s); peer median=3.0).",
+        },
+        {
+            "label": "Comp 2",
+            "position": [300, 400],
+            "selected": True,
+            "fit": object(),
+            "res_std": 0.01,
+            "coverage_count": 3,
+            "coverage_reference_count": 3.0,
+            "coverage_min_required_count": 2,
+            "fit_point_count": 3,
+            "fit_diagnostics": {"usable_point_count": 3},
+            "failure_reason": None,
+            "parameter_summary": "fit_method=ultranest, Tmid=1.0 +/- 0.1",
+        },
+    ]
+
+    log_comparison_candidate_fit_summaries(
+        candidate_fit_summaries,
+        {"selection_basis": "comparison_field", "comp_star_num": 2, "min_std": 0.01},
+    )
+
+    assert any("Selection basis: comparison-field" in message for message in logged)
+    assert any("Comp 1" in message and "reason=comparison candidate rejected after iterative low-coverage clipping" in message for message in logged)
+    assert any("Comp 2 [selected]" in message and "comparison-field calibration ranked this star best" in message for message in logged)
+    assert any("parameters: fit_method=ultranest" in message for message in logged)
+
+
 def test_comparison_star_stability_summary_penalizes_variable_candidates():
     airmass = np.linspace(1.0, 1.5, 6)
     summary = comparison_star_stability_summary(
@@ -282,6 +533,60 @@ def test_comparison_star_stability_summary_penalizes_variable_candidates():
     assert np.isfinite(summary["field_score"])
     assert summary["best_comp_index"] in (0, 1)
     assert summary["comp_summaries"][2]["aggregate_score"] > summary["comp_summaries"][0]["aggregate_score"]
+
+
+def test_comparison_star_coverage_summary_rejects_sparse_candidates():
+    coverage = comparison_star_coverage_summary(
+        {
+            "comp1": np.array([100.0, 101.0, 100.5, 101.5, 100.8, 101.2]),
+            "comp2": np.array([80.0, 80.8, 80.4, 81.0, 80.6, 80.9]),
+            "comp3": np.array([60.0, np.nan, np.nan, np.nan, np.nan, 60.3]),
+        }
+    )
+
+    assert not coverage["comp1"]["coverage_rejected"]
+    assert not coverage["comp2"]["coverage_rejected"]
+    assert coverage["comp3"]["coverage_rejected"]
+    assert coverage["comp3"]["coverage_count"] == 2
+
+
+def test_comparison_star_coverage_summary_iteratively_rejects_low_count_tail():
+    coverage = comparison_star_coverage_summary(
+        {
+            "comp1": np.array([10.0] * 10),
+            "comp2": np.array([11.0] * 10),
+            "comp3": np.array([12.0] * 10),
+            "comp4": np.array([13.0] * 7 + [np.nan] * 3),
+            "comp5": np.array([14.0] * 6 + [np.nan] * 4),
+            "comp6": np.array([15.0] + [np.nan] * 9),
+        }
+    )
+
+    assert not coverage["comp1"]["coverage_rejected"]
+    assert not coverage["comp2"]["coverage_rejected"]
+    assert not coverage["comp3"]["coverage_rejected"]
+    assert coverage["comp4"]["coverage_rejected"]
+    assert coverage["comp5"]["coverage_rejected"]
+    assert coverage["comp6"]["coverage_rejected"]
+    assert coverage["comp1"]["coverage_reference_count"] == pytest.approx(10.0)
+    assert coverage["comp1"]["coverage_min_required_count"] == 8
+
+
+def test_comparison_star_stability_summary_rejects_low_coverage_candidates():
+    airmass = np.linspace(1.0, 1.5, 6)
+    summary = comparison_star_stability_summary(
+        {
+            "comp1": np.array([100.0, 101.0, 100.5, 101.5, 100.8, 101.2]),
+            "comp2": np.array([80.0, 80.8, 80.4, 81.0, 80.6, 80.9]),
+            "comp3": np.array([60.0, np.nan, np.nan, np.nan, np.nan, 60.3]),
+        },
+        airmass,
+    )
+
+    assert np.isfinite(summary["field_score"])
+    assert summary["best_comp_index"] in (0, 1)
+    assert summary["comp_summaries"][2]["coverage_rejected"]
+    assert np.isinf(summary["comp_summaries"][2]["aggregate_score"])
 
 
 def test_cheap_lightcurve_prescore_ignores_relative_flux_above_two():
@@ -310,6 +615,81 @@ def test_should_skip_airmass_fit_when_airmass_span_is_small():
     assert should_skip_airmass_fit(airmass)
 
 
+def test_detrend_flux_on_out_of_transit_baseline_removes_linear_slope():
+    times = np.array([-2.0, -1.0, -0.25, 0.0, 0.25, 1.0, 2.0])
+    baseline = 1.0 + 0.02 * times
+    transit_profile = np.array([1.0, 1.0, 1.0, 0.99, 1.0, 1.0, 1.0])
+    flux = baseline * transit_profile
+    fluxerr = np.full_like(times, 0.01)
+    fit = types.SimpleNamespace(
+        transit=transit_profile,
+        parameters={"tmid": 0.0},
+    )
+
+    result = detrend_flux_on_out_of_transit_baseline(times, flux, fluxerr, fit)
+
+    assert result["applied"] is True
+    assert np.allclose(result["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
+    assert result["flux"][3] == pytest.approx(0.99, abs=1e-8)
+    assert result["slope"] == pytest.approx(0.02, abs=1e-8)
+
+
+def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened_flux(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    times = np.array([-2.0, -1.0, -0.25, 0.0, 0.25, 1.0, 2.0])
+    flux = (1.0 + 0.02 * times) * np.array([1.0, 1.0, 1.0, 0.99, 1.0, 1.0, 1.0])
+    fluxerr = np.full_like(times, 0.01)
+    airmass = np.ones_like(times)
+    prior = {"rprs": 0.1, "tmid": 0.0, "inc": 89.0, "a2": 0.0}
+    bounds = {"rprs": [0.0, 0.2], "tmid": [-0.1, 0.1], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]}
+
+    captured = {"calls": []}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        captured["calls"].append(np.array(call_flux, dtype=float))
+        return types.SimpleNamespace(
+            transit=np.array([1.0, 1.0, 1.0, 0.99, 1.0, 1.0, 1.0]),
+            parameters={"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a2": 0.01},
+            data=np.array(call_flux, dtype=float),
+            residuals=np.zeros_like(call_flux, dtype=float),
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit, refit_flux, refit_unc = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        skip_airmass_fit=False,
+        disable_vertical_flux_normalization=False,
+        detrend_on_outoftransit_baseline=True,
+    )
+
+    assert len(captured["calls"]) == 2
+    assert np.allclose(captured["calls"][0], flux)
+    assert np.allclose(captured["calls"][1][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
+    assert refit_flux[3] == pytest.approx(0.99, abs=1e-8)
+    assert np.allclose(refit_unc[[0, 1, 2, 4, 5, 6]], 0.01 / (1.0 + 0.02 * times[[0, 1, 2, 4, 5, 6]]))
+    assert fit.oot_baseline_detrending_applied is True
+    assert fit.oot_baseline_pre_points == 3
+    assert fit.oot_baseline_post_points == 3
+
+
 def test_phase_bin_sigma_clip_flags_local_phase_outlier():
     phase_centers = np.linspace(-0.045, 0.045, 10)
     phase = np.concatenate([center + np.linspace(-1e-4, 1e-4, 5) for center in phase_centers])
@@ -326,7 +706,17 @@ def test_phase_bin_sigma_clip_flags_local_phase_outlier():
 def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
     captured = {}
 
-    def fake_lc_fitter(times, fluxes, flux_unc, airmass, prior, bounds, jd_times=None, mode=None):
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
         captured["times"] = np.array(times)
         captured["fluxes"] = np.array(fluxes)
         captured["flux_unc"] = np.array(flux_unc)
@@ -367,10 +757,56 @@ def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
     assert np.allclose(fit_cflux, 2.0)
 
 
+def test_fit_lightcurve_rejects_undersampled_series(monkeypatch):
+    called = {"count": 0}
+
+    def fake_lc_fitter(*args, **kwargs):
+        called["count"] += 1
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.sigma_clip", lambda data, sigma=3, dt=21, po=2: np.zeros(len(data), dtype=bool))
+
+    times = np.linspace(0.0, 0.03, 4)
+    tflux = np.full(times.shape[0], 2.0)
+    cflux = np.full(times.shape[0], 2.0)
+    airmass = np.linspace(1.0, 1.3, times.shape[0])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+
+    myfit, fit_tflux, fit_cflux = fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times)
+
+    assert myfit is None
+    assert fit_tflux is None
+    assert fit_cflux is None
+    assert called["count"] == 0
+
+
 def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
     captured_calls = []
 
-    def fake_lc_fitter(times, fluxes, flux_unc, airmass, prior, bounds, jd_times=None, mode=None):
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
         call_index = len(captured_calls)
         captured_calls.append({
             "times": np.array(times),
@@ -426,10 +862,125 @@ def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
     assert len(fit_cflux) == 7
 
 
+def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
+    captured_modes = []
+
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        captured_modes.append(mode)
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.sigma_clip", lambda data, sigma=3, dt=21, po=2: np.zeros(len(data), dtype=bool))
+
+    times = np.linspace(0.0, 0.05, 6)
+    tflux = np.full(times.shape[0], 2.0)
+    cflux = np.full(times.shape[0], 2.0)
+    airmass = np.linspace(1.0, 1.5, times.shape[0])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+
+    myfit, _, _ = fit_lightcurve(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times,
+        final_fit_mode="ns",
+    )
+
+    assert myfit is not None
+    assert captured_modes == ["lm", "ns"]
+
+
+def test_fit_lightcurve_can_disable_impact_parameter_parameterization(monkeypatch):
+    captured = {"flags": []}
+
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        captured["flags"].append(use_impactparameter_rather_than_inclination_to_fit)
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.sigma_clip", lambda data, sigma=3, dt=21, po=2: np.zeros(len(data), dtype=bool))
+
+    times = np.linspace(0.0, 0.05, 6)
+    tflux = np.full(times.shape[0], 2.0)
+    cflux = np.full(times.shape[0], 2.0)
+    airmass = np.linspace(1.0, 1.5, times.shape[0])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+
+    fit_lightcurve(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times,
+        use_impactparameter_rather_than_inclination_to_fit=False,
+    )
+
+    assert captured["flags"] == [False]
+
+
 def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatch):
     captured = {}
 
-    def fake_lc_fitter(times, fluxes, flux_unc, airmass, prior, bounds, jd_times=None, mode=None):
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
         captured["bounds"] = dict(bounds)
         captured["airmass"] = np.array(airmass)
         return types.SimpleNamespace()

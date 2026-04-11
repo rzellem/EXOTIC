@@ -209,7 +209,12 @@ class Inputs:
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
-            'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0
+            'detrend_on_outoftransit_baseline': True,
+            'use_impactparameter_rather_than_inclination_to_fit': 'y',
+            'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
+            'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0,
+            'skip_low_comparison_coverage_rejection': 'n',
+            'fit_lightcurve_to_every_comparison_candidate': 'n',
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -418,10 +423,36 @@ class Inputs:
                 'disable vertical flux normalization',
                 'Disable vertical flux normalization',
             ),
+            'detrend_on_outoftransit_baseline': (
+                'detrend_on_outoftransit_baseline',
+                'Detrend on Out-of-Transit Baseline',
+                'detrend_on_out_of_transit_baseline',
+            ),
+            'use_impactparameter_rather_than_inclination_to_fit': (
+                'use_impactparameter_rather_than_inclination_to_fit',
+                'Use impact parameter rather than inclination to fit? (y/n)',
+                'Use Impact Parameter Rather Than Inclination To Fit? (y/n)',
+            ),
+            'use_psf_photometry': (
+                'use_psf_photometry',
+                'Use PSF Photometry? (y/n)',
+            ),
+            'use_aperture_photometry': (
+                'use_aperture_photometry',
+                'Use Aperture Photometry? (y/n)',
+            ),
             'use_adaptive_apertures': (
                 'use_adaptive_apertures',
                 'Use Adaptive Apertures? (y/n)',
                 'Use Adaptive Apertures (y/n)',
+            ),
+            'skip_low_comparison_coverage_rejection': (
+                'skip_low_comparison_coverage_rejection',
+                'Skip Low Comparison Coverage Rejection? (y/n)',
+            ),
+            'fit_lightcurve_to_every_comparison_candidate': (
+                'fit_lightcurve_to_every_comparison_candidate',
+                'Fit Lightcurve to Every Comparison Candidate? (y/n)',
             ),
             'bad_wcs_threshold_percent': (
                 'bad_wcs_threshold_percent',

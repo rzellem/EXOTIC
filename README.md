@@ -161,6 +161,12 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Maximum Wavelength (nm)": null,
 
             "Fast Aperture Mask (y/n)": true,
+            "use_psf_photometry": "y",
+            "use_aperture_photometry": "y",
+            "skip_low_comparison_coverage_rejection": "n",
+            "fit_lightcurve_to_every_comparison_candidate": "n",
+            "detrend_on_outoftransit_baseline": true,
+            "use_impactparameter_rather_than_inclination_to_fit": "y",
             "Use target-driven comp selection rather than comp-driven comp selection": "n",
             "require_comp_star": "y",
 

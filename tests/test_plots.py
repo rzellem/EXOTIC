@@ -2,9 +2,15 @@ import matplotlib
 matplotlib.use("Agg")
 
 import numpy as np
+import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
-from exotic.plots import plot_adaptive_aperture_diagnostics, plot_obs_stats
+from exotic.plots import (
+    plot_adaptive_aperture_diagnostics,
+    plot_comp_star_candidate_lightcurve_fits,
+    plot_individual_comp_star_calibration_series,
+    plot_obs_stats,
+)
 
 
 class DummyFit:
@@ -48,6 +54,42 @@ def test_plot_obs_stats_applies_relative_flux_mask(tmp_path, monkeypatch):
     assert (tmp_path / "temp" / "Observing_Statistics_target_2026-03-09.png").exists()
 
 
+def test_plot_obs_stats_uses_supplied_background_series(tmp_path, monkeypatch):
+    fit = DummyFit()
+    psf_rows = np.arange(35, dtype=float).reshape(5, 7)
+    psf = {"target": psf_rows}
+    si = np.array([2, 0, 4, 1, 3])
+    gi = np.array([True, False, True, True, True])
+    relative_flux_mask = np.array([True, False, True, True])
+    background_series = {"target": np.array([100.0, 200.0, 300.0, 400.0, 500.0])}
+    captured = []
+
+    original_plot = Axes.plot
+
+    def spy_plot(self, x, y, *args, **kwargs):
+        captured.append((np.asarray(x), np.asarray(y)))
+        return original_plot(self, x, y, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", spy_plot)
+
+    plot_obs_stats(
+        fit,
+        [],
+        psf,
+        si,
+        gi,
+        "Target",
+        str(tmp_path),
+        "2026-03-09",
+        relative_flux_mask=relative_flux_mask,
+        background_series=background_series,
+    )
+
+    assert len(captured) >= 6
+    np.testing.assert_array_equal(captured[5][0], fit.time)
+    np.testing.assert_array_equal(captured[5][1], np.array([300.0, 200.0, 400.0]))
+
+
 def test_plot_adaptive_aperture_diagnostics_writes_outputs(tmp_path):
     plot_adaptive_aperture_diagnostics(
         times=np.array([1.0, 2.0, 3.0]),
@@ -64,3 +106,59 @@ def test_plot_adaptive_aperture_diagnostics_writes_outputs(tmp_path):
 
     assert (tmp_path / "temp" / "AdaptiveApertureDiagnostics_Target_2026-03-09.png").exists()
     assert (tmp_path / "temp" / "AdaptiveApertureDiagnostics_Target_2026-03-09.pdf").exists()
+
+
+def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
+    plot_individual_comp_star_calibration_series(
+        times=np.array([1.0, 2.0, 3.0]),
+        comp_summaries=[
+            {
+                "label": "Comp 1",
+                "selected": True,
+                "aggregate_score": 0.0012,
+                "pairwise_ratio_series": {"vs 2": np.array([1.0, 1.01, 0.99])},
+                "ensemble_ratio_series": np.array([1.0, 1.005, 0.995]),
+            },
+            {
+                "label": "Comp 2",
+                "selected": False,
+                "aggregate_score": 0.0025,
+                "pairwise_ratio_series": {"vs 1": np.array([0.99, 1.0, 1.01])},
+                "ensemble_ratio_series": np.array([0.995, 1.0, 1.005]),
+            },
+        ],
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+        method_label="PSF photometry",
+    )
+
+    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.png").exists()
+    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.png").exists()
+    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.pdf").exists()
+
+
+def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
+    class DummyCandidateFit:
+        def plot_bestfit(self, phase=False):
+            fig, axes = plt.subplots(2, 1)
+            return fig, axes
+
+    plot_comp_star_candidate_lightcurve_fits(
+        candidate_fit_summaries=[
+            {"label": "Comp 1", "selected": True, "fit": DummyCandidateFit(), "res_std": 0.0012},
+            {"label": "Comp 2", "selected": False, "fit": DummyCandidateFit(), "res_std": 0.0025},
+            {"label": "Comp 3", "selected": False, "fit": None, "res_std": np.inf},
+        ],
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+        method_label="Aperture photometry (aper=5.00px, annulus=12.00px)",
+    )
+
+    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.png").exists()
+    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.png").exists()
+    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.pdf").exists()
+    assert not (tmp_path / "temp" / "CompStarLightCurveFit_Comp3_Target_2026-03-09.png").exists()

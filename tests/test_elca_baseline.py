@@ -2,6 +2,7 @@ import importlib
 import sys
 import types
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
@@ -89,6 +90,32 @@ def test_lc_fitter_recovers_explicit_a0_baseline(monkeypatch, tmp_path):
     assert np.median(fit.detrended[oot_mask]) == pytest.approx(1.0, abs=5e-4)
 
 
+def test_lc_fitter_explicit_a0_tracks_mean_airmass_normalization(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    prior["a2"] = -0.35
+    time = np.linspace(-0.03, 0.03, 301)
+    airmass = np.linspace(1.15, 1.85, len(time))
+    dataerr = np.full_like(time, 1e-3)
+    true_a0 = 0.985
+    data = true_a0 * elca.airmass_trend(prior["a2"], airmass) * elca.transit(time, prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+
+    assert fit.airmass_reference == pytest.approx(np.mean(airmass))
+    assert fit.parameters["a0"] == pytest.approx(true_a0, abs=1e-4)
+    assert fit.parameters["a1"] == pytest.approx(true_a0, abs=1e-4)
+
+
 def test_lc_fitter_auto_solves_baseline_when_a0_is_not_free(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -112,6 +139,31 @@ def test_lc_fitter_auto_solves_baseline_when_a0_is_not_free(monkeypatch, tmp_pat
     assert fit.parameters["a0"] == pytest.approx(1.03, abs=1e-4)
     assert fit.parameters["a1"] == pytest.approx(1.03, abs=1e-4)
     assert np.median(fit.detrended[oot_mask]) == pytest.approx(1.0, abs=5e-4)
+
+
+def test_lc_fitter_auto_solves_mean_airmass_normalization(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    prior["a2"] = 0.22
+    time = np.linspace(-0.03, 0.03, 301)
+    airmass = np.linspace(1.05, 1.75, len(time))
+    dataerr = np.full_like(time, 1e-3)
+    true_a0 = 1.018
+    data = true_a0 * elca.airmass_trend(prior["a2"], airmass) * elca.transit(time, prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005]},
+        mode="lm",
+        verbose=False,
+    )
+
+    assert fit.parameters["a0"] == pytest.approx(true_a0, abs=1e-4)
+    assert fit.parameters["a1"] == pytest.approx(true_a0, abs=1e-4)
 
 
 def test_lc_fitter_rejects_redundant_a0_and_a1_bounds(monkeypatch, tmp_path):
@@ -174,6 +226,9 @@ def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
         captured["points"] = args[0]
         captured["labels"] = kwargs["labels"]
         captured["range"] = kwargs["range"]
+        captured["titles"] = kwargs["titles"]
+        captured["title_kwargs"] = kwargs["title_kwargs"]
+        captured["label_kwargs"] = kwargs["label_kwargs"]
         return "figure"
 
     monkeypatch.setattr(elca, "corner", fake_corner)
@@ -184,6 +239,7 @@ def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
         "inc": [84.0, 90.0],
         "a0": [0.95, 1.05],
     }
+    fit.prior = make_prior()
     fit.quantiles = {"rprs": [], "inc": [], "a0": []}
     fit.parameters = {"rprs": 0.10, "inc": 88.42, "a0": 0.94962}
     fit.errors = {"rprs": 0.01, "inc": 0.75, "a0": 0.00394}
@@ -208,7 +264,7 @@ def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
     fig = fit.plot_triangle()
 
     assert fig == "figure"
-    assert captured["labels"][1] == "Distance from fitted Inc. [deg] (mirrored)"
+    assert captured["labels"][1] == r"$\Delta i$"
     assert captured["range"][0][0] == pytest.approx(0.05)
     assert captured["range"][0][1] == pytest.approx(0.125)
     expected_inc_distance_limit = np.max(np.abs(np.array([84.67, 90.0]) - fit.parameters["inc"]))
@@ -220,6 +276,10 @@ def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
     expected_inc_distance = np.abs(points[:, 1] - fit.parameters["inc"])
     np.testing.assert_allclose(captured["points"][:5, 1], expected_inc_distance)
     np.testing.assert_allclose(captured["points"][5:, 1], -expected_inc_distance)
+    assert captured["titles"][1].startswith("b=")
+    assert "\ni=" in captured["titles"][1]
+    assert captured["title_kwargs"]["loc"] == "left"
+    assert captured["label_kwargs"]["labelpad"] == 10
 
 
 def test_internal_impact_parameter_transform_round_trips_inclination(monkeypatch, tmp_path):
@@ -328,6 +388,8 @@ def test_plot_triangle_uses_mirrored_distance_from_fitted_impact_parameter_axis(
         captured["points"] = args[0]
         captured["labels"] = kwargs["labels"]
         captured["range"] = kwargs["range"]
+        captured["titles"] = kwargs["titles"]
+        captured["label_kwargs"] = kwargs["label_kwargs"]
         return "figure"
 
     monkeypatch.setattr(elca, "corner", fake_corner)
@@ -338,6 +400,7 @@ def test_plot_triangle_uses_mirrored_distance_from_fitted_impact_parameter_axis(
         "inc": [84.0, 90.0],
         "a0": [0.95, 1.05],
     }
+    fit.prior = make_prior()
     fit.sampled_keys = ["rprs", "b", "a0"]
     fit.sample_bounds = {
         "rprs": [0.0, 0.125],
@@ -369,10 +432,163 @@ def test_plot_triangle_uses_mirrored_distance_from_fitted_impact_parameter_axis(
     fig = fit.plot_triangle()
 
     assert fig == "figure"
-    assert captured["labels"][1] == "Distance from fitted b (mirrored)"
+    assert captured["labels"][1] == r"$\Delta b$"
     assert captured["range"][1][0] == pytest.approx(-0.25)
     assert captured["range"][1][1] == pytest.approx(0.25)
     assert captured["points"].shape == (10, 3)
     expected_b_distance = np.abs(points[:, 1] - fit.sample_parameters["b"])
     np.testing.assert_allclose(captured["points"][:5, 1], expected_b_distance)
     np.testing.assert_allclose(captured["points"][5:, 1], -expected_b_distance)
+    assert captured["titles"][1].startswith("b=")
+    assert "\ni=" in captured["titles"][1]
+    assert captured["label_kwargs"]["labelpad"] == 10
+
+
+def test_triangle_payload_tracks_left_and_right_geometry_branches_for_inclination(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.125],
+        "inc": [84.0, 90.0],
+        "a0": [0.95, 1.05],
+    }
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.10, "inc": 88.42, "a0": 0.94962}
+    fit.errors = {"rprs": 0.01, "inc": 0.75, "a0": 0.00394}
+    points = np.array(
+        [
+            [0.099, 88.30, 0.9501],
+            [0.101, 88.55, 0.9502],
+            [0.102, 88.10, 0.9515],
+            [0.098, 88.70, 0.9520],
+            [0.100, 88.40, 0.9508],
+        ]
+    )
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.array([-5.0, -4.0, -4.5, -5.5, -4.2]),
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    np.testing.assert_allclose(
+        payload["geometry_overlay"]["left_mirrored"],
+        np.array([-0.12, -0.32, -0.02, 0.12, 0.32, 0.02]),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        payload["geometry_overlay"]["right_mirrored"],
+        np.array([0.13, 0.28, -0.13, -0.28]),
+        atol=1e-12,
+    )
+
+
+def test_triangle_payload_tracks_left_and_right_geometry_branches_for_impact_parameter(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.125],
+        "inc": [84.0, 90.0],
+        "a0": [0.95, 1.05],
+    }
+    fit.prior = make_prior()
+    fit.sampled_keys = ["rprs", "b", "a0"]
+    fit.sample_bounds = {
+        "rprs": [0.0, 0.125],
+        "b": [0.0, 1.25434156],
+        "a0": [0.95, 1.05],
+    }
+    fit.sample_parameters = {"rprs": 0.10, "b": 0.314, "a0": 0.94962}
+    fit.sample_errors = {"rprs": 0.01, "b": 0.05, "a0": 0.00394}
+    fit.parameters = {"rprs": 0.10, "inc": 88.5, "a0": 0.94962}
+    fit.errors = {"rprs": 0.01, "inc": 0.75, "a0": 0.00394}
+    points = np.array(
+        [
+            [0.099, 0.300, 0.9501],
+            [0.101, 0.330, 0.9502],
+            [0.102, 0.290, 0.9515],
+            [0.098, 0.360, 0.9520],
+            [0.100, 0.314, 0.9508],
+        ]
+    )
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.array([-5.0, -4.0, -4.5, -5.5, -4.2]),
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    np.testing.assert_allclose(
+        payload["geometry_overlay"]["left_mirrored"],
+        np.array([-0.014, -0.024, 0.0, 0.014, 0.024, -0.0]),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        payload["geometry_overlay"]["right_mirrored"],
+        np.array([0.016, 0.046, 0.0, -0.016, -0.046, -0.0]),
+        atol=1e-12,
+    )
+
+
+def test_triangle_geometry_curves_fall_back_to_surviving_branch(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    curves = fit._build_triangle_plot_geometry_curves(
+        {
+            "left_count": 0,
+            "right_count": 4,
+            "left_mirrored": np.array([], dtype=float),
+            "right_mirrored": np.array([0.05, 0.10, 0.15, -0.05, -0.10, -0.15], dtype=float),
+        },
+        [-0.3, 0.3],
+        31,
+    )
+
+    np.testing.assert_allclose(curves["main_curve"], fit._smooth_triangle_plot_counts(curves["right_curve"]))
+    assert np.allclose(curves["left_curve"], 0.0)
+
+
+def test_triangle_geometry_overlay_reuses_shared_title_and_label_kwargs(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fig, axes = plt.subplots(2, 2)
+    payload = {
+        "sampled_keys": ["rprs", "b"],
+        "display_points": np.zeros((10, 2)),
+        "display_spec": {"index": 1},
+        "geometry_overlay": {
+            "index": 1,
+            "left_count": 2,
+            "right_count": 2,
+            "left_mirrored": np.array([-0.1, 0.1]),
+            "right_mirrored": np.array([-0.2, 0.2]),
+        },
+        "ranges": [[0.0, 0.1], [-0.3, 0.3]],
+        "titles": ["rprs", "b=0.32 +- 0.18\ni=88.5 +- 1.35 deg"],
+        "labels": ["rprs", r"$\Delta b$"],
+    }
+
+    fit._overlay_triangle_plot_geometry_histograms(
+        fig,
+        payload,
+        title_kwargs={"loc": "left", "pad": 4, "fontsize": 12},
+        label_kwargs={"labelpad": 10},
+    )
+
+    ax = axes[1, 1]
+    assert ax.title.get_fontsize() == pytest.approx(12.0)
+    assert ax.xaxis.label.get_text() == r"$\Delta b$"
+    assert ax.xaxis.labelpad == pytest.approx(10.0)
+    plt.close(fig)

@@ -147,6 +147,30 @@ def get_flux_baseline(values, fallback=1.0):
     return fallback
 
 
+def get_airmass_reference(airmass):
+    airmass = np.asarray(airmass, dtype=float)
+    finite_airmass = airmass[np.isfinite(airmass)]
+    if finite_airmass.size == 0:
+        return 0.0
+    return float(np.nanmean(finite_airmass))
+
+
+def center_airmass(airmass, reference=None):
+    airmass = np.asarray(airmass, dtype=float)
+    if reference is None:
+        reference = get_airmass_reference(airmass)
+    return airmass - float(reference)
+
+
+def airmass_trend(a2, airmass, reference=None):
+    return np.exp(np.asarray(a2, dtype=float) * center_airmass(airmass, reference=reference))
+
+
+def airmass_trend_grid(a2_values, airmass, reference=None):
+    centered = center_airmass(airmass, reference=reference)
+    return np.exp(np.outer(np.asarray(a2_values, dtype=float), centered))
+
+
 def solve_flux_baseline(model, data, dataerr=None):
     model = np.asarray(model, dtype=float)
     data = np.asarray(data, dtype=float)
@@ -199,7 +223,8 @@ def solve_flux_baseline_uncertainty(model, dataerr):
 def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
     n = int(n)
     a2 = np.random.normal(m_a2, sig_a2, n)
-    model = transit * np.exp(np.outer(a2, airmass))
+    reference = get_airmass_reference(airmass)
+    model = transit * airmass_trend_grid(a2, airmass, reference=reference)
     weights = np.ones(transit.shape[0], dtype=float)
 
     if dataerr is not None:
@@ -224,7 +249,7 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
     valid = np.isfinite(numer) & np.isfinite(denom) & (denom > 0)
 
     if not np.any(valid):
-        best_model = transit * np.exp(m_a2 * airmass)
+        best_model = transit * airmass_trend(m_a2, airmass, reference=reference)
         baseline = solve_flux_baseline(best_model, data, dataerr)
         return baseline, solve_flux_baseline_uncertainty(best_model, dataerr)
 
@@ -233,7 +258,7 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
     baseline_unc = float(np.nanstd(baselines))
 
     if baseline_unc == 0.0:
-        best_model = transit * np.exp(m_a2 * airmass)
+        best_model = transit * airmass_trend(m_a2, airmass, reference=reference)
         baseline_unc = solve_flux_baseline_uncertainty(best_model, dataerr)
 
     return baseline, baseline_unc
@@ -310,6 +335,7 @@ class lc_fitter(object):
         self.data = data
         self.dataerr = dataerr
         self.airmass = airmass
+        self.airmass_reference = get_airmass_reference(airmass)
         self.prior = prior
         self.bounds = bounds
         self.max_ncalls = 2e5
@@ -343,8 +369,15 @@ class lc_fitter(object):
         self.parameters['a1'] = value
         self.errors['a1'] = error
 
+    def _get_airmass_reference(self):
+        return getattr(self, 'airmass_reference', get_airmass_reference(self.airmass))
+
     def _build_systematics_model(self, values):
-        return get_flux_baseline(values) * np.exp(values.get('a2', 0) * self.airmass)
+        return get_flux_baseline(values) * airmass_trend(
+            values.get('a2', 0),
+            self.airmass,
+            reference=self._get_airmass_reference(),
+        )
 
     def _uses_internal_impact_parameter(self):
         return (
@@ -459,10 +492,10 @@ class lc_fitter(object):
     def _get_triangle_plot_display_spec(self, sampled_keys, sample_parameters, sample_errors, sample_points):
         if 'b' in sampled_keys:
             key = 'b'
-            label = 'Distance from fitted b (mirrored)'
+            label = r'$\Delta b$'
         elif 'inc' in sampled_keys:
             key = 'inc'
-            label = 'Distance from fitted Inc. [deg] (mirrored)'
+            label = r'$\Delta i$'
         else:
             return None
 
@@ -482,10 +515,141 @@ class lc_fitter(object):
             'key': key,
             'index': geometry_index,
             'label': label,
+            'center': center,
             'mask_center': 0.0,
             'mask_error': error,
             'magnitude_samples': magnitude_samples,
             'range': [-max_distance, max_distance],
+        }
+
+    def _get_triangle_plot_geometry_overlay(self, display_spec, sample_points):
+        if display_spec is None:
+            return None
+
+        geometry_index = display_spec['index']
+        center = display_spec['center']
+        offsets = np.asarray(sample_points[:, geometry_index], dtype=float) - center
+        left_offsets = offsets[offsets <= 0]
+        right_offsets = offsets[offsets >= 0]
+
+        def mirrored_offsets(branch_offsets):
+            if branch_offsets.size == 0:
+                return np.array([], dtype=float)
+            return np.concatenate([branch_offsets, -branch_offsets])
+
+        return {
+            'index': geometry_index,
+            'left_count': left_offsets.size,
+            'right_count': right_offsets.size,
+            'left_mirrored': mirrored_offsets(left_offsets),
+            'right_mirrored': mirrored_offsets(right_offsets),
+        }
+
+    def _format_triangle_plot_geometry_value(self, value, error, suffix=''):
+        if value is None or not np.isfinite(value):
+            return f"n/a{suffix}"
+        if error is None or not np.isfinite(error) or error < 0:
+            return f"{round_to_2(value)}{suffix}"
+        return f"{round_to_2(value, error)} +- {round_to_2(error)}{suffix}"
+
+    def _get_triangle_plot_geometry_summary(self, sampled_keys, sample_points):
+        bound_keys = list(self.bounds.keys())
+        sample_points = np.asarray(sample_points, dtype=float)
+        sample_parameters = getattr(self, 'sample_parameters', {})
+        sample_errors = getattr(self, 'sample_errors', {})
+
+        physical_samples = [
+            self._physical_values_from_sample_point(point, bound_keys, sampled_keys)
+            for point in sample_points
+        ]
+        inc_samples = np.array([sample['inc'] for sample in physical_samples], dtype=float)
+        b_samples = np.array([
+            sample.get('b', impact_parameter_from_inclination(sample, sample['inc']))
+            for sample in physical_samples
+        ], dtype=float)
+
+        inc_center = float(self.parameters.get('inc', np.nanmedian(inc_samples)))
+        inc_error = float(self.errors.get('inc', np.nanstd(inc_samples)))
+        if 'b' in sample_parameters:
+            b_center = float(sample_parameters['b'])
+        elif 'b' in self.parameters:
+            b_center = float(self.parameters['b'])
+        else:
+            b_center = float(np.nanmedian(b_samples))
+        b_error = float(sample_errors.get('b', self.errors.get('b', np.nanstd(b_samples))))
+
+        title = (
+            f"b={self._format_triangle_plot_geometry_value(b_center, b_error)}\n"
+            f"i={self._format_triangle_plot_geometry_value(inc_center, inc_error, ' deg')}"
+        )
+        return {
+            'b_center': b_center,
+            'b_error': b_error,
+            'inc_center': inc_center,
+            'inc_error': inc_error,
+            'title': title,
+        }
+
+    def _smooth_triangle_plot_counts(self, counts):
+        counts = np.asarray(counts, dtype=float)
+        if counts.size <= 1 or not np.any(counts > 0):
+            return counts
+
+        sigma_bins = max(1.0, counts.size / 18.0)
+        radius = max(1, int(np.ceil(3 * sigma_bins)))
+        grid = np.arange(-radius, radius + 1, dtype=float)
+        kernel = np.exp(-0.5 * (grid / sigma_bins) ** 2)
+        kernel /= np.sum(kernel)
+        return np.convolve(counts, kernel, mode='same')
+
+    def _build_triangle_plot_geometry_curves(self, geometry_overlay, hist_range, bins_1d):
+        hist_range = np.sort(np.asarray(hist_range, dtype=float))
+        bins_1d = max(1, int(bins_1d))
+        edges = np.linspace(hist_range[0], hist_range[1], bins_1d + 1)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        half_bin = 0.5 * (edges[1] - edges[0]) if edges.size > 1 else 0.0
+
+        def branch_curve(samples):
+            samples = np.asarray(samples, dtype=float)
+            counts, _ = np.histogram(samples, bins=edges)
+            support = np.zeros_like(counts, dtype=bool)
+            if samples.size > 0:
+                support = np.abs(centers) <= (np.max(np.abs(samples)) + half_bin)
+            return counts.astype(float), support
+
+        left_curve, left_support = branch_curve(geometry_overlay['left_mirrored'])
+        right_curve, right_support = branch_curve(geometry_overlay['right_mirrored'])
+
+        left_count = int(geometry_overlay.get('left_count', 0))
+        right_count = int(geometry_overlay.get('right_count', 0))
+        max_count = max(left_count, right_count)
+        min_count = min(left_count, right_count)
+
+        if max_count == 0:
+            main_curve = np.zeros_like(centers, dtype=float)
+        elif min_count == 0 or (min_count / max_count) < 0.35:
+            main_curve = left_curve if left_count >= right_count else right_curve
+        else:
+            stacked = np.vstack([
+                np.where(left_support, left_curve, np.nan),
+                np.where(right_support, right_curve, np.nan),
+            ])
+            valid_counts = np.sum(np.isfinite(stacked), axis=0)
+            summed = np.nansum(stacked, axis=0)
+            main_curve = np.divide(
+                summed,
+                valid_counts,
+                out=np.zeros_like(summed, dtype=float),
+                where=valid_counts > 0,
+            )
+
+        main_curve = self._smooth_triangle_plot_counts(main_curve)
+
+        return {
+            'centers': centers,
+            'left_curve': left_curve,
+            'right_curve': right_curve,
+            'main_curve': main_curve,
         }
 
     def _get_triangle_plot_payload(self):
@@ -494,6 +658,8 @@ class lc_fitter(object):
         sample_errors = getattr(self, 'sample_errors', self.errors)
         sample_points, sample_logl = self._get_triangle_plot_samples()
         display_spec = self._get_triangle_plot_display_spec(sampled_keys, sample_parameters, sample_errors, sample_points)
+        geometry_overlay = self._get_triangle_plot_geometry_overlay(display_spec, sample_points)
+        geometry_summary = self._get_triangle_plot_geometry_summary(sampled_keys, sample_points)
 
         display_points = np.array(sample_points, copy=True)
         display_logl = np.array(sample_logl, copy=True)
@@ -547,6 +713,7 @@ class lc_fitter(object):
 
             if display_spec is not None and key == display_spec['key']:
                 label = display_spec['label']
+                title = geometry_summary['title']
                 plot_range = display_spec['range']
                 center = display_spec['mask_center']
                 error = display_spec['mask_error']
@@ -562,12 +729,80 @@ class lc_fitter(object):
             'display_points': display_points,
             'display_logl': display_logl,
             'mask_values': mask_values,
+            'display_spec': display_spec,
+            'geometry_overlay': geometry_overlay,
+            'geometry_summary': geometry_summary,
             'labels': labels,
             'titles': titles,
             'ranges': ranges,
             'mask_centers': mask_centers,
             'mask_errors': mask_errors,
         }
+
+    def _overlay_triangle_plot_geometry_histograms(self, fig, payload, title_kwargs=None, label_kwargs=None):
+        if not hasattr(fig, 'axes'):
+            return
+
+        display_spec = payload.get('display_spec')
+        geometry_overlay = payload.get('geometry_overlay')
+        if display_spec is None or geometry_overlay is None:
+            return
+
+        sampled_keys = payload['sampled_keys']
+        if len(fig.axes) != len(sampled_keys) ** 2:
+            return
+
+        axes = np.array(fig.axes).reshape((len(sampled_keys), len(sampled_keys)))
+        geometry_index = geometry_overlay['index']
+        ax = axes[geometry_index, geometry_index]
+        hist_range = np.sort(payload['ranges'][geometry_index])
+        bins_1d = int(max(25, np.round(np.sqrt(payload['display_points'].shape[0]) * 6)))
+        curves = self._build_triangle_plot_geometry_curves(geometry_overlay, hist_range, bins_1d)
+
+        title = payload['titles'][geometry_index]
+        x_label = payload['labels'][geometry_index]
+        branch_left_color = '#6f8fcf'
+        branch_right_color = '#d79b9b'
+        title_kwargs = {} if title_kwargs is None else dict(title_kwargs)
+        label_kwargs = {} if label_kwargs is None else dict(label_kwargs)
+
+        ax.cla()
+        ax.plot(curves['centers'], curves['main_curve'], color='black', linewidth=1.5, zorder=4)
+        ax.plot(curves['centers'], curves['left_curve'], color=branch_left_color, linestyle='--',
+                linewidth=0.75, alpha=0.75, zorder=3)
+        ax.plot(curves['centers'], curves['right_curve'], color=branch_right_color, linestyle='--',
+                linewidth=0.75, alpha=0.75, zorder=3)
+        ax.set_title(title, **title_kwargs)
+        ax.set_xlim(hist_range)
+
+        max_y = max(
+            np.max(curves['main_curve']) if curves['main_curve'].size > 0 else 0.0,
+            np.max(curves['left_curve']) if curves['left_curve'].size > 0 else 0.0,
+            np.max(curves['right_curve']) if curves['right_curve'].size > 0 else 0.0,
+        )
+        ax.set_ylim(0, 1.1 * max(max_y, 1e-6))
+        ax.set_yticks([])
+
+        if geometry_index < len(sampled_keys) - 1:
+            ax.set_xticklabels([])
+        else:
+            ax.set_xlabel(x_label, **label_kwargs)
+
+    def _adjust_triangle_plot_layout(self, fig):
+        if not hasattr(fig, 'subplots_adjust'):
+            return
+        subplotpars = getattr(fig, 'subplotpars', None)
+        if subplotpars is None:
+            return
+
+        fig.subplots_adjust(
+            left=subplotpars.left,
+            bottom=max(subplotpars.bottom, 0.10),
+            right=min(subplotpars.right, 0.95),
+            top=min(subplotpars.top, 0.955),
+            wspace=subplotpars.wspace,
+            hspace=subplotpars.hspace,
+        )
 
     def fit_LM(self):
         freekeys = list(self.bounds.keys())
@@ -592,7 +827,11 @@ class lc_fitter(object):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
             model = transit(self.time, self.prior)
-            model *= np.exp(self.prior.get('a2', 0) * self.airmass)
+            model *= airmass_trend(
+                self.prior.get('a2', 0),
+                self.airmass,
+                reference=self._get_airmass_reference(),
+            )
             if self._has_free_flux_baseline():
                 model *= get_flux_baseline(self.prior)
             else:
@@ -660,7 +899,11 @@ class lc_fitter(object):
                     self.dataerr,
                 )
             else:
-                systematics = self.transit * np.exp(self.parameters.get('a2', 0) * self.airmass)
+                systematics = self.transit * airmass_trend(
+                    self.parameters.get('a2', 0),
+                    self.airmass,
+                    reference=self._get_airmass_reference(),
+                )
                 flux_scale = solve_flux_baseline(systematics, self.data, self.dataerr)
                 flux_scale_err = self.errors.get('a0', self.errors.get('a1', solve_flux_baseline_uncertainty(systematics, self.dataerr)))
             self._set_flux_baseline(flux_scale, flux_scale_err)
@@ -729,7 +972,11 @@ class lc_fitter(object):
             # chi-squared
             physical = physical_from_sample_point(pars)
             model = transit(self.time, physical)
-            model *= np.exp(physical.get('a2', 0) * self.airmass)
+            model *= airmass_trend(
+                physical.get('a2', 0),
+                self.airmass,
+                reference=self._get_airmass_reference(),
+            )
             if self._has_free_flux_baseline():
                 model *= get_flux_baseline(physical)
             else:
@@ -845,7 +1092,11 @@ class lc_fitter(object):
                     )[0]
                 test_values['a0'] = flux_scale
                 test_values['a1'] = flux_scale
-                airmass = flux_scale * np.exp(test_values.get('a2', 0) * self.airmass)
+                airmass = flux_scale * airmass_trend(
+                    test_values.get('a2', 0),
+                    self.airmass,
+                    reference=self._get_airmass_reference(),
+                )
                 residuals = self.data - (lightcurve * airmass)
                 chis.append(np.sum(residuals ** 2))
                 physical_tests.append(test_values)
@@ -1000,6 +1251,14 @@ class lc_fitter(object):
         if not np.any(mask3):
             mask3 = np.ones(len(chi2), dtype=bool)
 
+        label_kwargs = {
+            'labelpad': 10,
+        }
+        title_kwargs = {
+            'loc': 'left',
+            'pad': 4,
+        }
+
         fig = corner(payload['display_points'],
                      labels=payload['labels'],
                      bins=int(np.sqrt(payload['display_points'].shape[0])),
@@ -1015,13 +1274,19 @@ class lc_fitter(object):
                          'vmax': np.percentile(chi2[mask3], 95),
                          'cmap': 'viridis'
                      },
-                     label_kwargs={
-                         'labelpad': 15,
-                     },
+                     label_kwargs=label_kwargs,
+                     title_kwargs=title_kwargs,
                      hist_kwargs={
                          'color': 'black',
                      }
                      )
+        self._adjust_triangle_plot_layout(fig)
+        self._overlay_triangle_plot_geometry_histograms(
+            fig,
+            payload,
+            title_kwargs=title_kwargs,
+            label_kwargs=label_kwargs,
+        )
         return fig
 
 # simultaneously fit multiple data sets with global and local parameters
@@ -1144,7 +1409,10 @@ class glc_fitter(lc_fitter):
 
                 # compute model
                 model = transit(self.lc_data[i]['time'], self.lc_data[i]['priors'])
-                model *= np.exp(self.lc_data[i]['priors'].get('a2', 0) * self.lc_data[i]['airmass'])
+                model *= airmass_trend(
+                    self.lc_data[i]['priors'].get('a2', 0),
+                    self.lc_data[i]['airmass'],
+                )
                 if has_explicit_flux_baseline(self.global_bounds) or has_explicit_flux_baseline(self.local_bounds[i]):
                     model *= get_flux_baseline(self.lc_data[i]['priors'])
                 else:
@@ -1220,7 +1488,10 @@ class glc_fitter(lc_fitter):
 
             # solve for the local baseline flux scale
             model = transit(self.lc_data[n]['time'], self.lc_data[n]['priors'])
-            airmass = np.exp(self.lc_data[n]['airmass'] * self.lc_data[n]['priors'].get('a2', 0))
+            airmass = airmass_trend(
+                self.lc_data[n]['priors'].get('a2', 0),
+                self.lc_data[n]['airmass'],
+            )
             if has_explicit_flux_baseline(self.global_bounds) or has_explicit_flux_baseline(self.local_bounds[n]):
                 flux_scale = get_flux_baseline(self.lc_data[n]['priors'])
                 flux_scale_err = self.lc_data[n]['errors'].get('a0', self.lc_data[n]['errors'].get('a1', 0))
@@ -1275,7 +1546,10 @@ class glc_fitter(lc_fitter):
             nmarker = next(markers)
 
             model = transit(self.lc_data[i]['time'], self.lc_data[i]['priors'])
-            airmass = np.exp(self.lc_data[i]['airmass'] * self.lc_data[i]['priors'].get('a2', 0))
+            airmass = airmass_trend(
+                self.lc_data[i]['priors'].get('a2', 0),
+                self.lc_data[i]['airmass'],
+            )
             detrend = self.lc_data[i]['flux'] / (model * airmass)
 
             if ax.ndim == 1:
@@ -1553,7 +1827,7 @@ if __name__ == "__main__":
         'omega': 120,  # Arg of periastron
         'tmid': 0.75,  # Time of mid transit [day],
         'a0': 50,  # Baseline flux normalization
-        'a2': 0.,  # trend = a0 * np.exp(a2 * airmass)
+        'a2': 0.,  # trend = a0 * np.exp(a2 * (airmass - mean(airmass)))
 
         'teff': 5000,
         'tefferr': 50,
@@ -1580,7 +1854,7 @@ if __name__ == "__main__":
     airmass = np.zeros(time.shape[0])
 
     # GENERATE NOISY DATA
-    data = transit(time, prior) * prior['a0'] * np.exp(prior['a2'] * airmass)
+    data = transit(time, prior) * prior['a0'] * airmass_trend(prior['a2'], airmass)
     data += np.random.normal(0, prior['a0'] * 250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time)) + np.random.normal(300e-6, 50e-6, len(time))
 

@@ -3233,7 +3233,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
         norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref]
         norm_flux_unc /= np.nanmedian(lc_fit.data[mask_ref])
 
-        model = np.exp(lc_fit.parameters['a2'] * lc_fit.airmass_model[mask_ref])
+        model = lc_fit.airmass_model[mask_ref]
         flux = lc_fit.data[mask_ref]
         detrended = flux / model
 

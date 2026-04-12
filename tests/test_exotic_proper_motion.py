@@ -89,6 +89,7 @@ from exotic.exotic import (
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
     detrend_flux_on_out_of_transit_baseline,
+    ensure_lightcurve_fit_failure_reason,
     fit_lightcurve,
     fit_final_lightcurve_with_oot_baseline_detrending,
     fit_lightcurve_to_every_comparison_candidate,
@@ -99,6 +100,7 @@ from exotic.exotic import (
     log_comparison_candidate_fit_summaries,
     phase_bin_sigma_clip,
     representative_psf_sigma,
+    run_target_driven_photometry_search,
     resolve_frame_aperture_radii,
     summarize_adaptive_aperture_usage,
     should_skip_airmass_fit,
@@ -920,6 +922,123 @@ def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
 
     assert myfit is not None
     assert captured_modes == ["lm", "ns"]
+
+
+def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_aperture(monkeypatch):
+    evaluated = []
+
+    class DummyFit:
+        def __init__(self, residual_level):
+            self.residuals = np.full(6, residual_level)
+            self.data = np.ones(6)
+
+    def fake_evaluate(task):
+        _, tflux, cflux, _, _, _, _, _, _ = task
+        evaluated.append(np.asarray(cflux))
+        cflux = np.asarray(cflux)
+        tflux = np.asarray(tflux)
+        if np.allclose(cflux, 20.0):
+            return {"myfit": DummyFit(0.02), "res_std": 0.02}, tflux, cflux
+        if np.allclose(cflux, 40.0):
+            return {"myfit": DummyFit(0.01), "res_std": 0.01}, tflux, cflux
+        raise AssertionError("Unexpected candidate flux passed to evaluator.")
+
+    monkeypatch.setattr("exotic.exotic.evaluate_lightcurve_candidate", fake_evaluate)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+    psf_target_amp = 20.0 / (2.0 * np.pi)
+    psf_comp_amp = 20.0 / (2.0 * np.pi)
+    psf_data = {
+        "target": np.column_stack([
+            np.zeros(6),
+            np.zeros(6),
+            np.full(6, psf_target_amp),
+            np.ones(6),
+            np.ones(6),
+        ]),
+        "comp1": np.column_stack([
+            np.ones(6),
+            np.ones(6),
+            np.full(6, psf_comp_amp),
+            np.ones(6),
+            np.ones(6),
+        ]),
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 40.0),
+        "comp1": np.full((6, 1, 1), 40.0),
+    }
+
+    result = run_target_driven_photometry_search(
+        times,
+        jd_times,
+        airmass,
+        ld,
+        p_dict,
+        comp_stars=[[100.0, 200.0]],
+        psf_data=psf_data,
+        aper_data=aper_data,
+        apers=np.array([5.0]),
+        annuli=np.array([12.0]),
+        sigma=1.0,
+        require_comp_star=True,
+        use_psf_photometry=True,
+        use_aperture_photometry=True,
+    )
+
+    assert len(evaluated) == 2
+    assert {tuple(np.unique(values)) for values in evaluated} == {(20.0,), (40.0,)}
+    assert result["best_candidate"]["method"] == "aperture"
+    assert result["best_candidate"]["comp_index"] == 0
+    assert result["min_std"] == pytest.approx(0.01)
+
+
+def test_ensure_lightcurve_fit_failure_reason_preserves_existing_diagnostic_reason():
+    diagnostics = {
+        "failed_stage": "minimum_points",
+        "failure_reason": "only 4 usable point(s) remained after filtering; need at least 5 for a lightcurve fit.",
+    }
+
+    result = ensure_lightcurve_fit_failure_reason(
+        diagnostics,
+        fit_result=None,
+        failed_stage="lightcurve_fit",
+        failure_reason="the lightcurve fitter did not converge to a usable solution.",
+    )
+
+    assert result["failed_stage"] == "minimum_points"
+    assert result["failure_reason"] == diagnostics["failure_reason"]
+
+
+def test_ensure_lightcurve_fit_failure_reason_adds_generic_reason_when_missing():
+    diagnostics = {
+        "failed_stage": None,
+        "failure_reason": None,
+    }
+
+    result = ensure_lightcurve_fit_failure_reason(
+        diagnostics,
+        fit_result=None,
+        failed_stage="lightcurve_fit",
+        failure_reason="the lightcurve fitter did not converge to a usable solution.",
+    )
+
+    assert result["failed_stage"] == "lightcurve_fit"
+    assert result["failure_reason"] == "the lightcurve fitter did not converge to a usable solution."
 
 
 def test_fit_lightcurve_can_disable_impact_parameter_parameterization(monkeypatch):

@@ -53,6 +53,21 @@ def test_comp_params_defaults_require_comp_star_to_yes(tmp_path):
     assert inputs.info_dict["require_comp_star"] == "y"
 
 
+def test_comp_params_defaults_aavso_comp_to_no(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["aavso_comp"] == "n"
+
+
 def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):
     init_data = {
         "user_info": {},

@@ -470,6 +470,8 @@ class Inputs:
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
+        if self.info_dict['aavso_comp'] is None:
+            self.info_dict['aavso_comp'] = 'n'
         self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])
         planet_dict = init_params(planet_params, planet_dict, data['planetary_parameters'])
         return populate_missing_gaia_astrometry(planet_dict)

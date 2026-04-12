@@ -4143,6 +4143,16 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
     return diagnostics
 
 
+def ensure_lightcurve_fit_failure_reason(diagnostics, fit_result, failed_stage, failure_reason):
+    diagnostics = {} if diagnostics is None else dict(diagnostics)
+    if fit_result is None and diagnostics.get('failure_reason') is None:
+        diagnostics.update({
+            'failed_stage': failed_stage,
+            'failure_reason': failure_reason,
+        })
+    return diagnostics
+
+
 def cheap_lightcurve_prescore(tFlux, cFlux, airmass):
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio = np.divide(tFlux, cFlux)
@@ -4199,6 +4209,229 @@ def evaluate_lightcurve_candidate(task):
         'myfit': myfit,
         'res_std': res_std,
     }, tflux_fit, cflux_fit
+
+
+def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass, comp_stars, sigma,
+                                    require_comp_star=True,
+                                    skip_low_comparison_coverage_rejection=False,
+                                    use_psf_photometry=True,
+                                    use_aperture_photometry=True):
+    candidate_jobs = []
+    comp_star_count = len(comp_stars)
+
+    if use_psf_photometry and comp_star_count > 0:
+        target_flux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+        psf_comp_flux_map = {
+            f"comp{comp_idx + 1}": 2 * np.pi * psf_data[f"comp{comp_idx + 1}"][:, 2]
+            * psf_data[f"comp{comp_idx + 1}"][:, 3]
+            * psf_data[f"comp{comp_idx + 1}"][:, 4]
+            for comp_idx in range(comp_star_count)
+        }
+        psf_comp_coverage = comparison_star_coverage_summary(
+            psf_comp_flux_map,
+            skip_rejection=skip_low_comparison_coverage_rejection,
+        )
+        for comp_idx in range(comp_star_count):
+            ckey = f"comp{comp_idx + 1}"
+            if psf_comp_coverage[ckey]['coverage_rejected']:
+                continue
+
+            comp_flux = psf_comp_flux_map[ckey]
+            candidate_jobs.append({
+                'method': 'psf',
+                'a': None,
+                'an': None,
+                'aper': 0.0,
+                'annulus': float(15 * sigma),
+                'comp_index': comp_idx,
+                'ckey': ckey,
+                'mask': np.ones(target_flux.shape[0], dtype=bool),
+                'prescore': cheap_lightcurve_prescore(target_flux, comp_flux, airmass),
+            })
+
+    if use_aperture_photometry and aper_data is not None and apers is not None and annuli is not None:
+        for a, aper in enumerate(apers):
+            for an, annulus in enumerate(annuli):
+                target_flux = aper_data['target'][:, a, an]
+                aperture_comp_flux_map = {
+                    f"comp{comp_idx + 1}": aper_data[f"comp{comp_idx + 1}"][:, a, an]
+                    for comp_idx in range(comp_star_count)
+                }
+                aperture_comp_coverage = comparison_star_coverage_summary(
+                    aperture_comp_flux_map,
+                    skip_rejection=skip_low_comparison_coverage_rejection,
+                )
+
+                if not require_comp_star:
+                    candidate_jobs.append({
+                        'method': 'aperture',
+                        'a': a,
+                        'an': an,
+                        'aper': float(aper),
+                        'annulus': float(annulus),
+                        'comp_index': None,
+                        'ckey': None,
+                        'mask': np.ones(target_flux.shape[0], dtype=bool),
+                        'prescore': cheap_lightcurve_prescore(
+                            target_flux,
+                            np.ones(target_flux.shape[0]),
+                            airmass,
+                        ),
+                    })
+
+                for comp_idx in range(comp_star_count):
+                    ckey = f"comp{comp_idx + 1}"
+                    if aperture_comp_coverage[ckey]['coverage_rejected']:
+                        continue
+
+                    comp_series = aperture_comp_flux_map[ckey]
+                    aper_mask = valid_comparison_frame_mask(comp_series)
+                    candidate_jobs.append({
+                        'method': 'aperture',
+                        'a': a,
+                        'an': an,
+                        'aper': float(aper),
+                        'annulus': float(annulus),
+                        'comp_index': comp_idx,
+                        'ckey': ckey,
+                        'mask': aper_mask,
+                        'prescore': cheap_lightcurve_prescore(
+                            target_flux[aper_mask],
+                            comp_series[aper_mask],
+                            airmass[aper_mask],
+                        ),
+                    })
+
+    return candidate_jobs
+
+
+def shortlist_target_fit_candidates(candidate_jobs, minimum_count=50, fraction=0.35):
+    finite_candidates = [candidate for candidate in candidate_jobs if np.isfinite(candidate.get('prescore', np.inf))]
+    if finite_candidates:
+        finite_candidates.sort(key=lambda candidate: candidate['prescore'])
+        shortlist_count = max(int(minimum_count), int(fraction * len(finite_candidates)))
+        return finite_candidates[:min(len(finite_candidates), shortlist_count)]
+    return list(candidate_jobs)
+
+
+def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, psf_data, aper_data,
+                              disable_vertical_flux_normalization=False,
+                              use_impactparameter_rather_than_inclination_to_fit=True):
+    candidate_mask = np.asarray(candidate['mask'], dtype=bool)
+
+    if candidate['method'] == 'psf':
+        target_flux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+        if candidate['ckey'] is None:
+            comp_flux = np.ones(target_flux.shape[0], dtype=float)
+        else:
+            comp_flux = (
+                2 * np.pi * psf_data[candidate['ckey']][:, 2]
+                * psf_data[candidate['ckey']][:, 3]
+                * psf_data[candidate['ckey']][:, 4]
+            )
+    else:
+        target_flux = aper_data['target'][:, candidate['a'], candidate['an']]
+        if candidate['ckey'] is None:
+            comp_flux = np.ones(target_flux.shape[0], dtype=float)
+        else:
+            comp_flux = aper_data[candidate['ckey']][:, candidate['a'], candidate['an']]
+
+    return (
+        times[candidate_mask],
+        target_flux[candidate_mask],
+        comp_flux[candidate_mask],
+        airmass[candidate_mask],
+        ld,
+        p_dict,
+        jd_times[candidate_mask],
+        disable_vertical_flux_normalization,
+        use_impactparameter_rather_than_inclination_to_fit,
+    )
+
+
+def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, comp_stars, psf_data, aper_data,
+                                        apers, annuli, sigma,
+                                        require_comp_star=True,
+                                        disable_vertical_flux_normalization=False,
+                                        skip_low_comparison_coverage_rejection=False,
+                                        use_psf_photometry=True,
+                                        use_aperture_photometry=True,
+                                        multiprocess_lightcurve_fits=None,
+                                        use_impactparameter_rather_than_inclination_to_fit=True):
+    candidate_jobs = build_target_fit_candidate_jobs(
+        psf_data,
+        aper_data,
+        apers,
+        annuli,
+        airmass,
+        comp_stars,
+        sigma,
+        require_comp_star=require_comp_star,
+        skip_low_comparison_coverage_rejection=skip_low_comparison_coverage_rejection,
+        use_psf_photometry=use_psf_photometry,
+        use_aperture_photometry=use_aperture_photometry,
+    )
+    shortlist = shortlist_target_fit_candidates(candidate_jobs)
+    if not shortlist:
+        return {
+            'candidate_jobs': candidate_jobs,
+            'shortlist': shortlist,
+            'best_candidate': None,
+            'best_fit_lc': None,
+            'min_std': np.inf,
+            'flux_tar': None,
+            'flux_ref': None,
+        }
+
+    fit_tasks = [
+        target_fit_candidate_task(
+            candidate,
+            times,
+            jd_times,
+            airmass,
+            ld,
+            p_dict,
+            psf_data,
+            aper_data,
+            disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+            use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        )
+        for candidate in shortlist
+    ]
+
+    if multiprocess_lightcurve_fits is not None and multiprocess_lightcurve_fits > 0:
+        log_info(f"Using multiprocessing for candidate lightcurve fits ({multiprocess_lightcurve_fits} processes).")
+        with ProcessPoolExecutor(max_workers=multiprocess_lightcurve_fits) as executor:
+            fit_results = list(executor.map(evaluate_lightcurve_candidate, fit_tasks))
+    else:
+        fit_results = [evaluate_lightcurve_candidate(task) for task in fit_tasks]
+
+    best_candidate = None
+    best_fit_lc = None
+    best_res_std = np.inf
+    best_tflux = None
+    best_cflux = None
+    for candidate, result in zip(shortlist, fit_results):
+        fit_meta, tflux_fit, cflux_fit = result
+        if fit_meta is None:
+            continue
+
+        if fit_meta['res_std'] < best_res_std:
+            best_candidate = candidate
+            best_fit_lc = fit_meta['myfit']
+            best_res_std = fit_meta['res_std']
+            best_tflux = tflux_fit
+            best_cflux = cflux_fit
+
+    return {
+        'candidate_jobs': candidate_jobs,
+        'shortlist': shortlist,
+        'best_candidate': best_candidate,
+        'best_fit_lc': best_fit_lc,
+        'min_std': best_res_std,
+        'flux_tar': best_tflux,
+        'flux_ref': best_cflux,
+    }
 
 
 def selected_photometry_method_label(photometry_info):
@@ -4454,11 +4687,12 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 final_fit_mode='ns',
                 use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             )
-            if fit_result is None:
-                fit_diagnostics.update({
-                    'failed_stage': 'nested_fit',
-                    'failure_reason': "the nested lightcurve fitter did not converge to a usable solution.",
-                })
+            fit_diagnostics = ensure_lightcurve_fit_failure_reason(
+                fit_diagnostics,
+                fit_result,
+                failed_stage='nested_fit',
+                failure_reason="the nested lightcurve fitter did not converge to a usable solution.",
+            )
 
         res_std = np.inf
         fit_point_count = 0 if target_fit_flux is None else int(len(target_fit_flux))
@@ -5985,12 +6219,25 @@ def main():
                     selected_target_flux = aper_data['target'][:, best_a, best_an]
                     selected_comp_flux = aper_data[selected_ckey][:, best_a, best_an]
 
+                selected_fit_diagnostics = diagnose_lightcurve_fit_inputs(
+                    times,
+                    selected_target_flux,
+                    selected_comp_flux,
+                    airmass,
+                )
                 myfit, tFlux1, cFlux1 = fit_lightcurve(
                     times, selected_target_flux, selected_comp_flux, airmass, ld, pDict, jd_times,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
                 )
+                selected_fit_diagnostics = ensure_lightcurve_fit_failure_reason(
+                    selected_fit_diagnostics,
+                    myfit,
+                    failed_stage='lightcurve_fit',
+                    failure_reason="the lightcurve fitter did not converge to a usable solution.",
+                )
+                comparison_calibration['selected_fit_diagnostics'] = selected_fit_diagnostics
                 if myfit is not None:
                     res_std = myfit.residuals.std() / np.median(myfit.data)
                     photometry_info.update(best_fit_lc=myfit,
@@ -6051,202 +6298,121 @@ def main():
                                     'pos': exotic_infoDict['comp_stars'][j]
                                 }
                 else:
-                    log_info("Warning: Comparison-star calibration selected a photometry setup that failed target fitting."
-                             " Falling back to target-driven photometry selection.", warn=True)
-
-            if photometry_info['best_fit_lc'] is None and use_psf_photometry:
-                # Legacy fallback when comparison-star-only calibration cannot determine a usable setup.
-                psf_comp_flux_map = {
-                    f"comp{j + 1}": 2 * np.pi * psf_data[f"comp{j + 1}"][:, 2]
-                    * psf_data[f"comp{j + 1}"][:, 3]
-                    * psf_data[f"comp{j + 1}"][:, 4]
-                    for j in range(len(exotic_infoDict['comp_stars']))
-                }
-                psf_comp_coverage = comparison_star_coverage_summary(
-                    psf_comp_flux_map,
-                    skip_rejection=skip_low_comp_coverage_rejection,
-                )
-                for j in range(len(exotic_infoDict['comp_stars'])):
-                    ckey = f"comp{j + 1}"
-                    if psf_comp_coverage[ckey]['coverage_rejected']:
-                        continue
-
-                    cFlux = psf_comp_flux_map[ckey]
-                    myfit, tFlux1, cFlux1 = fit_lightcurve(
-                        times, tFlux, cFlux, airmass, ld, pDict, jd_times,
-                        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                        use_impactparameter_rather_than_inclination_to_fit=
-                        use_impactparameter_rather_than_inclination_to_fit,
+                    failure_reason = selected_fit_diagnostics.get(
+                        'failure_reason',
+                        "the lightcurve fitter did not converge to a usable solution.",
                     )
-                    res_std = np.inf
+                    log_info(
+                        "Warning: Comparison-star calibration selected a photometry setup that failed target fitting "
+                        f"(Comp {selected_comp_index + 1}, {comparison_calibration['method_label']}; "
+                        f"reason: {failure_reason}). Falling back to target-driven photometry selection.",
+                        warn=True,
+                    )
 
-                    if myfit is not None:
-                        for k in myfit.bounds.keys():
-                            log.debug(f"  {k}: {myfit.parameters[k]:.6f}")
-
-                        log.debug("The Residual Standard Deviation is: "
-                                  f"{round(100 * myfit.residuals.std() / np.median(myfit.data), 6)}%")
-                        log.debug(f"The Mean Squared Error is: {round(np.sum(myfit.residuals ** 2), 6)}\n")
-
-                        res_std = myfit.residuals.std() / np.median(myfit.data)
-
-                    if photometry_info['min_std'] > res_std and myfit is not None:
-                        photometry_info.update(best_fit_lc=myfit,
-                                               comp_star_num=j + 1, comp_star_coords=exotic_infoDict['comp_stars'][j],
-                                               min_std=res_std, min_aperture=0, min_annulus=15 * sigma_display,
-                                               aperture_index=None, annulus_index=None,
-                                               selection_basis='target_fit')
-
-                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
-
-                        centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
-                                                  x_ref=psf_data[ckey][:, 0], y_ref=psf_data[ckey][:, 1])
-
-                    if j in vsp_num:
-                        ref_flux[j] = {
-                            'myfit': myfit,
-                            'pos': exotic_infoDict['comp_stars'][j]
-                        }
-
-            if photometry_info['best_fit_lc'] is None and use_aperture_photometry:
-                log_info("\nComputing best comparison star, aperture, and sky annulus from the target lightcurve. Please wait.")
-
-                candidate_jobs = []
-                for a, aper in enumerate(apers):
-                    for an, annulus in enumerate(annuli):
-                        target_flux = aper_data['target'][:, a, an]
-                        aperture_comp_flux_map = {
-                            f"comp{j + 1}": aper_data[f"comp{j + 1}"][:, a, an]
-                            for j in range(len(exotic_infoDict['comp_stars']))
-                        }
-                        aperture_comp_coverage = comparison_star_coverage_summary(
-                            aperture_comp_flux_map,
-                            skip_rejection=skip_low_comp_coverage_rejection,
-                        )
-
-                        if not require_comp_star:
-                            candidate_jobs.append({
-                                'a': a,
-                                'an': an,
-                                'aper': aper,
-                                'annulus': annulus,
-                                'comp_index': None,
-                                'ckey': None,
-                                'mask': np.ones(target_flux.shape[0], dtype=bool),
-                                'prescore': cheap_lightcurve_prescore(target_flux, np.ones(target_flux.shape[0]), airmass),
-                            })
-
-                        for j in range(len(exotic_infoDict['comp_stars'])):
-                            ckey = f"comp{j + 1}"
-                            if aperture_comp_coverage[ckey]['coverage_rejected']:
-                                continue
-                            comp_series = aperture_comp_flux_map[ckey]
-                            aper_mask = valid_comparison_frame_mask(comp_series)
-                            comp_flux = comp_series[aper_mask]
-                            candidate_jobs.append({
-                                'a': a,
-                                'an': an,
-                                'aper': aper,
-                                'annulus': annulus,
-                                'comp_index': j,
-                                'ckey': ckey,
-                                'mask': aper_mask,
-                                'prescore': cheap_lightcurve_prescore(target_flux[aper_mask], comp_flux, airmass[aper_mask]),
-                            })
-
-                finite_candidates = [c for c in candidate_jobs if np.isfinite(c['prescore'])]
-                if finite_candidates:
-                    finite_candidates.sort(key=lambda candidate: candidate['prescore'])
-                    shortlist_count = max(50, int(0.35 * len(finite_candidates)))
-                    shortlist = finite_candidates[:min(len(finite_candidates), shortlist_count)]
+            if photometry_info['best_fit_lc'] is None and (use_psf_photometry or use_aperture_photometry):
+                if use_psf_photometry and use_aperture_photometry:
+                    log_info("\nComputing the best PSF/aperture photometry candidate from the target lightcurve. Please wait.")
+                elif use_aperture_photometry:
+                    log_info("\nComputing best comparison star, aperture, and sky annulus from the target lightcurve. Please wait.")
                 else:
-                    shortlist = []
+                    log_info("\nComputing best PSF comparison star from the target lightcurve. Please wait.")
 
-                if not shortlist:
-                    shortlist = candidate_jobs
+                target_driven_search = run_target_driven_photometry_search(
+                    times,
+                    jd_times,
+                    airmass,
+                    ld,
+                    pDict,
+                    exotic_infoDict['comp_stars'],
+                    psf_data,
+                    aper_data,
+                    apers,
+                    annuli,
+                    sigma_display,
+                    require_comp_star=require_comp_star,
+                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                    use_psf_photometry=use_psf_photometry,
+                    use_aperture_photometry=use_aperture_photometry,
+                    multiprocess_lightcurve_fits=args.multiprocess_lightcurve_fits,
+                    use_impactparameter_rather_than_inclination_to_fit=
+                    use_impactparameter_rather_than_inclination_to_fit,
+                )
 
-                fit_tasks = []
-                for candidate in shortlist:
-                    candidate_mask = candidate['mask']
-                    target_flux = aper_data['target'][:, candidate['a'], candidate['an']][candidate_mask]
-                    if candidate['comp_index'] is None:
-                        comp_flux = np.ones(target_flux.shape[0])
-                    else:
-                        comp_flux = aper_data[candidate['ckey']][:, candidate['a'], candidate['an']][candidate_mask]
+                best_candidate = target_driven_search['best_candidate']
+                if best_candidate is not None:
+                    photometry_info.update(
+                        best_fit_lc=target_driven_search['best_fit_lc'],
+                        comp_star_num=(None if best_candidate['comp_index'] is None else best_candidate['comp_index'] + 1),
+                        comp_star_coords=(
+                            None if best_candidate['comp_index'] is None
+                            else exotic_infoDict['comp_stars'][best_candidate['comp_index']]
+                        ),
+                        min_std=target_driven_search['min_std'],
+                        min_aperture=(
+                            0 if best_candidate['method'] == 'psf'
+                            else (-best_candidate['aper'] if best_candidate['comp_index'] is None else best_candidate['aper'])
+                        ),
+                        min_annulus=best_candidate['annulus'],
+                        aperture_index=best_candidate['a'],
+                        annulus_index=best_candidate['an'],
+                        selection_basis='target_fit',
+                    )
 
-                    fit_tasks.append((
-                        times[candidate_mask],
-                        target_flux,
-                        comp_flux,
-                        airmass[candidate_mask],
-                        ld,
-                        pDict,
-                        jd_times[candidate_mask],
-                        disable_vertical_flux_normalization,
-                        use_impactparameter_rather_than_inclination_to_fit,
-                    ))
+                    flux_values.update(
+                        flux_tar=target_driven_search['flux_tar'],
+                        flux_ref=target_driven_search['flux_ref'],
+                        flux_unc_tar=target_driven_search['flux_tar'] ** 0.5,
+                        flux_unc_ref=target_driven_search['flux_ref'] ** 0.5,
+                    )
 
-                fit_results = []
-                if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits > 0:
-                    log_info(f"Using multiprocessing for candidate lightcurve fits ({args.multiprocess_lightcurve_fits} processes).")
-                    with ProcessPoolExecutor(max_workers=args.multiprocess_lightcurve_fits) as executor:
-                        fit_results = list(executor.map(evaluate_lightcurve_candidate, fit_tasks))
-                else:
-                    fit_results = [evaluate_lightcurve_candidate(task) for task in fit_tasks]
+                    x_ref_data = psf_data['target'][:, 0]
+                    y_ref_data = psf_data['target'][:, 1]
+                    if best_candidate['ckey'] is not None:
+                        x_ref_data = psf_data[best_candidate['ckey']][:, 0]
+                        y_ref_data = psf_data[best_candidate['ckey']][:, 1]
 
-                best_candidate = None
-                for candidate, result in zip(shortlist, fit_results):
-                    fit_meta, tFlux1, cFlux1 = result
-                    if fit_meta is None:
-                        continue
-
-                    myfit = fit_meta['myfit']
-                    res_std = fit_meta['res_std']
-
-                    if photometry_info['min_std'] > res_std:
-                        best_candidate = candidate
-                        photometry_info.update(best_fit_lc=myfit,
-                                               comp_star_num=(None if candidate['comp_index'] is None else candidate['comp_index'] + 1),
-                                               comp_star_coords=(None if candidate['comp_index'] is None else exotic_infoDict['comp_stars'][candidate['comp_index']]),
-                                               min_std=res_std,
-                                               min_aperture=(-candidate['aper'] if candidate['comp_index'] is None else candidate['aper']),
-                                               min_annulus=candidate['annulus'],
-                                               aperture_index=candidate['a'],
-                                               annulus_index=candidate['an'],
-                                               selection_basis='target_fit')
-
-                        flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                           flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
-
-                        x_ref_data = psf_data['target'][:, 0]
-                        y_ref_data = psf_data['target'][:, 1]
-                        if candidate['ckey'] is not None:
-                            x_ref_data = psf_data[candidate['ckey']][:, 0]
-                            y_ref_data = psf_data[candidate['ckey']][:, 1]
-
-                        centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
-                                                  x_ref=x_ref_data, y_ref=y_ref_data)
+                    centroid_positions.update(
+                        x_targ=psf_data["target"][:, 0],
+                        y_targ=psf_data["target"][:, 1],
+                        x_ref=x_ref_data,
+                        y_ref=y_ref_data,
+                    )
 
                 if best_candidate is not None and vsp_num:
-                    best_a = best_candidate['a']
-                    best_an = best_candidate['an']
-                    best_target_flux = aper_data['target'][:, best_a, best_an]
-                    for j in vsp_num:
-                        ckey = f"comp{j + 1}"
-                        aper_mask = np.isfinite(aper_data[ckey][:, best_a, best_an])
-                        cFlux = aper_data[ckey][aper_mask][:, best_a, best_an]
-                        vsp_fit, _, _ = fit_lightcurve(
-                            times[aper_mask], best_target_flux[aper_mask], cFlux,
-                            airmass[aper_mask], ld, pDict, jd_times[aper_mask],
-                            disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                            use_impactparameter_rather_than_inclination_to_fit=
-                            use_impactparameter_rather_than_inclination_to_fit,
-                        )
-                        ref_flux[j] = {
-                            'myfit': vsp_fit,
-                            'pos': exotic_infoDict['comp_stars'][j]
-                        }
+                    if best_candidate['method'] == 'psf':
+                        for j in vsp_num:
+                            ckey = f"comp{j + 1}"
+                            cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
+                            vsp_fit, _, _ = fit_lightcurve(
+                                times, tFlux, cFlux, airmass, ld, pDict, jd_times,
+                                disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                                use_impactparameter_rather_than_inclination_to_fit=
+                                use_impactparameter_rather_than_inclination_to_fit,
+                            )
+                            ref_flux[j] = {
+                                'myfit': vsp_fit,
+                                'pos': exotic_infoDict['comp_stars'][j]
+                            }
+                    else:
+                        best_a = best_candidate['a']
+                        best_an = best_candidate['an']
+                        best_target_flux = aper_data['target'][:, best_a, best_an]
+                        for j in vsp_num:
+                            ckey = f"comp{j + 1}"
+                            aper_mask = np.isfinite(aper_data[ckey][:, best_a, best_an])
+                            cFlux = aper_data[ckey][aper_mask][:, best_a, best_an]
+                            vsp_fit, _, _ = fit_lightcurve(
+                                times[aper_mask], best_target_flux[aper_mask], cFlux,
+                                airmass[aper_mask], ld, pDict, jd_times[aper_mask],
+                                disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                                use_impactparameter_rather_than_inclination_to_fit=
+                                use_impactparameter_rather_than_inclination_to_fit,
+                            )
+                            ref_flux[j] = {
+                                'myfit': vsp_fit,
+                                'pos': exotic_infoDict['comp_stars'][j]
+                            }
 
             update_photometry_adaptive_summary(
                 photometry_info,

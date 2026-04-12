@@ -216,6 +216,91 @@ def test_create_fit_variables_preserves_explicit_baseline_in_nested_mode(monkeyp
     assert fit.parameters["a1"] == pytest.approx(0.98, abs=1e-9)
 
 
+def test_create_fit_variables_respects_plot_time_range(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    prior = make_prior()
+    fit.time = np.array([-0.015, 0.010], dtype=float)
+    fit.data = 0.99 * elca.transit(fit.time, prior)
+    fit.dataerr = np.full_like(fit.time, 1e-3)
+    fit.airmass = np.zeros_like(fit.time)
+    fit.prior = prior.copy()
+    fit.bounds = {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]}
+    fit.mode = "ns"
+    fit.parameters = prior.copy()
+    fit.errors = {"rprs": 1e-3, "tmid": 1e-4, "a0": 2e-3}
+    fit.plot_time_range = (-0.12, 0.18)
+
+    fit.create_fit_variables()
+
+    assert fit.time_upsample[0] == pytest.approx(-0.12, abs=1e-12)
+    assert fit.time_upsample[-1] == pytest.approx(0.18, abs=1e-12)
+    assert fit.phase_upsample[0] == pytest.approx(-0.04, abs=1e-12)
+    assert fit.phase_upsample[-1] == pytest.approx(0.06, abs=1e-12)
+
+
+def test_plot_bestfit_uses_full_plot_time_range_for_phase_xlim(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+    fit.plot_time_range = (-0.12, 0.18)
+    fit._update_plot_geometry()
+
+    fig, axes = fit.plot_bestfit()
+
+    assert axes[0].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
+    assert axes[1].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
+    plt.close(fig)
+
+
+def test_glc_plot_bestfit_median_limits_use_full_phase_span(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    phase = np.array([0.01, 0.02], dtype=float)
+    phase_upsample = np.linspace(-0.04, 0.06, 100)
+    residuals = np.array([1e-4, -1e-4], dtype=float)
+    times = prior["tmid"] + phase * prior["per"]
+
+    fit = elca.glc_fitter.__new__(elca.glc_fitter)
+    fit.parameters = prior.copy()
+    fit.errors = {"rprs": 1e-3, "tmid": 1e-4}
+    fit.lc_data = [{
+        "time": times,
+        "flux": np.ones_like(times),
+        "detrend": np.ones_like(times),
+        "ferr": np.full_like(times, 1e-3),
+        "residuals": residuals,
+        "phase": phase,
+        "phase_upsample": phase_upsample,
+        "time_upsample": prior["tmid"] + phase_upsample * prior["per"],
+        "transit_upsample": np.ones_like(phase_upsample),
+        "priors": prior.copy(),
+        "errors": {"rprs": 1e-3, "tmid": 1e-4},
+        "name": "dataset",
+    }]
+
+    fig, axes = fit.plot_bestfit(phase_limits="median")
+
+    assert axes[0].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
+    assert axes[1].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
+    plt.close(fig)
+
+
 def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)

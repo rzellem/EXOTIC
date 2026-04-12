@@ -103,6 +103,7 @@ from exotic.exotic import (
     summarize_adaptive_aperture_usage,
     should_skip_airmass_fit,
     should_fit_lightcurve_to_every_comparison_candidate,
+    should_detect_bad_pixels_before_photometry,
     should_use_aperture_photometry,
     should_use_psf_photometry,
     should_skip_low_comparison_coverage_rejection,
@@ -197,6 +198,12 @@ def test_should_fit_lightcurve_to_every_comparison_candidate_parses_values():
     assert should_fit_lightcurve_to_every_comparison_candidate(None) is False
     assert should_fit_lightcurve_to_every_comparison_candidate("y") is True
     assert should_fit_lightcurve_to_every_comparison_candidate("n") is False
+
+
+def test_should_detect_bad_pixels_before_photometry_parses_values():
+    assert should_detect_bad_pixels_before_photometry(None) is True
+    assert should_detect_bad_pixels_before_photometry("y") is True
+    assert should_detect_bad_pixels_before_photometry("n") is False
 
 
 def test_is_out_of_transit_baseline_detrending_enabled_parses_values():

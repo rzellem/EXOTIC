@@ -210,6 +210,7 @@ class Inputs:
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'detrend_on_outoftransit_baseline': True,
+            'detect_bad_pixels_before_photometry': 'y',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
             'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0,
@@ -422,6 +423,10 @@ class Inputs:
             'disable_vertical_flux_normalization': (
                 'disable vertical flux normalization',
                 'Disable vertical flux normalization',
+            ),
+            'detect_bad_pixels_before_photometry': (
+                'detect_bad_pixels_before_photometry',
+                'Detect Bad Pixels Before Photometry? (y/n)',
             ),
             'detrend_on_outoftransit_baseline': (
                 'detrend_on_outoftransit_baseline',

@@ -93,7 +93,7 @@ import requests
 # scipy imports
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
-from scipy.ndimage import binary_erosion, gaussian_filter
+from scipy.ndimage import binary_erosion, gaussian_filter, maximum_filter, median_filter
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
@@ -170,6 +170,21 @@ COMPARISON_STAR_MIN_VALID_FRAMES = 5
 COMPARISON_STAR_COVERAGE_SIGMA = 3.0
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
+BAD_PIXEL_DETECTION_FRACTION = 0.30
+BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
+BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
+BAD_PIXEL_OUTLIER_SIGMA = 8.0
+BAD_PIXEL_GLOBAL_SIGMA = 3.0
+BAD_PIXEL_ISOLATION_SIGMA = 5.0
+BAD_PIXEL_ISOLATION_RATIO = 2.0
+BAD_PIXEL_COUNTS_FILENAME = "BadPixelDetectionCounts.fits"
+BAD_PIXEL_MASK_FILENAME = "BadPixelMask.fits"
+BAD_PIXEL_NEIGHBOR_FOOTPRINT = np.array(
+    [[1, 1, 1],
+     [1, 0, 1],
+     [1, 1, 1]],
+    dtype=bool,
+)
 
 
 def airmass_span(airmass):
@@ -394,6 +409,27 @@ def should_use_aperture_photometry(config_value):
             return False
 
     log_info("Warning: Invalid 'use_aperture_photometry' value; keeping aperture photometry enabled.", warn=True)
+    return True
+
+
+def should_detect_bad_pixels_before_photometry(config_value):
+    if config_value is None:
+        return True
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'detect_bad_pixels_before_photometry' value; keeping bad-pixel precheck enabled.",
+        warn=True,
+    )
     return True
 
 
@@ -678,6 +714,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     disable_vertical_flux_normalization=False,
     detrend_on_outoftransit_baseline=True,
     use_impactparameter_rather_than_inclination_to_fit=True,
+    plot_time_range=None,
 ):
     fit = lc_fitter(
         times,
@@ -690,6 +727,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         mode='ns',
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
     )
+    fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
 
     if not detrend_on_outoftransit_baseline:
@@ -743,6 +781,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         mode='ns',
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
     )
+    refit = apply_plot_time_range(refit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, airmass, skip_airmass_fit, note=airmass_skip_note)
     annotate_out_of_transit_baseline_detrending(
         refit,
@@ -1102,6 +1141,23 @@ def apply_lightcurve_mask(lightcurve, mask, sort_index=None):
         if sort_index is not None:
             array_values = array_values[sort_index]
         setattr(lightcurve, attr, array_values[mask])
+
+
+def apply_plot_time_range(lightcurve, time_values):
+    if lightcurve is None:
+        return lightcurve
+
+    values = np.asarray(time_values, dtype=float).reshape(-1)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return lightcurve
+
+    lightcurve.plot_time_range = (float(np.min(finite)), float(np.max(finite)))
+    updater = getattr(lightcurve, "_update_plot_geometry", None)
+    if callable(updater):
+        updater()
+
+    return lightcurve
 
 
 def exp_offset(hdr, time_unit, exp):
@@ -2542,6 +2598,209 @@ def load_image_data(file_name):
     return image_data
 
 
+def persistent_bad_pixel_count_threshold(frame_count, minimum_fraction=BAD_PIXEL_DETECTION_FRACTION):
+    if frame_count <= 0:
+        return 1
+    return max(1, int(np.floor(float(minimum_fraction) * frame_count)) + 1)
+
+
+def detect_frame_bad_pixels(image_data,
+                            outlier_sigma=BAD_PIXEL_OUTLIER_SIGMA,
+                            isolation_sigma=BAD_PIXEL_ISOLATION_SIGMA,
+                            isolation_ratio=BAD_PIXEL_ISOLATION_RATIO):
+    values = np.asarray(image_data, dtype=float)
+    if values.ndim != 2 or values.size == 0:
+        return np.zeros(values.shape[:2], dtype=bool)
+
+    finite_mask = np.isfinite(values)
+    if np.count_nonzero(finite_mask) < BAD_PIXEL_NEIGHBOR_FOOTPRINT.sum():
+        return np.zeros(values.shape, dtype=bool)
+
+    working = np.array(values, copy=True)
+    frame_median = bn.nanmedian(working[finite_mask])
+    if not np.isfinite(frame_median):
+        frame_median = 0.0
+    working[~finite_mask] = frame_median
+
+    neighbor_median = median_filter(working, footprint=BAD_PIXEL_NEIGHBOR_FOOTPRINT, mode='mirror')
+    neighbor_max = maximum_filter(working, footprint=BAD_PIXEL_NEIGHBOR_FOOTPRINT, mode='mirror')
+    residual = working - neighbor_median
+
+    global_scatter = robust_scatter(residual[finite_mask])
+    if not np.isfinite(global_scatter) or global_scatter <= 0:
+        global_scatter = robust_scatter(working[finite_mask])
+    if not np.isfinite(global_scatter) or global_scatter <= 0:
+        return np.zeros(values.shape, dtype=bool)
+
+    local_scatter = 1.4826 * median_filter(
+        np.abs(residual),
+        footprint=BAD_PIXEL_NEIGHBOR_FOOTPRINT,
+        mode='mirror',
+    )
+    diff_threshold = np.maximum(outlier_sigma * local_scatter, BAD_PIXEL_GLOBAL_SIGMA * global_scatter)
+    isolation_threshold = max(isolation_sigma * global_scatter, 1.0)
+    neighbor_scale = np.maximum(np.abs(neighbor_max), 1.0)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        isolation_ratio_values = np.divide(np.abs(working), neighbor_scale)
+
+    return (
+        finite_mask
+        & (residual > diff_threshold)
+        & ((working - neighbor_max) > isolation_threshold)
+        & (isolation_ratio_values >= isolation_ratio)
+    )
+
+
+def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None,
+                                   minimum_fraction=BAD_PIXEL_DETECTION_FRACTION,
+                                   minimum_frames=BAD_PIXEL_PRECHECK_MIN_FRAMES):
+    inputfiles = list(inputfiles)
+    total_files = len(inputfiles)
+    if total_files < minimum_frames:
+        log_info(
+            f"Bad-pixel precheck skipped: only {total_files} frame(s); need at least {minimum_frames} frames.",
+        )
+        return None
+
+    detection_counts = None
+    scanned_files = 0
+
+    for index, file_name in enumerate(inputfiles):
+        plateStatus.setCurrentFilename(file_name)
+        try:
+            frame_data = frame_loader(file_name)
+        except Exception as exc:
+            log_info(
+                f"Warning: skipping bad-pixel precheck for {_display_filename(file_name)} ({exc}).",
+                warn=True,
+            )
+            continue
+
+        frame_mask = detect_frame_bad_pixels(frame_data)
+        if frame_mask.ndim != 2:
+            log_info(
+                f"Warning: skipping bad-pixel precheck for {_display_filename(file_name)} because the frame is not 2-D.",
+                warn=True,
+            )
+            continue
+
+        if detection_counts is None:
+            detection_counts = np.zeros(frame_mask.shape, dtype=np.uint32)
+        elif detection_counts.shape != frame_mask.shape:
+            log_info(
+                "Warning: skipping bad-pixel precheck for "
+                f"{_display_filename(file_name)} because its shape {frame_mask.shape} does not match "
+                f"the reference frame shape {detection_counts.shape}.",
+                warn=True,
+            )
+            continue
+
+        detection_counts += frame_mask.astype(np.uint32)
+        scanned_files += 1
+
+        completed = index + 1
+        if completed == total_files or completed % BAD_PIXEL_PROGRESS_LOG_INTERVAL == 0:
+            log_info(f"Bad-pixel precheck progress: {completed}/{total_files}")
+
+    if detection_counts is None or scanned_files < minimum_frames:
+        log_info(
+            f"Bad-pixel precheck skipped: only {scanned_files} usable frame(s); need at least {minimum_frames}.",
+            warn=True,
+        )
+        return None
+
+    required_count = persistent_bad_pixel_count_threshold(scanned_files, minimum_fraction)
+    bad_pixel_mask = detection_counts >= required_count
+    coord_y, coord_x = np.nonzero(bad_pixel_mask)
+
+    counts_path = None
+    mask_path = None
+    if save_directory is not None:
+        temp_dir = Path(save_directory) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        counts_path = temp_dir / BAD_PIXEL_COUNTS_FILENAME
+        mask_path = temp_dir / BAD_PIXEL_MASK_FILENAME
+        fits.writeto(counts_path, detection_counts.astype(np.int32), overwrite=True)
+        fits.writeto(mask_path, bad_pixel_mask.astype(np.uint8), overwrite=True)
+
+    threshold_percent = minimum_fraction * 100.0
+    summary = (
+        f"Bad-pixel precheck: identified {int(np.count_nonzero(bad_pixel_mask))} persistent bad pixel(s) "
+        f"after scanning {scanned_files}/{total_files} frame(s) with a >{threshold_percent:g}% recurrence threshold "
+        f"({required_count}+ detections)."
+    )
+    if counts_path is not None and mask_path is not None:
+        summary += f" Saved {counts_path.name} and {mask_path.name} to temp/."
+    log_info(summary)
+
+    return {
+        'count_image': detection_counts,
+        'mask': bad_pixel_mask,
+        'coord_y': coord_y.astype(int),
+        'coord_x': coord_x.astype(int),
+        'required_count': required_count,
+        'minimum_fraction': float(minimum_fraction),
+        'frame_count': scanned_files,
+        'counts_path': counts_path,
+        'mask_path': mask_path,
+    }
+
+
+def repair_bad_pixels_in_frame(image_data, bad_pixel_reference):
+    if bad_pixel_reference is None:
+        return image_data
+
+    coord_y = bad_pixel_reference.get('coord_y')
+    coord_x = bad_pixel_reference.get('coord_x')
+    if coord_y is None or coord_x is None:
+        mask = np.asarray(bad_pixel_reference.get('mask'), dtype=bool)
+        if mask.size == 0:
+            return image_data
+        coord_y, coord_x = np.nonzero(mask)
+
+    coord_y = np.asarray(coord_y, dtype=int)
+    coord_x = np.asarray(coord_x, dtype=int)
+    if coord_y.size == 0 or coord_x.size == 0:
+        return image_data
+
+    repaired = np.array(image_data, dtype=float, copy=True)
+    valid_coords = (
+        (coord_y >= 0) & (coord_y < repaired.shape[0])
+        & (coord_x >= 0) & (coord_x < repaired.shape[1])
+    )
+    if not np.any(valid_coords):
+        return repaired
+
+    coord_y = coord_y[valid_coords]
+    coord_x = coord_x[valid_coords]
+    repaired[coord_y, coord_x] = np.nan
+
+    padded = np.pad(repaired, 1, mode='edge')
+    yp = coord_y + 1
+    xp = coord_x + 1
+    neighbors = np.stack([
+        padded[yp - 1, xp - 1],
+        padded[yp - 1, xp],
+        padded[yp - 1, xp + 1],
+        padded[yp, xp - 1],
+        padded[yp, xp + 1],
+        padded[yp + 1, xp - 1],
+        padded[yp + 1, xp],
+        padded[yp + 1, xp + 1],
+    ], axis=0)
+
+    fill_values = np.nanmedian(neighbors, axis=0)
+    if np.any(~np.isfinite(fill_values)):
+        frame_median = bn.nanmedian(repaired)
+        if not np.isfinite(frame_median):
+            frame_median = 0.0
+        fill_values[~np.isfinite(fill_values)] = frame_median
+
+    repaired[coord_y, coord_x] = fill_values
+    return repaired
+
+
 def transformation_task(i, file_name, reference_file):
     if i == 0:
         return i, SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
@@ -3296,6 +3555,9 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
     ignore_header_wcs = should_ignore_header_wcs(info_dict.get('ignore_header_wcs'))
     bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(info_dict.get('bad_wcs_threshold_percent'))
+    detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
+        info_dict.get('detect_bad_pixels_before_photometry', 'y')
+    )
 
     plateStatus.initializeFilenames(info_dict['images'])
     inputfiles = corruption_check(info_dict['images'])
@@ -3321,6 +3583,19 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     )
     if dropped_wcs_files:
         plateStatus.initializeFilenames(list(inputfiles))
+
+    bad_pixel_reference = None
+    if detect_bad_pixels_before_photometry:
+        log_info(
+            "Bad-pixel precheck enabled: scanning frames for persistent isolated high-count outliers before photometry."
+        )
+        bad_pixel_reference = build_persistent_bad_pixel_map(
+            inputfiles,
+            load_image_data,
+            save_directory=info_dict['save'],
+        )
+    else:
+        log_info("Bad-pixel precheck disabled per optional_info setting.")
 
     use_multiprocess_transform_precompute = should_use_multiprocess_transform_precompute(
         inputfiles, multiprocess_transformations, ignore_header_wcs=ignore_header_wcs
@@ -3357,7 +3632,10 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     if tar_radec is not None and comp_radec:
         target_and_comp_radec = np.array([tar_radec, comp_radec[0]], dtype=float)
 
-    targ_sig_xy = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)[3:5]
+    centroid_reference_image = load_image_data(inputfiles[0])
+    centroid_reference_image = repair_bad_pixels_in_frame(centroid_reference_image, bad_pixel_reference)
+    targ_sig_xy = fit_centroid(centroid_reference_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)[3:5]
+    del centroid_reference_image
 
     # aperture and annulus scale factors in PSF sigma units
     aper_sigma = 3 * max(targ_sig_xy)
@@ -3402,6 +3680,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 
         # IMAGES
         imageData = hdul[extension].data
+        imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference)
 
         if i == 0:
             firstImage = np.copy(imageData)
@@ -3568,6 +3847,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    final_fit_mode='lm',
                    use_impactparameter_rather_than_inclination_to_fit=True):
     # remove outliers
+    plot_time_range = np.asarray(times, dtype=float)
     si = np.argsort(times)
     times_sorted = times[si]
     tflux_sorted = tFlux[si]
@@ -3692,6 +3972,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         mode='lm',
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
     )
+    myfit = apply_plot_time_range(myfit, plot_time_range)
     annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
 
     if (
@@ -3723,6 +4004,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                 mode='lm',
                 use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             )
+            myfit = apply_plot_time_range(myfit, plot_time_range)
             annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
 
     if final_fit_mode == 'ns' and myfit is not None:
@@ -3737,6 +4019,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             mode='ns',
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         )
+        myfit = apply_plot_time_range(myfit, plot_time_range)
         annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
 
     return myfit, f1, f2
@@ -4500,7 +4783,8 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
 
 
 def load_calibrated_reduction_image(file_name, generalDark, generalBias, generalFlat,
-                                    demosaic_fmt, demosaic_out, demosaic_mult):
+                                    demosaic_fmt, demosaic_out, demosaic_mult,
+                                    bad_pixel_reference=None):
     hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
     extension = 0
     image_header = hdul[extension].header
@@ -4513,6 +4797,7 @@ def load_calibrated_reduction_image(file_name, generalDark, generalBias, general
 
     image_data = apply_cals(image_data, generalDark, generalBias, generalFlat, 1)
     image_data = demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, 1)
+    image_data = repair_bad_pixels_in_frame(image_data, bad_pixel_reference)
     return image_data
 
 
@@ -5000,6 +5285,9 @@ def main():
             bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(
                 exotic_infoDict.get('bad_wcs_threshold_percent')
             )
+            detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
+                exotic_infoDict.get('detect_bad_pixels_before_photometry', 'y')
+            )
             inputfiles, wcs_keep_mask, dropped_wcs_files = filter_sparse_missing_wcs_frames(
                 inputfiles,
                 ignore_header_wcs=ignore_header_wcs,
@@ -5009,7 +5297,29 @@ def main():
                 times = times[wcs_keep_mask]
                 jd_times = jd_times[wcs_keep_mask]
                 plateStatus.initializeFilenames(list(inputfiles))
-            
+
+            bad_pixel_reference = None
+            if detect_bad_pixels_before_photometry:
+                log_info(
+                    "Bad-pixel precheck enabled: scanning calibrated frames for persistent isolated "
+                    "high-count outliers before plate-solve checks and photometry."
+                )
+                bad_pixel_reference = build_persistent_bad_pixel_map(
+                    inputfiles,
+                    lambda file_name: load_calibrated_reduction_image(
+                        file_name,
+                        generalDark,
+                        generalBias,
+                        generalFlat,
+                        demosaic_fmt,
+                        demosaic_out,
+                        demosaic_mult,
+                    ),
+                    save_directory=exotic_infoDict['save'],
+                )
+            else:
+                log_info("Bad-pixel precheck disabled per optional_info setting.")
+
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
@@ -5017,7 +5327,19 @@ def main():
             inc = 0
             for ifile in inputfiles:
                 plateStatus.setCurrentFilename(ifile)
-                first_image = fits.getdata(ifile)
+                if bad_pixel_reference is not None:
+                    first_image = load_calibrated_reduction_image(
+                        ifile,
+                        generalDark,
+                        generalBias,
+                        generalFlat,
+                        demosaic_fmt,
+                        demosaic_out,
+                        demosaic_mult,
+                        bad_pixel_reference=bad_pixel_reference,
+                    )
+                else:
+                    first_image = fits.getdata(ifile)
                 try:
                     initial_centroid = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
                     if np.isnan(initial_centroid[0]):
@@ -5229,6 +5551,7 @@ def main():
                 imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
                 # Demosaic, if needed
                 imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
+                imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference)
 
                 if i == 0:
                     firstImage = np.copy(imageData)
@@ -5425,6 +5748,7 @@ def main():
                                     demosaic_fmt,
                                     demosaic_out,
                                     demosaic_mult,
+                                    bad_pixel_reference=bad_pixel_reference,
                                 )
                                 loaded_from_disk = True
                             try:
@@ -6324,6 +6648,7 @@ def main():
             detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
             use_impactparameter_rather_than_inclination_to_fit=
             use_impactparameter_rather_than_inclination_to_fit,
+            plot_time_range=times,
         )
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])

@@ -128,6 +128,21 @@ def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_p
     assert inputs.info_dict["disable_vertical_flux_normalization"] is False
 
 
+def test_comp_params_defaults_detect_bad_pixels_before_photometry_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["detect_bad_pixels_before_photometry"] == "y"
+
+
 def test_comp_params_defaults_detrend_on_outoftransit_baseline_to_true(tmp_path):
     init_data = {
         "user_info": {},
@@ -306,6 +321,21 @@ def test_comp_params_reads_disable_vertical_flux_normalization_from_optional_inf
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["disable_vertical_flux_normalization"] is True
+
+
+def test_comp_params_reads_detect_bad_pixels_before_photometry_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"detect_bad_pixels_before_photometry": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["detect_bad_pixels_before_photometry"] == "n"
 
 
 def test_comp_params_reads_detrend_on_outoftransit_baseline_from_optional_info(tmp_path):

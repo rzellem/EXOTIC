@@ -131,6 +131,38 @@ def get_phase(times, per, tmid):
     return (times - tmid + 0.25 * per) / per % 1 - 0.25
 
 
+def normalize_time_range(time_range):
+    if time_range is None:
+        return None
+
+    values = np.asarray(time_range, dtype=float).reshape(-1)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return None
+
+    return float(np.min(finite)), float(np.max(finite))
+
+
+def get_plot_phase(times, per, tmid, reference_times=None):
+    times = np.asarray(times, dtype=float)
+    if not np.isfinite(per) or per == 0:
+        return times * np.nan
+
+    raw_phase = (times - tmid) / per
+
+    reference_range = normalize_time_range(reference_times)
+    if reference_range is None:
+        finite_phase = raw_phase[np.isfinite(raw_phase)]
+        if finite_phase.size == 0:
+            return raw_phase
+        reference_epoch = float(np.rint(0.5 * (np.min(finite_phase) + np.max(finite_phase))))
+    else:
+        ref_phase = (np.asarray(reference_range, dtype=float) - tmid) / per
+        reference_epoch = float(np.rint(np.mean(ref_phase)))
+
+    return raw_phase - reference_epoch
+
+
 def fallback_flux_baseline():
     return 1.0
 
@@ -371,6 +403,29 @@ class lc_fitter(object):
 
     def _get_airmass_reference(self):
         return getattr(self, 'airmass_reference', get_airmass_reference(self.airmass))
+
+    def _get_plot_time_range(self):
+        plot_time_range = normalize_time_range(getattr(self, 'plot_time_range', None))
+        if plot_time_range is not None:
+            return plot_time_range
+        return normalize_time_range(self.time)
+
+    def _update_plot_geometry(self):
+        plot_time_range = self._get_plot_time_range()
+        self.phase = get_plot_phase(self.time, self.parameters['per'], self.parameters['tmid'], plot_time_range)
+
+        if plot_time_range is None:
+            self.time_upsample = np.linspace(min(self.time), max(self.time), 1000)
+        else:
+            self.time_upsample = np.linspace(plot_time_range[0], plot_time_range[1], 1000)
+
+        self.transit_upsample = transit(self.time_upsample, self.parameters)
+        self.phase_upsample = get_plot_phase(
+            self.time_upsample,
+            self.parameters['per'],
+            self.parameters['tmid'],
+            plot_time_range,
+        )
 
     def _build_systematics_model(self, values):
         return get_flux_baseline(values) * airmass_trend(
@@ -880,11 +935,8 @@ class lc_fitter(object):
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.phase = get_phase(self.time, self.parameters['per'], self.parameters['tmid'])
         self.transit = transit(self.time, self.parameters)
-        self.time_upsample = np.linspace(min(self.time), max(self.time), 1000)
-        self.transit_upsample = transit(self.time_upsample, self.parameters)
-        self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
+        self._update_plot_geometry()
         if np.ndim(self.airmass) != 2:
             if self._has_free_flux_baseline():
                 flux_scale = get_flux_baseline(self.parameters)
@@ -1188,7 +1240,7 @@ class lc_fitter(object):
             axs[1].plot(self.phase, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=0.2,
                         label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals / np.median(self.data) * 1e2)))
             axs[1].plot(bt2 / self.parameters['per'], br2, 'bs', alpha=1, zorder=2)
-            axs[1].set_xlim([min(self.phase), max(self.phase)])
+            axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
             axs[1].set_xlabel("Phase", fontsize=14)
 
             si = np.argsort(self.phase)
@@ -1198,14 +1250,14 @@ class lc_fitter(object):
             # axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
             sii = np.argsort(self.phase_upsample)
             axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
-            axs[0].set_xlim([min(self.phase), max(self.phase)])
+            axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
             axs[0].set_xlabel("Phase ", fontsize=14)
         else:
             bt, br, _ = time_bin(self.time, self.residuals / np.median(self.data) * 1e2, bin_dt)
             axs[1].plot(self.time, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=0.2,
                         label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals / np.median(self.data) * 1e2)))
             axs[1].plot(bt, br, 'bs', alpha=1, zorder=2, label=r'$\sigma$ = {:.2f} %'.format(np.std(br)))
-            axs[1].set_xlim([min(self.time), max(self.time)])
+            axs[1].set_xlim([min(self.time_upsample), max(self.time_upsample)])
             axs[1].set_xlabel("Time [day]", fontsize=14)
 
             bt, bf, bs = time_bin(self.time, self.detrended, bin_dt)
@@ -1213,7 +1265,7 @@ class lc_fitter(object):
             sii = np.argsort(self.time_upsample)
             axs[0].errorbar(bt, bf, yerr=bs, alpha=1, zorder=2, color='blue', ls='none', marker='s')
             axs[0].plot(self.time_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
-            axs[0].set_xlim([min(self.time), max(self.time)])
+            axs[0].set_xlim([min(self.time_upsample), max(self.time_upsample)])
             axs[0].set_xlabel("Time [day]", fontsize=14)
 
         axs[0].get_xaxis().set_visible(False)
@@ -1506,9 +1558,23 @@ class glc_fitter(lc_fitter):
             self.lc_data[n]['detrend'] = self.lc_data[n]['flux'] / (airmass * flux_scale)
 
             # phase
-            self.lc_data[n]['phase'] = get_phase(self.lc_data[n]['time'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
-            self.lc_data[n]['time_upsample'] = np.linspace(min(self.lc_data[n]['time']), max(self.lc_data[n]['time']), 1000)
-            self.lc_data[n]['phase_upsample'] = get_phase(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors']['per'], self.lc_data[n]['priors']['tmid'])
+            plot_time_range = normalize_time_range(self.lc_data[n].get('plot_time_range'))
+            if plot_time_range is None:
+                plot_time_range = normalize_time_range(self.lc_data[n]['time'])
+            self.lc_data[n]['plot_time_range'] = plot_time_range
+            self.lc_data[n]['phase'] = get_plot_phase(
+                self.lc_data[n]['time'],
+                self.lc_data[n]['priors']['per'],
+                self.lc_data[n]['priors']['tmid'],
+                plot_time_range,
+            )
+            self.lc_data[n]['time_upsample'] = np.linspace(plot_time_range[0], plot_time_range[1], 1000)
+            self.lc_data[n]['phase_upsample'] = get_plot_phase(
+                self.lc_data[n]['time_upsample'],
+                self.lc_data[n]['priors']['per'],
+                self.lc_data[n]['priors']['tmid'],
+                plot_time_range,
+            )
             self.lc_data[n]['transit_upsample'] = transit(self.lc_data[n]['time_upsample'], self.lc_data[n]['priors'])
 
         # create an average value from all the local fits, used for plotting final best fit
@@ -1638,6 +1704,7 @@ class glc_fitter(lc_fitter):
 
         alldata = {
             'time': [],
+            'phase': [],
             'flux': [],
             'detrend': [],
             'ferr': [],
@@ -1648,12 +1715,13 @@ class glc_fitter(lc_fitter):
             ncolor = next(colors)
             nmarker = next(markers)
             alldata['time'].extend(self.lc_data[n]['time'].tolist())
+            alldata['phase'].extend(self.lc_data[n]['phase'].tolist())
             alldata['detrend'].extend(self.lc_data[n]['detrend'].tolist())
             alldata['flux'].extend(self.lc_data[n]['flux'].tolist())
             alldata['ferr'].extend(self.lc_data[n]['ferr'].tolist())
             alldata['residuals'].extend(self.lc_data[n]['residuals'].tolist())
             
-            phase = get_phase(self.lc_data[n]['time'], self.parameters['per'], self.lc_data[n]['priors']['tmid'])
+            phase = self.lc_data[n]['phase']
             si = np.argsort(phase)
             #bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.lc_data[n]['residuals'][si]/np.median(self.lc_data[n]['flux'])*1e2, bin_dt)
 
@@ -1675,8 +1743,8 @@ class glc_fitter(lc_fitter):
                                 label=r'{}: {:.2f} %'.format(self.lc_data[n].get('name',''),np.std(self.lc_data[n]['residuals']/np.median(self.lc_data[n]['flux'])*1e2)))
 
             # replace min and max for upsampled lc model
-            minp = min(minp, min(phase))
-            maxp = max(maxp, max(phase))
+            minp = min(minp, min(self.lc_data[n]['phase_upsample']))
+            maxp = max(maxp, max(self.lc_data[n]['phase_upsample']))
             min_std = min(min_std, np.std(self.lc_data[n]['residuals']/np.median(self.lc_data[n]['flux'])))
 
             # plot individual best fit models
@@ -1687,7 +1755,7 @@ class glc_fitter(lc_fitter):
         for k in alldata.keys():
             alldata[k] = np.array(alldata[k])
             
-        phase = get_phase(alldata['time'], self.parameters['per'], self.lc_data[n]['priors']['tmid'])
+        phase = alldata['phase']
         si = np.argsort(phase)
         bt, br, _ = time_bin(phase[si]*self.parameters['per'], alldata['residuals'][si]/np.median(alldata['flux']), 2*bin_dt)
         bt, bf, bs = time_bin(phase[si]*self.parameters['per'], alldata['detrend'][si], 2*bin_dt)
@@ -1700,12 +1768,10 @@ class glc_fitter(lc_fitter):
         axs[1].plot(bt/self.parameters['per'],br*1e2,color='white',ls='none',marker='o',ms=11,markeredgecolor='black')
 
         # best fit model
-        self.time_upsample = np.linspace(minp*self.parameters['per']+self.parameters['tmid'], 
-                                         maxp*self.parameters['per']+self.parameters['tmid'], 10000)
+        self.phase_upsample = np.linspace(minp, maxp, 10000)
+        self.time_upsample = self.parameters['tmid'] + self.phase_upsample * self.parameters['per']
         self.transit_upsample = transit(self.time_upsample, self.parameters)
-        self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
-        sii = np.argsort(self.phase_upsample)
-        axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel, lw=3)
+        axs[0].plot(self.phase_upsample, self.transit_upsample, 'r-', zorder=3, label=lclabel, lw=3)
 
         # set up axes limits
         axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
@@ -1718,8 +1784,8 @@ class glc_fitter(lc_fitter):
         # compute average min and max for all the data
         mins = []; maxs = []
         for n in range(len(self.lc_data)):
-            mins.append(min(self.lc_data[n]['phase']))
-            maxs.append(max(self.lc_data[n]['phase']))
+            mins.append(min(self.lc_data[n]['phase_upsample']))
+            maxs.append(max(self.lc_data[n]['phase_upsample']))
 
         # set up phase limits
         if isinstance(phase_limits, str):
@@ -1782,7 +1848,7 @@ class glc_fitter(lc_fitter):
             ncolor = next(colors)
             nmarker = next(markers)
 
-            phase = get_phase(self.lc_data[n]['time'], self.parameters['per'], self.lc_data[n]['priors']['tmid'])
+            phase = self.lc_data[n]['phase']
             si = np.argsort(phase)
             bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.lc_data[n]['residuals'][si]/np.median(self.lc_data[n]['flux'])*1e2, bin_dt)
             
@@ -1795,17 +1861,15 @@ class glc_fitter(lc_fitter):
             ax.errorbar(bt2/self.lc_data[n]['priors']['per'],bf2,yerr=bs,alpha=1,zorder=2,color=ncolor,ls='none',marker=nmarker)
 
             # replace min and max for upsampled lc model
-            minp = min(minp, min(phase))
-            maxp = max(maxp, max(phase))
+            minp = min(minp, min(self.lc_data[n]['phase_upsample']))
+            maxp = max(maxp, max(self.lc_data[n]['phase_upsample']))
             min_std = min(min_std, np.std(self.lc_data[n]['residuals']/np.median(self.lc_data[n]['flux'])))
 
             # best fit model
-            self.time_upsample = np.linspace(minp*self.parameters['per']+self.parameters['tmid'], 
-                                            maxp*self.parameters['per']+self.parameters['tmid'], 10000)
+            self.phase_upsample = np.linspace(minp, maxp, 10000)
+            self.time_upsample = self.parameters['tmid'] + self.phase_upsample * self.parameters['per']
             self.transit_upsample = transit(self.time_upsample, self.parameters)
-            self.phase_upsample = get_phase(self.time_upsample, self.parameters['per'], self.parameters['tmid'])
-            sii = np.argsort(self.phase_upsample)
-            ax.plot(self.phase_upsample[sii], self.transit_upsample[sii]-n*dy, ls='-', color=ncolor, zorder=3, label=self.lc_data[n].get('name',''))
+            ax.plot(self.phase_upsample, self.transit_upsample-n*dy, ls='-', color=ncolor, zorder=3, label=self.lc_data[n].get('name',''))
 
         ax.set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         ax.set_xlabel("Phase ", fontsize=14)

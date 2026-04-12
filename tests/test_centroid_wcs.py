@@ -104,6 +104,61 @@ def _write_extension_wcs_fits(tmp_path, shape=(100, 120)):
     return path
 
 
+def test_detect_frame_bad_pixels_flags_isolated_hot_pixel_but_not_broad_star_core():
+    image = _gaussian_image(shape=(60, 60), center=(30.0, 30.0), amplitude=1200.0, sigma=1.8, background=100.0)
+    image[10, 15] = 8000.0
+
+    mask = exotic_module.detect_frame_bad_pixels(image)
+
+    assert mask[10, 15]
+    assert not mask[30, 30]
+
+
+def test_build_persistent_bad_pixel_map_thresholds_recurrence_and_saves_outputs(tmp_path):
+    frames = {}
+    for frame_index in range(10):
+        frame = np.full((9, 9), 100.0, dtype=float)
+        if frame_index < 4:
+            frame[2, 3] = 4000.0
+        if frame_index < 3:
+            frame[6, 5] = 3500.0
+        frames[f"frame_{frame_index}.fits"] = frame
+
+    reference = exotic_module.build_persistent_bad_pixel_map(
+        list(frames.keys()),
+        lambda file_name: frames[file_name],
+        save_directory=tmp_path,
+    )
+
+    assert reference is not None
+    assert reference["required_count"] == 4
+    assert reference["mask"][2, 3]
+    assert not reference["mask"][6, 5]
+
+    count_image = fits.getdata(tmp_path / "temp" / "BadPixelDetectionCounts.fits")
+    mask_image = fits.getdata(tmp_path / "temp" / "BadPixelMask.fits").astype(bool)
+
+    assert count_image[2, 3] == 4
+    assert count_image[6, 5] == 3
+    assert mask_image[2, 3]
+    assert not mask_image[6, 5]
+
+
+def test_repair_bad_pixels_in_frame_replaces_known_bad_pixel_with_neighbor_median():
+    image = np.arange(25, dtype=float).reshape(5, 5)
+    image[2, 2] = 9999.0
+    reference = {
+        "mask": np.zeros((5, 5), dtype=bool),
+        "coord_y": np.array([2]),
+        "coord_x": np.array([2]),
+    }
+    reference["mask"][2, 2] = True
+
+    repaired = exotic_module.repair_bad_pixels_in_frame(image, reference)
+
+    assert repaired[2, 2] == pytest.approx(12.0)
+
+
 def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch):
     image = _gaussian_image()
     low_flux_warnings = []

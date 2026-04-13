@@ -21,7 +21,7 @@ python_version
 pyvo~=1.5.3
 rebound~=4.4.3
 requests~=2.32.3
-scipy~=1.14.1
+scipy~=1.17.1
 scikit-image~=0.24.0
 statsmodels~=0.14.4
 tenacity~=9.0

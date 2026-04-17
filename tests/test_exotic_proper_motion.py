@@ -86,6 +86,7 @@ from exotic.exotic import (
     auto_tune_aperture_sigma_grid,
     check_coordinates,
     cheap_lightcurve_prescore,
+    comparison_candidate_fit_selection_reason,
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
     detrend_flux_on_out_of_transit_baseline,
@@ -93,6 +94,7 @@ from exotic.exotic import (
     fit_lightcurve,
     fit_final_lightcurve_with_oot_baseline_detrending,
     fit_lightcurve_to_every_comparison_candidate,
+    fit_ranked_comparison_calibration_candidates,
     is_adaptive_aperture_mode_enabled,
     is_comp_star_required,
     is_out_of_transit_baseline_detrending_enabled,
@@ -528,6 +530,23 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
     assert any("parameters: fit_method=ultranest" in message for message in logged)
 
 
+def test_comparison_candidate_fit_selection_reason_describes_comparison_field_retry():
+    reason = comparison_candidate_fit_selection_reason(
+        {
+            "selected": True,
+            "failure_reason": None,
+            "res_std": 0.01,
+        },
+        {
+            "selection_basis": "comparison_field_retry",
+            "comp_star_num": 2,
+            "min_std": 0.01,
+        },
+    )
+
+    assert "fell back to this star" in reason
+
+
 def test_comparison_star_stability_summary_penalizes_variable_candidates():
     airmass = np.linspace(1.0, 1.5, 6)
     summary = comparison_star_stability_summary(
@@ -712,6 +731,51 @@ def test_phase_bin_sigma_clip_flags_local_phase_outlier():
     assert mask[27]
 
 
+def test_fit_final_lightcurve_preserves_explicit_plot_time_range(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        return types.SimpleNamespace(
+            parameters={"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a2": 0.01},
+            data=np.array(call_flux, dtype=float),
+            residuals=np.zeros_like(call_flux, dtype=float),
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(0.0, 0.05, 6)
+    flux = np.ones(6, dtype=float)
+    fluxerr = np.full(6, 0.01, dtype=float)
+    airmass = np.linspace(1.0, 1.5, 6)
+    prior = {"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0}
+    bounds = {"rprs": [0.05, 0.15], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0]}
+    plot_time_range = (-0.12, 0.18)
+
+    fit, _, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        detrend_on_outoftransit_baseline=False,
+        plot_time_range=plot_time_range,
+    )
+
+    assert fit.plot_time_range == pytest.approx(plot_time_range)
+
+
 def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
     captured = {}
 
@@ -764,6 +828,113 @@ def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
     assert np.allclose(captured["fluxes"], 1.0)
     assert np.allclose(fit_tflux, 2.0)
     assert np.allclose(fit_cflux, 2.0)
+
+
+def test_fit_lightcurve_preserves_explicit_plot_time_range(monkeypatch):
+    captured = {}
+
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        fit = types.SimpleNamespace()
+        captured["fit"] = fit
+        return fit
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.sigma_clip", lambda data, sigma=3, dt=21, po=2: np.zeros(len(data), dtype=bool))
+
+    times = np.linspace(0.0, 0.05, 6)
+    tflux = np.full(times.shape[0], 2.0)
+    cflux = np.full(times.shape[0], 2.0)
+    airmass = np.linspace(1.0, 1.5, times.shape[0])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+    plot_time_range = (-0.12, 0.18)
+
+    myfit, _, _ = fit_lightcurve(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times,
+        plot_time_range=plot_time_range,
+    )
+
+    assert myfit is captured["fit"]
+    assert myfit.plot_time_range == pytest.approx(plot_time_range)
+
+
+def test_fit_lightcurve_centers_vertical_flux_bound_on_raw_flux_ratio(monkeypatch):
+    captured = {}
+
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        fit = types.SimpleNamespace()
+        captured["fit"] = fit
+        captured["prior"] = dict(prior)
+        captured["bounds"] = {
+            key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+            for key, value in bounds.items()
+        }
+        return fit
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.sigma_clip", lambda data, sigma=3, dt=21, po=2: np.zeros(len(data), dtype=bool))
+
+    times = np.linspace(0.0, 0.05, 6)
+    tflux = np.full(times.shape[0], 100.0)
+    cflux = np.full(times.shape[0], 2000.0)
+    airmass = np.linspace(1.0, 1.5, times.shape[0])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+
+    myfit, _, _ = fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times)
+
+    assert myfit is captured["fit"]
+    assert captured["prior"]["a0"] == pytest.approx(0.05)
+    assert captured["prior"]["a1"] == pytest.approx(0.05)
+    assert captured["bounds"]["a0"] == pytest.approx([0.0375, 0.0625])
 
 
 def test_fit_lightcurve_rejects_undersampled_series(monkeypatch):
@@ -933,7 +1104,7 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
             self.data = np.ones(6)
 
     def fake_evaluate(task):
-        _, tflux, cflux, _, _, _, _, _, _ = task
+        _, tflux, cflux, _, _, _, _, _, _, _ = task
         evaluated.append(np.asarray(cflux))
         cflux = np.asarray(cflux)
         tflux = np.asarray(tflux)
@@ -1005,6 +1176,131 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
     assert result["best_candidate"]["method"] == "aperture"
     assert result["best_candidate"]["comp_index"] == 0
     assert result["min_std"] == pytest.approx(0.01)
+
+
+def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidate(monkeypatch):
+    class DummyFit:
+        def __init__(self):
+            self.residuals = np.full(6, 0.01)
+            self.data = np.ones(6)
+
+    def fake_fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times, **kwargs):
+        cflux = np.asarray(cflux, dtype=float)
+        if np.allclose(cflux, 0.0):
+            return None, None, None
+        return DummyFit(), np.asarray(tflux, dtype=float), cflux
+
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "aper": 5.0,
+        "annulus": 12.0,
+        "best_comp_index": 0,
+        "comp_summaries": [
+            {
+                "comp_index": 0,
+                "key": "comp1",
+                "aggregate_score": 0.01,
+                "coverage_rejected": False,
+            },
+            {
+                "comp_index": 1,
+                "key": "comp2",
+                "aggregate_score": 0.02,
+                "coverage_rejected": False,
+            },
+        ],
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 10.0),
+        "comp1": np.zeros((6, 1, 1)),
+        "comp2": np.full((6, 1, 1), 5.0),
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.ones(6),
+    )
+
+    assert [attempt["comp_index"] for attempt in result["attempts"]] == [0, 1]
+    assert result["selected_result"]["comp_index"] == 1
+    assert "relative-flux filtering left 0 usable point(s)" in result["attempts"][0]["fit_diagnostics"]["failure_reason"]
+    assert result["attempts"][1]["fit"] is not None
+
+
+def test_fit_lightcurve_to_every_comparison_candidate_forwards_full_plot_time_range(monkeypatch):
+    captured_plot_ranges = []
+
+    class DummyFit:
+        def __init__(self, plot_time_range):
+            self.plot_time_range = plot_time_range
+            self.parameters = {"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0}
+            self.errors = {"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01}
+            self.residuals = np.full(6, 0.01, dtype=float)
+            self.data = np.ones(6, dtype=float)
+
+    def fake_fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
+        plot_time_range = kwargs.get("plot_time_range")
+        captured_plot_ranges.append(plot_time_range)
+        return DummyFit(plot_time_range), np.asarray(tflux, dtype=float), np.asarray(cflux, dtype=float)
+
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+    monkeypatch.setattr(
+        "exotic.exotic.diagnose_lightcurve_fit_inputs",
+        lambda *args, **kwargs: {
+            "input_point_count": 6,
+            "has_reference_flux": True,
+            "relative_flux_point_count": 6,
+            "sigma_clip_point_count": 6,
+            "usable_point_count": 6,
+            "failed_stage": None,
+            "failure_reason": None,
+        },
+    )
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    psf_series = np.ones((6, 7), dtype=float)
+    psf_data = {
+        "target": psf_series.copy(),
+        "comp1": psf_series.copy(),
+    }
+    photometry_info = {
+        "best_fit_lc": object(),
+        "comp_star_num": 1,
+        "min_aperture": 0,
+    }
+    plot_time_range = (-0.12, 0.18)
+
+    summaries = fit_lightcurve_to_every_comparison_candidate(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={},
+        comp_stars=[[100.0, 200.0]],
+        psf_data=psf_data,
+        aper_data=None,
+        photometry_info=photometry_info,
+        plot_time_range=plot_time_range,
+    )
+
+    assert captured_plot_ranges == [plot_time_range]
+    assert summaries[0]["fit"].plot_time_range == pytest.approx(plot_time_range)
 
 
 def test_ensure_lightcurve_fit_failure_reason_preserves_existing_diagnostic_reason():

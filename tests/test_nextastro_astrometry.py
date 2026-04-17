@@ -92,6 +92,49 @@ def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):
     assert header['CTYPE2'] == 'DEC--TAN'
 
 
+def test_plate_solution_logs_json_via_message_logger_when_fail_warnings_suppressed(tmp_path, monkeypatch):
+    fits_path = _create_test_fits(tmp_path)
+    (tmp_path / "temp").mkdir()
+    logged = []
+
+    monkeypatch.setattr(
+        'exotic.api.plate_solution.requests.post',
+        lambda url, json, timeout: DummyResponse({'status': 'queued', 'request_id': 'abc123'})
+    )
+    monkeypatch.setattr(
+        'exotic.api.plate_solution.requests.get',
+        lambda url, timeout: DummyResponse({
+            'status': 'solved',
+            'solution': {
+                'wcs_header': {
+                    'SIMPLE': True,
+                    'BITPIX': -64,
+                    'NAXIS': 2,
+                    'NAXIS1': 120,
+                    'NAXIS2': 100,
+                    'CTYPE1': 'RA---TAN',
+                    'CTYPE2': 'DEC--TAN',
+                }
+            }
+        })
+    )
+    monkeypatch.setattr('exotic.api.plate_solution.time.sleep', lambda _: None)
+
+    solver = NextAstroPlateSolution(
+        file=fits_path,
+        directory=tmp_path,
+        suppress_fail_warning=True,
+        message_logger=logged.append
+    )
+
+    wcs_file = solver.plate_solution()
+
+    assert wcs_file == tmp_path / 'temp' / 'wcs.fits'
+    assert any('NextAstro astrometry request JSON:' in message for message in logged)
+    assert any('NextAstro astrometry submission response JSON:' in message for message in logged)
+    assert any('NextAstro astrometry status response JSON (solved):' in message for message in logged)
+
+
 def test_extract_astrometry_hints_with_scale_only(tmp_path):
     fits_path = _create_test_fits(tmp_path)
     solver = NextAstroPlateSolution(file=fits_path, directory=tmp_path, pixel_scale=2.0)
@@ -143,8 +186,8 @@ def test_poll_for_solution_logs_unexpected_status(tmp_path, monkeypatch, capsys)
 
     assert header is False
     output = capsys.readouterr().out
-    assert "Status response (unexpected)" in output
-    assert "'status': 'processing'" in output
+    assert "NextAstro astrometry status response JSON (unexpected)" in output
+    assert '"status": "processing"' in output
 
 
 def test_submit_solve_request_handles_non_json_response(tmp_path, monkeypatch, capsys):
@@ -169,7 +212,7 @@ def test_submit_solve_request_handles_non_json_response(tmp_path, monkeypatch, c
 
     assert request_id is False
     output = capsys.readouterr().out
-    assert "Solve request payload" in output
+    assert "NextAstro astrometry request JSON:" in output
     assert "Solve response returned non-JSON response" not in output
     assert "bad gateway" not in output.lower()
     assert solver.last_http_status == 502

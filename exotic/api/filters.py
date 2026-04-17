@@ -105,6 +105,7 @@ fwhm_alias = {
         "hb": "Stromgren Hbw",
         "zs": "PanSTARRS z-short",
         "clearV": "ClearV",
+        "C": "MObs CV",
         "clear": "ClearV",
         "lum": "ClearV",
         "w": "ClearV",

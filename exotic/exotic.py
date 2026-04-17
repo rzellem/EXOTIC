@@ -565,13 +565,21 @@ def apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled
     finite_flux = np.asarray(flux_values, dtype=float)
     finite_flux = finite_flux[np.isfinite(finite_flux) & (finite_flux > 0)]
     baseline_guess = 1.0 if finite_flux.size == 0 else float(np.nanmedian(finite_flux))
-    baseline_guess = float(np.clip(baseline_guess, 0.95, 1.05))
+    if not np.isfinite(baseline_guess) or baseline_guess <= 0:
+        baseline_guess = 1.0
 
     prior['a0'] = baseline_guess
     prior['a1'] = baseline_guess
 
     if not disabled:
-        bounds['a0'] = [0.95, 1.05]
+        # Raw target/reference flux ratios are often far from unity, so only keep
+        # the legacy near-unity bound for already-normalized light curves.
+        if 0.95 <= baseline_guess <= 1.05:
+            bounds['a0'] = [0.95, 1.05]
+        else:
+            lower = max(np.finfo(float).eps, baseline_guess * 0.75)
+            upper = baseline_guess * 1.25
+            bounds['a0'] = [lower, upper]
 
 
 def detrend_flux_on_out_of_transit_baseline(
@@ -1810,7 +1818,8 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
             ra=ra,
             dec=dec,
             pixel_scale=pixel_scale,
-            suppress_fail_warning=True
+            suppress_fail_warning=True,
+            message_logger=log_info
         )
         wcs_file = nextastro_solver.plate_solution()
         if wcs_file:
@@ -1848,7 +1857,8 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
         ra=ra,
         dec=dec,
         pixel_scale=pixel_scale,
-        suppress_fail_warning=True
+        suppress_fail_warning=True,
+        message_logger=log_info
     )
     wcs_file = nextastro_solver.plate_solution()
     animate_toggle()
@@ -3845,9 +3855,10 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    allow_mid_transit_range_warning=True, disable_vertical_flux_normalization=False,
                    final_fit_mode='lm',
-                   use_impactparameter_rather_than_inclination_to_fit=True):
+                   use_impactparameter_rather_than_inclination_to_fit=True,
+                   plot_time_range=None):
     # remove outliers
-    plot_time_range = np.asarray(times, dtype=float)
+    plot_time_range = np.asarray(times if plot_time_range is None else plot_time_range, dtype=float)
     si = np.argsort(times)
     times_sorted = times[si]
     tflux_sorted = tFlux[si]
@@ -4186,6 +4197,7 @@ def evaluate_lightcurve_candidate(task):
         ld,
         p_dict,
         jd_times,
+        plot_time_range,
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
     ) = task
@@ -4200,6 +4212,7 @@ def evaluate_lightcurve_candidate(task):
         allow_mid_transit_range_warning=False,
         disable_vertical_flux_normalization=disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        plot_time_range=plot_time_range,
     )
     if myfit is None:
         return None, tflux_fit, cflux_fit
@@ -4315,6 +4328,7 @@ def shortlist_target_fit_candidates(candidate_jobs, minimum_count=50, fraction=0
 
 
 def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, psf_data, aper_data,
+                              plot_time_range=None,
                               disable_vertical_flux_normalization=False,
                               use_impactparameter_rather_than_inclination_to_fit=True):
     candidate_mask = np.asarray(candidate['mask'], dtype=bool)
@@ -4344,6 +4358,7 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
         ld,
         p_dict,
         jd_times[candidate_mask],
+        plot_time_range,
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
     )
@@ -4352,6 +4367,7 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
 def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, comp_stars, psf_data, aper_data,
                                         apers, annuli, sigma,
                                         require_comp_star=True,
+                                        plot_time_range=None,
                                         disable_vertical_flux_normalization=False,
                                         skip_low_comparison_coverage_rejection=False,
                                         use_psf_photometry=True,
@@ -4393,6 +4409,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             p_dict,
             psf_data,
             aper_data,
+            plot_time_range=plot_time_range,
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         )
@@ -4497,12 +4514,24 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
     if summary.get('selected'):
         if selection_basis == 'comparison_field':
             return "selected: comparison-field calibration ranked this star best for the chosen photometry method"
+        if selection_basis == 'comparison_field_retry':
+            return (
+                "selected: comparison-field calibration fell back to this star "
+                "after better-ranked candidates failed target fitting"
+            )
         return "selected: lowest target-fit residual scatter in the chosen search"
 
     if selection_basis == 'comparison_field':
         if selected_comp_num is None:
             return "not selected: comparison-field calibration chose a different candidate"
         return f"not selected: comparison-field calibration chose Comp {selected_comp_num}"
+    if selection_basis == 'comparison_field_retry':
+        if selected_comp_num is None:
+            return "not selected: comparison-field fallback chose a different candidate"
+        return (
+            "not selected: comparison-field fallback chose "
+            f"Comp {selected_comp_num} after better-ranked candidate(s) failed target fitting"
+        )
 
     if np.isfinite(candidate_res_std) and np.isfinite(selected_res_std):
         if candidate_res_std > selected_res_std + 1e-12:
@@ -4605,6 +4634,7 @@ def log_comparison_candidate_fit_summaries(candidate_fit_summaries, photometry_i
 
 def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p_dict, comp_stars,
                                                  psf_data, aper_data, photometry_info,
+                                                 plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
                                                  skip_low_comparison_coverage_rejection=False,
                                                  use_impactparameter_rather_than_inclination_to_fit=True):
@@ -4686,6 +4716,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                 final_fit_mode='ns',
                 use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+                plot_time_range=plot_time_range,
             )
             fit_diagnostics = ensure_lightcurve_fit_failure_reason(
                 fit_diagnostics,
@@ -5189,6 +5220,117 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
     return best_candidate
 
 
+def ranked_comparison_calibration_summaries(comparison_calibration):
+    if comparison_calibration is None:
+        return []
+
+    ranked_summaries = []
+    for summary in comparison_calibration.get('comp_summaries', []):
+        aggregate_score = summary.get('aggregate_score', np.inf)
+        if summary.get('coverage_rejected'):
+            continue
+        if not np.isfinite(aggregate_score):
+            continue
+        ranked_summaries.append(summary)
+
+    ranked_summaries.sort(
+        key=lambda summary: (
+            summary.get('aggregate_score', np.inf),
+            summary.get('comp_index', np.inf),
+        )
+    )
+    return ranked_summaries
+
+
+def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
+                                                 psf_data, aper_data, target_psf_flux,
+                                                 plot_time_range=None,
+                                                 disable_vertical_flux_normalization=False,
+                                                 use_impactparameter_rather_than_inclination_to_fit=True):
+    ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
+    if not ranked_summaries:
+        return {
+            'ranked_summaries': [],
+            'attempts': [],
+            'selected_result': None,
+        }
+
+    method = comparison_calibration['method']
+    aperture_index = comparison_calibration.get('a')
+    annulus_index = comparison_calibration.get('an')
+    if method == 'psf':
+        target_flux = target_psf_flux
+    else:
+        target_flux = aper_data['target'][:, aperture_index, annulus_index]
+
+    attempts = []
+    selected_result = None
+    for rank, comp_summary in enumerate(ranked_summaries):
+        comp_index = comp_summary['comp_index']
+        ckey = comp_summary.get('key', f"comp{comp_index + 1}")
+        if method == 'psf':
+            comp_flux = (
+                2 * np.pi * psf_data[ckey][:, 2]
+                * psf_data[ckey][:, 3]
+                * psf_data[ckey][:, 4]
+            )
+        else:
+            comp_flux = aper_data[ckey][:, aperture_index, annulus_index]
+
+        fit_diagnostics = diagnose_lightcurve_fit_inputs(
+            times,
+            target_flux,
+            comp_flux,
+            airmass,
+        )
+        fit_result, tflux_fit, cflux_fit = fit_lightcurve(
+            times,
+            target_flux,
+            comp_flux,
+            airmass,
+            ld,
+            p_dict,
+            jd_times,
+            disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+            plot_time_range=plot_time_range,
+        )
+        fit_diagnostics = ensure_lightcurve_fit_failure_reason(
+            fit_diagnostics,
+            fit_result,
+            failed_stage='lightcurve_fit',
+            failure_reason="the lightcurve fitter did not converge to a usable solution.",
+        )
+
+        res_std = np.inf
+        if fit_result is not None and hasattr(fit_result, 'residuals') and hasattr(fit_result, 'data'):
+            with np.errstate(divide='ignore', invalid='ignore'):
+                res_std = float(np.std(fit_result.residuals) / np.median(fit_result.data))
+
+        attempt = {
+            'rank': rank,
+            'comp_index': comp_index,
+            'ckey': ckey,
+            'fit': fit_result,
+            'tflux_fit': tflux_fit,
+            'cflux_fit': cflux_fit,
+            'fit_diagnostics': fit_diagnostics,
+            'res_std': res_std,
+        }
+        attempts.append(attempt)
+
+        if fit_result is not None:
+            selected_result = attempt
+            break
+
+    return {
+        'ranked_summaries': ranked_summaries,
+        'attempts': attempts,
+        'selected_result': selected_result,
+    }
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Using a JSON initialization file to bypass user inputs for EXOTIC.")
     parser.add_argument('-rt', '--realtime',
@@ -5515,6 +5657,10 @@ def main():
             times = np.array(times)[si]
             jd_times = np.array(jd_times)[si]
             inputfiles = np.array(inputfiles)[si]
+            finite_plot_times = times[np.isfinite(times)]
+            full_plot_time_range = None
+            if finite_plot_times.size:
+                full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
             ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
             bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(
                 exotic_infoDict.get('bad_wcs_threshold_percent')
@@ -6200,46 +6346,56 @@ def main():
                 except Exception as e:
                     log_info(f"Warning: Could not save comparison-star calibration outputs ({e}).", warn=True)
 
-                selected_comp_index = comparison_calibration['best_comp_index']
-                selected_ckey = f"comp{selected_comp_index + 1}"
-                selected_comp_coords = exotic_infoDict['comp_stars'][selected_comp_index]
-                selected_min_aperture = 0 if comparison_calibration['method'] == 'psf' else comparison_calibration['aper']
-                selected_min_annulus = comparison_calibration['annulus']
-                selected_a = None if comparison_calibration['method'] == 'psf' else comparison_calibration['a']
-                selected_an = None if comparison_calibration['method'] == 'psf' else comparison_calibration['an']
-
-                if comparison_calibration['method'] == 'psf':
-                    selected_target_flux = tFlux
-                    selected_comp_flux = (
-                        2 * np.pi * psf_data[selected_ckey][:, 2] * psf_data[selected_ckey][:, 3] * psf_data[selected_ckey][:, 4]
-                    )
-                else:
-                    best_a = comparison_calibration['a']
-                    best_an = comparison_calibration['an']
-                    selected_target_flux = aper_data['target'][:, best_a, best_an]
-                    selected_comp_flux = aper_data[selected_ckey][:, best_a, best_an]
-
-                selected_fit_diagnostics = diagnose_lightcurve_fit_inputs(
+                comparison_fit_search = fit_ranked_comparison_calibration_candidates(
                     times,
-                    selected_target_flux,
-                    selected_comp_flux,
+                    jd_times,
                     airmass,
-                )
-                myfit, tFlux1, cFlux1 = fit_lightcurve(
-                    times, selected_target_flux, selected_comp_flux, airmass, ld, pDict, jd_times,
+                    ld,
+                    pDict,
+                    comparison_calibration,
+                    psf_data,
+                    aper_data,
+                    tFlux,
+                    plot_time_range=full_plot_time_range,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
                 )
-                selected_fit_diagnostics = ensure_lightcurve_fit_failure_reason(
-                    selected_fit_diagnostics,
-                    myfit,
-                    failed_stage='lightcurve_fit',
-                    failure_reason="the lightcurve fitter did not converge to a usable solution.",
-                )
-                comparison_calibration['selected_fit_diagnostics'] = selected_fit_diagnostics
-                if myfit is not None:
-                    res_std = myfit.residuals.std() / np.median(myfit.data)
+                comparison_calibration['ranked_fit_comp_indices'] = [
+                    summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
+                ]
+                comparison_calibration['fit_attempt_summaries'] = comparison_fit_search['attempts']
+
+                selected_attempt = comparison_fit_search['selected_result']
+                fit_attempts = comparison_fit_search['attempts']
+                if fit_attempts:
+                    comparison_calibration['selected_fit_diagnostics'] = fit_attempts[-1]['fit_diagnostics']
+
+                if selected_attempt is not None:
+                    selected_comp_index = selected_attempt['comp_index']
+                    selected_ckey = selected_attempt['ckey']
+                    selected_comp_coords = exotic_infoDict['comp_stars'][selected_comp_index]
+                    selected_min_aperture = 0 if comparison_calibration['method'] == 'psf' else comparison_calibration['aper']
+                    selected_min_annulus = comparison_calibration['annulus']
+                    selected_a = None if comparison_calibration['method'] == 'psf' else comparison_calibration['a']
+                    selected_an = None if comparison_calibration['method'] == 'psf' else comparison_calibration['an']
+                    myfit = selected_attempt['fit']
+                    tFlux1 = selected_attempt['tflux_fit']
+                    cFlux1 = selected_attempt['cflux_fit']
+                    res_std = selected_attempt['res_std']
+                    selection_basis = (
+                        'comparison_field'
+                        if selected_comp_index == comparison_calibration['best_comp_index']
+                        else 'comparison_field_retry'
+                    )
+                    if selection_basis == 'comparison_field_retry':
+                        retry_count = selected_attempt['rank']
+                        log_info(
+                            "Comparison-star calibration retry selected "
+                            f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
+                            f"after {retry_count} better-ranked candidate(s) failed target fitting."
+                        )
+
                     photometry_info.update(best_fit_lc=myfit,
                                            comp_star_num=selected_comp_index + 1,
                                            comp_star_coords=selected_comp_coords,
@@ -6249,7 +6405,7 @@ def main():
                                            aperture_index=selected_a,
                                            annulus_index=selected_an,
                                            calibration_field_score=comparison_calibration['field_score'],
-                                           selection_basis='comparison_field')
+                                           selection_basis=selection_basis)
 
                     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
                                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
@@ -6273,6 +6429,7 @@ def main():
                                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                                     use_impactparameter_rather_than_inclination_to_fit=
                                     use_impactparameter_rather_than_inclination_to_fit,
+                                    plot_time_range=full_plot_time_range,
                                 )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
@@ -6292,22 +6449,37 @@ def main():
                                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                                     use_impactparameter_rather_than_inclination_to_fit=
                                     use_impactparameter_rather_than_inclination_to_fit,
+                                    plot_time_range=full_plot_time_range,
                                 )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
                                     'pos': exotic_infoDict['comp_stars'][j]
                                 }
                 else:
-                    failure_reason = selected_fit_diagnostics.get(
-                        'failure_reason',
-                        "the lightcurve fitter did not converge to a usable solution.",
-                    )
-                    log_info(
-                        "Warning: Comparison-star calibration selected a photometry setup that failed target fitting "
-                        f"(Comp {selected_comp_index + 1}, {comparison_calibration['method_label']}; "
-                        f"reason: {failure_reason}). Falling back to target-driven photometry selection.",
-                        warn=True,
-                    )
+                    if fit_attempts:
+                        failed_attempt = fit_attempts[-1]
+                        failed_comp_index = failed_attempt['comp_index']
+                        failure_reason = failed_attempt['fit_diagnostics'].get(
+                            'failure_reason',
+                            "the lightcurve fitter did not converge to a usable solution.",
+                        )
+                        attempted_count = len(fit_attempts)
+                        ranked_count = len(comparison_fit_search['ranked_summaries'])
+                        log_info(
+                            "Warning: Comparison-star calibration exhausted "
+                            f"{attempted_count}/{ranked_count} ranked comparison star(s) for "
+                            f"{comparison_calibration['method_label']} without a usable target fit "
+                            f"(last attempt: Comp {failed_comp_index + 1}; reason: {failure_reason}). "
+                            "Falling back to target-driven photometry selection.",
+                            warn=True,
+                        )
+                    else:
+                        log_info(
+                            "Warning: Comparison-star calibration did not produce any coverage-qualified "
+                            "comparison stars to test against the target fit. Falling back to target-driven "
+                            "photometry selection.",
+                            warn=True,
+                        )
 
             if photometry_info['best_fit_lc'] is None and (use_psf_photometry or use_aperture_photometry):
                 if use_psf_photometry and use_aperture_photometry:
@@ -6330,6 +6502,7 @@ def main():
                     annuli,
                     sigma_display,
                     require_comp_star=require_comp_star,
+                    plot_time_range=full_plot_time_range,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
                     use_psf_photometry=use_psf_photometry,
@@ -6389,6 +6562,7 @@ def main():
                                 disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                                 use_impactparameter_rather_than_inclination_to_fit=
                                 use_impactparameter_rather_than_inclination_to_fit,
+                                plot_time_range=full_plot_time_range,
                             )
                             ref_flux[j] = {
                                 'myfit': vsp_fit,
@@ -6408,6 +6582,7 @@ def main():
                                 disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                                 use_impactparameter_rather_than_inclination_to_fit=
                                 use_impactparameter_rather_than_inclination_to_fit,
+                                plot_time_range=full_plot_time_range,
                             )
                             ref_flux[j] = {
                                 'myfit': vsp_fit,
@@ -6480,6 +6655,7 @@ def main():
                     psf_data,
                     aper_data,
                     photometry_info,
+                    plot_time_range=full_plot_time_range,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
                     use_impactparameter_rather_than_inclination_to_fit=
@@ -6814,7 +6990,7 @@ def main():
             detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
             use_impactparameter_rather_than_inclination_to_fit=
             use_impactparameter_rather_than_inclination_to_fit,
-            plot_time_range=times,
+            plot_time_range=full_plot_time_range,
         )
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])

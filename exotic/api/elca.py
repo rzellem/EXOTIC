@@ -382,10 +382,25 @@ class lc_fitter(object):
         self.sample_parameters = {}
         self.sample_errors = {}
         self.sample_quantiles = {}
+        self.nested_fit_fallback = False
+        self.nested_fit_failure_reason = None
         if self.mode == "lm":
             self.fit_LM()
         elif self.mode == "ns":
-            self.fit_nested()
+            try:
+                self.fit_nested()
+            except np.linalg.LinAlgError as exc:
+                self.nested_fit_fallback = True
+                self.nested_fit_failure_reason = f"{type(exc).__name__}: {exc}"
+                self.ns_type = 'lm'
+                self.mode = "lm"
+                if self.verbose:
+                    print(
+                        "WARNING: Nested light curve fitting failed with a linear algebra error; "
+                        "falling back to least-squares fit."
+                    )
+                    print(f"  Reason: {self.nested_fit_failure_reason}")
+                self.fit_LM()
 
     def _validate_flux_baseline_keys(self):
         free_flux_keys = [key for key in self.bounds if key in ('a0', 'a1')]

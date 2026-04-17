@@ -839,6 +839,14 @@ def test_parse_aavso_prereduced_overrides_uses_known_filter_lookup_when_filter_x
     assert overrides["wl_max"] == "1000.0"
 
 
+def test_lookup_aavso_filter_metadata_uses_c_alias_for_cv_filter() -> None:
+    filter_metadata = inputs_module.lookup_aavso_filter_metadata("C")
+
+    assert filter_metadata["name"] == "CV"
+    assert filter_metadata["desc"] == "MObs CV"
+    assert filter_metadata["fwhm"] == ("350.0", "850.0")
+
+
 def test_parse_aavso_prereduced_overrides_uses_osc_split_filter_alias_lookup(tmp_path):
     pre_reduced_file = tmp_path / "aavso_prereduced.txt"
     pre_reduced_file.write_text(
@@ -854,6 +862,23 @@ def test_parse_aavso_prereduced_overrides_uses_osc_split_filter_alias_lookup(tmp
     assert overrides["filter_desc"] == "Photographic G"
     assert overrides["wl_min"] == "502.8"
     assert overrides["wl_max"] == "586.8"
+
+
+def test_parse_aavso_prereduced_overrides_uses_c_alias_for_cv_filter_lookup(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#FILTER=C\n"
+        "#DATE,DIFF,ERR\n"
+        "2461102.76092732,0.979108,0.0386426\n"
+    )
+
+    overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
+
+    assert overrides["filter"] == "C"
+    assert overrides["filter_desc"] == "MObs CV"
+    assert overrides["wl_min"] == "350.0"
+    assert overrides["wl_max"] == "850.0"
 
 
 def test_parse_aavso_prereduced_overrides_marks_airmass_as_already_corrected(tmp_path):

@@ -193,7 +193,7 @@ class PlateSolution:
 class NextAstroPlateSolution:
 
     def __init__(self, file=None, directory=None, api_url='https://astrometry.nextastro.org/', ra=None, dec=None,
-                 pixel_scale=None, suppress_fail_warning=False):
+                 pixel_scale=None, suppress_fail_warning=False, message_logger=None):
         self.api_url = api_url.rstrip('/')
         self.file = file
         self.directory = directory
@@ -201,6 +201,7 @@ class NextAstroPlateSolution:
         self.dec = dec
         self.pixel_scale = pixel_scale
         self.suppress_fail_warning = suppress_fail_warning
+        self.message_logger = message_logger
         self.last_error_type = None
         self.last_http_status = None
 
@@ -227,8 +228,17 @@ class NextAstroPlateSolution:
         return wcs_file
 
     def _emit_debug(self, message):
-        if not self.suppress_fail_warning:
+        if self.message_logger is not None:
+            self.message_logger(message)
+        elif not self.suppress_fail_warning:
             print(message)
+
+    @staticmethod
+    def _json_message(payload):
+        try:
+            return dumps(payload)
+        except (TypeError, ValueError):
+            return str(payload)
 
     def _fail(self, error_type):
         self.last_error_type = error_type
@@ -354,11 +364,11 @@ class NextAstroPlateSolution:
         if hints is not None:
             payload["hints"] = hints
 
-        self._emit_debug(f"[NextAstro] Solve request payload: {payload}")
+        self._emit_debug(f"NextAstro astrometry request JSON: {self._json_message(payload)}")
         response = requests.post(f"{self.api_url}/solve", json=payload, timeout=_RQ_TIMEOUT)
         response_json = self._decode_response_json(response, 'Solve response')
         if response_json is not None and response.status_code != 502:
-            self._emit_debug(f"[NextAstro] Solve response: {response_json}")
+            self._emit_debug(f"NextAstro astrometry submission response JSON: {self._json_message(response_json)}")
         if response.status_code >= 400 or response_json is None:
             return False
         if response_json.get('status') in {'queued', 'running'}:
@@ -388,23 +398,32 @@ class NextAstroPlateSolution:
                 return False
             if response.status_code >= 400:
                 if response.status_code != 502:
-                    self._emit_debug(f"[NextAstro] Status response (HTTP {response.status_code}): {response_json}")
+                    self._emit_debug(
+                        f"NextAstro astrometry status response JSON (HTTP {response.status_code}): "
+                        f"{self._json_message(response_json)}"
+                    )
                 return False
 
             status = str(response_json.get('status', '')).lower()
             latest_status = response_json.get('status')
             if status == 'solved':
-                self._emit_debug(f"[NextAstro] Status response (solved): {response_json}")
+                self._emit_debug(
+                    f"NextAstro astrometry status response JSON (solved): {self._json_message(response_json)}"
+                )
                 header_dict = response_json.get('solution', {}).get('wcs_header')
                 if isinstance(header_dict, dict):
                     return Header(header_dict)
                 return False
             if status == 'failed':
-                self._emit_debug(f"[NextAstro] Status response (failed): {response_json}")
+                self._emit_debug(
+                    f"NextAstro astrometry status response JSON (failed): {self._json_message(response_json)}"
+                )
                 return False
 
             if status not in _NEXTASTRO_IN_PROGRESS_STATUSES:
-                self._emit_debug(f"[NextAstro] Status response (unexpected): {response_json}")
+                self._emit_debug(
+                    f"NextAstro astrometry status response JSON (unexpected): {self._json_message(response_json)}"
+                )
                 return False
 
             time.sleep(_NEXTASTRO_STATUS_POLL_SEC)

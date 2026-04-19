@@ -173,6 +173,21 @@ def test_comp_params_defaults_detrend_on_outoftransit_baseline_to_true(tmp_path)
     assert inputs.info_dict["detrend_on_outoftransit_baseline"] is True
 
 
+def test_comp_params_defaults_final_fit_baseline_duration_multiplier_to_one(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["final_fit_baseline_duration_multiplier"] == pytest.approx(1.0)
+
+
 def test_comp_params_defaults_use_impactparameter_fit_to_yes(tmp_path):
     init_data = {
         "user_info": {},
@@ -381,6 +396,21 @@ def test_comp_params_reads_detrend_on_outoftransit_baseline_false_from_optional_
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["detrend_on_outoftransit_baseline"] is False
+
+
+def test_comp_params_reads_final_fit_baseline_duration_multiplier_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"final_fit_baseline_duration_multiplier": 1.75},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["final_fit_baseline_duration_multiplier"] == pytest.approx(1.75)
 
 
 def test_comp_params_reads_use_impactparameter_fit_from_optional_info(tmp_path):
@@ -847,6 +877,15 @@ def test_lookup_aavso_filter_metadata_uses_c_alias_for_cv_filter() -> None:
     assert filter_metadata["fwhm"] == ("350.0", "850.0")
 
 
+def test_lookup_aavso_filter_metadata_uses_luminosity_aliases_for_clearv_filter() -> None:
+    for alias in ("lum", "Lum", "Luminosity", "luminosity"):
+        filter_metadata = inputs_module.lookup_aavso_filter_metadata(alias)
+
+        assert filter_metadata["name"] == "CV"
+        assert filter_metadata["desc"] == "ClearV"
+        assert filter_metadata["fwhm"] == ("350.0", "1000.0")
+
+
 def test_parse_aavso_prereduced_overrides_uses_osc_split_filter_alias_lookup(tmp_path):
     pre_reduced_file = tmp_path / "aavso_prereduced.txt"
     pre_reduced_file.write_text(
@@ -879,6 +918,23 @@ def test_parse_aavso_prereduced_overrides_uses_c_alias_for_cv_filter_lookup(tmp_
     assert overrides["filter_desc"] == "MObs CV"
     assert overrides["wl_min"] == "350.0"
     assert overrides["wl_max"] == "850.0"
+
+
+def test_parse_aavso_prereduced_overrides_uses_luminosity_alias_for_clearv_lookup(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#FILTER=Luminosity\n"
+        "#DATE,DIFF,ERR\n"
+        "2461102.76092732,0.979108,0.0386426\n"
+    )
+
+    overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
+
+    assert overrides["filter"] == "Luminosity"
+    assert overrides["filter_desc"] == "ClearV"
+    assert overrides["wl_min"] == "350.0"
+    assert overrides["wl_max"] == "1000.0"
 
 
 def test_parse_aavso_prereduced_overrides_marks_airmass_as_already_corrected(tmp_path):

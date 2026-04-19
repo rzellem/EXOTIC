@@ -210,6 +210,7 @@ class Inputs:
             'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'detrend_on_outoftransit_baseline': True,
+            'final_fit_baseline_duration_multiplier': 1.0,
             'detect_bad_pixels_before_photometry': 'y',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
@@ -432,6 +433,10 @@ class Inputs:
                 'detrend_on_outoftransit_baseline',
                 'Detrend on Out-of-Transit Baseline',
                 'detrend_on_out_of_transit_baseline',
+            ),
+            'final_fit_baseline_duration_multiplier': (
+                'final_fit_baseline_duration_multiplier',
+                'Final Fit Baseline Duration Multiplier',
             ),
             'use_impactparameter_rather_than_inclination_to_fit': (
                 'use_impactparameter_rather_than_inclination_to_fit',

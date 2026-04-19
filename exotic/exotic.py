@@ -170,6 +170,8 @@ COMPARISON_STAR_MIN_VALID_FRAMES = 5
 COMPARISON_STAR_COVERAGE_SIGMA = 3.0
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
+FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
+FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER = 0.5
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
 BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
@@ -238,6 +240,187 @@ def annotate_out_of_transit_baseline_detrending(
     fit.oot_baseline_intercept = intercept
     fit.oot_baseline_pre_points = int(pre_points) if pre_points is not None else 0
     fit.oot_baseline_post_points = int(post_points) if post_points is not None else 0
+
+
+def annotate_final_fit_prefit_refinement(
+    fit,
+    applied,
+    note=None,
+    baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+    duration=None,
+    original_point_count=None,
+    refined_point_count=None,
+    trimmed_pre_points=0,
+    trimmed_post_points=0,
+    original_tmid_bounds=None,
+    refined_tmid_bounds=None,
+):
+    if fit is None:
+        return
+
+    fit.prefit_refinement_applied = bool(applied)
+    fit.prefit_refinement_note = note
+    fit.prefit_refinement_baseline_duration_multiplier = float(baseline_duration_multiplier)
+    fit.prefit_refinement_duration = duration
+    fit.prefit_refinement_original_point_count = (
+        int(original_point_count) if original_point_count is not None else None
+    )
+    fit.prefit_refinement_point_count = (
+        int(refined_point_count) if refined_point_count is not None else None
+    )
+    fit.prefit_refinement_trimmed_pre_points = int(trimmed_pre_points or 0)
+    fit.prefit_refinement_trimmed_post_points = int(trimmed_post_points or 0)
+    fit.prefit_refinement_original_tmid_bounds = original_tmid_bounds
+    fit.prefit_refinement_tmid_bounds = refined_tmid_bounds
+
+
+def annotate_rprs_posterior_refit(fit, applied, note=None, history=None):
+    if fit is None:
+        return
+
+    history = [] if history is None else list(history)
+    fit.rprs_posterior_refit_applied = bool(applied)
+    fit.rprs_posterior_refit_note = note
+    fit.rprs_posterior_refit_count = len(history)
+    fit.rprs_posterior_refit_history = history
+    if history:
+        latest = history[-1]
+        fit.rprs_posterior_refit_edge = latest.get('edge')
+        fit.rprs_posterior_refit_mode = latest.get('mode')
+        fit.rprs_posterior_refit_std = latest.get('std')
+        fit.rprs_posterior_refit_original_bounds = latest.get('original_bounds')
+        fit.rprs_posterior_refit_bounds = latest.get('new_bounds')
+    else:
+        fit.rprs_posterior_refit_edge = None
+        fit.rprs_posterior_refit_mode = None
+        fit.rprs_posterior_refit_std = None
+        fit.rprs_posterior_refit_original_bounds = None
+        fit.rprs_posterior_refit_bounds = None
+
+
+def clone_lightcurve_bounds(bounds):
+    return {
+        key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+        for key, value in bounds.items()
+    }
+
+
+def run_nested_lightcurve_fit_with_rprs_posterior_retry(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    prior,
+    bounds,
+    jd_times=None,
+    use_impactparameter_rather_than_inclination_to_fit=True,
+    max_rprs_retries=1,
+):
+    def build_fit(local_prior, local_bounds):
+        return lc_fitter(
+            times,
+            flux_values,
+            flux_errors,
+            airmass,
+            local_prior,
+            local_bounds,
+            jd_times=jd_times,
+            mode='ns',
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+        )
+
+    current_prior = dict(prior)
+    current_bounds = clone_lightcurve_bounds(bounds)
+    retry_history = []
+    retry_note = None
+    fit = build_fit(current_prior, current_bounds)
+
+    diagnostics = None
+    for _ in range(int(max(0, max_rprs_retries))):
+        diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+        if not callable(diagnostics_getter):
+            diagnostics = None
+            break
+
+        diagnostics = diagnostics_getter('rprs')
+        new_bounds = diagnostics.get('bounds') if diagnostics else None
+        if not diagnostics or not diagnostics.get('clipped') or new_bounds is None:
+            break
+
+        try:
+            new_lower, new_upper = [float(value) for value in new_bounds]
+        except (TypeError, ValueError):
+            retry_note = "Skipped; the automatic Rp/R* retry proposed malformed bounds."
+            break
+        if not np.isfinite(new_lower) or not np.isfinite(new_upper) or new_lower >= new_upper:
+            retry_note = "Skipped; the automatic Rp/R* retry proposed invalid bounds."
+            break
+
+        previous_bounds = current_bounds.get('rprs')
+        if previous_bounds is not None and np.allclose(
+            np.asarray(previous_bounds, dtype=float),
+            np.asarray([new_lower, new_upper], dtype=float),
+            atol=1e-12,
+            rtol=0.0,
+        ):
+            retry_note = "Skipped; the automatic Rp/R* retry did not expand the sampled range."
+            break
+
+        retry_history.append({
+            'attempt': len(retry_history) + 1,
+            'edge': diagnostics.get('edge'),
+            'mode': float(diagnostics.get('mode', np.nan)),
+            'std': float(diagnostics.get('std', np.nan)),
+            'original_bounds': None if previous_bounds is None else [float(previous_bounds[0]), float(previous_bounds[1])],
+            'new_bounds': [new_lower, new_upper],
+        })
+        log_info(
+            "Rp/R* posterior is truncated against the "
+            f"{diagnostics.get('edge', 'active')} search bound; retrying nested fit "
+            f"with Rp/R* centered at {diagnostics.get('mode', np.nan):.6f} "
+            f"and sigma {diagnostics.get('std', np.nan):.6f} "
+            f"over [{new_lower:.6f}, {new_upper:.6f}]."
+        )
+
+        updated_bounds = clone_lightcurve_bounds(current_bounds)
+        updated_bounds['rprs'] = [new_lower, new_upper]
+
+        updated_prior = dict(current_prior)
+        fit_parameters = getattr(fit, 'parameters', {})
+        if isinstance(fit_parameters, dict):
+            for key in updated_bounds:
+                if key in fit_parameters:
+                    updated_prior[key] = fit_parameters[key]
+        if np.isfinite(diagnostics.get('mode', np.nan)):
+            updated_prior['rprs'] = float(diagnostics['mode'])
+
+        current_prior = updated_prior
+        current_bounds = updated_bounds
+        fit = build_fit(current_prior, current_bounds)
+
+    if retry_history:
+        final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+        final_diagnostics = final_diagnostics_getter('rprs') if callable(final_diagnostics_getter) else None
+        note = f"Applied {len(retry_history)} automatic Rp/R* posterior range refit(s)."
+        if final_diagnostics and final_diagnostics.get('clipped'):
+            note = (
+                f"{note} The posterior still hugs the {final_diagnostics.get('edge')} bound after retry."
+            )
+            log_info(
+                "Warning: Rp/R* posterior still appears truncated after the automatic retry; "
+                "please inspect the triangle plot carefully.",
+                warn=True,
+            )
+    elif retry_note is not None:
+        note = retry_note
+    elif diagnostics is not None and diagnostics.get('reason'):
+        note = f"Not needed; {diagnostics['reason']}"
+    else:
+        note = "Not evaluated; posterior diagnostics are unavailable for this fit."
+
+    annotate_rprs_posterior_refit(fit, bool(retry_history), note=note, history=retry_history)
+    return fit
 
 
 def log_info(string, warn=False, error=False):
@@ -539,6 +722,30 @@ def is_out_of_transit_baseline_detrending_enabled(config_value):
     return True
 
 
+def get_final_fit_baseline_duration_multiplier(config_value):
+    if config_value is None:
+        return FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT
+    if isinstance(config_value, (int, float)) and np.isfinite(config_value) and config_value >= 0:
+        return float(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip()
+        if normalized == "":
+            return FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            parsed = np.nan
+        if np.isfinite(parsed) and parsed >= 0:
+            return float(parsed)
+
+    log_info(
+        "Warning: Invalid 'final_fit_baseline_duration_multiplier' value; "
+        f"using default {FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT:.1f}.",
+        warn=True,
+    )
+    return FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT
+
+
 def should_use_impactparameter_rather_than_inclination_to_fit(config_value):
     if config_value is None:
         return True
@@ -709,6 +916,188 @@ def detrend_flux_on_out_of_transit_baseline(
     }
 
 
+def estimate_transit_duration_from_fit(fit):
+    if fit is None:
+        return np.nan
+
+    for attribute_name in ('duration_expected', 'duration_measured'):
+        duration = getattr(fit, attribute_name, np.nan)
+        if np.isfinite(duration) and duration > 0:
+            return float(duration)
+
+    times = np.asarray(getattr(fit, 'time', []), dtype=float)
+    transit_model = np.asarray(getattr(fit, 'transit', []), dtype=float)
+    if times.shape != transit_model.shape or times.size == 0:
+        return np.nan
+
+    in_transit = np.isfinite(times) & np.isfinite(transit_model) & (transit_model < 1)
+    if not np.any(in_transit):
+        return np.nan
+
+    transit_times = np.sort(times[in_transit])
+    if transit_times.size == 1:
+        sorted_times = np.sort(times[np.isfinite(times)])
+        if sorted_times.size < 2:
+            return np.nan
+        cadence = np.nanmedian(np.diff(sorted_times))
+        return float(cadence) if np.isfinite(cadence) and cadence > 0 else np.nan
+
+    cadence = np.nanmedian(np.diff(np.sort(times[np.isfinite(times)])))
+    if not np.isfinite(cadence) or cadence <= 0:
+        cadence = 0.0
+    duration = (transit_times[-1] - transit_times[0]) + cadence
+    return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
+
+
+def build_final_fit_prefit_refinement_plan(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    prior,
+    bounds,
+    fit,
+    jd_times=None,
+    baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+):
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    jd_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+
+    original_tmid_bounds = clone_lightcurve_bounds(bounds).get('tmid')
+    base_plan = {
+        'applied': False,
+        'note': None,
+        'baseline_duration_multiplier': float(baseline_duration_multiplier),
+        'duration': np.nan,
+        'trimmed_pre_points': 0,
+        'trimmed_post_points': 0,
+        'original_point_count': int(times.shape[0]),
+        'refined_point_count': int(times.shape[0]),
+        'original_tmid_bounds': original_tmid_bounds,
+        'refined_tmid_bounds': original_tmid_bounds,
+        'times': times,
+        'flux': flux_values,
+        'unc': flux_errors,
+        'airmass': airmass,
+        'jd_times': jd_array,
+        'prior': dict(prior),
+        'bounds': clone_lightcurve_bounds(bounds),
+    }
+
+    if fit is None:
+        base_plan['note'] = "Skipped; the initial nested fit did not return a solution."
+        return base_plan
+
+    duration = estimate_transit_duration_from_fit(fit)
+    base_plan['duration'] = duration
+    if not np.isfinite(duration) or duration <= 0:
+        base_plan['note'] = "Skipped; the initial nested fit did not produce a measurable transit duration."
+        return base_plan
+
+    fit_parameters = getattr(fit, 'parameters', {})
+    tmid = fit_parameters.get('tmid', prior.get('tmid', np.nan))
+    if not np.isfinite(tmid):
+        base_plan['note'] = "Skipped; the initial nested fit did not return a finite Tmid."
+        return base_plan
+
+    period = fit_parameters.get('per', prior.get('per', np.nan))
+    if np.isfinite(period) and duration >= period:
+        base_plan['note'] = "Skipped; the initial nested fit returned a non-physical transit duration."
+        return base_plan
+
+    half_duration = FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER * duration
+    if not np.isfinite(half_duration) or half_duration <= 0:
+        base_plan['note'] = "Skipped; the initial nested fit returned an invalid transit duration."
+        return base_plan
+
+    keep_half_width = duration * (0.5 + baseline_duration_multiplier)
+    lower_window = tmid - keep_half_width
+    upper_window = tmid + keep_half_width
+    keep_mask = np.isfinite(times) & (times >= lower_window) & (times <= upper_window)
+
+    trimmed_pre_points = int(np.count_nonzero(np.isfinite(times) & (times < lower_window)))
+    trimmed_post_points = int(np.count_nonzero(np.isfinite(times) & (times > upper_window)))
+    kept_points = int(np.count_nonzero(keep_mask))
+    min_required_points = max(LIGHTCURVE_MIN_VALID_POINTS, len(bounds) + 1)
+    if kept_points < min_required_points:
+        keep_mask = np.ones(times.shape[0], dtype=bool)
+        kept_points = int(keep_mask.sum())
+        trimmed_pre_points = 0
+        trimmed_post_points = 0
+        trim_note = (
+            "kept the full light curve because trimming would leave too few points for a stable refit"
+        )
+    elif trimmed_pre_points or trimmed_post_points:
+        trim_note = (
+            f"trimmed {trimmed_pre_points} pre-ingress and {trimmed_post_points} post-egress point(s)"
+        )
+    else:
+        trim_note = "kept the full light curve because no extra baseline points fell outside the target window"
+
+    refined_tmid_bounds = [float(tmid - half_duration), float(tmid + half_duration)]
+    base_plan['refined_tmid_bounds'] = refined_tmid_bounds
+
+    bounds_changed = False
+    if original_tmid_bounds is None:
+        bounds_changed = True
+    else:
+        bounds_changed = not np.allclose(
+            np.asarray(original_tmid_bounds, dtype=float),
+            np.asarray(refined_tmid_bounds, dtype=float),
+            atol=1e-12,
+            rtol=0.0,
+        )
+
+    if not np.any(keep_mask):
+        base_plan['note'] = "Skipped; no valid points remained inside the requested prefit window."
+        return base_plan
+
+    refined_times = times[keep_mask]
+    refined_flux = flux_values[keep_mask]
+    refined_unc = flux_errors[keep_mask]
+    refined_airmass = airmass[keep_mask]
+    refined_jd_times = None if jd_array is None else jd_array[keep_mask]
+
+    refined_prior = dict(prior)
+    if isinstance(fit_parameters, dict):
+        for key in ('rprs', 'tmid', 'inc', 'a2'):
+            if key in refined_prior and key in fit_parameters:
+                refined_prior[key] = fit_parameters[key]
+
+    refined_bounds = clone_lightcurve_bounds(bounds)
+    refined_bounds['tmid'] = refined_tmid_bounds
+
+    base_plan.update({
+        'applied': bool(trimmed_pre_points or trimmed_post_points or bounds_changed),
+        'note': (
+            "Using an initial nested fit to estimate a transit duration of "
+            f"{duration:.6f} day(s), {trim_note}, and setting the second-pass "
+            f"Tmid bounds to [{refined_tmid_bounds[0]:.6f}, {refined_tmid_bounds[1]:.6f}]."
+        ),
+        'trimmed_pre_points': trimmed_pre_points,
+        'trimmed_post_points': trimmed_post_points,
+        'refined_point_count': kept_points,
+        'times': refined_times,
+        'flux': refined_flux,
+        'unc': refined_unc,
+        'airmass': refined_airmass,
+        'jd_times': refined_jd_times,
+        'prior': refined_prior,
+        'bounds': refined_bounds,
+    })
+
+    if not base_plan['applied']:
+        base_plan['note'] = (
+            "Not needed; the initial final-fit solution already used the desired baseline window "
+            "and the Tmid bounds already matched the modeled transit duration."
+        )
+
+    return base_plan
+
+
 def fit_final_lightcurve_with_oot_baseline_detrending(
     times,
     flux_values,
@@ -723,8 +1112,9 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     detrend_on_outoftransit_baseline=True,
     use_impactparameter_rather_than_inclination_to_fit=True,
     plot_time_range=None,
+    baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
 ):
-    fit = lc_fitter(
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         times,
         flux_values,
         flux_errors,
@@ -732,11 +1122,65 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         prior,
         bounds,
         jd_times=jd_times,
-        mode='ns',
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
     )
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
+
+    prefit_plan = build_final_fit_prefit_refinement_plan(
+        times,
+        flux_values,
+        flux_errors,
+        airmass,
+        prior,
+        bounds,
+        fit,
+        jd_times=jd_times,
+        baseline_duration_multiplier=baseline_duration_multiplier,
+    )
+    working_times = prefit_plan['times']
+    working_flux = prefit_plan['flux']
+    working_unc = prefit_plan['unc']
+    working_airmass = prefit_plan['airmass']
+    working_jd_times = prefit_plan['jd_times']
+    working_prior = prefit_plan['prior']
+    working_bounds = prefit_plan['bounds']
+
+    if prefit_plan.get('applied'):
+        log_info("Applying final-fit prefit refinement before the optional baseline detrending pass.")
+        log_info(prefit_plan['note'])
+        apply_vertical_flux_normalization_bound(
+            working_prior,
+            working_bounds,
+            working_flux,
+            disable_vertical_flux_normalization,
+        )
+        fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+            working_times,
+            working_flux,
+            working_unc,
+            working_airmass,
+            working_prior,
+            working_bounds,
+            jd_times=working_jd_times,
+            use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        )
+        fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
+        annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
+
+    annotate_final_fit_prefit_refinement(
+        fit,
+        prefit_plan.get('applied', False),
+        note=prefit_plan.get('note'),
+        baseline_duration_multiplier=baseline_duration_multiplier,
+        duration=prefit_plan.get('duration'),
+        original_point_count=prefit_plan.get('original_point_count'),
+        refined_point_count=prefit_plan.get('refined_point_count'),
+        trimmed_pre_points=prefit_plan.get('trimmed_pre_points', 0),
+        trimmed_post_points=prefit_plan.get('trimmed_post_points', 0),
+        original_tmid_bounds=prefit_plan.get('original_tmid_bounds'),
+        refined_tmid_bounds=prefit_plan.get('refined_tmid_bounds'),
+    )
 
     if not detrend_on_outoftransit_baseline:
         annotate_out_of_transit_baseline_detrending(
@@ -744,9 +1188,9 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             False,
             note="Disabled; using the direct nested-sampling fit.",
         )
-        return fit, flux_values, flux_errors
+        return fit, working_flux, working_unc
 
-    detrend_result = detrend_flux_on_out_of_transit_baseline(times, flux_values, flux_errors, fit)
+    detrend_result = detrend_flux_on_out_of_transit_baseline(working_times, working_flux, working_unc, fit)
     if not detrend_result.get('applied'):
         note = f"Skipped; {detrend_result.get('note', 'unable to fit an out-of-transit baseline.')}"
         log_info(f"Optional out-of-transit baseline detrending skipped: {detrend_result.get('note', 'unknown reason')}")
@@ -757,20 +1201,17 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             pre_points=detrend_result.get('pre_points', 0),
             post_points=detrend_result.get('post_points', 0),
         )
-        return fit, flux_values, flux_errors
+        return fit, working_flux, working_unc
 
     log_info("Applying optional out-of-transit linear baseline detrending and refitting final light curve.")
     log_info(detrend_result['note'])
 
-    refit_prior = dict(prior)
+    refit_prior = dict(working_prior)
     for key in ('rprs', 'tmid', 'inc', 'a2'):
         if key in refit_prior and key in fit.parameters:
             refit_prior[key] = fit.parameters[key]
 
-    refit_bounds = {
-        key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
-        for key, value in bounds.items()
-    }
+    refit_bounds = clone_lightcurve_bounds(working_bounds)
     apply_vertical_flux_normalization_bound(
         refit_prior,
         refit_bounds,
@@ -778,19 +1219,31 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         disable_vertical_flux_normalization,
     )
 
-    refit = lc_fitter(
-        times,
+    refit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        working_times,
         detrend_result['flux'],
         detrend_result['unc'],
-        airmass,
+        working_airmass,
         refit_prior,
         refit_bounds,
-        jd_times=jd_times,
-        mode='ns',
+        jd_times=working_jd_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
     )
-    refit = apply_plot_time_range(refit, times if plot_time_range is None else plot_time_range)
-    annotate_airmass_fit(refit, airmass, skip_airmass_fit, note=airmass_skip_note)
+    refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
+    annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
+    annotate_final_fit_prefit_refinement(
+        refit,
+        prefit_plan.get('applied', False),
+        note=prefit_plan.get('note'),
+        baseline_duration_multiplier=baseline_duration_multiplier,
+        duration=prefit_plan.get('duration'),
+        original_point_count=prefit_plan.get('original_point_count'),
+        refined_point_count=prefit_plan.get('refined_point_count'),
+        trimmed_pre_points=prefit_plan.get('trimmed_pre_points', 0),
+        trimmed_post_points=prefit_plan.get('trimmed_post_points', 0),
+        original_tmid_bounds=prefit_plan.get('original_tmid_bounds'),
+        refined_tmid_bounds=prefit_plan.get('refined_tmid_bounds'),
+    )
     annotate_out_of_transit_baseline_detrending(
         refit,
         True,
@@ -4019,7 +4472,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
 
     if final_fit_mode == 'ns' and myfit is not None:
-        myfit = lc_fitter(
+        myfit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
             arrayTimes,
             arrayFinalFlux,
             arrayNormUnc,
@@ -4027,7 +4480,6 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             prior,
             mybounds,
             jd_times=arrayJDTimes,
-            mode='ns',
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         )
         myfit = apply_plot_time_range(myfit, plot_time_range)
@@ -4075,6 +4527,18 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
     diagnostics['relative_flux_point_count'] = int(times_sorted.shape[0])
 
     if has_reference_flux:
+        finite_ratio_mask = np.isfinite(flux_ratio_sorted)
+        high_ratio_mask = finite_ratio_mask & np.greater(flux_ratio_sorted, RELATIVE_FLUX_MAX)
+        nonfinite_ratio_count = int(np.count_nonzero(~finite_ratio_mask))
+        high_ratio_count = int(np.count_nonzero(high_ratio_mask))
+        rejected_ratio_count = nonfinite_ratio_count + high_ratio_count
+        finite_ratio_values = flux_ratio_sorted[finite_ratio_mask]
+        ratio_range_text = "finite ratio range=n/a"
+        if finite_ratio_values.size:
+            ratio_range_text = (
+                f"finite ratio range={np.nanmin(finite_ratio_values):.4f} to "
+                f"{np.nanmax(finite_ratio_values):.4f}"
+            )
         relative_flux_mask = relative_flux_filter_mask(flux_ratio_sorted)
         diagnostics['relative_flux_point_count'] = int(np.count_nonzero(relative_flux_mask))
         times_sorted = times_sorted[relative_flux_mask]
@@ -4087,8 +4551,11 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
                 'failed_stage': 'relative_flux_filter',
                 'failure_reason': (
                     "relative-flux filtering left "
-                    f"{diagnostics['relative_flux_point_count']} usable point(s); invalid, non-finite, "
-                    "or >2x target/reference ratios were rejected."
+                    f"{diagnostics['relative_flux_point_count']} usable point(s); "
+                    f"rejected {rejected_ratio_count}/{diagnostics['input_point_count']} frame(s) "
+                    "during target/reference ratio screening "
+                    f"(non-finite={nonfinite_ratio_count}, >{RELATIVE_FLUX_MAX:g}x={high_ratio_count}, "
+                    f"{ratio_range_text})."
                 ),
             })
             return diagnostics
@@ -4201,6 +4668,7 @@ def evaluate_lightcurve_candidate(task):
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
     ) = task
+    fit_diagnostics = diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass)
     myfit, tflux_fit, cflux_fit = fit_lightcurve(
         times,
         tflux,
@@ -4214,13 +4682,22 @@ def evaluate_lightcurve_candidate(task):
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         plot_time_range=plot_time_range,
     )
-    if myfit is None:
-        return None, tflux_fit, cflux_fit
+    fit_diagnostics = ensure_lightcurve_fit_failure_reason(
+        fit_diagnostics,
+        myfit,
+        failed_stage='lightcurve_fit',
+        failure_reason="the lightcurve fitter did not converge to a usable solution.",
+    )
 
-    res_std = myfit.residuals.std() / np.median(myfit.data)
+    res_std = np.inf
+    if myfit is not None:
+        res_std = myfit.residuals.std() / np.median(myfit.data)
     return {
         'myfit': myfit,
         'res_std': res_std,
+        'fit_diagnostics': fit_diagnostics,
+        'failure_reason': fit_diagnostics.get('failure_reason'),
+        'fit_point_count': 0 if tflux_fit is None else int(len(tflux_fit)),
     }, tflux_fit, cflux_fit
 
 
@@ -4259,6 +4736,11 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                 'comp_index': comp_idx,
                 'ckey': ckey,
                 'mask': np.ones(target_flux.shape[0], dtype=bool),
+                'coverage_count': psf_comp_coverage[ckey]['coverage_count'],
+                'coverage_total_frame_count': psf_comp_coverage[ckey]['coverage_total_frame_count'],
+                'coverage_reference_count': psf_comp_coverage[ckey]['coverage_reference_count'],
+                'coverage_min_required_count': psf_comp_coverage[ckey]['coverage_min_required_count'],
+                'coverage_rejected': psf_comp_coverage[ckey]['coverage_rejected'],
                 'prescore': cheap_lightcurve_prescore(target_flux, comp_flux, airmass),
             })
 
@@ -4285,6 +4767,11 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                         'comp_index': None,
                         'ckey': None,
                         'mask': np.ones(target_flux.shape[0], dtype=bool),
+                        'coverage_count': int(target_flux.shape[0]),
+                        'coverage_total_frame_count': int(target_flux.shape[0]),
+                        'coverage_reference_count': float(target_flux.shape[0]),
+                        'coverage_min_required_count': LIGHTCURVE_MIN_VALID_POINTS,
+                        'coverage_rejected': False,
                         'prescore': cheap_lightcurve_prescore(
                             target_flux,
                             np.ones(target_flux.shape[0]),
@@ -4308,6 +4795,11 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                         'comp_index': comp_idx,
                         'ckey': ckey,
                         'mask': aper_mask,
+                        'coverage_count': aperture_comp_coverage[ckey]['coverage_count'],
+                        'coverage_total_frame_count': aperture_comp_coverage[ckey]['coverage_total_frame_count'],
+                        'coverage_reference_count': aperture_comp_coverage[ckey]['coverage_reference_count'],
+                        'coverage_min_required_count': aperture_comp_coverage[ckey]['coverage_min_required_count'],
+                        'coverage_rejected': aperture_comp_coverage[ckey]['coverage_rejected'],
                         'prescore': cheap_lightcurve_prescore(
                             target_flux[aper_mask],
                             comp_series[aper_mask],
@@ -4392,6 +4884,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         return {
             'candidate_jobs': candidate_jobs,
             'shortlist': shortlist,
+            'candidate_summaries': [],
             'best_candidate': None,
             'best_fit_lc': None,
             'min_std': np.inf,
@@ -4428,9 +4921,12 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
     best_res_std = np.inf
     best_tflux = None
     best_cflux = None
+    candidate_summaries = []
     for candidate, result in zip(shortlist, fit_results):
         fit_meta, tflux_fit, cflux_fit = result
-        if fit_meta is None:
+        candidate_summaries.append(summarize_target_fit_candidate(candidate, fit_meta, comp_stars))
+
+        if fit_meta is None or fit_meta.get('myfit') is None:
             continue
 
         if fit_meta['res_std'] < best_res_std:
@@ -4440,9 +4936,15 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             best_tflux = tflux_fit
             best_cflux = cflux_fit
 
+    if best_candidate is not None:
+        best_identity = target_fit_candidate_identity(best_candidate)
+        for summary in candidate_summaries:
+            summary['selected'] = target_fit_candidate_identity(summary) == best_identity
+
     return {
         'candidate_jobs': candidate_jobs,
         'shortlist': shortlist,
+        'candidate_summaries': candidate_summaries,
         'best_candidate': best_candidate,
         'best_fit_lc': best_fit_lc,
         'min_std': best_res_std,
@@ -4475,6 +4977,127 @@ def format_comp_star_position(position):
         return f"x={float(x_pos):.1f}, y={float(y_pos):.1f}"
     except (TypeError, ValueError):
         return f"coords={position}"
+
+
+def format_comp_star_coverage_text(summary):
+    coverage_text = (
+        f"{summary['coverage_count']} valid frame(s)"
+        f" out of {summary.get('coverage_total_frame_count', 'n/a')} total"
+        f"; min_required={summary.get('coverage_min_required_count', 0)}"
+    )
+    coverage_median = summary.get('coverage_reference_count', np.nan)
+    if np.isfinite(coverage_median):
+        coverage_text += f"; peer_median={coverage_median:.1f}"
+    return coverage_text
+
+
+def target_fit_candidate_identity(candidate):
+    return (
+        candidate.get('method'),
+        candidate.get('a'),
+        candidate.get('an'),
+        candidate.get('comp_index'),
+    )
+
+
+def summarize_target_fit_candidate(candidate, fit_meta, comp_stars):
+    comp_index = candidate.get('comp_index')
+    fit_meta = {} if fit_meta is None else dict(fit_meta)
+    fit_result = fit_meta.get('myfit')
+    return {
+        'label': "Target-only" if comp_index is None else f"Comp {comp_index + 1}",
+        'position': None if comp_index is None else comp_stars[comp_index],
+        'selected': False,
+        'method_label': comparison_method_label(candidate),
+        'prescore': candidate.get('prescore', np.inf),
+        'fit': fit_result,
+        'res_std': fit_meta.get('res_std', np.inf),
+        'coverage_count': candidate.get('coverage_count', 0),
+        'coverage_total_frame_count': candidate.get('coverage_total_frame_count', 0),
+        'coverage_reference_count': candidate.get('coverage_reference_count', np.nan),
+        'coverage_min_required_count': candidate.get('coverage_min_required_count', 0),
+        'coverage_rejected': candidate.get('coverage_rejected', False),
+        'fit_point_count': fit_meta.get('fit_point_count', 0),
+        'fit_diagnostics': fit_meta.get('fit_diagnostics') or {},
+        'failure_reason': fit_meta.get('failure_reason'),
+        'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
+        'comp_index': comp_index,
+        'a': candidate.get('a'),
+        'an': candidate.get('an'),
+        'method': candidate.get('method'),
+    }
+
+
+def log_comparison_calibration_fit_attempt_summaries(attempts, method_label):
+    if not attempts:
+        return
+
+    log_info("\nComparison-star calibration target-fit diagnostics:")
+    log_info(f"Photometry method: {method_label}")
+
+    for attempt in attempts:
+        selected_label = " [selected]" if attempt.get('selected') else ""
+        position_text = format_comp_star_position(attempt.get('position'))
+        diagnostics = attempt.get('fit_diagnostics') or {}
+        usable_point_count = diagnostics.get('usable_point_count', 0)
+        coverage_text = format_comp_star_coverage_text(attempt)
+        suitability_score = attempt.get('aggregate_score', np.inf)
+        suitability_text = "n/a" if not np.isfinite(suitability_score) else f"{suitability_score * 100.0:.4f}%"
+        residual_text = "n/a"
+        if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
+            residual_text = f"{attempt['res_std'] * 100.0:.4f}%"
+        reason_text = attempt.get(
+            'failure_reason',
+            "selected: first coverage-qualified comparison star with a usable target fit",
+        )
+        log_info(
+            f"  {attempt['label']}{selected_label} ({position_text}): "
+            f"suitability={suitability_text}, coverage={coverage_text}, "
+            f"usable_after_filters={usable_point_count}, fit_points={attempt.get('fit_point_count', 0)}, "
+            f"residual_scatter={residual_text}, reason={reason_text}"
+        )
+        parameter_summary = attempt.get('parameter_summary')
+        if parameter_summary:
+            log_info(f"    parameters: {parameter_summary}")
+
+
+def log_target_fit_candidate_summaries(candidate_summaries, max_entries=10):
+    if not candidate_summaries:
+        return
+
+    log_info("\nTarget-fit candidate diagnostics:")
+
+    displayed_summaries = candidate_summaries[:max_entries]
+    for summary in displayed_summaries:
+        selected_label = " [selected]" if summary.get('selected') else ""
+        position_text = format_comp_star_position(summary.get('position'))
+        diagnostics = summary.get('fit_diagnostics') or {}
+        usable_point_count = diagnostics.get('usable_point_count', 0)
+        coverage_text = format_comp_star_coverage_text(summary)
+        prescore = summary.get('prescore', np.inf)
+        prescore_text = "n/a" if not np.isfinite(prescore) else f"{prescore * 100.0:.4f}%"
+        residual_text = "n/a"
+        if summary.get('fit') is not None and np.isfinite(summary.get('res_std', np.inf)):
+            residual_text = f"{summary['res_std'] * 100.0:.4f}%"
+        reason_text = summary.get(
+            'failure_reason',
+            "selected: lowest target-fit residual scatter in the evaluated shortlist",
+        )
+        log_info(
+            f"  {summary['label']}{selected_label} ({position_text}) with {summary['method_label']}: "
+            f"prescore={prescore_text}, coverage={coverage_text}, "
+            f"usable_after_filters={usable_point_count}, fit_points={summary.get('fit_point_count', 0)}, "
+            f"residual_scatter={residual_text}, reason={reason_text}"
+        )
+        parameter_summary = summary.get('parameter_summary')
+        if parameter_summary:
+            log_info(f"    parameters: {parameter_summary}")
+
+    if len(candidate_summaries) > len(displayed_summaries):
+        log_info(
+            f"  ... omitted {len(candidate_summaries) - len(displayed_summaries)} additional "
+            "target-fit candidate(s); consider increasing the log limit if you need the full list."
+        )
 
 
 def comparison_calibration_selection_reason(summary, best_comp_score):
@@ -4611,12 +5234,7 @@ def log_comparison_candidate_fit_summaries(candidate_fit_summaries, photometry_i
         position_text = format_comp_star_position(summary.get('position'))
         diagnostics = summary.get('fit_diagnostics') or {}
         usable_point_count = diagnostics.get('usable_point_count', 0)
-        coverage_median = summary.get('coverage_reference_count', np.nan)
-        coverage_text = (
-            f"{summary['coverage_count']}/{summary.get('coverage_min_required_count', 0)} valid frame(s)"
-        )
-        if np.isfinite(coverage_median):
-            coverage_text += f", peer_median={coverage_median:.1f}"
+        coverage_text = format_comp_star_coverage_text(summary)
         residual_text = "n/a"
         if summary.get('fit') is not None and np.isfinite(summary.get('res_std', np.inf)):
             residual_text = f"{summary['res_std'] * 100.0:.4f}%"
@@ -4675,6 +5293,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
 
         fit_mask = valid_comparison_frame_mask(comp_flux_series)
         coverage_count = coverage_summary[ckey]['coverage_count']
+        coverage_total_frame_count = coverage_summary[ckey]['coverage_total_frame_count']
         coverage_reference_count = coverage_summary[ckey]['coverage_reference_count']
         coverage_min_required_count = coverage_summary[ckey]['coverage_min_required_count']
         coverage_rejected = coverage_summary[ckey]['coverage_rejected']
@@ -4740,6 +5359,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
             'fit': fit_result,
             'res_std': res_std,
             'coverage_count': coverage_count,
+            'coverage_total_frame_count': coverage_total_frame_count,
             'coverage_reference_count': coverage_reference_count,
             'coverage_min_required_count': coverage_min_required_count,
             'coverage_rejected': coverage_rejected,
@@ -4840,6 +5460,7 @@ def comparison_star_coverage_summary(comp_flux_map,
     for key in comp_keys:
         coverage_summary[key] = {
             'coverage_count': coverage_counts[key],
+            'coverage_total_frame_count': total_frame_count,
             'coverage_reference_count': coverage_reference_count,
             'coverage_median_count': coverage_reference_count,
             'coverage_scatter': coverage_scatter,
@@ -4924,6 +5545,7 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
             'pairwise_ratio_series': pairwise_series,
             'ensemble_ratio_series': ensemble_ratio_series,
             'coverage_count': coverage_summary[key]['coverage_count'],
+            'coverage_total_frame_count': coverage_summary[key]['coverage_total_frame_count'],
             'coverage_reference_count': coverage_summary[key]['coverage_reference_count'],
             'coverage_min_required_count': coverage_summary[key]['coverage_min_required_count'],
             'coverage_rejected': coverage_summary[key]['coverage_rejected'],
@@ -5312,17 +5934,32 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'rank': rank,
             'comp_index': comp_index,
             'ckey': ckey,
+            'label': comp_summary.get('label', f"Comp {comp_index + 1}"),
+            'position': comp_summary.get('position'),
+            'aggregate_score': comp_summary.get('aggregate_score', np.inf),
+            'coverage_count': comp_summary.get('coverage_count', 0),
+            'coverage_total_frame_count': comp_summary.get('coverage_total_frame_count', 0),
+            'coverage_reference_count': comp_summary.get('coverage_reference_count', np.nan),
+            'coverage_min_required_count': comp_summary.get('coverage_min_required_count', 0),
+            'coverage_rejected': comp_summary.get('coverage_rejected', False),
             'fit': fit_result,
             'tflux_fit': tflux_fit,
             'cflux_fit': cflux_fit,
             'fit_diagnostics': fit_diagnostics,
             'res_std': res_std,
+            'fit_point_count': 0 if tflux_fit is None else int(len(tflux_fit)),
+            'failure_reason': fit_diagnostics.get('failure_reason'),
+            'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
+            'selected': False,
         }
         attempts.append(attempt)
 
         if fit_result is not None:
             selected_result = attempt
             break
+
+    if selected_result is not None:
+        selected_result['selected'] = True
 
     return {
         'ranked_summaries': ranked_summaries,
@@ -5526,6 +6163,12 @@ def main():
         )
         detrend_on_outoftransit_baseline = is_out_of_transit_baseline_detrending_enabled(
             exotic_infoDict.get('detrend_on_outoftransit_baseline', True)
+        )
+        final_fit_baseline_duration_multiplier = get_final_fit_baseline_duration_multiplier(
+            exotic_infoDict.get(
+                'final_fit_baseline_duration_multiplier',
+                FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+            )
         )
         use_impactparameter_rather_than_inclination_to_fit = (
             should_use_impactparameter_rather_than_inclination_to_fit(
@@ -6263,6 +6906,7 @@ def main():
             }
 
             comparison_calibration = None
+            target_driven_search = None
             if target_driven_comp_selection:
                 log_info("\nUsing target-driven comparison-star selection per optional_info setting.")
             else:
@@ -6289,10 +6933,7 @@ def main():
                     pairwise_text = "n/a" if not np.isfinite(summary['pairwise_median_score']) else f"{summary['pairwise_median_score'] * 100.0:.4f}%"
                     selected_label = " [selected]" if summary['selected'] else ""
                     position_text = format_comp_star_position(summary['position'])
-                    coverage_text = (
-                        f"coverage={summary['coverage_count']}/{summary['coverage_min_required_count']} "
-                        f"(peer_median={summary['coverage_reference_count']:.1f})"
-                    )
+                    coverage_text = f"coverage={format_comp_star_coverage_text(summary)}"
                     if summary['coverage_rejected']:
                         coverage_text += " [rejected: low coverage]"
                     log_info(
@@ -6370,6 +7011,11 @@ def main():
                 fit_attempts = comparison_fit_search['attempts']
                 if fit_attempts:
                     comparison_calibration['selected_fit_diagnostics'] = fit_attempts[-1]['fit_diagnostics']
+                    if selected_attempt is None or len(fit_attempts) > 1:
+                        log_comparison_calibration_fit_attempt_summaries(
+                            fit_attempts,
+                            comparison_calibration['method_label'],
+                        )
 
                 if selected_attempt is not None:
                     selected_comp_index = selected_attempt['comp_index']
@@ -6551,6 +7197,22 @@ def main():
                         x_ref=x_ref_data,
                         y_ref=y_ref_data,
                     )
+                else:
+                    candidate_summaries = target_driven_search.get('candidate_summaries', [])
+                    if candidate_summaries:
+                        log_info(
+                            "Warning: Target-driven photometry search evaluated "
+                            f"{len(candidate_summaries)} shortlisted candidate(s) but none yielded "
+                            "a usable lightcurve fit.",
+                            warn=True,
+                        )
+                        log_target_fit_candidate_summaries(candidate_summaries)
+                    elif require_comp_star:
+                        log_info(
+                            "Warning: Target-driven comparison-star search did not produce any "
+                            "coverage-qualified comparison-star candidates to evaluate.",
+                            warn=True,
+                        )
 
                 if best_candidate is not None and vsp_num:
                     if best_candidate['method'] == 'psf':
@@ -6599,7 +7261,18 @@ def main():
             )
 
             if require_comp_star and photometry_info['comp_star_num'] is None:
-                log_info("Error: require_comp_star is enabled, but no valid comparison star could be selected.", error=True)
+                if target_driven_search is not None and target_driven_search.get('candidate_summaries'):
+                    log_info(
+                        "Error: require_comp_star is enabled, but every evaluated comparison-star candidate "
+                        "was rejected. See the target-fit candidate diagnostics above for the per-candidate "
+                        "failure reasons.",
+                        error=True,
+                    )
+                else:
+                    log_info(
+                        "Error: require_comp_star is enabled, but no valid comparison star could be selected.",
+                        error=True,
+                    )
                 return
 
             log_info("\n\n*********************************************")
@@ -6991,6 +7664,7 @@ def main():
             use_impactparameter_rather_than_inclination_to_fit=
             use_impactparameter_rather_than_inclination_to_fit,
             plot_time_range=full_plot_time_range,
+            baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
         )
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])

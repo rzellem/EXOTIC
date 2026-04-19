@@ -509,6 +509,42 @@ def test_nested_fit_reports_inclination_from_internal_impact_parameter(monkeypat
     assert fit.errors["inc"] > 0
 
 
+def test_rprs_posterior_recenter_diagnostics_detect_upper_bound_clipping(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.prior = make_prior()
+    fit.bounds = {"rprs": [0.0, 0.15], "tmid": [-0.005, 0.005]}
+    fit.sampled_keys = ["rprs", "tmid"]
+    fit.sample_bounds = {"rprs": [0.0, 0.15], "tmid": [-0.005, 0.005]}
+
+    rprs_samples = np.concatenate([
+        np.linspace(0.090, 0.120, 12),
+        np.linspace(0.128, 0.149, 28),
+    ])
+    tmid_samples = np.linspace(-2e-4, 2e-4, rprs_samples.size)
+    points = np.column_stack([rprs_samples, tmid_samples])
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-6.0, -3.0, rprs_samples.size),
+        },
+        "samples": points.copy(),
+    }
+
+    diagnostics = fit.get_parameter_posterior_recenter_diagnostics("rprs")
+
+    assert diagnostics["clipped"] is True
+    assert diagnostics["edge"] == "upper"
+    assert diagnostics["mode"] > 0.13
+    assert diagnostics["std"] > 0
+    assert diagnostics["bounds"][0] >= 0.0
+    assert diagnostics["bounds"][1] > 0.15
+
+
 def test_plot_triangle_uses_mirrored_distance_from_fitted_impact_parameter_axis(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)

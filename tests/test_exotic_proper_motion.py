@@ -89,17 +89,21 @@ from exotic.exotic import (
     comparison_candidate_fit_selection_reason,
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
+    diagnose_lightcurve_fit_inputs,
     detrend_flux_on_out_of_transit_baseline,
     ensure_lightcurve_fit_failure_reason,
     fit_lightcurve,
     fit_final_lightcurve_with_oot_baseline_detrending,
     fit_lightcurve_to_every_comparison_candidate,
     fit_ranked_comparison_calibration_candidates,
+    get_final_fit_baseline_duration_multiplier,
     is_adaptive_aperture_mode_enabled,
     is_comp_star_required,
     is_out_of_transit_baseline_detrending_enabled,
     is_target_driven_comp_selection_enabled,
+    log_comparison_calibration_fit_attempt_summaries,
     log_comparison_candidate_fit_summaries,
+    log_target_fit_candidate_summaries,
     phase_bin_sigma_clip,
     representative_psf_sigma,
     run_target_driven_photometry_search,
@@ -215,6 +219,13 @@ def test_is_out_of_transit_baseline_detrending_enabled_parses_values():
     assert is_out_of_transit_baseline_detrending_enabled("y") is True
     assert is_out_of_transit_baseline_detrending_enabled("n") is False
     assert is_out_of_transit_baseline_detrending_enabled(True) is True
+
+
+def test_get_final_fit_baseline_duration_multiplier_parses_values():
+    assert get_final_fit_baseline_duration_multiplier(None) == pytest.approx(1.0)
+    assert get_final_fit_baseline_duration_multiplier("2.5") == pytest.approx(2.5)
+    assert get_final_fit_baseline_duration_multiplier(0) == pytest.approx(0.0)
+    assert get_final_fit_baseline_duration_multiplier(-1) == pytest.approx(1.0)
 
 
 def test_should_use_psf_photometry_parses_values():
@@ -497,6 +508,7 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
             "fit": None,
             "res_std": np.inf,
             "coverage_count": 1,
+            "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
             "coverage_min_required_count": 2,
             "fit_point_count": 0,
@@ -510,6 +522,7 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
             "fit": object(),
             "res_std": 0.01,
             "coverage_count": 3,
+            "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
             "coverage_min_required_count": 2,
             "fit_point_count": 3,
@@ -525,9 +538,93 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
     )
 
     assert any("Selection basis: comparison-field" in message for message in logged)
+    assert any("coverage=1 valid frame(s) out of 3 total; min_required=2; peer_median=3.0" in message for message in logged)
     assert any("Comp 1" in message and "reason=comparison candidate rejected after iterative low-coverage clipping" in message for message in logged)
     assert any("Comp 2 [selected]" in message and "comparison-field calibration ranked this star best" in message for message in logged)
     assert any("parameters: fit_method=ultranest" in message for message in logged)
+
+
+def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monkeypatch):
+    logged = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, warn=False, error=False: logged.append(message))
+
+    attempts = [
+        {
+            "label": "Comp 1",
+            "position": [100, 200],
+            "selected": False,
+            "aggregate_score": 0.01,
+            "coverage_count": 3,
+            "coverage_total_frame_count": 3,
+            "coverage_reference_count": 3.0,
+            "coverage_min_required_count": 2,
+            "fit": None,
+            "res_std": np.inf,
+            "fit_point_count": 0,
+            "fit_diagnostics": {"usable_point_count": 0},
+            "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during target/reference ratio screening (non-finite=0, >2x=3, finite ratio range=3.0000 to 3.0000).",
+            "parameter_summary": None,
+        },
+        {
+            "label": "Comp 2",
+            "position": [300, 400],
+            "selected": True,
+            "aggregate_score": 0.02,
+            "coverage_count": 3,
+            "coverage_total_frame_count": 3,
+            "coverage_reference_count": 3.0,
+            "coverage_min_required_count": 2,
+            "fit": object(),
+            "res_std": 0.01,
+            "fit_point_count": 3,
+            "fit_diagnostics": {"usable_point_count": 3},
+            "failure_reason": None,
+            "parameter_summary": "fit_method=ultranest, Tmid=1.0 +/- 0.1",
+        },
+    ]
+
+    log_comparison_calibration_fit_attempt_summaries(attempts, "Aperture photometry (aper=7.05px, annulus=22.73px)")
+
+    assert any("Comparison-star calibration target-fit diagnostics:" in message for message in logged)
+    assert any("Photometry method: Aperture photometry (aper=7.05px, annulus=22.73px)" in message for message in logged)
+    assert any("Comp 1" in message and "reason=relative-flux filtering left 0 usable point(s)" in message for message in logged)
+    assert any("Comp 2 [selected]" in message and "fit_points=3" in message for message in logged)
+    assert any("parameters: fit_method=ultranest" in message for message in logged)
+
+
+def test_log_target_fit_candidate_summaries_includes_methods_and_reasons(monkeypatch):
+    logged = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, warn=False, error=False: logged.append(message))
+
+    candidate_summaries = [
+        {
+            "label": "Comp 1",
+            "position": [100, 200],
+            "selected": False,
+            "method_label": "Aperture photometry (aper=7.05px, annulus=22.73px)",
+            "prescore": 0.005,
+            "fit": None,
+            "res_std": np.inf,
+            "coverage_count": 3,
+            "coverage_total_frame_count": 3,
+            "coverage_reference_count": 3.0,
+            "coverage_min_required_count": 2,
+            "fit_point_count": 0,
+            "fit_diagnostics": {"usable_point_count": 0},
+            "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during target/reference ratio screening (non-finite=0, >2x=3, finite ratio range=3.0000 to 3.0000).",
+            "parameter_summary": None,
+        },
+    ]
+
+    log_target_fit_candidate_summaries(candidate_summaries)
+
+    assert any("Target-fit candidate diagnostics:" in message for message in logged)
+    assert any(
+        "Comp 1" in message
+        and "with Aperture photometry (aper=7.05px, annulus=22.73px)" in message
+        and "reason=relative-flux filtering left 0 usable point(s)" in message
+        for message in logged
+    )
 
 
 def test_comparison_candidate_fit_selection_reason_describes_comparison_field_retry():
@@ -576,6 +673,7 @@ def test_comparison_star_coverage_summary_rejects_sparse_candidates():
     assert not coverage["comp2"]["coverage_rejected"]
     assert coverage["comp3"]["coverage_rejected"]
     assert coverage["comp3"]["coverage_count"] == 2
+    assert coverage["comp3"]["coverage_total_frame_count"] == 6
 
 
 def test_comparison_star_coverage_summary_iteratively_rejects_low_count_tail():
@@ -596,6 +694,7 @@ def test_comparison_star_coverage_summary_iteratively_rejects_low_count_tail():
     assert coverage["comp4"]["coverage_rejected"]
     assert coverage["comp5"]["coverage_rejected"]
     assert coverage["comp6"]["coverage_rejected"]
+    assert coverage["comp1"]["coverage_total_frame_count"] == 10
     assert coverage["comp1"]["coverage_reference_count"] == pytest.approx(10.0)
     assert coverage["comp1"]["coverage_min_required_count"] == 8
 
@@ -774,6 +873,153 @@ def test_fit_final_lightcurve_preserves_explicit_plot_time_range(monkeypatch):
     )
 
     assert fit.plot_time_range == pytest.approx(plot_time_range)
+
+
+def test_fit_final_lightcurve_retries_nested_fit_when_rprs_posterior_is_clipped(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+
+    def make_fit(call_flux, diagnostics):
+        fit = types.SimpleNamespace(
+            parameters={"tmid": 0.0, "rprs": 0.152, "inc": 89.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.002, "inc": 0.1, "a2": 0.01},
+            data=np.array(call_flux, dtype=float),
+            residuals=np.zeros_like(call_flux, dtype=float),
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: diagnostics if key == "rprs" else None
+        return fit
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value for key, value in call_bounds.items()},
+        })
+        if len(captured["calls"]) == 1:
+            return make_fit(
+                call_flux,
+                {
+                    "clipped": True,
+                    "edge": "upper",
+                    "mode": 0.158,
+                    "std": 0.006,
+                    "bounds": [0.128, 0.188],
+                    "reason": "posterior peaks against the upper search bound.",
+                },
+            )
+        return make_fit(
+            call_flux,
+            {
+                "clipped": False,
+                "edge": None,
+                "mode": 0.159,
+                "std": 0.005,
+                "bounds": [0.128, 0.188],
+                "reason": "posterior support is comfortably inside the sampled bounds.",
+            },
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(-0.03, 0.03, 7)
+    flux = np.ones(7, dtype=float)
+    fluxerr = np.full(7, 0.01, dtype=float)
+    airmass = np.ones(7, dtype=float)
+    prior = {"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0}
+    bounds = {"rprs": [0.0, 0.125], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]}
+
+    fit, _, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        detrend_on_outoftransit_baseline=False,
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.0, 0.125])
+    assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.158)
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.128, 0.188])
+    assert fit.rprs_posterior_refit_applied is True
+    assert fit.rprs_posterior_refit_count == 1
+    assert fit.rprs_posterior_refit_edge == "upper"
+    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.128, 0.188])
+
+
+def test_fit_final_lightcurve_prefit_refinement_trims_baseline_and_recenters_tmid(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+    ):
+        captured["calls"].append({
+            "times": np.array(call_times, dtype=float),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+        })
+        return types.SimpleNamespace(
+            duration_expected=2.0,
+            duration_measured=2.0,
+            parameters={"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0, "per": 10.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a2": 0.01},
+            data=np.array(call_flux, dtype=float),
+            residuals=np.zeros_like(call_flux, dtype=float),
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0], dtype=float)
+    flux = np.ones(times.shape[0], dtype=float)
+    fluxerr = np.full(times.shape[0], 0.01, dtype=float)
+    airmass = np.ones(times.shape[0], dtype=float)
+    prior = {"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0, "per": 10.0}
+    bounds = {"rprs": [0.0, 0.2], "tmid": [-2.0, 2.0], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]}
+
+    fit, trimmed_flux, trimmed_unc = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        detrend_on_outoftransit_baseline=False,
+        baseline_duration_multiplier=0.5,
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][0]["times"] == pytest.approx(times)
+    assert captured["calls"][1]["times"] == pytest.approx(np.array([-2.0, -1.0, 0.0, 1.0, 2.0]))
+    assert captured["calls"][1]["bounds"]["tmid"] == pytest.approx([-1.0, 1.0])
+    assert trimmed_flux == pytest.approx(np.ones(5))
+    assert trimmed_unc == pytest.approx(np.full(5, 0.01))
+    assert fit.prefit_refinement_applied is True
+    assert fit.prefit_refinement_trimmed_pre_points == 1
+    assert fit.prefit_refinement_trimmed_post_points == 1
+    assert fit.prefit_refinement_tmid_bounds == pytest.approx([-1.0, 1.0])
 
 
 def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
@@ -1239,6 +1485,60 @@ def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidat
     assert result["selected_result"]["comp_index"] == 1
     assert "relative-flux filtering left 0 usable point(s)" in result["attempts"][0]["fit_diagnostics"]["failure_reason"]
     assert result["attempts"][1]["fit"] is not None
+
+
+def test_diagnose_lightcurve_fit_inputs_reports_relative_flux_breakdown():
+    diagnostics = diagnose_lightcurve_fit_inputs(
+        np.linspace(0.0, 0.05, 6),
+        np.full(6, 30.0),
+        np.full(6, 10.0),
+        np.linspace(1.0, 1.5, 6),
+    )
+
+    assert diagnostics["failed_stage"] == "relative_flux_filter"
+    assert "relative-flux filtering left 0 usable point(s)" in diagnostics["failure_reason"]
+    assert "non-finite=0" in diagnostics["failure_reason"]
+    assert ">2x=6" in diagnostics["failure_reason"]
+    assert "finite ratio range=3.0000 to 3.0000" in diagnostics["failure_reason"]
+
+
+def test_run_target_driven_photometry_search_returns_failed_candidate_summaries(monkeypatch):
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", lambda *args, **kwargs: (None, None, None))
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 30.0),
+        "comp1": np.full((6, 1, 1), 10.0),
+        "comp2": np.full((6, 1, 1), 12.0),
+    }
+
+    result = run_target_driven_photometry_search(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={},
+        comp_stars=[[100.0, 200.0], [300.0, 400.0]],
+        psf_data={},
+        aper_data=aper_data,
+        apers=np.array([7.05]),
+        annuli=np.array([22.73]),
+        sigma=1.0,
+        require_comp_star=True,
+        use_psf_photometry=False,
+        use_aperture_photometry=True,
+        multiprocess_lightcurve_fits=0,
+    )
+
+    assert result["best_candidate"] is None
+    assert len(result["candidate_summaries"]) == 2
+    assert all(
+        "relative-flux filtering left 0 usable point(s)" in summary["failure_reason"]
+        for summary in result["candidate_summaries"]
+    )
+    assert result["candidate_summaries"][0]["method_label"] == "Aperture photometry (aper=7.05px, annulus=22.73px)"
 
 
 def test_fit_lightcurve_to_every_comparison_candidate_forwards_full_plot_time_range(monkeypatch):

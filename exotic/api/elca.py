@@ -559,6 +559,190 @@ class lc_fitter(object):
         index_samples = np.clip(np.rint(index_samples[:, 0]).astype(int), 0, points.shape[0] - 1)
         return points[index_samples], np.asarray(self.results.logl, dtype=float)[index_samples]
 
+    def get_parameter_posterior_samples(self, key):
+        try:
+            sample_points, _ = self._get_triangle_plot_samples()
+        except Exception:
+            return np.array([], dtype=float)
+
+        sample_points = np.asarray(sample_points, dtype=float)
+        if sample_points.ndim != 2 or sample_points.shape[0] == 0:
+            return np.array([], dtype=float)
+
+        sampled_keys = list(getattr(self, 'sampled_keys', self._get_sampled_keys()))
+        if key in sampled_keys:
+            key_index = sampled_keys.index(key)
+            if key_index < sample_points.shape[1]:
+                return np.asarray(sample_points[:, key_index], dtype=float)
+
+        bound_keys = list(self.bounds.keys())
+        physical_samples = [
+            self._physical_values_from_sample_point(point, bound_keys, sampled_keys).get(key, np.nan)
+            for point in sample_points
+        ]
+        return np.asarray(physical_samples, dtype=float)
+
+    def _estimate_histogram_mode(self, samples, bounds=None, bins=None):
+        samples = np.asarray(samples, dtype=float)
+        finite_samples = samples[np.isfinite(samples)]
+        if finite_samples.size == 0:
+            return np.nan, np.nan
+        if finite_samples.size == 1:
+            return float(finite_samples[0]), np.nan
+
+        if bounds is None:
+            lower = float(np.nanmin(finite_samples))
+            upper = float(np.nanmax(finite_samples))
+        else:
+            lower, upper = np.asarray(bounds, dtype=float).reshape(-1)[:2]
+            if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+                lower = float(np.nanmin(finite_samples))
+                upper = float(np.nanmax(finite_samples))
+
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            return float(np.nanmedian(finite_samples)), np.nan
+
+        if bins is None:
+            bins = int(np.clip(np.sqrt(finite_samples.size), 10, 80))
+        bins = max(1, int(bins))
+
+        counts, edges = np.histogram(finite_samples, bins=bins, range=(lower, upper))
+        if counts.size == 0:
+            return float(np.nanmedian(finite_samples)), np.nan
+
+        mode_index = int(np.argmax(counts))
+        mode = float(0.5 * (edges[mode_index] + edges[mode_index + 1]))
+        bin_width = float(edges[1] - edges[0]) if edges.size > 1 else np.nan
+        return mode, bin_width
+
+    def get_parameter_posterior_recenter_diagnostics(self, key, sigma_scale=5.0, bins=None):
+        diagnostics = {
+            'key': key,
+            'clipped': False,
+            'edge': None,
+            'mode': np.nan,
+            'std': np.nan,
+            'full_std': np.nan,
+            'bounds': None,
+            'original_bounds': None,
+            'sample_size': 0,
+            'reason': None,
+        }
+
+        bounds = getattr(self, 'sample_bounds', {}).get(key, self.bounds.get(key))
+        if bounds is None:
+            diagnostics['reason'] = "parameter bounds are unavailable."
+            return diagnostics
+
+        try:
+            lower_bound, upper_bound = np.asarray(bounds, dtype=float).reshape(-1)[:2]
+        except (TypeError, ValueError, IndexError):
+            diagnostics['reason'] = "parameter bounds are malformed."
+            return diagnostics
+
+        diagnostics['original_bounds'] = [float(lower_bound), float(upper_bound)]
+        if not np.isfinite(lower_bound) or not np.isfinite(upper_bound) or lower_bound >= upper_bound:
+            diagnostics['reason'] = "parameter bounds are not finite."
+            return diagnostics
+
+        samples = self.get_parameter_posterior_samples(key)
+        finite_samples = np.asarray(samples, dtype=float)
+        finite_samples = finite_samples[np.isfinite(finite_samples)]
+        diagnostics['sample_size'] = int(finite_samples.size)
+        if finite_samples.size < 8:
+            diagnostics['reason'] = "too few posterior samples are available."
+            return diagnostics
+
+        mode, bin_width = self._estimate_histogram_mode(finite_samples, bounds=(lower_bound, upper_bound), bins=bins)
+        full_std = float(np.nanstd(finite_samples))
+        diagnostics['mode'] = mode
+        diagnostics['full_std'] = full_std
+
+        if not np.isfinite(mode):
+            diagnostics['reason'] = "posterior mode could not be estimated."
+            return diagnostics
+
+        q05, q16, q50, q84, q95 = np.nanpercentile(finite_samples, [5, 16, 50, 84, 95])
+        width = float(upper_bound - lower_bound)
+        scale_floor = max(
+            2.0 * bin_width if np.isfinite(bin_width) and bin_width > 0 else 0.0,
+            0.01 * width,
+            np.finfo(float).eps,
+        )
+        tail_gap_threshold = max(0.5 * full_std if np.isfinite(full_std) and full_std > 0 else 0.0, scale_floor)
+        mode_gap_threshold = max(
+            1.0 * full_std if np.isfinite(full_std) and full_std > 0 else 0.0,
+            3.0 * bin_width if np.isfinite(bin_width) and bin_width > 0 else 0.0,
+            0.05 * width,
+            np.finfo(float).eps,
+        )
+
+        upper_gap_q95 = float(upper_bound - q95)
+        lower_gap_q05 = float(q05 - lower_bound)
+        upper_gap_mode = float(upper_bound - mode)
+        lower_gap_mode = float(mode - lower_bound)
+
+        upper_clipped = upper_gap_q95 <= tail_gap_threshold and upper_gap_mode <= mode_gap_threshold
+        lower_clipped = lower_gap_q05 <= tail_gap_threshold and lower_gap_mode <= mode_gap_threshold
+
+        if upper_clipped and lower_clipped:
+            clipped_edge = 'upper' if upper_gap_mode <= lower_gap_mode else 'lower'
+        elif upper_clipped:
+            clipped_edge = 'upper'
+        elif lower_clipped:
+            clipped_edge = 'lower'
+        else:
+            diagnostics['bounds'] = [float(lower_bound), float(upper_bound)]
+            diagnostics['reason'] = "posterior support is comfortably inside the sampled bounds."
+            return diagnostics
+
+        diagnostics['clipped'] = True
+        diagnostics['edge'] = clipped_edge
+
+        if clipped_edge == 'upper':
+            side_distances = mode - finite_samples[finite_samples <= mode]
+        else:
+            side_distances = finite_samples[finite_samples >= mode] - mode
+
+        side_distances = np.asarray(side_distances, dtype=float)
+        side_distances = side_distances[np.isfinite(side_distances)]
+        side_distances = side_distances[side_distances >= 0]
+
+        if side_distances.size >= 2:
+            mirrored = np.concatenate([side_distances, -side_distances])
+            estimated_std = float(np.nanstd(mirrored))
+        else:
+            estimated_std = full_std
+
+        min_std = max(
+            bin_width if np.isfinite(bin_width) and bin_width > 0 else 0.0,
+            width * 1e-3,
+            np.finfo(float).eps,
+        )
+        if not np.isfinite(estimated_std) or estimated_std <= 0:
+            estimated_std = full_std
+        if not np.isfinite(estimated_std) or estimated_std <= 0:
+            estimated_std = min_std
+        estimated_std = float(max(estimated_std, min_std))
+        diagnostics['std'] = estimated_std
+
+        radius = float(max(sigma_scale * estimated_std, min_std))
+        new_lower = float(mode - radius)
+        new_upper = float(mode + radius)
+        if lower_bound >= 0:
+            new_lower = max(float(lower_bound), new_lower)
+        diagnostics['bounds'] = [new_lower, new_upper]
+        diagnostics['reason'] = (
+            f"posterior peaks against the {clipped_edge} search bound "
+            f"(mode={mode:.6g}, sigma={estimated_std:.6g})."
+        )
+        diagnostics['q16'] = float(q16)
+        diagnostics['q50'] = float(q50)
+        diagnostics['q84'] = float(q84)
+        diagnostics['q05'] = float(q05)
+        diagnostics['q95'] = float(q95)
+        return diagnostics
+
     def _get_triangle_plot_display_spec(self, sampled_keys, sample_parameters, sample_errors, sample_points):
         if 'b' in sampled_keys:
             key = 'b'

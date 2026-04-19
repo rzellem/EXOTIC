@@ -117,6 +117,10 @@ try:  # plate solution
     from .api.plate_solution import NextAstroPlateSolution, PlateSolution
 except ImportError:  # package import
     from api.plate_solution import NextAstroPlateSolution, PlateSolution
+try:
+    from .api.http_compression import build_compressed_json_request
+except ImportError:
+    from api.http_compression import build_compressed_json_request
 try:  # nea
     from .api.nea import NASAExoplanetArchive
 except ImportError:  # package import
@@ -171,6 +175,9 @@ COMPARISON_STAR_COVERAGE_SIGMA = 3.0
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
+RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
+RPRS_SEARCH_BOUND_MIN = 0.0
+RPRS_SEARCH_BOUND_MAX = 0.30
 FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER = 0.5
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
@@ -305,6 +312,50 @@ def clone_lightcurve_bounds(bounds):
     }
 
 
+def sanitize_rprs_search_bounds(bounds):
+    sanitized = clone_lightcurve_bounds(bounds)
+    if 'rprs' not in sanitized:
+        return sanitized
+
+    try:
+        lower_bound, upper_bound = [
+            float(value) for value in np.asarray(sanitized['rprs'], dtype=float).reshape(-1)[:2]
+        ]
+    except (TypeError, ValueError, IndexError):
+        sanitized['rprs'] = [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+        return sanitized
+
+    if not np.isfinite(lower_bound) or not np.isfinite(upper_bound):
+        sanitized['rprs'] = [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+        return sanitized
+
+    lower_bound = float(np.clip(lower_bound, RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX))
+    upper_bound = float(np.clip(upper_bound, RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX))
+    if lower_bound >= upper_bound:
+        sanitized['rprs'] = [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+    else:
+        sanitized['rprs'] = [lower_bound, upper_bound]
+    return sanitized
+
+
+def clamp_rprs_prior_to_bounds(prior, bounds):
+    clamped = dict(prior)
+    if 'rprs' not in clamped or 'rprs' not in bounds:
+        return clamped
+
+    try:
+        rprs_value = float(clamped['rprs'])
+        lower_bound, upper_bound = [
+            float(value) for value in np.asarray(bounds['rprs'], dtype=float).reshape(-1)[:2]
+        ]
+    except (TypeError, ValueError, IndexError):
+        return clamped
+
+    if np.isfinite(rprs_value) and np.isfinite(lower_bound) and np.isfinite(upper_bound) and lower_bound < upper_bound:
+        clamped['rprs'] = float(np.clip(rprs_value, lower_bound, upper_bound))
+    return clamped
+
+
 def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     times,
     flux_values,
@@ -314,9 +365,11 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     bounds,
     jd_times=None,
     use_impactparameter_rather_than_inclination_to_fit=True,
-    max_rprs_retries=1,
+    max_rprs_retries=RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
 ):
     def build_fit(local_prior, local_bounds):
+        local_bounds = sanitize_rprs_search_bounds(local_bounds)
+        local_prior = clamp_rprs_prior_to_bounds(local_prior, local_bounds)
         return lc_fitter(
             times,
             flux_values,
@@ -330,8 +383,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             use_impactparameter_rather_than_inclination_to_fit,
         )
 
-    current_prior = dict(prior)
-    current_bounds = clone_lightcurve_bounds(bounds)
+    current_bounds = sanitize_rprs_search_bounds(bounds)
+    current_prior = clamp_rprs_prior_to_bounds(prior, current_bounds)
     retry_history = []
     retry_note = None
     fit = build_fit(current_prior, current_bounds)
@@ -358,14 +411,34 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             break
 
         previous_bounds = current_bounds.get('rprs')
-        if previous_bounds is not None and np.allclose(
-            np.asarray(previous_bounds, dtype=float),
-            np.asarray([new_lower, new_upper], dtype=float),
-            atol=1e-12,
-            rtol=0.0,
-        ):
-            retry_note = "Skipped; the automatic Rp/R* retry did not expand the sampled range."
-            break
+        clamped_bounds = sanitize_rprs_search_bounds({'rprs': [new_lower, new_upper]}).get('rprs', [new_lower, new_upper])
+        new_lower, new_upper = [float(value) for value in clamped_bounds]
+        if previous_bounds is not None:
+            previous_lower, previous_upper = [float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]]
+            clipped_edge = diagnostics.get('edge')
+            expands_sampled_range = False
+            if clipped_edge == 'upper':
+                expands_sampled_range = new_upper > previous_upper + 1e-12
+            elif clipped_edge == 'lower':
+                expands_sampled_range = new_lower < previous_lower - 1e-12
+            else:
+                expands_sampled_range = (
+                    new_lower < previous_lower - 1e-12 or
+                    new_upper > previous_upper + 1e-12
+                )
+
+            if not expands_sampled_range:
+                if (
+                    previous_lower <= RPRS_SEARCH_BOUND_MIN + 1e-12 and
+                    previous_upper >= RPRS_SEARCH_BOUND_MAX - 1e-12
+                ):
+                    retry_note = (
+                        "Skipped; the automatic Rp/R* retry reached the maximum exoplanet "
+                        f"search range [{RPRS_SEARCH_BOUND_MIN:.6f}, {RPRS_SEARCH_BOUND_MAX:.6f}]."
+                    )
+                else:
+                    retry_note = "Skipped; the automatic Rp/R* retry did not expand the sampled range."
+                break
 
         retry_history.append({
             'attempt': len(retry_history) + 1,
@@ -385,6 +458,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
         updated_bounds = clone_lightcurve_bounds(current_bounds)
         updated_bounds['rprs'] = [new_lower, new_upper]
+        updated_bounds = sanitize_rprs_search_bounds(updated_bounds)
 
         updated_prior = dict(current_prior)
         fit_parameters = getattr(fit, 'parameters', {})
@@ -394,6 +468,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                     updated_prior[key] = fit_parameters[key]
         if np.isfinite(diagnostics.get('mode', np.nan)):
             updated_prior['rprs'] = float(diagnostics['mode'])
+        updated_prior = clamp_rprs_prior_to_bounds(updated_prior, updated_bounds)
 
         current_prior = updated_prior
         current_bounds = updated_bounds
@@ -404,11 +479,13 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         final_diagnostics = final_diagnostics_getter('rprs') if callable(final_diagnostics_getter) else None
         note = f"Applied {len(retry_history)} automatic Rp/R* posterior range refit(s)."
         if final_diagnostics and final_diagnostics.get('clipped'):
+            retry_label = "retry" if len(retry_history) == 1 else "retries"
             note = (
-                f"{note} The posterior still hugs the {final_diagnostics.get('edge')} bound after retry."
+                f"{note} The posterior still hugs the {final_diagnostics.get('edge')} bound after "
+                f"{len(retry_history)} {retry_label}."
             )
             log_info(
-                "Warning: Rp/R* posterior still appears truncated after the automatic retry; "
+                "Warning: Rp/R* posterior still appears truncated after the automatic retries; "
                 "please inspect the triangle plot carefully.",
                 warn=True,
             )
@@ -459,7 +536,16 @@ def log_mid_transit_range_warning_once(array_times, tmid_prior):
 
 def relative_flux_filter_mask(relative_flux, max_relative_flux=RELATIVE_FLUX_MAX):
     relative_flux = np.asarray(relative_flux, dtype=float)
-    return np.isfinite(relative_flux) & np.less_equal(relative_flux, max_relative_flux)
+    return (
+        np.isfinite(relative_flux)
+        & np.greater(relative_flux, 0)
+        & np.less_equal(relative_flux, max_relative_flux)
+    )
+
+
+def valid_flux_ratio_mask(relative_flux):
+    relative_flux = np.asarray(relative_flux, dtype=float)
+    return np.isfinite(relative_flux) & np.greater(relative_flux, 0)
 
 
 def valid_comparison_frame_mask(flux_values):
@@ -2596,8 +2682,13 @@ def nextastro_variability_test(comp_ra_dec):
     api_url = 'https://photometry.nextastro.org/variability_test'
 
     payload = [{'ra': float(ra), 'dec': float(dec)} for ra, dec in comp_ra_dec]
+    request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(payload)
     log_info(f"NextAstro variability request JSON: {json.dumps(payload)}")
-    result = requests.post(api_url, json=payload, timeout=30)
+    log_info(
+        "NextAstro variability request compression: "
+        f"{content_encoding} ({compressed_size} bytes sent; {raw_size} bytes raw)"
+    )
+    result = requests.post(api_url, data=request_body, headers=headers, timeout=30)
     if result.status_code != 200:
         raise RuntimeError(f"NextAstro variability server returned HTTP {result.status_code}.")
 
@@ -4321,13 +4412,13 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
 
     has_reference_flux = not np.allclose(cflux_sorted, 1.0)
     if has_reference_flux:
-        relative_flux_mask = relative_flux_filter_mask(flux_ratio_sorted)
-        times_sorted = times_sorted[relative_flux_mask]
-        tflux_sorted = tflux_sorted[relative_flux_mask]
-        cflux_sorted = cflux_sorted[relative_flux_mask]
-        flux_ratio_sorted = flux_ratio_sorted[relative_flux_mask]
-        jd_times_sorted = jd_times[si][relative_flux_mask]
-        airmass_sorted = airmass[si][relative_flux_mask]
+        flux_ratio_mask = valid_flux_ratio_mask(flux_ratio_sorted)
+        times_sorted = times_sorted[flux_ratio_mask]
+        tflux_sorted = tflux_sorted[flux_ratio_mask]
+        cflux_sorted = cflux_sorted[flux_ratio_mask]
+        flux_ratio_sorted = flux_ratio_sorted[flux_ratio_mask]
+        jd_times_sorted = jd_times[si][flux_ratio_mask]
+        airmass_sorted = airmass[si][flux_ratio_mask]
     else:
         jd_times_sorted = jd_times[si]
         airmass_sorted = airmass[si]
@@ -4488,7 +4579,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     return myfit, f1, f2
 
 
-def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
+def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relative_flux_max=True):
     times = np.asarray(times, dtype=float)
     tflux = np.asarray(tflux, dtype=float)
     cflux = np.asarray(cflux, dtype=float)
@@ -4528,10 +4619,8 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
 
     if has_reference_flux:
         finite_ratio_mask = np.isfinite(flux_ratio_sorted)
+        nonpositive_ratio_mask = finite_ratio_mask & np.less_equal(flux_ratio_sorted, 0)
         high_ratio_mask = finite_ratio_mask & np.greater(flux_ratio_sorted, RELATIVE_FLUX_MAX)
-        nonfinite_ratio_count = int(np.count_nonzero(~finite_ratio_mask))
-        high_ratio_count = int(np.count_nonzero(high_ratio_mask))
-        rejected_ratio_count = nonfinite_ratio_count + high_ratio_count
         finite_ratio_values = flux_ratio_sorted[finite_ratio_mask]
         ratio_range_text = "finite ratio range=n/a"
         if finite_ratio_values.size:
@@ -4539,7 +4628,24 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
                 f"finite ratio range={np.nanmin(finite_ratio_values):.4f} to "
                 f"{np.nanmax(finite_ratio_values):.4f}"
             )
-        relative_flux_mask = relative_flux_filter_mask(flux_ratio_sorted)
+        nonfinite_ratio_count = int(np.count_nonzero(~finite_ratio_mask))
+        nonpositive_ratio_count = int(np.count_nonzero(nonpositive_ratio_mask))
+        high_ratio_count = int(np.count_nonzero(high_ratio_mask))
+        rejected_ratio_count = nonfinite_ratio_count + nonpositive_ratio_count
+        relative_flux_mask = valid_flux_ratio_mask(flux_ratio_sorted)
+        rejection_detail = (
+            f"(non-finite={nonfinite_ratio_count}, non-positive={nonpositive_ratio_count}, "
+            f"{ratio_range_text})."
+        )
+        rejection_context = "invalid target/reference ratio screening"
+        if enforce_relative_flux_max:
+            relative_flux_mask &= ~high_ratio_mask
+            rejected_ratio_count += high_ratio_count
+            rejection_detail = (
+                f"(non-finite={nonfinite_ratio_count}, non-positive={nonpositive_ratio_count}, "
+                f">{RELATIVE_FLUX_MAX:g}x={high_ratio_count}, {ratio_range_text})."
+            )
+            rejection_context = "target/reference ratio screening"
         diagnostics['relative_flux_point_count'] = int(np.count_nonzero(relative_flux_mask))
         times_sorted = times_sorted[relative_flux_mask]
         tflux_sorted = tflux_sorted[relative_flux_mask]
@@ -4553,9 +4659,7 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass):
                     "relative-flux filtering left "
                     f"{diagnostics['relative_flux_point_count']} usable point(s); "
                     f"rejected {rejected_ratio_count}/{diagnostics['input_point_count']} frame(s) "
-                    "during target/reference ratio screening "
-                    f"(non-finite={nonfinite_ratio_count}, >{RELATIVE_FLUX_MAX:g}x={high_ratio_count}, "
-                    f"{ratio_range_text})."
+                    f"during {rejection_context} {rejection_detail}"
                 ),
             })
             return diagnostics
@@ -4631,13 +4735,16 @@ def ensure_lightcurve_fit_failure_reason(diagnostics, fit_result, failed_stage, 
     return diagnostics
 
 
-def cheap_lightcurve_prescore(tFlux, cFlux, airmass):
+def cheap_lightcurve_prescore(tFlux, cFlux, airmass, enforce_relative_flux_max=True):
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio = np.divide(tFlux, cFlux)
 
-    finite_mask = np.isfinite(flux_ratio) & np.isfinite(airmass) & (flux_ratio > 0)
+    finite_mask = valid_flux_ratio_mask(flux_ratio) & np.isfinite(airmass)
     if not np.allclose(cFlux, 1.0):
-        finite_mask &= relative_flux_filter_mask(flux_ratio)
+        if enforce_relative_flux_max:
+            finite_mask &= relative_flux_filter_mask(flux_ratio)
+        else:
+            finite_mask &= valid_flux_ratio_mask(flux_ratio)
     if np.count_nonzero(finite_mask) < 5:
         return np.inf
 
@@ -4668,7 +4775,13 @@ def evaluate_lightcurve_candidate(task):
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
     ) = task
-    fit_diagnostics = diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass)
+    fit_diagnostics = diagnose_lightcurve_fit_inputs(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        enforce_relative_flux_max=False,
+    )
     myfit, tflux_fit, cflux_fit = fit_lightcurve(
         times,
         tflux,
@@ -4741,7 +4854,12 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                 'coverage_reference_count': psf_comp_coverage[ckey]['coverage_reference_count'],
                 'coverage_min_required_count': psf_comp_coverage[ckey]['coverage_min_required_count'],
                 'coverage_rejected': psf_comp_coverage[ckey]['coverage_rejected'],
-                'prescore': cheap_lightcurve_prescore(target_flux, comp_flux, airmass),
+                'prescore': cheap_lightcurve_prescore(
+                    target_flux,
+                    comp_flux,
+                    airmass,
+                    enforce_relative_flux_max=False,
+                ),
             })
 
     if use_aperture_photometry and aper_data is not None and apers is not None and annuli is not None:
@@ -4776,6 +4894,7 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                             target_flux,
                             np.ones(target_flux.shape[0]),
                             airmass,
+                            enforce_relative_flux_max=False,
                         ),
                     })
 
@@ -4804,6 +4923,7 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                             target_flux[aper_mask],
                             comp_series[aper_mask],
                             airmass[aper_mask],
+                            enforce_relative_flux_max=False,
                         ),
                     })
 
@@ -5321,6 +5441,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 target_flux[fit_mask],
                 comp_flux_series[fit_mask],
                 airmass[fit_mask],
+                enforce_relative_flux_max=False,
             )
         if not coverage_rejected and coverage_count > 1 and fit_diagnostics['failure_reason'] is None:
             fit_result, target_fit_flux, comp_fit_flux = fit_lightcurve(
@@ -5904,6 +6025,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             target_flux,
             comp_flux,
             airmass,
+            enforce_relative_flux_max=False,
         )
         fit_result, tflux_fit, cflux_fit = fit_lightcurve(
             times,

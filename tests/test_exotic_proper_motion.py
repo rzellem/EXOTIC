@@ -716,14 +716,24 @@ def test_comparison_star_stability_summary_rejects_low_coverage_candidates():
     assert np.isinf(summary["comp_summaries"][2]["aggregate_score"])
 
 
-def test_cheap_lightcurve_prescore_ignores_relative_flux_above_two():
+def test_cheap_lightcurve_prescore_ignores_large_ratios_when_requested():
     tflux = np.array([2.0, 2.0, 2.0, 6.0, 2.0, 2.0])
     cflux = np.full(tflux.shape[0], 2.0)
     airmass = np.linspace(1.0, 1.5, tflux.shape[0])
 
-    score = cheap_lightcurve_prescore(tflux, cflux, airmass)
+    score = cheap_lightcurve_prescore(tflux, cflux, airmass, enforce_relative_flux_max=True)
 
     assert np.isclose(score, 0.0)
+
+
+def test_cheap_lightcurve_prescore_allows_large_raw_target_reference_ratios():
+    tflux = np.full(6, 30.0)
+    cflux = np.full(6, 10.0)
+    airmass = np.linspace(1.0, 1.5, 6)
+
+    score = cheap_lightcurve_prescore(tflux, cflux, airmass, enforce_relative_flux_max=False)
+
+    assert np.isfinite(score)
 
 
 def test_cheap_lightcurve_prescore_keeps_target_only_mode_unfiltered():
@@ -1022,7 +1032,7 @@ def test_fit_final_lightcurve_prefit_refinement_trims_baseline_and_recenters_tmi
     assert fit.prefit_refinement_tmid_bounds == pytest.approx([-1.0, 1.0])
 
 
-def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
+def test_fit_lightcurve_keeps_large_raw_target_reference_ratios(monkeypatch):
     captured = {}
 
     def fake_lc_fitter(
@@ -1069,10 +1079,9 @@ def test_fit_lightcurve_removes_relative_flux_above_two_before_fit(monkeypatch):
 
     assert myfit is not None
     assert captured["mode"] == "lm"
-    assert len(captured["fluxes"]) == 5
-    assert np.all(captured["fluxes"] <= 2.0)
-    assert np.allclose(captured["fluxes"], 1.0)
-    assert np.allclose(fit_tflux, 2.0)
+    assert len(captured["fluxes"]) == 6
+    assert np.allclose(captured["fluxes"], np.array([1.0, 1.0, 1.0, 3.0, 1.0, 1.0]))
+    assert np.allclose(fit_tflux, tflux)
     assert np.allclose(fit_cflux, 2.0)
 
 
@@ -1484,6 +1493,7 @@ def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidat
     assert [attempt["comp_index"] for attempt in result["attempts"]] == [0, 1]
     assert result["selected_result"]["comp_index"] == 1
     assert "relative-flux filtering left 0 usable point(s)" in result["attempts"][0]["fit_diagnostics"]["failure_reason"]
+    assert "non-finite=6" in result["attempts"][0]["fit_diagnostics"]["failure_reason"]
     assert result["attempts"][1]["fit"] is not None
 
 
@@ -1535,7 +1545,11 @@ def test_run_target_driven_photometry_search_returns_failed_candidate_summaries(
     assert result["best_candidate"] is None
     assert len(result["candidate_summaries"]) == 2
     assert all(
-        "relative-flux filtering left 0 usable point(s)" in summary["failure_reason"]
+        summary["failure_reason"] is not None
+        for summary in result["candidate_summaries"]
+    )
+    assert all(
+        ">2x=" not in summary["failure_reason"]
         for summary in result["candidate_summaries"]
     )
     assert result["candidate_summaries"][0]["method_label"] == "Aperture photometry (aper=7.05px, annulus=22.73px)"

@@ -626,6 +626,11 @@ class lc_fitter(object):
             'bounds': None,
             'original_bounds': None,
             'sample_size': 0,
+            'peak_height': np.nan,
+            'lower_edge_height': np.nan,
+            'upper_edge_height': np.nan,
+            'lower_edge_peak_fraction': np.nan,
+            'upper_edge_peak_fraction': np.nan,
             'reason': None,
         }
 
@@ -664,6 +669,29 @@ class lc_fitter(object):
 
         q05, q16, q50, q84, q95 = np.nanpercentile(finite_samples, [5, 16, 50, 84, 95])
         width = float(upper_bound - lower_bound)
+        histogram_bins = int(np.clip(np.sqrt(finite_samples.size), 10, 80)) if bins is None else max(1, int(bins))
+        histogram_counts, _ = np.histogram(
+            finite_samples,
+            bins=histogram_bins,
+            range=(lower_bound, upper_bound),
+        )
+        histogram_counts = np.asarray(histogram_counts, dtype=float)
+        peak_height = float(np.nanmax(histogram_counts)) if histogram_counts.size else np.nan
+        lower_edge_height = float(histogram_counts[0]) if histogram_counts.size else np.nan
+        upper_edge_height = float(histogram_counts[-1]) if histogram_counts.size else np.nan
+        if np.isfinite(peak_height) and peak_height > 0:
+            lower_edge_peak_fraction = float(lower_edge_height / peak_height)
+            upper_edge_peak_fraction = float(upper_edge_height / peak_height)
+        else:
+            lower_edge_peak_fraction = np.nan
+            upper_edge_peak_fraction = np.nan
+
+        diagnostics['peak_height'] = peak_height
+        diagnostics['lower_edge_height'] = lower_edge_height
+        diagnostics['upper_edge_height'] = upper_edge_height
+        diagnostics['lower_edge_peak_fraction'] = lower_edge_peak_fraction
+        diagnostics['upper_edge_peak_fraction'] = upper_edge_peak_fraction
+
         scale_floor = max(
             2.0 * bin_width if np.isfinite(bin_width) and bin_width > 0 else 0.0,
             0.01 * width,
@@ -684,6 +712,19 @@ class lc_fitter(object):
 
         upper_clipped = upper_gap_q95 <= tail_gap_threshold and upper_gap_mode <= mode_gap_threshold
         lower_clipped = lower_gap_q05 <= tail_gap_threshold and lower_gap_mode <= mode_gap_threshold
+        edge_peak_fraction_floor = 0.20
+        rejected_edges = []
+
+        if upper_clipped and np.isfinite(upper_edge_peak_fraction) and upper_edge_peak_fraction < edge_peak_fraction_floor:
+            upper_clipped = False
+            rejected_edges.append(
+                f"upper edge histogram height is only {upper_edge_peak_fraction:.3f} of the posterior peak"
+            )
+        if lower_clipped and np.isfinite(lower_edge_peak_fraction) and lower_edge_peak_fraction < edge_peak_fraction_floor:
+            lower_clipped = False
+            rejected_edges.append(
+                f"lower edge histogram height is only {lower_edge_peak_fraction:.3f} of the posterior peak"
+            )
 
         if upper_clipped and lower_clipped:
             clipped_edge = 'upper' if upper_gap_mode <= lower_gap_mode else 'lower'
@@ -693,7 +734,14 @@ class lc_fitter(object):
             clipped_edge = 'lower'
         else:
             diagnostics['bounds'] = [float(lower_bound), float(upper_bound)]
-            diagnostics['reason'] = "posterior support is comfortably inside the sampled bounds."
+            if rejected_edges:
+                diagnostics['reason'] = (
+                    "posterior reaches a search bound, but "
+                    + " and ".join(rejected_edges)
+                    + ", so it is not treated as truncated."
+                )
+            else:
+                diagnostics['reason'] = "posterior support is comfortably inside the sampled bounds."
             return diagnostics
 
         diagnostics['clipped'] = True

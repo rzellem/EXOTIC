@@ -46,6 +46,11 @@ import time
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
+try:
+    from .http_compression import build_compressed_json_request
+except ImportError:
+    from http_compression import build_compressed_json_request
+
 _R_MAX_STOPS_LOW = 7
 _R_MAX_STOPS = 10
 _R_MAX_SECS = 37
@@ -364,8 +369,14 @@ class NextAstroPlateSolution:
         if hints is not None:
             payload["hints"] = hints
 
+        request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(payload)
+
         self._emit_debug(f"NextAstro astrometry request JSON: {self._json_message(payload)}")
-        response = requests.post(f"{self.api_url}/solve", json=payload, timeout=_RQ_TIMEOUT)
+        self._emit_debug(
+            "NextAstro astrometry request compression: "
+            f"{content_encoding} ({compressed_size} bytes sent; {raw_size} bytes raw)"
+        )
+        response = requests.post(f"{self.api_url}/solve", data=request_body, headers=headers, timeout=_RQ_TIMEOUT)
         response_json = self._decode_response_json(response, 'Solve response')
         if response_json is not None and response.status_code != 502:
             self._emit_debug(f"NextAstro astrometry submission response JSON: {self._json_message(response_json)}")

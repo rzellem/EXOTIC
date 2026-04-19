@@ -27,3 +27,4 @@ scikit-image~=0.24.0
 statsmodels~=0.14.4
 tenacity~=9.0
 ultranest~=3.6.5;platform_system!='Windows'
+zstandard~=0.23.0

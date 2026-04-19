@@ -252,6 +252,7 @@ def test_additional_standard_filter_aliases_in_filter_column() -> None:
         ("w", "MObs CV", "CV", "350.0", "850.0"),
         ("pl", "MObs CV", "CV", "350.0", "850.0"),
         ("exo", "Astrodon ExoPlanet-BB", "CBB", "500.0", "1000.0"),
+        ("Astrodon-Exo", "Astrodon ExoPlanet-BB", "CBB", "500.0", "1000.0"),
     ]
 
     for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:

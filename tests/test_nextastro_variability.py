@@ -1,8 +1,11 @@
 import importlib.util
 import sys
 import types
+import gzip
+import json
 
 import numpy as np
+import pytest
 
 fake_barycorrpy = types.ModuleType('barycorrpy')
 fake_utc_tdb = types.ModuleType('barycorrpy.utc_tdb')
@@ -99,13 +102,24 @@ class DummyResponse:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
+def _decode_request_body(body, headers):
+    encoding = headers["Content-Encoding"]
+    if encoding == "gzip":
+        return json.loads(gzip.decompress(body).decode("utf-8"))
+    if encoding == "zstd":
+        zstandard = pytest.importorskip("zstandard")
+        return json.loads(zstandard.ZstdDecompressor().decompress(body).decode("utf-8"))
+    raise AssertionError(f"Unexpected content encoding: {encoding}")
+
+
 def test_nextastro_variability_logs_json_request_and_response(monkeypatch):
     captured = {}
     logged = []
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, data, headers, timeout):
         captured['url'] = url
-        captured['json'] = json
+        captured['json'] = _decode_request_body(data, headers)
+        captured['headers'] = headers
         captured['timeout'] = timeout
         return DummyResponse([
             {'is_in_vsx': 0},
@@ -119,9 +133,12 @@ def test_nextastro_variability_logs_json_request_and_response(monkeypatch):
 
     assert captured['url'].endswith('/variability_test')
     assert captured['timeout'] == 30
+    assert captured['headers']['Content-Type'] == 'application/json'
+    assert captured['headers']['Content-Encoding'] in {'gzip', 'zstd'}
     assert captured['json'] == [{'ra': 10.1, 'dec': -11.2}, {'ra': 22.3, 'dec': -33.4}]
     assert variability_flags == [False, True]
     assert any('NextAstro variability request JSON:' in message for message in logged)
+    assert any('NextAstro variability request compression:' in message for message in logged)
     assert any('NextAstro variability response JSON:' in message for message in logged)
 
 

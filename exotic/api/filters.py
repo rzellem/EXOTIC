@@ -82,6 +82,7 @@ fwhm_alias = {
         "Clear (unfiltered) reduced to R sequence": "Cousins R",
 
         "Clear with blue-blocking": "Astrodon ExoPlanet-BB",
+        "Astrodon-Exo": "Astrodon ExoPlanet-BB",
         "Exop": "Astrodon ExoPlanet-BB",
 
         # additional short aliases found in FILTER column values

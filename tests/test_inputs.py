@@ -869,6 +869,23 @@ def test_parse_aavso_prereduced_overrides_uses_known_filter_lookup_when_filter_x
     assert overrides["wl_max"] == "1000.0"
 
 
+def test_parse_aavso_prereduced_overrides_uses_astrodon_exo_alias_lookup(tmp_path):
+    pre_reduced_file = tmp_path / "aavso_prereduced.txt"
+    pre_reduced_file.write_text(
+        "#TYPE=EXOPLANET\n"
+        "#FILTER=Astrodon-Exo\n"
+        "#DATE,DIFF,ERR\n"
+        "2461102.76092732,0.979108,0.0386426\n"
+    )
+
+    overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
+
+    assert overrides["filter"] == "Astrodon-Exo"
+    assert overrides["filter_desc"] == "Astrodon ExoPlanet-BB"
+    assert overrides["wl_min"] == "500.0"
+    assert overrides["wl_max"] == "1000.0"
+
+
 def test_lookup_aavso_filter_metadata_uses_c_alias_for_cv_filter() -> None:
     filter_metadata = inputs_module.lookup_aavso_filter_metadata("C")
 

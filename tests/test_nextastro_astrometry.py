@@ -1,7 +1,10 @@
+import gzip
+import json
 from pathlib import Path
 
 import numpy as np
 from astropy.io.fits import getheader, writeto
+import pytest
 
 from exotic.api.plate_solution import NextAstroPlateSolution, PlateSolution
 
@@ -17,6 +20,16 @@ class DummyResponse:
         if self._json_error is not None:
             raise self._json_error
         return self._payload
+
+
+def _decode_request_body(body, headers):
+    encoding = headers["Content-Encoding"]
+    if encoding == "gzip":
+        return json.loads(gzip.decompress(body).decode("utf-8"))
+    if encoding == "zstd":
+        zstandard = pytest.importorskip("zstandard")
+        return json.loads(zstandard.ZstdDecompressor().decompress(body).decode("utf-8"))
+    raise AssertionError(f"Unexpected content encoding: {encoding}")
 
 
 def _create_test_fits(tmp_path: Path) -> Path:
@@ -45,13 +58,16 @@ def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):
     fits_path = _create_test_fits(tmp_path)
     (tmp_path / "temp").mkdir()
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, data, headers, timeout):
+        payload = _decode_request_body(data, headers)
         assert url.endswith('/solve')
-        assert json['image'] == {'width': 120, 'height': 100}
-        assert json['hints']['ra_deg'] == 210.8023
-        assert json['hints']['dec_deg'] == 54.3489
-        assert json['hints']['scale_arcsec_per_pix'] == 1.23
-        assert json['hints']['scale_tolerance_frac'] == 0.25
+        assert headers["Content-Type"] == "application/json"
+        assert headers["Content-Encoding"] in {"gzip", "zstd"}
+        assert payload['image'] == {'width': 120, 'height': 100}
+        assert payload['hints']['ra_deg'] == 210.8023
+        assert payload['hints']['dec_deg'] == 54.3489
+        assert payload['hints']['scale_arcsec_per_pix'] == 1.23
+        assert payload['hints']['scale_tolerance_frac'] == 0.25
         return DummyResponse({'status': 'queued', 'request_id': 'abc123'})
 
     def fake_get(url, timeout):
@@ -99,7 +115,7 @@ def test_plate_solution_logs_json_via_message_logger_when_fail_warnings_suppress
 
     monkeypatch.setattr(
         'exotic.api.plate_solution.requests.post',
-        lambda url, json, timeout: DummyResponse({'status': 'queued', 'request_id': 'abc123'})
+        lambda url, data, headers, timeout: DummyResponse({'status': 'queued', 'request_id': 'abc123'})
     )
     monkeypatch.setattr(
         'exotic.api.plate_solution.requests.get',
@@ -131,6 +147,7 @@ def test_plate_solution_logs_json_via_message_logger_when_fail_warnings_suppress
 
     assert wcs_file == tmp_path / 'temp' / 'wcs.fits'
     assert any('NextAstro astrometry request JSON:' in message for message in logged)
+    assert any('NextAstro astrometry request compression:' in message for message in logged)
     assert any('NextAstro astrometry submission response JSON:' in message for message in logged)
     assert any('NextAstro astrometry status response JSON (solved):' in message for message in logged)
 
@@ -196,7 +213,7 @@ def test_submit_solve_request_handles_non_json_response(tmp_path, monkeypatch, c
 
     monkeypatch.setattr(
         'exotic.api.plate_solution.requests.post',
-        lambda url, json, timeout: DummyResponse(
+        lambda url, data, headers, timeout: DummyResponse(
             status_code=502,
             text='<html>bad gateway</html>',
             json_error=ValueError('not json')

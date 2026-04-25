@@ -224,7 +224,14 @@ class LimbDarkening:
                 return False
             for k in ('wl_min', 'wl_max'):  # clean inputs
                 filter_[k] = filter_.get(k)
-                filter_[k] = str(filter_[k]).strip().replace(' ', '').rstrip('.') if filter_[k] else filter_[k]
+                if filter_[k] is None:
+                    continue
+                filter_[k] = str(filter_[k]).strip().replace(' ', '').rstrip('.')
+                if not filter_[k]:
+                    filter_[k] = None
+            if filter_['wl_min'] is None or filter_['wl_max'] is None:
+                return False
+            for k in ('wl_min', 'wl_max'):
                 if not 200. <= float(filter_[k]) <= 4000.:  # also fails if nan
                     raise ValueError(f"FWHM '{k}' is outside of bounds (200., 4000.). ...")
                 else:  # add .0 to end of str to aid literal matching

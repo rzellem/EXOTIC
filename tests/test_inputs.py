@@ -98,6 +98,21 @@ def test_comp_params_defaults_bad_wcs_threshold_percent_to_three(tmp_path):
     assert inputs.info_dict["bad_wcs_threshold_percent"] == 3.0
 
 
+def test_comp_params_defaults_pointing_rejection_sigma_to_four(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["pointing_rejection_sigma"] == pytest.approx(4.0)
+
+
 def test_comp_params_defaults_skip_low_comparison_coverage_rejection_to_no(tmp_path):
     init_data = {
         "user_info": {},
@@ -186,6 +201,21 @@ def test_comp_params_defaults_final_fit_baseline_duration_multiplier_to_one(tmp_
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["final_fit_baseline_duration_multiplier"] == pytest.approx(1.0)
+
+
+def test_comp_params_defaults_use_eebls_tmid_initializer_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_eebls_to_initialize_tmid_and_bounds"] == "y"
 
 
 def test_comp_params_defaults_use_impactparameter_fit_to_yes(tmp_path):
@@ -308,6 +338,21 @@ def test_comp_params_reads_bad_wcs_threshold_percent_from_optional_info(tmp_path
     assert inputs.info_dict["bad_wcs_threshold_percent"] == 5.5
 
 
+def test_comp_params_reads_pointing_rejection_sigma_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"pointing_rejection_sigma": 3.5},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["pointing_rejection_sigma"] == 3.5
+
+
 def test_comp_params_reads_skip_low_comparison_coverage_rejection_from_optional_info(tmp_path):
     init_data = {
         "user_info": {},
@@ -411,6 +456,21 @@ def test_comp_params_reads_final_fit_baseline_duration_multiplier_from_optional_
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["final_fit_baseline_duration_multiplier"] == pytest.approx(1.75)
+
+
+def test_comp_params_reads_use_eebls_tmid_initializer_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"Use EEBLS to Initialize Tmid and Bounds? (y/n)": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_eebls_to_initialize_tmid_and_bounds"] == "n"
 
 
 def test_comp_params_reads_use_impactparameter_fit_from_optional_info(tmp_path):

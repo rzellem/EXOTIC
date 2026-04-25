@@ -71,6 +71,7 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, EarthLocation, AltAz
 from astropy.io import fits
 from astropy.time import Time
+from astropy.timeseries import BoxLeastSquares
 from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
 # UTC to BJD converter import
@@ -97,7 +98,7 @@ from scipy.ndimage import binary_erosion, gaussian_filter, maximum_filter, media
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
-from tenacity import retry, stop_after_delay
+from tenacity import RetryError, retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_fixed
 # color, color_demosaicing
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 # ########## EXOTIC imports ##########
@@ -178,7 +179,24 @@ FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
 RPRS_SEARCH_BOUND_MAX = 0.30
+RPRS_RETRY_MIN_HALF_WIDTH = 0.05
 FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER = 0.5
+EEBLS_DURATION_GRID_SIZE = 15
+EEBLS_DURATION_MIN_FRACTION = 0.5
+EEBLS_DURATION_MAX_FRACTION = 1.75
+EEBLS_TMID_HALF_WIDTH_DURATION_MULTIPLIER = 1.5
+EEBLS_MIN_VALID_POINTS = 10
+EPHEMERIS_BRACKETED_TMID_HALF_WIDTH_DURATION_MULTIPLIER = 2.0
+COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS = 15.0
+ROBUST_FLUX_MIN_FRACTION_OF_MEDIAN = 0.02
+ROBUST_FLUX_MIN_POINTS = 20
+WCS_REFERENCE_GEOMETRY_TOLERANCE_PIXELS = 5.0
+WCS_MIN_GEOMETRY_MATCH_FRACTION = 0.5
+TIME_REJECTION_RANGE_DISPLAY_LIMIT = 6
+TIME_REJECTION_GROUP_GAP_CADENCE_MULTIPLIER = 2.5
+NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS = 5
+NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS = 10
+NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
 BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
@@ -281,6 +299,118 @@ def annotate_final_fit_prefit_refinement(
     fit.prefit_refinement_tmid_bounds = refined_tmid_bounds
 
 
+def annotate_nested_tmid_refinement(
+    fit,
+    applied,
+    note=None,
+    original_tmid_bounds=None,
+    refined_tmid_bounds=None,
+):
+    if fit is None:
+        return
+
+    fit.nested_tmid_refinement_applied = bool(applied)
+    fit.nested_tmid_refinement_note = note
+    fit.nested_tmid_refinement_original_tmid_bounds = original_tmid_bounds
+    fit.nested_tmid_refinement_tmid_bounds = refined_tmid_bounds
+
+
+def annotate_lightcurve_filter_diagnostics(fit, diagnostics):
+    if fit is None:
+        return
+
+    fit.frame_filter_diagnostics = [dict(diagnostic) for diagnostic in (diagnostics or [])]
+
+
+def annotate_selected_photometry_debug(
+    fit,
+    times,
+    target_flux,
+    comp_flux,
+    raw_ratio,
+    initial_sigma_keep_mask,
+    phase_clip_keep_mask_on_sigma_filtered=None,
+):
+    if fit is None:
+        return
+
+    sigma_keep_mask = np.asarray(initial_sigma_keep_mask, dtype=bool)
+    sigma_kept_count = int(np.count_nonzero(sigma_keep_mask))
+    if phase_clip_keep_mask_on_sigma_filtered is None:
+        phase_keep_mask = np.ones(sigma_kept_count, dtype=bool)
+    else:
+        phase_keep_mask = np.asarray(phase_clip_keep_mask_on_sigma_filtered, dtype=bool)
+        if phase_keep_mask.shape[0] != sigma_kept_count:
+            phase_keep_mask = np.ones(sigma_kept_count, dtype=bool)
+
+    fit.selected_photometry_debug = {
+        'times': np.asarray(times, dtype=float).copy(),
+        'target_flux': np.asarray(target_flux, dtype=float).copy(),
+        'comp_flux': np.asarray(comp_flux, dtype=float).copy(),
+        'raw_ratio': np.asarray(raw_ratio, dtype=float).copy(),
+        'initial_sigma_keep_mask': sigma_keep_mask.copy(),
+        'phase_clip_keep_mask_on_sigma_filtered': phase_keep_mask.copy(),
+    }
+
+
+def save_selected_photometry_debug_series(save_dir, planet_name, observation_date, fit):
+    if fit is None:
+        return None
+
+    debug = getattr(fit, 'selected_photometry_debug', None)
+    if not debug:
+        return None
+
+    times = np.asarray(debug.get('times'), dtype=float)
+    target_flux = np.asarray(debug.get('target_flux'), dtype=float)
+    comp_flux = np.asarray(debug.get('comp_flux'), dtype=float)
+    raw_ratio = np.asarray(debug.get('raw_ratio'), dtype=float)
+    initial_sigma_keep_mask = np.asarray(debug.get('initial_sigma_keep_mask'), dtype=bool)
+    phase_clip_keep_mask = np.asarray(
+        debug.get('phase_clip_keep_mask_on_sigma_filtered', np.ones(np.count_nonzero(initial_sigma_keep_mask))),
+        dtype=bool,
+    )
+
+    if not (
+        times.shape == target_flux.shape == comp_flux.shape == raw_ratio.shape == initial_sigma_keep_mask.shape
+    ):
+        return None
+
+    phase_keep_full = np.zeros(times.shape[0], dtype=bool)
+    sigma_kept_indices = np.flatnonzero(initial_sigma_keep_mask)
+    if sigma_kept_indices.size:
+        if phase_clip_keep_mask.shape[0] != sigma_kept_indices.size:
+            phase_clip_keep_mask = np.ones(sigma_kept_indices.size, dtype=bool)
+        phase_keep_full[sigma_kept_indices] = phase_clip_keep_mask
+
+    output_dir = Path(save_dir) / "temp"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"SelectedPhotometryRawRatio_{planet_name}_{observation_date}.csv"
+
+    output_rows = np.column_stack(
+        [
+            times,
+            target_flux,
+            comp_flux,
+            raw_ratio,
+            initial_sigma_keep_mask.astype(int),
+            phase_keep_full.astype(int),
+        ]
+    )
+    np.savetxt(
+        output_path,
+        output_rows,
+        delimiter=",",
+        header=(
+            "BJD_TDB,Target Flux,Comp Flux,Raw Ratio,"
+            "Kept After Initial Sigma Clip,Kept After Phase Residual Clip"
+        ),
+        comments="",
+        fmt=["%.8f", "%.8f", "%.8f", "%.8f", "%d", "%d"],
+    )
+    return output_path
+
+
 def annotate_rprs_posterior_refit(fit, applied, note=None, history=None):
     if fit is None:
         return
@@ -356,6 +486,38 @@ def clamp_rprs_prior_to_bounds(prior, bounds):
     return clamped
 
 
+def enforce_minimum_rprs_retry_half_width(mode, bounds, min_half_width=RPRS_RETRY_MIN_HALF_WIDTH):
+    try:
+        lower_bound, upper_bound = [
+            float(value) for value in np.asarray(bounds, dtype=float).reshape(-1)[:2]
+        ]
+    except (TypeError, ValueError, IndexError):
+        return bounds
+
+    if not np.isfinite(lower_bound) or not np.isfinite(upper_bound) or lower_bound >= upper_bound:
+        return bounds
+
+    center = float(mode) if np.isfinite(mode) else float(0.5 * (lower_bound + upper_bound))
+    half_width = max(float(min_half_width), 0.0)
+    expanded_lower = min(lower_bound, center - half_width)
+    expanded_upper = max(upper_bound, center + half_width)
+
+    if expanded_lower < RPRS_SEARCH_BOUND_MIN:
+        expanded_upper = min(
+            RPRS_SEARCH_BOUND_MAX,
+            expanded_upper + (RPRS_SEARCH_BOUND_MIN - expanded_lower),
+        )
+        expanded_lower = RPRS_SEARCH_BOUND_MIN
+    if expanded_upper > RPRS_SEARCH_BOUND_MAX:
+        expanded_lower = max(
+            RPRS_SEARCH_BOUND_MIN,
+            expanded_lower - (expanded_upper - RPRS_SEARCH_BOUND_MAX),
+        )
+        expanded_upper = RPRS_SEARCH_BOUND_MAX
+
+    return [float(expanded_lower), float(expanded_upper)]
+
+
 def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     times,
     flux_values,
@@ -412,6 +574,11 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
         previous_bounds = current_bounds.get('rprs')
         clamped_bounds = sanitize_rprs_search_bounds({'rprs': [new_lower, new_upper]}).get('rprs', [new_lower, new_upper])
+        clamped_bounds = enforce_minimum_rprs_retry_half_width(
+            diagnostics.get('mode', np.nan),
+            clamped_bounds,
+        )
+        clamped_bounds = sanitize_rprs_search_bounds({'rprs': clamped_bounds}).get('rprs', clamped_bounds)
         new_lower, new_upper = [float(value) for value in clamped_bounds]
         if previous_bounds is not None:
             previous_lower, previous_upper = [float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]]
@@ -553,6 +720,38 @@ def valid_comparison_frame_mask(flux_values):
     return np.isfinite(flux_values) & (flux_values > 0)
 
 
+def robust_flux_floor_mask(
+    flux_values,
+    min_fraction_of_median=ROBUST_FLUX_MIN_FRACTION_OF_MEDIAN,
+    min_points=ROBUST_FLUX_MIN_POINTS,
+):
+    flux_values = np.asarray(flux_values, dtype=float)
+    valid = np.isfinite(flux_values) & (flux_values > 0)
+    if np.count_nonzero(valid) < max(LIGHTCURVE_MIN_VALID_POINTS, int(min_points)):
+        return valid
+
+    center, _ = sigma_clipped_nanmedian(flux_values[valid], sigma=4.0, max_iters=3)
+    if not np.isfinite(center) or center <= 0:
+        center = bn.nanmedian(flux_values[valid])
+    if not np.isfinite(center) or center <= 0:
+        return valid
+
+    floor = float(min_fraction_of_median) * float(center)
+    if not np.isfinite(floor) or floor <= 0:
+        return valid
+
+    return valid & np.greater_equal(flux_values, floor)
+
+
+def robust_target_reference_flux_mask(target_flux, reference_flux):
+    target_mask = robust_flux_floor_mask(target_flux)
+    if reference_flux is None:
+        return target_mask
+
+    reference_mask = robust_flux_floor_mask(reference_flux)
+    return target_mask & reference_mask
+
+
 def is_fast_aperture_mask_enabled(config_value):
     if config_value is None:
         return True
@@ -681,6 +880,28 @@ def should_use_aperture_photometry(config_value):
     return True
 
 
+def should_use_eebls_to_initialize_tmid_and_bounds(config_value):
+    if config_value is None:
+        return True
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'use_eebls_to_initialize_tmid_and_bounds' value; "
+        "keeping the EEBLS transit initializer enabled.",
+        warn=True,
+    )
+    return True
+
+
 def should_detect_bad_pixels_before_photometry(config_value):
     if config_value is None:
         return True
@@ -769,6 +990,47 @@ def get_bad_wcs_threshold_fraction(config_value):
     return threshold_percent / 100.0
 
 
+def get_pointing_rejection_sigma(config_value):
+    default_sigma = 4.0
+    if config_value is None:
+        return default_sigma
+
+    if isinstance(config_value, str):
+        normalized = config_value.strip()
+        if normalized == "":
+            return default_sigma
+    else:
+        normalized = config_value
+
+    try:
+        sigma = float(normalized)
+    except (TypeError, ValueError):
+        log_info(
+            f"Warning: Invalid 'pointing_rejection_sigma' value; using default {default_sigma:g}.",
+            warn=True,
+        )
+        return default_sigma
+
+    if not np.isfinite(sigma):
+        log_info(
+            f"Warning: Invalid 'pointing_rejection_sigma' value; using default {default_sigma:g}.",
+            warn=True,
+        )
+        return default_sigma
+
+    if sigma < 0:
+        log_info(
+            f"Warning: Invalid 'pointing_rejection_sigma' value; using default {default_sigma:g}.",
+            warn=True,
+        )
+        return default_sigma
+
+    if sigma == 0:
+        return None
+
+    return sigma
+
+
 def is_vertical_flux_normalization_disabled(config_value):
     if config_value is None:
         return False
@@ -832,6 +1094,317 @@ def get_final_fit_baseline_duration_multiplier(config_value):
     return FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT
 
 
+def estimate_transit_duration_from_prior_geometry(prior):
+    try:
+        period = float(prior['per'])
+        rprs = float(prior['rprs'])
+        ars = float(prior['ars'])
+        inc = float(prior['inc'])
+    except (KeyError, TypeError, ValueError):
+        return np.nan
+
+    if (
+        not np.isfinite(period) or period <= 0
+        or not np.isfinite(rprs) or rprs < 0
+        or not np.isfinite(ars) or ars <= 0
+        or not np.isfinite(inc)
+    ):
+        return np.nan
+
+    ecc = prior.get('ecc', 0.0)
+    omega = np.deg2rad(prior.get('omega', 0.0))
+    sin_inc = np.sin(np.deg2rad(inc))
+    if not np.isfinite(sin_inc) or sin_inc <= 0:
+        return np.nan
+
+    impact_scale = ars * (1.0 - ecc ** 2) / max(np.finfo(float).eps, 1.0 + ecc * np.sin(omega))
+    impact_parameter = impact_scale * np.cos(np.deg2rad(inc))
+    chord_sq = (1.0 + rprs) ** 2 - impact_parameter ** 2
+    if not np.isfinite(chord_sq) or chord_sq <= 0 or not np.isfinite(impact_scale) or impact_scale <= 0:
+        return np.nan
+
+    argument = np.sqrt(chord_sq) / (impact_scale * sin_inc)
+    argument = float(np.clip(argument, -1.0, 1.0))
+    duration = (period / np.pi) * np.arcsin(argument)
+    return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
+
+
+def estimate_ephemeris_tmid_and_bounds(
+    times,
+    prior_tmid,
+    period,
+    midt_unc,
+    per_unc,
+    expected_duration=np.nan,
+    sigma_multiplier=25.0,
+):
+    summary = {
+        'method': 'ephemeris',
+        'applied': False,
+        'tmid': float(prior_tmid) if np.isfinite(prior_tmid) else np.nan,
+        'bounds': [np.nan, np.nan],
+        'cycle_index': np.nan,
+        'propagated_half_width': np.nan,
+        'half_width': np.nan,
+        'observations_bracket_expected_transit': False,
+        'duration_capped': False,
+        'observed_window_capped': False,
+        'note': 'Using ephemeris-derived Tmid bounds.',
+    }
+
+    try:
+        prior_tmid = float(prior_tmid)
+        period = float(period)
+        midt_unc = float(midt_unc)
+        per_unc = float(per_unc)
+        sigma_multiplier = float(sigma_multiplier)
+    except (TypeError, ValueError):
+        summary['note'] = 'Using ephemeris-derived Tmid bounds with invalid prior metadata.'
+        return summary
+
+    if not np.isfinite(prior_tmid) or not np.isfinite(period) or period <= 0:
+        summary['note'] = 'Using ephemeris-derived Tmid bounds with invalid Tmid/period metadata.'
+        return summary
+
+    valid_times = np.asarray(times, dtype=float)
+    valid_times = valid_times[np.isfinite(valid_times)]
+    if valid_times.size == 0:
+        summary['bounds'] = [prior_tmid, prior_tmid]
+        summary['note'] = 'Using ephemeris-derived Tmid bounds with no finite observation times.'
+        return summary
+
+    phases = (valid_times - prior_tmid) / period
+    cycle_index = float(np.floor(phases).max())
+    tmid = float(prior_tmid + cycle_index * period)
+
+    propagated_half_width = np.abs(sigma_multiplier * midt_unc + cycle_index * sigma_multiplier * per_unc)
+    max_half_width = 0.25 * period
+    if not np.isfinite(propagated_half_width) or propagated_half_width <= 0:
+        half_width = max_half_width
+        propagated_half_width = np.nan
+    else:
+        half_width = min(float(propagated_half_width), max_half_width)
+
+    cadence = np.nan
+    if valid_times.size > 1:
+        cadence = np.nanmedian(np.diff(np.sort(valid_times)))
+
+    lower = float(tmid - half_width)
+    upper = float(tmid + half_width)
+    if np.isfinite(expected_duration) and expected_duration > 0:
+        coverage_margin = 0.5 * float(expected_duration)
+        if np.isfinite(cadence) and cadence > 0:
+            coverage_margin = max(coverage_margin, 3.0 * cadence)
+
+        pre_points = int(np.count_nonzero(valid_times < tmid - coverage_margin))
+        post_points = int(np.count_nonzero(valid_times > tmid + coverage_margin))
+        bracketed = pre_points > 0 and post_points > 0
+        summary['observations_bracket_expected_transit'] = bracketed
+
+        cadence_floor = 0.0
+        if np.isfinite(cadence) and cadence > 0:
+            cadence_floor = 5.0 * cadence
+        duration_cap = max(
+            EPHEMERIS_BRACKETED_TMID_HALF_WIDTH_DURATION_MULTIPLIER * float(expected_duration),
+            cadence_floor,
+        )
+        if bracketed and np.isfinite(duration_cap) and duration_cap > 0 and duration_cap < half_width:
+            half_width = float(duration_cap)
+            summary['duration_capped'] = True
+            lower = float(tmid - half_width)
+            upper = float(tmid + half_width)
+
+        if bracketed:
+            observed_lower = float(np.nanmin(valid_times) + 0.5 * float(expected_duration))
+            observed_upper = float(np.nanmax(valid_times) - 0.5 * float(expected_duration))
+            if (
+                np.isfinite(observed_lower)
+                and np.isfinite(observed_upper)
+                and observed_upper > observed_lower
+            ):
+                tightened_lower = max(lower, observed_lower)
+                tightened_upper = min(upper, observed_upper)
+                if tightened_upper > tightened_lower and (
+                    tightened_lower > lower + 1e-12 or tightened_upper < upper - 1e-12
+                ):
+                    lower = float(tightened_lower)
+                    upper = float(tightened_upper)
+                    summary['observed_window_capped'] = True
+
+    half_width = max(float(tmid - lower), float(upper - tmid))
+    summary.update({
+        'tmid': tmid,
+        'bounds': [lower, upper],
+        'cycle_index': cycle_index,
+        'propagated_half_width': propagated_half_width,
+        'half_width': half_width,
+        'applied': summary['duration_capped'] or summary['observed_window_capped'],
+    })
+    if summary['observed_window_capped']:
+        summary['note'] = (
+            "Ephemeris-derived Tmid bounds were intersected with the observed time span needed to contain the "
+            f"full expected transit; using bounds=[{lower:.6f}, {upper:.6f}] instead of the wider propagated "
+            f"half-width {float(propagated_half_width):.6f} day(s)."
+        )
+    elif summary['duration_capped']:
+        summary['note'] = (
+            "Ephemeris-derived Tmid bounds were narrowed to the expected-transit timescale because the "
+            f"observations bracket the expected transit; using bounds=[{lower:.6f}, {upper:.6f}] "
+            f"instead of the wider propagated half-width {float(propagated_half_width):.6f} day(s)."
+        )
+    else:
+        summary['note'] = f"Using ephemeris-derived Tmid bounds [{lower:.6f}, {upper:.6f}]."
+
+    return summary
+
+
+def estimate_tmid_and_bounds_with_eebls(times, flux_values, flux_errors, prior, fallback_bounds):
+    summary = {
+        'method': 'ephemeris',
+        'applied': False,
+        'tmid': float(prior.get('tmid', np.nan)),
+        'bounds': [float(fallback_bounds[0]), float(fallback_bounds[1])],
+        'duration': np.nan,
+        'depth': np.nan,
+        'depth_snr': np.nan,
+        'note': 'EEBLS transit initializer did not run.',
+    }
+
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    period = float(prior.get('per', np.nan))
+    if not np.isfinite(period) or period <= 0:
+        summary['note'] = 'EEBLS transit initializer skipped: invalid orbital period.'
+        return summary
+
+    valid = np.isfinite(times) & np.isfinite(flux_values) & (flux_values > 0)
+    if flux_errors.shape == flux_values.shape:
+        valid &= np.isfinite(flux_errors) & (flux_errors > 0)
+    else:
+        flux_errors = np.full_like(flux_values, np.nan, dtype=float)
+
+    if np.count_nonzero(valid) < max(LIGHTCURVE_MIN_VALID_POINTS, EEBLS_MIN_VALID_POINTS):
+        summary['note'] = 'EEBLS transit initializer skipped: not enough valid points.'
+        return summary
+
+    valid_times = np.asarray(times[valid], dtype=float)
+    valid_flux = np.asarray(flux_values[valid], dtype=float)
+    valid_errors = np.asarray(flux_errors[valid], dtype=float)
+    sort_index = np.argsort(valid_times)
+    fit_times = valid_times[sort_index]
+    fit_flux = valid_flux[sort_index]
+    fit_errors = valid_errors[sort_index]
+    cadence = np.nanmedian(np.diff(fit_times))
+    if not np.isfinite(cadence) or cadence <= 0:
+        cadence = max(np.finfo(float).eps, 0.005 * period)
+
+    x = fit_times - np.nanmedian(fit_times)
+    baseline = np.ones_like(fit_flux, dtype=float)
+    design = np.column_stack((np.ones_like(x), x))
+    if np.count_nonzero(np.isfinite(x)) >= 2:
+        weights = np.ones_like(fit_flux, dtype=float)
+        finite_error_mask = np.isfinite(fit_errors) & (fit_errors > 0)
+        if np.any(finite_error_mask):
+            weights[finite_error_mask] = 1.0 / (fit_errors[finite_error_mask] ** 2)
+            weights[~finite_error_mask] = 0.0
+            if not np.any(weights > 0):
+                weights = np.ones_like(fit_flux, dtype=float)
+        sqrt_weights = np.sqrt(weights)
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(design * sqrt_weights[:, None], fit_flux * sqrt_weights, rcond=None)
+            baseline = coeffs[0] + coeffs[1] * x
+            if not np.all(np.isfinite(baseline)) or np.any(baseline <= 0):
+                baseline = np.ones_like(fit_flux, dtype=float)
+        except np.linalg.LinAlgError:
+            baseline = np.ones_like(fit_flux, dtype=float)
+
+    detrended_flux = fit_flux / baseline
+    detrended_flux /= np.nanmedian(detrended_flux)
+    detrended_errors = fit_errors / baseline
+    if not np.all(np.isfinite(detrended_errors)) or np.any(detrended_errors <= 0):
+        detrended_errors = None
+
+    expected_duration = estimate_transit_duration_from_prior_geometry(prior)
+    if not np.isfinite(expected_duration) or expected_duration <= 0:
+        expected_duration = 0.05 * period
+
+    min_duration = max(3.0 * cadence, EEBLS_DURATION_MIN_FRACTION * expected_duration)
+    max_duration = min(0.25 * period, max(min_duration * 1.5, EEBLS_DURATION_MAX_FRACTION * expected_duration))
+    if not np.isfinite(min_duration) or not np.isfinite(max_duration) or max_duration <= 0 or min_duration > max_duration:
+        summary['note'] = 'EEBLS transit initializer skipped: invalid duration search grid.'
+        return summary
+
+    durations = np.linspace(min_duration, max_duration, EEBLS_DURATION_GRID_SIZE)
+    durations = np.unique(durations[np.isfinite(durations) & (durations > 0)])
+    if durations.size == 0:
+        summary['note'] = 'EEBLS transit initializer skipped: empty duration search grid.'
+        return summary
+
+    try:
+        bls = BoxLeastSquares(fit_times, detrended_flux, dy=detrended_errors)
+        results = bls.power(period, durations, objective='snr')
+    except Exception as exc:
+        summary['note'] = f'EEBLS transit initializer failed: {type(exc).__name__}: {exc}'
+        return summary
+
+    power = np.asarray(results.power, dtype=float)
+    if power.size == 0 or not np.any(np.isfinite(power)):
+        summary['note'] = 'EEBLS transit initializer skipped: no finite search power values were returned.'
+        return summary
+
+    best_index = int(np.nanargmax(power))
+    tmid = float(np.asarray(results.transit_time, dtype=float)[best_index])
+    duration = float(np.asarray(results.duration, dtype=float)[best_index])
+    depth = float(np.asarray(results.depth, dtype=float)[best_index])
+    depth_snr = float(np.asarray(results.depth_snr, dtype=float)[best_index])
+    if (
+        not np.isfinite(tmid)
+        or not np.isfinite(duration) or duration <= 0
+        or not np.isfinite(depth) or depth <= 0
+        or not np.isfinite(depth_snr) or depth_snr <= 0
+    ):
+        summary['note'] = 'EEBLS transit initializer skipped: the best-fitting transit candidate was not physical.'
+        return summary
+
+    coverage_margin = max(0.5 * duration, 3.0 * cadence)
+    pre_points = int(np.count_nonzero(np.isfinite(fit_times) & (fit_times < tmid - coverage_margin)))
+    post_points = int(np.count_nonzero(np.isfinite(fit_times) & (fit_times > tmid + coverage_margin)))
+    if pre_points == 0 or post_points == 0:
+        summary['note'] = (
+            "EEBLS transit initializer skipped: the strongest box-like signal is not bracketed by data on both sides "
+            f"({pre_points} pre-point(s), {post_points} post-point(s))."
+        )
+        return summary
+
+    duration_for_bounds = duration
+    if np.isfinite(expected_duration) and expected_duration > 0:
+        duration_for_bounds = max(duration_for_bounds, 0.75 * expected_duration)
+    half_width = min(
+        0.25 * period,
+        max(EEBLS_TMID_HALF_WIDTH_DURATION_MULTIPLIER * duration_for_bounds, 5.0 * cadence),
+    )
+    if not np.isfinite(half_width) or half_width <= 0:
+        summary['note'] = 'EEBLS transit initializer skipped: invalid Tmid search half-width.'
+        return summary
+
+    summary.update({
+        'method': 'eebls',
+        'applied': True,
+        'tmid': tmid,
+        'bounds': [float(tmid - half_width), float(tmid + half_width)],
+        'duration': duration,
+        'depth': depth,
+        'depth_snr': depth_snr,
+        'note': (
+            "EEBLS transit initializer found a box-like transit candidate at "
+            f"Tmid={tmid:.6f} day(s) with duration={duration:.6f} day(s), depth={depth:.5f}, "
+            f"depth_snr={depth_snr:.2f}, and bounds=[{tmid - half_width:.6f}, {tmid + half_width:.6f}]."
+        ),
+    })
+    return summary
+
+
 def should_use_impactparameter_rather_than_inclination_to_fit(config_value):
     if config_value is None:
         return True
@@ -875,21 +1448,23 @@ def apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled
             bounds['a0'] = [lower, upper]
 
 
-def detrend_flux_on_out_of_transit_baseline(
+def summarize_initial_fit_transit_coverage(
     times,
-    flux_values,
-    flux_errors,
     fit,
+    flux_values=None,
+    flux_errors=None,
     depth_fraction=OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION,
 ):
     times = np.asarray(times, dtype=float)
-    flux_values = np.asarray(flux_values, dtype=float)
-    flux_errors = np.asarray(flux_errors, dtype=float)
     transit_model = np.asarray(getattr(fit, 'transit', []), dtype=float)
+    if flux_values is None:
+        flux_values = np.ones_like(times, dtype=float)
+    else:
+        flux_values = np.asarray(flux_values, dtype=float)
 
-    if transit_model.shape != flux_values.shape:
+    if transit_model.shape != times.shape or flux_values.shape != times.shape:
         return {
-            'applied': False,
+            'valid': False,
             'note': 'initial fit did not provide a transit model aligned with the light curve.',
         }
 
@@ -899,22 +1474,22 @@ def detrend_flux_on_out_of_transit_baseline(
         & (flux_values > 0)
         & np.isfinite(transit_model)
     )
-    if flux_errors.shape == flux_values.shape:
-        valid &= np.isfinite(flux_errors) & (flux_errors > 0)
-    else:
-        flux_errors = np.ones_like(flux_values, dtype=float)
+    if flux_errors is not None:
+        flux_errors = np.asarray(flux_errors, dtype=float)
+        if flux_errors.shape == flux_values.shape:
+            valid &= np.isfinite(flux_errors) & (flux_errors > 0)
 
     if np.count_nonzero(valid) < 3:
         return {
-            'applied': False,
-            'note': 'not enough finite flux points remain to fit an out-of-transit baseline.',
+            'valid': False,
+            'note': 'not enough finite flux points remain to isolate the modeled transit window.',
         }
 
     depth = np.clip(1.0 - transit_model, 0.0, None)
     max_depth = np.nanmax(depth[valid])
     if not np.isfinite(max_depth) or max_depth <= 0:
         return {
-            'applied': False,
+            'valid': False,
             'note': 'initial fit did not produce a measurable transit depth for baseline isolation.',
         }
 
@@ -922,7 +1497,7 @@ def detrend_flux_on_out_of_transit_baseline(
     in_transit = valid & (depth > threshold)
     if not np.any(in_transit):
         return {
-            'applied': False,
+            'valid': False,
             'note': 'could not isolate ingress and egress from the initial fit.',
         }
 
@@ -935,14 +1510,333 @@ def detrend_flux_on_out_of_transit_baseline(
     post_mask = oot_mask & (times > mid_transit)
     pre_points = int(np.count_nonzero(pre_mask))
     post_points = int(np.count_nonzero(post_mask))
+    has_two_sided_oot = pre_points > 0 and post_points > 0
 
-    if pre_points == 0 or post_points == 0:
+    summary = {
+        'valid': True,
+        'note': None,
+        'mid_transit': mid_transit,
+        'ingress_time': ingress_time,
+        'egress_time': egress_time,
+        'in_transit_mask': in_transit,
+        'oot_mask': oot_mask,
+        'pre_mask': pre_mask,
+        'post_mask': post_mask,
+        'pre_points': pre_points,
+        'post_points': post_points,
+        'has_two_sided_oot': has_two_sided_oot,
+    }
+    if not has_two_sided_oot:
+        summary['note'] = 'need out-of-transit coverage on both sides of transit to fit a linear baseline.'
+    return summary
+
+
+def summarize_prior_transit_coverage(
+    times,
+    prior,
+    flux_values=None,
+    flux_errors=None,
+):
+    times = np.asarray(times, dtype=float)
+    if flux_values is None:
+        flux_values = np.ones_like(times, dtype=float)
+    else:
+        flux_values = np.asarray(flux_values, dtype=float)
+
+    if times.shape != flux_values.shape:
+        return {
+            'valid': False,
+            'note': 'prior-based transit coverage could not be aligned with the light curve.',
+        }
+
+    valid = np.isfinite(times) & np.isfinite(flux_values) & (flux_values > 0)
+    if flux_errors is not None:
+        flux_errors = np.asarray(flux_errors, dtype=float)
+        if flux_errors.shape == flux_values.shape:
+            valid &= np.isfinite(flux_errors) & (flux_errors > 0)
+
+    if np.count_nonzero(valid) < 3:
+        return {
+            'valid': False,
+            'note': 'not enough finite flux points remain to evaluate prior-based transit coverage.',
+        }
+
+    try:
+        mid_transit = float(prior.get('tmid', np.nan))
+    except (AttributeError, TypeError, ValueError):
+        mid_transit = np.nan
+    if not np.isfinite(mid_transit):
+        return {
+            'valid': False,
+            'note': 'prior-based transit coverage skipped: no finite ephemeris-centered Tmid was available.',
+        }
+
+    duration = estimate_transit_duration_from_prior_geometry(prior)
+    if not np.isfinite(duration) or duration <= 0:
+        return {
+            'valid': False,
+            'note': 'prior-based transit coverage skipped: could not estimate a physical transit duration from the priors.',
+        }
+
+    ingress_time = float(mid_transit - 0.5 * duration)
+    egress_time = float(mid_transit + 0.5 * duration)
+    in_transit = valid & (times >= ingress_time) & (times <= egress_time)
+    if not np.any(in_transit):
+        return {
+            'valid': False,
+            'note': 'prior-based transit coverage skipped: the ephemeris-centered transit window does not overlap the observations.',
+        }
+
+    oot_mask = valid & ((times < ingress_time) | (times > egress_time))
+    pre_mask = oot_mask & (times < mid_transit)
+    post_mask = oot_mask & (times > mid_transit)
+    pre_points = int(np.count_nonzero(pre_mask))
+    post_points = int(np.count_nonzero(post_mask))
+    has_two_sided_oot = pre_points > 0 and post_points > 0
+
+    summary = {
+        'valid': True,
+        'note': None,
+        'mid_transit': mid_transit,
+        'ingress_time': ingress_time,
+        'egress_time': egress_time,
+        'in_transit_mask': in_transit,
+        'oot_mask': oot_mask,
+        'pre_mask': pre_mask,
+        'post_mask': post_mask,
+        'pre_points': pre_points,
+        'post_points': post_points,
+        'has_two_sided_oot': has_two_sided_oot,
+        'used_prior_ephemeris': True,
+        'duration': duration,
+    }
+    if not has_two_sided_oot:
+        summary['note'] = (
+            'need out-of-transit coverage on both sides of the ephemeris-centered transit window '
+            'to fit a linear baseline.'
+        )
+    return summary
+
+
+def extract_baseline_corrected_lightcurve_arrays(fit):
+    times = np.asarray(getattr(fit, 'time', []), dtype=float)
+    if times.ndim != 1 or times.size == 0:
+        return None, None, None
+
+    flux_values = None
+    flux_source = None
+
+    detrended = np.asarray(getattr(fit, 'detrended', []), dtype=float)
+    if detrended.shape == times.shape:
+        valid_detrended = np.isfinite(detrended) & (detrended > 0)
+        if np.any(valid_detrended):
+            flux_values = detrended.copy()
+            flux_source = "provisional detrended light curve"
+
+    if flux_values is None:
+        data = np.asarray(getattr(fit, 'data', []), dtype=float)
+        airmass_model = np.asarray(getattr(fit, 'airmass_model', []), dtype=float)
+        if data.shape == times.shape and airmass_model.shape == times.shape:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                flux_values = np.divide(data, airmass_model)
+            flux_source = "provisional flux ratio divided by the fitted airmass/baseline model"
+        elif data.shape == times.shape:
+            flux_values = data.copy()
+            flux_source = "provisional raw flux ratio"
+        else:
+            return None, None, None
+
+    flux_errors = None
+    detrended_errors = np.asarray(getattr(fit, 'detrendederr', []), dtype=float)
+    if detrended_errors.shape == times.shape:
+        valid_detrended_errors = np.isfinite(detrended_errors) & (detrended_errors > 0)
+        if np.any(valid_detrended_errors):
+            flux_errors = detrended_errors.copy()
+
+    if flux_errors is None:
+        data_errors = np.asarray(getattr(fit, 'dataerr', []), dtype=float)
+        airmass_model = np.asarray(getattr(fit, 'airmass_model', []), dtype=float)
+        if data_errors.shape == times.shape and airmass_model.shape == times.shape:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                flux_errors = np.divide(data_errors, airmass_model)
+        elif data_errors.shape == times.shape:
+            flux_errors = data_errors.copy()
+        else:
+            flux_errors = np.full(times.shape, np.nan, dtype=float)
+
+    return flux_values, flux_errors, flux_source
+
+
+def prepare_final_fit_lightcurve_series(
+    fit,
+    depth_fraction=OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION,
+):
+    times = np.asarray(getattr(fit, 'time', []), dtype=float)
+    if times.ndim != 1 or times.size == 0:
         return {
             'applied': False,
-            'note': 'need out-of-transit coverage on both sides of transit to fit a linear baseline.',
-            'pre_points': pre_points,
-            'post_points': post_points,
+            'note': 'could not prepare a final-fit light curve because the provisional fit had no time samples.',
         }
+
+    flux_values, flux_errors, flux_source = extract_baseline_corrected_lightcurve_arrays(fit)
+    if flux_values is None:
+        return {
+            'applied': False,
+            'note': 'could not derive a baseline-corrected provisional light curve for final-fit preparation.',
+        }
+
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+
+    valid_flux = np.isfinite(flux_values) & (flux_values > 0)
+    valid_errors = np.isfinite(flux_errors) & (flux_errors > 0)
+
+    if np.count_nonzero(valid_flux) < LIGHTCURVE_MIN_VALID_POINTS:
+        return {
+            'applied': False,
+            'note': 'not enough finite baseline-corrected flux points remained for final-fit preparation.',
+        }
+
+    coverage_summary = summarize_initial_fit_transit_coverage(
+        times,
+        fit,
+        flux_values=flux_values,
+        flux_errors=flux_errors if np.any(valid_errors) else None,
+        depth_fraction=depth_fraction,
+    )
+
+    baseline_mask = valid_flux
+    used_two_sided_oot = False
+    pre_points = coverage_summary.get('pre_points', 0)
+    post_points = coverage_summary.get('post_points', 0)
+
+    if coverage_summary.get('valid') and coverage_summary.get('has_two_sided_oot'):
+        candidate_baseline_mask = coverage_summary['oot_mask'] & valid_flux
+        if np.count_nonzero(candidate_baseline_mask) >= LIGHTCURVE_MIN_VALID_POINTS:
+            baseline_mask = candidate_baseline_mask
+            used_two_sided_oot = True
+
+    baseline_level, baseline_scatter = sigma_clipped_nanmedian(flux_values[baseline_mask])
+    if not np.isfinite(baseline_level) or baseline_level <= 0:
+        fallback_mask = valid_flux
+        baseline_level, baseline_scatter = sigma_clipped_nanmedian(flux_values[fallback_mask])
+        baseline_mask = fallback_mask
+
+    if not np.isfinite(baseline_level) or baseline_level <= 0:
+        return {
+            'applied': False,
+            'note': 'could not determine a positive baseline level for final-fit preparation.',
+        }
+
+    normalized_flux = flux_values / baseline_level
+    normalized_unc = flux_errors / baseline_level
+
+    if used_two_sided_oot:
+        uncertainty_mask = baseline_mask & np.isfinite(normalized_unc) & (normalized_unc > 0)
+        observed_scatter = np.nanstd(normalized_flux[baseline_mask])
+        predicted_unc = np.nanmedian(normalized_unc[uncertainty_mask]) if np.any(uncertainty_mask) else np.nan
+        if np.isfinite(observed_scatter) and observed_scatter > 0 and np.isfinite(predicted_unc) and predicted_unc > 0:
+            normalized_unc *= observed_scatter / predicted_unc
+
+    valid_normalized_unc = np.isfinite(normalized_unc) & (normalized_unc > 0)
+    if not np.any(valid_normalized_unc):
+        fallback_unc = baseline_scatter / baseline_level
+        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
+            fallback_unc = np.nanstd(normalized_flux[baseline_mask])
+        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
+            fallback_unc = np.finfo(float).eps
+        normalized_unc = np.full(times.shape, fallback_unc, dtype=float)
+    else:
+        fallback_unc = np.nanmedian(normalized_unc[valid_normalized_unc])
+        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
+            fallback_unc = np.nanstd(normalized_flux[baseline_mask])
+        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
+            fallback_unc = np.finfo(float).eps
+        normalized_unc[~valid_normalized_unc] = fallback_unc
+
+    if used_two_sided_oot:
+        note = (
+            f"Prepared the final-fit input light curve from the {flux_source} and normalized it with "
+            f"{pre_points} pre-ingress and {post_points} post-egress modeled out-of-transit point(s)."
+        )
+    else:
+        note = (
+            f"Prepared the final-fit input light curve from the {flux_source} and normalized it with a "
+            f"sigma-clipped full-series baseline because the provisional fit only bracketed one side of transit "
+            f"({pre_points} pre-ingress and {post_points} post-egress modeled out-of-transit point(s))."
+        )
+
+    return {
+        'applied': True,
+        'flux': normalized_flux,
+        'unc': normalized_unc,
+        'note': note,
+        'source': flux_source,
+        'coverage_summary': coverage_summary,
+        'used_two_sided_oot': used_two_sided_oot,
+        'baseline_level': float(baseline_level),
+    }
+
+
+def detrend_flux_on_out_of_transit_baseline(
+    times,
+    flux_values,
+    flux_errors,
+    fit,
+    prior=None,
+    depth_fraction=OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION,
+):
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    if flux_errors.shape != flux_values.shape:
+        flux_errors = np.ones_like(flux_values, dtype=float)
+
+    coverage_summary = summarize_initial_fit_transit_coverage(
+        times,
+        fit,
+        flux_values=flux_values,
+        flux_errors=flux_errors,
+        depth_fraction=depth_fraction,
+    )
+    used_prior_coverage = False
+    if prior is not None and (
+        (not coverage_summary.get('valid'))
+        or (not coverage_summary.get('has_two_sided_oot'))
+    ):
+        prior_coverage_summary = summarize_prior_transit_coverage(
+            times,
+            prior,
+            flux_values=flux_values,
+            flux_errors=flux_errors,
+        )
+        if prior_coverage_summary.get('valid') and prior_coverage_summary.get('has_two_sided_oot'):
+            coverage_summary = prior_coverage_summary
+            used_prior_coverage = True
+
+    if not coverage_summary.get('valid'):
+        return {
+            'applied': False,
+            'note': coverage_summary.get('note', 'could not isolate a transit window for baseline fitting.'),
+        }
+
+    if not coverage_summary.get('has_two_sided_oot'):
+        return {
+            'applied': False,
+            'note': coverage_summary.get(
+                'note',
+                'need out-of-transit coverage on both sides of transit to fit a linear baseline.',
+            ),
+            'pre_points': coverage_summary.get('pre_points', 0),
+            'post_points': coverage_summary.get('post_points', 0),
+        }
+
+    oot_mask = coverage_summary['oot_mask']
+    mid_transit = coverage_summary['mid_transit']
+    ingress_time = coverage_summary['ingress_time']
+    egress_time = coverage_summary['egress_time']
+    pre_points = coverage_summary['pre_points']
+    post_points = coverage_summary['post_points']
 
     x = times[oot_mask] - mid_transit
     if np.allclose(x, x[0]):
@@ -987,8 +1881,14 @@ def detrend_flux_on_out_of_transit_baseline(
     return {
         'applied': True,
         'note': (
-            f"Applied weighted linear out-of-transit baseline detrending using "
-            f"{pre_points} pre-ingress and {post_points} post-egress points."
+            (
+                "Applied weighted linear out-of-transit baseline detrending using the "
+                "ephemeris-centered transit window from the priors because the fitted transit "
+                "window was one-sided. "
+                if used_prior_coverage else
+                "Applied weighted linear out-of-transit baseline detrending using "
+            )
+            + f"{pre_points} pre-ingress and {post_points} post-egress points."
         ),
         'flux': flux_values / baseline,
         'unc': flux_errors / baseline,
@@ -999,6 +1899,7 @@ def detrend_flux_on_out_of_transit_baseline(
         'post_points': post_points,
         'ingress_time': ingress_time,
         'egress_time': egress_time,
+        'used_prior_ephemeris': used_prior_coverage,
     }
 
 
@@ -1033,6 +1934,115 @@ def estimate_transit_duration_from_fit(fit):
         cadence = 0.0
     duration = (transit_times[-1] - transit_times[0]) + cadence
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
+
+
+def build_nested_tmid_refinement_from_initial_fit(times, flux_values, flux_errors, prior, bounds, fit):
+    original_tmid_bounds = clone_lightcurve_bounds(bounds).get('tmid')
+    base_plan = {
+        'applied': False,
+        'note': 'Not needed; using the original nested-sampling Tmid bounds.',
+        'prior': dict(prior),
+        'bounds': clone_lightcurve_bounds(bounds),
+        'original_tmid_bounds': original_tmid_bounds,
+        'refined_tmid_bounds': original_tmid_bounds,
+    }
+
+    if fit is None or not hasattr(fit, 'parameters') or not isinstance(fit.parameters, dict):
+        base_plan['note'] = "Skipped; the initial LM fit did not provide fitted parameters for nested-sampling refinement."
+        return base_plan
+
+    tmid = fit.parameters.get('tmid', np.nan)
+    if not np.isfinite(tmid):
+        base_plan['note'] = "Skipped; the initial LM fit did not return a finite Tmid."
+        return base_plan
+
+    coverage_summary = summarize_initial_fit_transit_coverage(
+        times,
+        fit,
+        flux_values=flux_values,
+        flux_errors=flux_errors,
+    )
+    if not coverage_summary.get('valid'):
+        base_plan['note'] = (
+            "Skipped; the initial LM fit did not provide a usable modeled transit window for nested-sampling refinement."
+        )
+        return base_plan
+
+    if not coverage_summary.get('has_two_sided_oot'):
+        pre_points = coverage_summary.get('pre_points', 0)
+        post_points = coverage_summary.get('post_points', 0)
+        base_plan['note'] = (
+            "Skipped; the initial LM fit only captured one side of the modeled transit, "
+            "so tightening the nested-sampling Tmid bounds would lock onto a partial-transit solution "
+            f"({pre_points} pre-ingress and {post_points} post-egress out-of-transit point(s))."
+        )
+        return base_plan
+
+    duration = estimate_transit_duration_from_fit(fit)
+    period = fit.parameters.get('per', prior.get('per', np.nan))
+    if not np.isfinite(duration) or duration <= 0:
+        base_plan['note'] = "Skipped; the initial LM fit did not produce a measurable transit duration."
+        return base_plan
+    if np.isfinite(period) and duration >= period:
+        base_plan['note'] = "Skipped; the initial LM fit returned a non-physical transit duration."
+        return base_plan
+
+    valid_times = np.asarray(times, dtype=float)
+    valid_times = valid_times[np.isfinite(valid_times)]
+    cadence = np.nan
+    if valid_times.size > 1:
+        cadence = np.nanmedian(np.diff(np.sort(valid_times)))
+
+    half_width = FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER * duration
+    if np.isfinite(cadence) and cadence > 0:
+        half_width = max(half_width, 3.0 * cadence)
+    if not np.isfinite(half_width) or half_width <= 0:
+        base_plan['note'] = "Skipped; the nested-sampling Tmid refinement half-width was not physical."
+        return base_plan
+
+    refined_lower = float(tmid - half_width)
+    refined_upper = float(tmid + half_width)
+    if original_tmid_bounds is not None and len(original_tmid_bounds) == 2:
+        original_lower = float(original_tmid_bounds[0])
+        original_upper = float(original_tmid_bounds[1])
+        refined_lower = max(original_lower, refined_lower)
+        refined_upper = min(original_upper, refined_upper)
+
+    if not np.isfinite(refined_lower) or not np.isfinite(refined_upper) or refined_upper <= refined_lower:
+        base_plan['note'] = "Skipped; the refined nested-sampling Tmid bounds collapsed to an invalid range."
+        return base_plan
+
+    refined_tmid_bounds = [refined_lower, refined_upper]
+    base_plan['refined_tmid_bounds'] = refined_tmid_bounds
+    if original_tmid_bounds is not None and np.allclose(
+        np.asarray(original_tmid_bounds, dtype=float),
+        np.asarray(refined_tmid_bounds, dtype=float),
+        atol=1e-12,
+        rtol=0.0,
+    ):
+        base_plan['note'] = (
+            "Not needed; the initial LM fit already sat inside the original nested-sampling Tmid bounds."
+        )
+        return base_plan
+
+    refined_prior = dict(prior)
+    for key in ('rprs', 'tmid', 'inc', 'a2'):
+        if key in refined_prior and key in fit.parameters:
+            refined_prior[key] = fit.parameters[key]
+
+    refined_bounds = clone_lightcurve_bounds(bounds)
+    refined_bounds['tmid'] = refined_tmid_bounds
+
+    base_plan.update({
+        'applied': True,
+        'note': (
+            "Using the initial LM fit to recenter nested-sampling Tmid bounds to "
+            f"[{refined_lower:.6f}, {refined_upper:.6f}] around Tmid={tmid:.6f}."
+        ),
+        'prior': refined_prior,
+        'bounds': refined_bounds,
+    })
+    return base_plan
 
 
 def build_final_fit_prefit_refinement_plan(
@@ -1089,6 +2099,22 @@ def build_final_fit_prefit_refinement_plan(
         base_plan['note'] = "Skipped; the initial nested fit did not return a finite Tmid."
         return base_plan
 
+    coverage_summary = summarize_initial_fit_transit_coverage(
+        times,
+        fit,
+        flux_values=flux_values,
+        flux_errors=flux_errors,
+    )
+    if coverage_summary.get('valid') and not coverage_summary.get('has_two_sided_oot'):
+        pre_points = coverage_summary.get('pre_points', 0)
+        post_points = coverage_summary.get('post_points', 0)
+        base_plan['note'] = (
+            "Skipped; the initial nested fit only captured one side of the modeled transit, "
+            "so tightening the second-pass Tmid bounds would lock onto a partial-transit solution "
+            f"({pre_points} pre-ingress and {post_points} post-egress out-of-transit point(s))."
+        )
+        return base_plan
+
     period = fit_parameters.get('per', prior.get('per', np.nan))
     if np.isfinite(period) and duration >= period:
         base_plan['note'] = "Skipped; the initial nested fit returned a non-physical transit duration."
@@ -1123,7 +2149,19 @@ def build_final_fit_prefit_refinement_plan(
     else:
         trim_note = "kept the full light curve because no extra baseline points fell outside the target window"
 
-    refined_tmid_bounds = [float(tmid - half_duration), float(tmid + half_duration)]
+    refined_lower = float(tmid - half_duration)
+    refined_upper = float(tmid + half_duration)
+    if original_tmid_bounds is not None and len(original_tmid_bounds) == 2:
+        original_lower = float(original_tmid_bounds[0])
+        original_upper = float(original_tmid_bounds[1])
+        refined_lower = max(original_lower, refined_lower)
+        refined_upper = min(original_upper, refined_upper)
+
+    if not np.isfinite(refined_lower) or not np.isfinite(refined_upper) or refined_upper <= refined_lower:
+        base_plan['note'] = "Skipped; the refined final-fit Tmid bounds collapsed to an invalid range."
+        return base_plan
+
+    refined_tmid_bounds = [refined_lower, refined_upper]
     base_plan['refined_tmid_bounds'] = refined_tmid_bounds
 
     bounds_changed = False
@@ -1276,7 +2314,13 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         )
         return fit, working_flux, working_unc
 
-    detrend_result = detrend_flux_on_out_of_transit_baseline(working_times, working_flux, working_unc, fit)
+    detrend_result = detrend_flux_on_out_of_transit_baseline(
+        working_times,
+        working_flux,
+        working_unc,
+        fit,
+        prior=working_prior,
+    )
     if not detrend_result.get('applied'):
         note = f"Skipped; {detrend_result.get('note', 'unable to fit an out-of-transit baseline.')}"
         log_info(f"Optional out-of-transit baseline detrending skipped: {detrend_result.get('note', 'unknown reason')}")
@@ -1506,21 +2550,60 @@ def resolve_frame_aperture_radii(apertures, annuli, adaptive_apertures=False, fr
 # Initialze plate status log
 plateStatus = PlateStatus(log_info)
 
-def sigma_clip(ogdata, sigma=3, dt=21, po=2):
-    nanmask = np.isnan(ogdata)
+def sigma_clip(ogdata, sigma=3, dt=21, po=2, times=None):
+    values = np.asarray(ogdata, dtype=float)
+    nanmask = np.isnan(values)
+    valid_mask = ~nanmask
+    valid_indices = np.flatnonzero(valid_mask)
 
-    if po < dt <= len(ogdata[~nanmask]):
-        mdata = savgol_filter(ogdata[~nanmask], window_length=dt, polyorder=po)
-        # mdata = median_filter(ogdata[~nanmask], dt)
-        res = ogdata[~nanmask] - mdata
+    if not (po < dt <= valid_indices.size):
+        return nanmask
+
+    segment_ranges = []
+    if times is not None:
+        time_values = np.asarray(times, dtype=float)
+        if time_values.shape == values.shape:
+            valid_times = time_values[valid_mask]
+            finite_valid_times = np.isfinite(valid_times)
+            if np.all(finite_valid_times):
+                cadence = np.nanmedian(np.diff(valid_times)) if valid_times.size > 1 else np.nan
+                if np.isfinite(cadence) and cadence > 0:
+                    gap_threshold = max(
+                        5.0 * cadence,
+                        0.25 * int(dt) * cadence,
+                    )
+                    local_start = 0
+                    for local_index, gap in enumerate(np.diff(valid_times), start=1):
+                        if gap > gap_threshold:
+                            segment_ranges.append((local_start, local_index))
+                            local_start = local_index
+                    segment_ranges.append((local_start, valid_times.size))
+
+    if not segment_ranges:
+        segment_ranges = [(0, valid_indices.size)]
+
+    clipped_mask = np.zeros(valid_indices.size, dtype=bool)
+    for start, stop in segment_ranges:
+        local_values = values[valid_indices[start:stop]]
+        if not (po < dt <= local_values.size):
+            continue
+
+        mdata = savgol_filter(local_values, window_length=dt, polyorder=po)
+        # mdata = median_filter(local_values, dt)
+        res = local_values - mdata
+        if res.size == 0:
+            continue
         # Vectorized bootstrap estimate avoids Python-loop overhead in tight runs.
         sample_size = min(25, res.size)
         bootstrap_samples = np.random.choice(res, size=(100, sample_size), replace=True)
         std = bn.nanmedian(bn.nanstd(bootstrap_samples, axis=1))
         # std = np.nanstd(res) # biased from large outliers
+        if not np.isfinite(std) or std <= 0:
+            continue
         sigmask = np.abs(res) > sigma * std
-        nanmask[~nanmask] = sigmask
+        clipped_mask[start:stop] = sigmask
 
+    nanmask[valid_indices] = clipped_mask
     return nanmask
 
 
@@ -1705,6 +2788,123 @@ def apply_plot_time_range(lightcurve, time_values):
         updater()
 
     return lightcurve
+
+
+def build_time_rejection_diagnostic(stage, times, keep_mask, note=None):
+    times = np.asarray(times, dtype=float).reshape(-1)
+    keep_mask = np.asarray(keep_mask, dtype=bool).reshape(-1)
+    if times.shape[0] != keep_mask.shape[0]:
+        return None
+
+    finite_mask = np.isfinite(times)
+    input_point_count = int(np.count_nonzero(finite_mask))
+    dropped_times = np.asarray(times[finite_mask & ~keep_mask], dtype=float)
+    kept_point_count = int(np.count_nonzero(finite_mask & keep_mask))
+    dropped_point_count = int(dropped_times.size)
+
+    cadence = np.nan
+    finite_times = np.sort(times[finite_mask])
+    if finite_times.size > 1:
+        cadence = np.nanmedian(np.diff(finite_times))
+
+    dropped_ranges = []
+    if dropped_times.size:
+        dropped_times = np.sort(dropped_times)
+        gap_threshold = np.inf
+        if np.isfinite(cadence) and cadence > 0:
+            gap_threshold = max(
+                TIME_REJECTION_GROUP_GAP_CADENCE_MULTIPLIER * cadence,
+                np.finfo(float).eps,
+            )
+
+        range_start = float(dropped_times[0])
+        range_end = float(dropped_times[0])
+        range_count = 1
+        for current_time in dropped_times[1:]:
+            current_time = float(current_time)
+            if np.isfinite(gap_threshold) and (current_time - range_end) <= gap_threshold:
+                range_end = current_time
+                range_count += 1
+                continue
+
+            dropped_ranges.append({
+                'start': range_start,
+                'end': range_end,
+                'count': int(range_count),
+            })
+            range_start = current_time
+            range_end = current_time
+            range_count = 1
+
+        dropped_ranges.append({
+            'start': range_start,
+            'end': range_end,
+            'count': int(range_count),
+        })
+
+    return {
+        'stage': stage,
+        'note': note,
+        'input_point_count': input_point_count,
+        'kept_point_count': kept_point_count,
+        'dropped_point_count': dropped_point_count,
+        'cadence': float(cadence) if np.isfinite(cadence) else np.nan,
+        'dropped_ranges': dropped_ranges,
+        'first_dropped_time': (float(dropped_times[0]) if dropped_times.size else np.nan),
+        'last_dropped_time': (float(dropped_times[-1]) if dropped_times.size else np.nan),
+    }
+
+
+def format_time_rejection_diagnostic(diagnostic, max_ranges=TIME_REJECTION_RANGE_DISPLAY_LIMIT):
+    if not diagnostic:
+        return None
+
+    dropped_ranges = diagnostic.get('dropped_ranges') or []
+    if not dropped_ranges:
+        return (
+            f"{diagnostic.get('stage', 'frame filter')}: removed 0/"
+            f"{diagnostic.get('input_point_count', 0)} frame(s)."
+        )
+
+    display_ranges = dropped_ranges[:max_ranges]
+    range_parts = []
+    for range_summary in display_ranges:
+        start = float(range_summary['start'])
+        end = float(range_summary['end'])
+        count = int(range_summary['count'])
+        if count <= 1 or np.isclose(start, end):
+            range_parts.append(f"{start:.8f} ({count} frame)")
+        else:
+            frame_label = "frame" if count == 1 else "frames"
+            range_parts.append(f"{start:.8f} to {end:.8f} ({count} {frame_label})")
+
+    if len(dropped_ranges) > len(display_ranges):
+        remaining = len(dropped_ranges) - len(display_ranges)
+        range_parts.append(f"... {remaining} more range(s)")
+
+    message = (
+        f"{diagnostic.get('stage', 'frame filter')}: removed "
+        f"{diagnostic.get('dropped_point_count', 0)}/{diagnostic.get('input_point_count', 0)} frame(s); "
+        f"BJD range(s): {'; '.join(range_parts)}."
+    )
+    note = diagnostic.get('note')
+    if note:
+        message += f" {note}"
+    return message
+
+
+def log_lightcurve_filter_diagnostics(diagnostics, header="Lightcurve frame rejection diagnostics", only_removed=True):
+    normalized = [diagnostic for diagnostic in (diagnostics or []) if diagnostic]
+    if only_removed:
+        normalized = [diagnostic for diagnostic in normalized if diagnostic.get('dropped_point_count', 0) > 0]
+    if not normalized:
+        return
+
+    log_info(f"\n{header}:")
+    for diagnostic in normalized:
+        diagnostic_text = format_time_rejection_diagnostic(diagnostic)
+        if diagnostic_text:
+            log_info(f"  {diagnostic_text}")
 
 
 def exp_offset(hdr, time_unit, exp):
@@ -2279,15 +3479,338 @@ def evaluate_celestial_wcs_coverage(inputfiles):
     return all_have_celestial_wcs, missing_wcs_files
 
 
-def log_missing_celestial_wcs_preview(missing_wcs_files):
-    if not missing_wcs_files:
+def log_file_preview(file_names, label):
+    if not file_names:
         return
 
-    preview = ", ".join(missing_wcs_files[:3])
-    remainder = len(missing_wcs_files) - 3
+    preview = ", ".join([_display_filename(file_name) for file_name in file_names[:3]])
+    remainder = len(file_names) - 3
     if remainder > 0:
         preview = f"{preview}, ... (+{remainder} more)"
-    log.debug(f"Files without usable celestial WCS: {preview}")
+    log.debug(f"{label}: {preview}")
+
+
+def log_missing_celestial_wcs_preview(missing_wcs_files):
+    log_file_preview(missing_wcs_files, "Files without usable celestial WCS")
+
+
+def format_file_preview_for_user(file_names, limit=6):
+    if not file_names:
+        return ""
+
+    display_names = [_display_filename(file_name) for file_name in file_names[:limit]]
+    remainder = len(file_names) - len(display_names)
+    if remainder > 0:
+        display_names.append(f"... (+{remainder} more)")
+    return ", ".join(display_names)
+
+
+def leading_rejected_reference_prefix(ordered_inputfiles, dropped_files):
+    if ordered_inputfiles is None:
+        return [], None
+
+    ordered_inputfiles = [str(file_name) for file_name in ordered_inputfiles]
+    dropped_lookup = {str(file_name) for file_name in (dropped_files or [])}
+    leading_rejected = []
+    next_candidate = None
+
+    for file_name in ordered_inputfiles:
+        if file_name in dropped_lookup:
+            leading_rejected.append(file_name)
+            continue
+        next_candidate = file_name
+        break
+
+    return leading_rejected, next_candidate
+
+
+def abort_if_reference_frame_rejected(reference_file, dropped_files, ordered_inputfiles=None,
+                                      rejection_label="Pointing precheck"):
+    if reference_file is None or not dropped_files:
+        return False
+
+    reference_file = str(reference_file)
+    dropped_files = [str(file_name) for file_name in dropped_files]
+    if reference_file not in dropped_files:
+        return False
+
+    other_dropped_files = [file_name for file_name in dropped_files if file_name != reference_file]
+    leading_rejected_files, next_reference_candidate = leading_rejected_reference_prefix(
+        ordered_inputfiles,
+        dropped_files,
+    )
+    if not leading_rejected_files:
+        leading_rejected_files = [reference_file]
+
+    log_info(
+        f"Error: {rejection_label} rejected the first usable image "
+        f"({_display_filename(reference_file)}). EXOTIC uses that frame as the reference image for "
+        "the supplied target and comparison-star pixel coordinates, so it is not safe to continue "
+        "with a different reference image.",
+        error=True,
+    )
+    if other_dropped_files:
+        log_info(
+            f"{rejection_label} also rejected {len(other_dropped_files)} other frame(s): "
+            f"{format_file_preview_for_user(other_dropped_files)}",
+            error=True,
+        )
+
+    leading_preview = format_file_preview_for_user(leading_rejected_files)
+    if len(leading_rejected_files) == 1:
+        removal_instruction = (
+            f"Please remove or move this rejected frame and run again: {leading_preview}."
+        )
+    else:
+        removal_instruction = (
+            f"Please remove or move these leading rejected frames and run again: {leading_preview}."
+        )
+
+    if next_reference_candidate is not None:
+        removal_instruction += (
+            f" The next remaining frame would be "
+            f"{_display_filename(next_reference_candidate)}."
+        )
+    else:
+        removal_instruction += (
+            " No non-rejected frame remains after that prefix, so this dataset still would not "
+            "have a usable reference image."
+        )
+
+    log_info(
+        removal_instruction,
+        error=True,
+    )
+    log_info(
+        "If you need to keep those frames, reorder the dataset so a good reference image comes first, "
+        "or set optional_info 'pointing_rejection_sigma' to 0 to disable this precheck.",
+        error=True,
+    )
+    return True
+
+
+def collect_wcs_frame_center_pointings(inputfiles):
+    positions = np.full((len(inputfiles), 2), np.nan, dtype=float)
+    usable_mask = np.zeros(len(inputfiles), dtype=bool)
+    usable_indices = []
+    ra_values = []
+    dec_values = []
+
+    for index, file_name in enumerate(inputfiles):
+        try:
+            image_header = get_first_image_header(file_name)
+            wcs = search_wcs_from_header(image_header)
+            if not wcs.is_celestial:
+                continue
+
+            width = int(image_header.get("NAXIS1", 0))
+            height = int(image_header.get("NAXIS2", 0))
+            if width <= 0 or height <= 0:
+                continue
+
+            center_x = (width - 1) / 2.0
+            center_y = (height - 1) / 2.0
+            ra_deg, dec_deg = wcs.pixel_to_world_values(center_x, center_y)
+            if not np.isfinite(ra_deg) or not np.isfinite(dec_deg):
+                continue
+
+            usable_indices.append(index)
+            ra_values.append(float(ra_deg))
+            dec_values.append(float(dec_deg))
+        except Exception:
+            continue
+
+    if not usable_indices:
+        return positions, usable_mask
+
+    coords = SkyCoord(ra=np.asarray(ra_values) * u.deg, dec=np.asarray(dec_values) * u.deg, frame='icrs')
+    reference_coord = coords[0]
+    delta_lon, delta_lat = reference_coord.spherical_offsets_to(coords)
+    offsets = np.column_stack((delta_lon.to_value(u.arcsec), delta_lat.to_value(u.arcsec)))
+
+    for index, offset in zip(usable_indices, offsets):
+        positions[index] = offset
+        usable_mask[index] = True
+
+    return positions, usable_mask
+
+
+def log_pointing_precheck_alignment_progress(i, total_files, file_name):
+    log_info(
+        f"Pointing precheck alignment progress: file {i + 1} of {total_files} : "
+        f"{_display_filename(file_name)}"
+    )
+
+
+def collect_transform_frame_pointings(inputfiles, frame_loader=None):
+    positions = np.full((len(inputfiles), 2), np.nan, dtype=float)
+    usable_mask = np.zeros(len(inputfiles), dtype=bool)
+
+    if len(inputfiles) == 0:
+        return positions, usable_mask
+
+    if frame_loader is None:
+        frame_loader = load_image_data
+
+    total_files = len(inputfiles)
+    log_pointing_precheck_alignment_progress(0, total_files, inputfiles[0])
+    try:
+        reference_image = frame_loader(inputfiles[0])
+    except Exception as exc:
+        log_info(
+            f"Warning: pointing precheck alignment fallback could not load the reference frame "
+            f"{_display_filename(inputfiles[0])} ({exc}).",
+            warn=True,
+        )
+        return positions, usable_mask
+
+    if getattr(reference_image, "ndim", 0) != 2:
+        log_info("Warning: pointing precheck alignment fallback requires 2-D images; skipping.", warn=True)
+        return positions, usable_mask
+
+    height, width = reference_image.shape
+    reference_anchor = np.array([[(width - 1) / 2.0, (height - 1) / 2.0]], dtype=float)
+    positions[0] = reference_anchor[0]
+    usable_mask[0] = True
+
+    for index, file_name in enumerate(inputfiles[1:], start=1):
+        log_pointing_precheck_alignment_progress(index, total_files, file_name)
+        try:
+            image_data = frame_loader(file_name)
+            if getattr(image_data, "ndim", 0) != 2:
+                continue
+
+            tform = transformation(
+                image_data,
+                file_name,
+                report_failure=False,
+                reference_image=reference_image,
+            )
+            mapped_anchor = np.asarray(tform(reference_anchor), dtype=float).reshape(-1, 2)[0]
+            if np.all(np.isfinite(mapped_anchor)):
+                positions[index] = mapped_anchor
+                usable_mask[index] = True
+        except Exception:
+            continue
+
+    return positions, usable_mask
+
+
+def sigma_clip_pointing_positions(positions, sigma=3.0, max_iters=5):
+    positions = np.asarray(positions, dtype=float)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError("positions must be an Nx2 array")
+
+    finite_mask = np.all(np.isfinite(positions), axis=1)
+    keep_mask = finite_mask.copy()
+    if np.count_nonzero(keep_mask) < POINTING_REJECTION_MIN_FRAMES:
+        return keep_mask
+
+    sigma = float(sigma)
+    for _ in range(max_iters):
+        candidate_positions = positions[keep_mask]
+        if candidate_positions.shape[0] < POINTING_REJECTION_MIN_FRAMES:
+            break
+
+        center = np.nanmedian(candidate_positions, axis=0)
+        deltas = candidate_positions - center
+        radial_offsets = np.hypot(deltas[:, 0], deltas[:, 1])
+
+        scatter_x = robust_scatter(deltas[:, 0])
+        scatter_y = robust_scatter(deltas[:, 1])
+        radial_scatter = robust_scatter(radial_offsets)
+
+        if not np.isfinite(scatter_x) or scatter_x <= 0:
+            scatter_x = radial_scatter
+        if not np.isfinite(scatter_y) or scatter_y <= 0:
+            scatter_y = radial_scatter
+
+        if (not np.isfinite(scatter_x) or scatter_x <= 0
+                or not np.isfinite(scatter_y) or scatter_y <= 0):
+            break
+
+        normalized_distance = np.sqrt((deltas[:, 0] / scatter_x) ** 2 + (deltas[:, 1] / scatter_y) ** 2)
+        current_keep = normalized_distance <= sigma
+        if np.all(current_keep):
+            break
+
+        updated_keep = keep_mask.copy()
+        updated_keep[np.flatnonzero(keep_mask)] = current_keep
+        if np.array_equal(updated_keep, keep_mask):
+            break
+        keep_mask = updated_keep
+
+    return keep_mask
+
+
+def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ignore_header_wcs=False,
+                                   frame_loader=None):
+    inputfiles = np.array(inputfiles)
+    keep_mask = np.ones(len(inputfiles), dtype=bool)
+
+    if len(inputfiles) == 0 or pointing_rejection_sigma is None:
+        return inputfiles, keep_mask, []
+
+    if len(inputfiles) < POINTING_REJECTION_MIN_FRAMES:
+        log_info(
+            f"Pointing precheck skipped: only {len(inputfiles)} frame(s); "
+            f"need at least {POINTING_REJECTION_MIN_FRAMES}.",
+        )
+        return inputfiles, keep_mask, []
+
+    positions = None
+    usable_mask = None
+    mode_label = None
+
+    if not ignore_header_wcs:
+        wcs_positions, wcs_usable_mask = collect_wcs_frame_center_pointings(inputfiles)
+        usable_wcs_count = int(np.count_nonzero(wcs_usable_mask))
+        if usable_wcs_count == len(inputfiles):
+            positions = wcs_positions
+            usable_mask = wcs_usable_mask
+            mode_label = "WCS"
+        elif usable_wcs_count > 0:
+            log_info(
+                f"Pointing precheck: usable WCS-derived pointing centers found for "
+                f"{usable_wcs_count}/{len(inputfiles)} frame(s); falling back to alignment-derived positions."
+            )
+        else:
+            log_info("Pointing precheck: no usable WCS-derived pointing centers found; using alignment-derived positions.")
+
+    if positions is None:
+        positions, usable_mask = collect_transform_frame_pointings(inputfiles, frame_loader=frame_loader)
+        mode_label = "alignment"
+
+    usable_count = int(np.count_nonzero(usable_mask))
+    if usable_count < POINTING_REJECTION_MIN_FRAMES:
+        log_info(
+            f"Pointing precheck skipped: only {usable_count} usable {mode_label}-derived pointing estimate(s); "
+            f"need at least {POINTING_REJECTION_MIN_FRAMES}.",
+        )
+        return inputfiles, keep_mask, []
+
+    keep_mask[np.flatnonzero(usable_mask)] = sigma_clip_pointing_positions(
+        positions[usable_mask],
+        sigma=pointing_rejection_sigma,
+        max_iters=POINTING_REJECTION_MAX_ITERS,
+    )
+
+    dropped_files = inputfiles[~keep_mask].tolist()
+    if not dropped_files:
+        log_info(
+            f"Pointing precheck ({mode_label}): no frames exceeded the "
+            f"{float(pointing_rejection_sigma):g}-sigma pointing threshold."
+        )
+        return inputfiles, keep_mask, []
+
+    retained_files = inputfiles[keep_mask]
+    log_info(
+        f"Pointing precheck ({mode_label}): {len(retained_files)}/{len(inputfiles)} frame(s) remain after "
+        f"dropping {len(dropped_files)} file(s) beyond {float(pointing_rejection_sigma):g} sigma from the "
+        "median pointing."
+    )
+    log_file_preview(dropped_files, "Pointing precheck dropped files")
+    return retained_files, keep_mask, dropped_files
 
 
 def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_missing_fraction=None):
@@ -2634,6 +4157,69 @@ def extract_vsx_objects(payload):
     return []
 
 
+def describe_retry_exception(err):
+    if isinstance(err, RetryError):
+        last_attempt = getattr(err, 'last_attempt', None)
+        attempt_number = getattr(last_attempt, 'attempt_number', None)
+        try:
+            root_cause = last_attempt.exception() if last_attempt is not None else None
+        except Exception:
+            root_cause = None
+
+        if root_cause is not None:
+            attempt_text = f" after {attempt_number} attempts" if attempt_number else ""
+            return (f"{err.__class__.__name__}{attempt_text} "
+                    f"({root_cause.__class__.__name__}: {root_cause})")
+
+    return f"{err.__class__.__name__}: {err}"
+
+
+def extract_http_status_code_from_error(err):
+    if err is None:
+        return None
+
+    response = getattr(err, 'response', None)
+    status_code = getattr(response, 'status_code', None)
+    if status_code is not None:
+        try:
+            return int(status_code)
+        except (TypeError, ValueError):
+            return None
+
+    status_match = re.search(r"\bHTTP\s+(\d{3})\b", str(err), flags=re.IGNORECASE)
+    if status_match is None:
+        return None
+
+    try:
+        return int(status_match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def should_retry_nextastro_variability_error(err):
+    if isinstance(err, requests.exceptions.RequestException):
+        status_code = extract_http_status_code_from_error(err)
+        return status_code is None or status_code in NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES
+
+    if isinstance(err, RuntimeError):
+        status_code = extract_http_status_code_from_error(err)
+        return status_code in NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES
+
+    return False
+
+
+def submit_nextastro_variability_request(api_url, payload, content_encoding=None):
+    request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(
+        payload,
+        content_encoding=content_encoding,
+    )
+    log_info(
+        "NextAstro variability request compression: "
+        f"{content_encoding} ({compressed_size} bytes sent; {raw_size} bytes raw)"
+    )
+    return requests.post(api_url, data=request_body, headers=headers, timeout=30), content_encoding
+
+
 @retry(stop=stop_after_delay(30))
 def vsx_variable(ra, dec, radius=0.01, maglimit=14):
     default_vsx_error = None
@@ -2677,18 +4263,28 @@ def build_comp_ra_dec(ra_wcs, dec_wcs, comp_stars):
     return comp_ra_dec
 
 
-@retry(stop=stop_after_delay(30))
+@retry(
+    stop=stop_after_attempt(NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS),
+    wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
+    retry=retry_if_exception(should_retry_nextastro_variability_error),
+)
 def nextastro_variability_test(comp_ra_dec):
     api_url = 'https://photometry.nextastro.org/variability_test'
 
     payload = [{'ra': float(ra), 'dec': float(dec)} for ra, dec in comp_ra_dec]
-    request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(payload)
     log_info(f"NextAstro variability request JSON: {json.dumps(payload)}")
-    log_info(
-        "NextAstro variability request compression: "
-        f"{content_encoding} ({compressed_size} bytes sent; {raw_size} bytes raw)"
-    )
-    result = requests.post(api_url, data=request_body, headers=headers, timeout=30)
+    result, content_encoding = submit_nextastro_variability_request(api_url, payload)
+    if result.status_code == 415 and content_encoding == 'zstd':
+        log_info(
+            "NextAstro variability server rejected zstd-compressed request (HTTP 415); "
+            "retrying this request once with gzip.",
+            warn=True,
+        )
+        result, content_encoding = submit_nextastro_variability_request(
+            api_url,
+            payload,
+            content_encoding='gzip',
+        )
     if result.status_code != 200:
         raise RuntimeError(f"NextAstro variability server returned HTTP {result.status_code}.")
 
@@ -2722,7 +4318,7 @@ def check_for_variable_stars(ra_wcs, dec_wcs, comp_stars, use_nextastro_variabil
                     comp_stars.remove(comp_star)
             return
         except Exception as e:
-            log_info(f"\nWarning: NextAstro variability server check failed ({e}). "
+            log_info(f"\nWarning: NextAstro variability server check failed ({describe_retry_exception(e)}). "
                      "Falling back to individual VSX variability checks.", warn=True)
 
     for i, comp_star in enumerate(comp_stars[:]):
@@ -3422,6 +5018,8 @@ def transformation_task_with_cached_reference(i, file_name):
 
 MAX_MULTIPROCESS_TRANSFORM_WORKERS = 8
 SPARSE_MISSING_WCS_DROP_THRESHOLD = 0.03
+POINTING_REJECTION_MIN_FRAMES = 5
+POINTING_REJECTION_MAX_ITERS = 5
 
 # Automatic aperture-grid tuning constants (in PSF sigma units)
 APERTURE_SIGMA_MIN = 1.5
@@ -3471,16 +5069,16 @@ def build_multiprocess_transformations(inputfiles, max_processes):
     return transforms
 
 
-def log_finding_transformation_progress(i, total_jobs, file_name, use_multiprocess_progress):
+def log_alignment_progress(i, total_jobs, file_name, use_multiprocess_progress):
     if use_multiprocess_progress:
         completed = i + 1
         if completed == total_jobs or completed % 10 == 0:
-            log_info(f"Multiprocessing finding transformations progress: {completed}/{total_jobs}")
+            log_info(f"Multiprocessing alignment progress: {completed}/{total_jobs}")
         return
 
     display_file_name = _display_filename(file_name)
-    sys.stdout.write(f"Finding transformation {i + 1} of {total_jobs} : {display_file_name}\n")
-    log.debug(f"Finding transformation {i + 1} of {total_jobs} : {display_file_name}\n")
+    sys.stdout.write(f"Aligning frame {i + 1} of {total_jobs} : {display_file_name}\n")
+    log.debug(f"Aligning frame {i + 1} of {total_jobs} : {display_file_name}\n")
     sys.stdout.flush()
 
 
@@ -3673,16 +5271,116 @@ def fractional_flux_change_within_limit(current_amplitude, previous_amplitude, l
     return np.abs((current_amplitude - previous_amplitude) / previous_amplitude) <= limit
 
 
-def centroid_offset_matches_reference(psf_a, psf_b, expected_dx, expected_dy, tolerance=1):
-    x_values = [psf_a[0], psf_b[0]]
-    y_values = [psf_a[1], psf_b[1]]
-    if not np.all(np.isfinite(x_values + y_values)):
+def centroid_position_is_finite(psf_row):
+    try:
+        coords = np.asarray(psf_row[:2], dtype=float)
+    except (TypeError, ValueError, IndexError):
         return False
 
+    return bool(np.all(np.isfinite(coords)))
+
+
+def centroid_offset_matches_reference(psf_a, psf_b, expected_dx, expected_dy,
+                                      tolerance=WCS_REFERENCE_GEOMETRY_TOLERANCE_PIXELS):
+    if not centroid_position_is_finite(psf_a) or not centroid_position_is_finite(psf_b):
+        return False
+    if not np.isfinite(expected_dx) or not np.isfinite(expected_dy):
+        return False
+
+    dx = float(abs(float(psf_a[0]) - float(psf_b[0])))
+    dy = float(abs(float(psf_a[1]) - float(psf_b[1])))
+    tolerance = float(tolerance)
+
     return (
-        expected_dx - tolerance <= abs(int(psf_a[0]) - int(psf_b[0])) <= expected_dx + tolerance
-        and expected_dy - tolerance <= abs(int(psf_a[1]) - int(psf_b[1])) <= expected_dy + tolerance
+        abs(dx - float(expected_dx)) <= tolerance
+        and abs(dy - float(expected_dy)) <= tolerance
     )
+
+
+def should_keep_header_wcs_alignment(
+    projected_off_frame,
+    frame_index,
+    target_psf_row,
+    previous_target_psf_row=None,
+    comp_psf_rows=None,
+    previous_comp_psf_rows=None,
+    expected_offsets=None,
+    tolerance=WCS_REFERENCE_GEOMETRY_TOLERANCE_PIXELS,
+    min_geometry_match_fraction=WCS_MIN_GEOMETRY_MATCH_FRACTION,
+):
+    decision = {
+        'use_wcs_alignment': False,
+        'reason': 'missing_target_centroid',
+        'target_flux_change_ok': True,
+        'comp_flux_change_ok': True,
+        'geometry_match_count': 0,
+        'geometry_test_count': 0,
+    }
+
+    if projected_off_frame:
+        decision.update(use_wcs_alignment=True, reason='projected_off_frame')
+        return decision
+
+    if not centroid_position_is_finite(target_psf_row):
+        return decision
+
+    if frame_index == 0:
+        decision.update(use_wcs_alignment=True, reason='first_frame')
+        return decision
+
+    if previous_target_psf_row is not None:
+        decision['target_flux_change_ok'] = fractional_flux_change_within_limit(
+            target_psf_row[2],
+            previous_target_psf_row[2],
+        )
+
+    comp_psf_rows = {} if comp_psf_rows is None else dict(comp_psf_rows)
+    previous_comp_psf_rows = {} if previous_comp_psf_rows is None else dict(previous_comp_psf_rows)
+    expected_offsets = {} if expected_offsets is None else dict(expected_offsets)
+
+    for key, comp_row in comp_psf_rows.items():
+        prev_comp_row = previous_comp_psf_rows.get(key)
+        if prev_comp_row is not None:
+            decision['comp_flux_change_ok'] = (
+                decision['comp_flux_change_ok']
+                and fractional_flux_change_within_limit(comp_row[2], prev_comp_row[2])
+            )
+
+        if not centroid_position_is_finite(comp_row):
+            continue
+
+        expected_offset = expected_offsets.get(key)
+        if expected_offset is None:
+            continue
+
+        try:
+            expected_dx = float(expected_offset[0])
+            expected_dy = float(expected_offset[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+
+        decision['geometry_test_count'] += 1
+        if centroid_offset_matches_reference(
+            comp_row,
+            target_psf_row,
+            expected_dx,
+            expected_dy,
+            tolerance=tolerance,
+        ):
+            decision['geometry_match_count'] += 1
+
+    geometry_test_count = decision['geometry_test_count']
+    if geometry_test_count == 0:
+        decision.update(use_wcs_alignment=True, reason='finite_target_only')
+        return decision
+
+    minimum_matches = max(1, int(np.ceil(float(min_geometry_match_fraction) * geometry_test_count)))
+    if decision['geometry_match_count'] >= minimum_matches:
+        decision.update(use_wcs_alignment=True, reason='geometry_match')
+    else:
+        decision['reason'] = 'geometry_mismatch'
+
+    return decision
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
@@ -4109,6 +5807,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
     ignore_header_wcs = should_ignore_header_wcs(info_dict.get('ignore_header_wcs'))
     bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(info_dict.get('bad_wcs_threshold_percent'))
+    pointing_rejection_sigma = get_pointing_rejection_sigma(info_dict.get('pointing_rejection_sigma'))
     detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
         info_dict.get('detect_bad_pixels_before_photometry', 'y')
     )
@@ -4136,6 +5835,34 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         max_missing_fraction=bad_wcs_threshold_fraction,
     )
     if dropped_wcs_files:
+        plateStatus.initializeFilenames(list(inputfiles))
+    pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
+    pointing_reference_file = inputfiles[0] if len(inputfiles) else None
+    inputfiles, _, dropped_pointing_files = filter_pointing_outlier_frames(
+        inputfiles,
+        pointing_rejection_sigma=pointing_rejection_sigma,
+        ignore_header_wcs=ignore_header_wcs,
+    )
+    if dropped_pointing_files:
+        if abort_if_reference_frame_rejected(
+            pointing_reference_file,
+            dropped_pointing_files,
+            ordered_inputfiles=pointing_precheck_inputfiles,
+        ):
+            ax.clear()
+            ax.set_title(target_name)
+            ax.set_ylabel('Normalized Flux')
+            ax.set_xlabel('Time (JD)')
+            ax.text(
+                0.5,
+                0.5,
+                "Reference image rejected by pointing precheck.\nSee log for details.",
+                transform=ax.transAxes,
+                ha='center',
+                va='center',
+            )
+            plt.close(ax.figure)
+            return
         plateStatus.initializeFilenames(list(inputfiles))
 
     bad_pixel_reference = None
@@ -4239,13 +5966,6 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         if i == 0:
             firstImage = np.copy(imageData)
 
-        log_finding_transformation_progress(
-            i,
-            len(inputfiles),
-            fileName,
-            use_multiprocess_transform_precompute,
-        )
-
         use_wcs_alignment = False
         if not ignore_header_wcs:
             try:
@@ -4285,34 +6005,28 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                     fast_mode=frame_fast_centroid,
                 )
 
-                target_flux_change_ok = True
-                comp_valid = True
-                if projected_off_frame:
-                    use_wcs_alignment = True
-                elif i != 0:
-                    target_flux_change_ok = fractional_flux_change_within_limit(
-                        psf_data['target'][i][2],
-                        psf_data['target'][i - 1][2],
-                    )
-                    comp_valid = (
-                        centroid_offset_matches_reference(
-                            psf_data['comp'][i],
-                            psf_data['target'][i],
-                            tar_comp_dist['comp'][0],
-                            tar_comp_dist['comp'][1],
-                        )
-                        and fractional_flux_change_within_limit(
-                            psf_data['comp'][i][2],
-                            psf_data['comp'][i - 1][2],
-                        )
-                    )
-                    use_wcs_alignment = target_flux_change_ok and comp_valid
-                else:
+                if i == 0:
                     tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
                     tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
-                    use_wcs_alignment = True
+                wcs_alignment_decision = should_keep_header_wcs_alignment(
+                    projected_off_frame,
+                    i,
+                    psf_data['target'][i],
+                    previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
+                    comp_psf_rows={'comp': psf_data['comp'][i]},
+                    previous_comp_psf_rows={} if i == 0 else {'comp': psf_data['comp'][i - 1]},
+                    expected_offsets={'comp': tar_comp_dist['comp']},
+                )
+                use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
             except Exception:
                 use_wcs_alignment = False
+
+        log_alignment_progress(
+            i,
+            len(inputfiles),
+            fileName,
+            use_multiprocess_transform_precompute,
+        )
 
         if not use_wcs_alignment:
             if i == 0:
@@ -4400,7 +6114,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    allow_mid_transit_range_warning=True, disable_vertical_flux_normalization=False,
                    final_fit_mode='lm',
                    use_impactparameter_rather_than_inclination_to_fit=True,
-                   plot_time_range=None):
+                   plot_time_range=None,
+                   use_eebls_to_initialize_tmid_and_bounds=True):
     # remove outliers
     plot_time_range = np.asarray(times if plot_time_range is None else plot_time_range, dtype=float)
     si = np.argsort(times)
@@ -4410,9 +6125,16 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio_sorted = np.divide(tflux_sorted, cflux_sorted)
 
+    filter_diagnostics = []
     has_reference_flux = not np.allclose(cflux_sorted, 1.0)
     if has_reference_flux:
         flux_ratio_mask = valid_flux_ratio_mask(flux_ratio_sorted)
+        filter_diagnostics.append(build_time_rejection_diagnostic(
+            "Target/reference ratio filter",
+            times_sorted,
+            flux_ratio_mask,
+            note="Dropped non-finite or non-positive target/reference ratios before fitting.",
+        ))
         times_sorted = times_sorted[flux_ratio_mask]
         tflux_sorted = tflux_sorted[flux_ratio_mask]
         cflux_sorted = cflux_sorted[flux_ratio_mask]
@@ -4426,12 +6148,24 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     if len(times_sorted) <= 1:
         return None, None, None
 
+    debug_times = np.asarray(times_sorted, dtype=float).copy()
+    debug_target_flux = np.asarray(tflux_sorted, dtype=float).copy()
+    debug_comp_flux = np.asarray(cflux_sorted, dtype=float).copy()
+    debug_raw_ratio = np.asarray(flux_ratio_sorted, dtype=float).copy()
+
     dt = np.mean(np.diff(times_sorted))
     ndt = int(25. / 24. / 60. / dt) * 2 + 1
     if ndt > len(times_sorted):
         ndt = int(len(times_sorted)/4) * 2 + 1
-    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt))
+    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt), times=times_sorted)
     valid_mask = ~filtered_data
+    debug_initial_sigma_keep_mask = np.asarray(valid_mask, dtype=bool).copy()
+    filter_diagnostics.append(build_time_rejection_diagnostic(
+        "Initial sigma clip",
+        times_sorted,
+        valid_mask,
+        note="Dropped 3-sigma target/reference-ratio outliers before the first lightcurve fit.",
+    ))
 
     arrayFinalFlux = flux_ratio_sorted[valid_mask]
     f1 = tflux_sorted[valid_mask]
@@ -4451,6 +6185,12 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
     nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(
         arrayAirmass)
+    filter_diagnostics.append(build_time_rejection_diagnostic(
+        "Finite/positive photometry filter",
+        arrayTimes,
+        ~nanmask,
+        note="Dropped non-finite or non-positive flux, uncertainty, time, or airmass values.",
+    ))
 
     if np.sum(~nanmask) <= 1:
         return None, None, None
@@ -4480,21 +6220,38 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     }
 
     arrayPhases = (arrayTimes - pDict['midT']) / prior['per']
-    prior['tmid'] = pDict['midT'] + np.floor(arrayPhases).max() * prior['per']
-
-    upper = prior['tmid'] + np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
-    lower = prior['tmid'] - np.abs(25 * pDict['midTUnc'] + np.floor(arrayPhases).max() * 25 * pDict['pPerUnc'])
-
-    if upper > prior['tmid'] + 0.25 * prior['per']:
-        upper = prior['tmid'] + 0.25 * prior['per']
-    if lower < prior['tmid'] - 0.25 * prior['per']:
-        lower = prior['tmid'] - 0.25 * prior['per']
+    expected_duration = estimate_transit_duration_from_prior_geometry(prior)
+    tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
+        arrayTimes,
+        pDict['midT'],
+        prior['per'],
+        pDict['midTUnc'],
+        pDict['pPerUnc'],
+        expected_duration=expected_duration,
+        sigma_multiplier=25.0,
+    )
+    prior['tmid'] = tmid_search_summary['tmid']
+    lower, upper = tmid_search_summary['bounds']
 
     if (
         allow_mid_transit_range_warning
         and np.floor(arrayPhases).max() - np.floor(arrayPhases).min() == 0
     ):
         log_mid_transit_range_warning_once(arrayTimes, prior['tmid'])
+
+    if tmid_search_summary.get('duration_capped'):
+        log_info(tmid_search_summary['note'])
+    if use_eebls_to_initialize_tmid_and_bounds:
+        tmid_search_summary = estimate_tmid_and_bounds_with_eebls(
+            arrayTimes,
+            arrayFinalFlux,
+            arrayNormUnc,
+            prior,
+            [lower, upper],
+        )
+        if tmid_search_summary.get('applied'):
+            prior['tmid'] = tmid_search_summary['tmid']
+            lower, upper = tmid_search_summary['bounds']
 
     mybounds = {
         'rprs': [0, prior['rprs'] * 1.25],
@@ -4529,6 +6286,13 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     )
     myfit = apply_plot_time_range(myfit, plot_time_range)
     annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
+    annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
+    if myfit is not None:
+        myfit.initial_tmid_search_method = tmid_search_summary.get('method')
+        myfit.initial_tmid_search_applied = bool(tmid_search_summary.get('applied'))
+        myfit.initial_tmid_search_tmid = tmid_search_summary.get('tmid')
+        myfit.initial_tmid_search_bounds = tmid_search_summary.get('bounds')
+        myfit.initial_tmid_search_note = tmid_search_summary.get('note')
 
     if (
         myfit is not None
@@ -4540,6 +6304,12 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         phase_clip_mask = phase_bin_sigma_clip(myfit.residuals, myfit.phase, sigma=3, bins=10)
         min_required_points = max(len(mybounds) + 1, 5)
         if np.count_nonzero(~phase_clip_mask) >= min_required_points and np.any(phase_clip_mask):
+            filter_diagnostics.append(build_time_rejection_diagnostic(
+                "Phase-binned residual clip",
+                arrayTimes,
+                ~phase_clip_mask,
+                note="Dropped phase-binned residual outliers after the initial LM fit before refitting.",
+            ))
             arrayFinalFlux = arrayFinalFlux[~phase_clip_mask]
             arrayNormUnc = arrayNormUnc[~phase_clip_mask]
             arrayTimes = arrayTimes[~phase_clip_mask]
@@ -4561,20 +6331,63 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             )
             myfit = apply_plot_time_range(myfit, plot_time_range)
             annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
+            annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
+            if myfit is not None:
+                myfit.initial_tmid_search_method = tmid_search_summary.get('method')
+                myfit.initial_tmid_search_applied = bool(tmid_search_summary.get('applied'))
+                myfit.initial_tmid_search_tmid = tmid_search_summary.get('tmid')
+                myfit.initial_tmid_search_bounds = tmid_search_summary.get('bounds')
+                myfit.initial_tmid_search_note = tmid_search_summary.get('note')
 
+    debug_phase_clip_keep_mask = np.ones(np.count_nonzero(debug_initial_sigma_keep_mask), dtype=bool)
     if final_fit_mode == 'ns' and myfit is not None:
+        nested_refinement = build_nested_tmid_refinement_from_initial_fit(
+            arrayTimes,
+            arrayFinalFlux,
+            arrayNormUnc,
+            prior,
+            mybounds,
+            myfit,
+        )
         myfit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
             arrayTimes,
             arrayFinalFlux,
             arrayNormUnc,
             arrayAirmass,
-            prior,
-            mybounds,
+            nested_refinement['prior'],
+            nested_refinement['bounds'],
             jd_times=arrayJDTimes,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         )
         myfit = apply_plot_time_range(myfit, plot_time_range)
         annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
+        annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
+        if myfit is not None:
+            myfit.initial_tmid_search_method = tmid_search_summary.get('method')
+            myfit.initial_tmid_search_applied = bool(tmid_search_summary.get('applied'))
+            myfit.initial_tmid_search_tmid = tmid_search_summary.get('tmid')
+            myfit.initial_tmid_search_bounds = tmid_search_summary.get('bounds')
+            myfit.initial_tmid_search_note = tmid_search_summary.get('note')
+            annotate_nested_tmid_refinement(
+                myfit,
+                nested_refinement.get('applied', False),
+                note=nested_refinement.get('note'),
+                original_tmid_bounds=nested_refinement.get('original_tmid_bounds'),
+                refined_tmid_bounds=nested_refinement.get('refined_tmid_bounds'),
+            )
+
+    if myfit is not None:
+        if 'phase_clip_mask' in locals():
+            debug_phase_clip_keep_mask = np.asarray(~phase_clip_mask, dtype=bool).copy()
+        annotate_selected_photometry_debug(
+            myfit,
+            debug_times,
+            debug_target_flux,
+            debug_comp_flux,
+            debug_raw_ratio,
+            debug_initial_sigma_keep_mask,
+            phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
+        )
 
     return myfit, f1, f2
 
@@ -4673,7 +6486,7 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relativ
         ndt = 5
     if ndt > len(times_sorted):
         ndt = int(len(times_sorted) / 4) * 2 + 1
-    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt))
+    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt), times=times_sorted)
     valid_mask = ~filtered_data
     diagnostics['sigma_clip_point_count'] = int(np.count_nonzero(valid_mask))
     if diagnostics['sigma_clip_point_count'] <= 1:
@@ -4774,6 +6587,7 @@ def evaluate_lightcurve_candidate(task):
         plot_time_range,
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
+        use_eebls_to_initialize_tmid_and_bounds,
     ) = task
     fit_diagnostics = diagnose_lightcurve_fit_inputs(
         times,
@@ -4794,6 +6608,7 @@ def evaluate_lightcurve_candidate(task):
         disable_vertical_flux_normalization=disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         plot_time_range=plot_time_range,
+        use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
     )
     fit_diagnostics = ensure_lightcurve_fit_failure_reason(
         fit_diagnostics,
@@ -4824,6 +6639,7 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
 
     if use_psf_photometry and comp_star_count > 0:
         target_flux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+        target_flux_mask = robust_flux_floor_mask(target_flux)
         psf_comp_flux_map = {
             f"comp{comp_idx + 1}": 2 * np.pi * psf_data[f"comp{comp_idx + 1}"][:, 2]
             * psf_data[f"comp{comp_idx + 1}"][:, 3]
@@ -4833,6 +6649,7 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
         psf_comp_coverage = comparison_star_coverage_summary(
             psf_comp_flux_map,
             skip_rejection=skip_low_comparison_coverage_rejection,
+            validity_mask_func=robust_flux_floor_mask,
         )
         for comp_idx in range(comp_star_count):
             ckey = f"comp{comp_idx + 1}"
@@ -4840,6 +6657,7 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                 continue
 
             comp_flux = psf_comp_flux_map[ckey]
+            psf_mask = target_flux_mask & robust_flux_floor_mask(comp_flux)
             candidate_jobs.append({
                 'method': 'psf',
                 'a': None,
@@ -4848,16 +6666,16 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                 'annulus': float(15 * sigma),
                 'comp_index': comp_idx,
                 'ckey': ckey,
-                'mask': np.ones(target_flux.shape[0], dtype=bool),
+                'mask': psf_mask,
                 'coverage_count': psf_comp_coverage[ckey]['coverage_count'],
                 'coverage_total_frame_count': psf_comp_coverage[ckey]['coverage_total_frame_count'],
                 'coverage_reference_count': psf_comp_coverage[ckey]['coverage_reference_count'],
                 'coverage_min_required_count': psf_comp_coverage[ckey]['coverage_min_required_count'],
                 'coverage_rejected': psf_comp_coverage[ckey]['coverage_rejected'],
                 'prescore': cheap_lightcurve_prescore(
-                    target_flux,
-                    comp_flux,
-                    airmass,
+                    target_flux[psf_mask],
+                    comp_flux[psf_mask],
+                    airmass[psf_mask],
                     enforce_relative_flux_max=False,
                 ),
             })
@@ -4942,7 +6760,8 @@ def shortlist_target_fit_candidates(candidate_jobs, minimum_count=50, fraction=0
 def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, psf_data, aper_data,
                               plot_time_range=None,
                               disable_vertical_flux_normalization=False,
-                              use_impactparameter_rather_than_inclination_to_fit=True):
+                              use_impactparameter_rather_than_inclination_to_fit=True,
+                              use_eebls_to_initialize_tmid_and_bounds=True):
     candidate_mask = np.asarray(candidate['mask'], dtype=bool)
 
     if candidate['method'] == 'psf':
@@ -4973,6 +6792,7 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
         plot_time_range,
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
+        use_eebls_to_initialize_tmid_and_bounds,
     )
 
 
@@ -4985,7 +6805,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
                                         use_psf_photometry=True,
                                         use_aperture_photometry=True,
                                         multiprocess_lightcurve_fits=None,
-                                        use_impactparameter_rather_than_inclination_to_fit=True):
+                                        use_impactparameter_rather_than_inclination_to_fit=True,
+                                        use_eebls_to_initialize_tmid_and_bounds=True):
     candidate_jobs = build_target_fit_candidate_jobs(
         psf_data,
         aper_data,
@@ -5025,6 +6846,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             plot_time_range=plot_time_range,
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+            use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
         )
         for candidate in shortlist
     ]
@@ -5099,6 +6921,47 @@ def format_comp_star_position(position):
         return f"coords={position}"
 
 
+def deduplicate_comparison_star_coords(comp_stars, min_separation_pixels=COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS):
+    if comp_stars is None:
+        return [], []
+
+    try:
+        threshold = float(min_separation_pixels)
+    except (TypeError, ValueError):
+        threshold = COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS
+    if not np.isfinite(threshold) or threshold <= 0:
+        threshold = COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS
+
+    unique_coords = []
+    duplicate_messages = []
+    for index, coord in enumerate(comp_stars, start=1):
+        try:
+            x_pos, y_pos = float(coord[0]), float(coord[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+
+        duplicate_entry = None
+        for unique_index, unique_coord in enumerate(unique_coords, start=1):
+            separation = float(np.hypot(x_pos - unique_coord[0], y_pos - unique_coord[1]))
+            if separation <= threshold:
+                duplicate_entry = (unique_index, unique_coord, separation)
+                break
+
+        if duplicate_entry is not None:
+            kept_index, kept_coord, separation = duplicate_entry
+            duplicate_messages.append(
+                "Merged comparison star "
+                f"#{index} ({x_pos:.1f}, {y_pos:.1f}) into comparison star "
+                f"#{kept_index} ({kept_coord[0]:.1f}, {kept_coord[1]:.1f}) "
+                f"because they were only {separation:.2f} px apart."
+            )
+            continue
+
+        unique_coords.append([x_pos, y_pos])
+
+    return unique_coords, duplicate_messages
+
+
 def format_comp_star_coverage_text(summary):
     coverage_text = (
         f"{summary['coverage_count']} valid frame(s)"
@@ -5166,9 +7029,9 @@ def log_comparison_calibration_fit_attempt_summaries(attempts, method_label):
         residual_text = "n/a"
         if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
             residual_text = f"{attempt['res_std'] * 100.0:.4f}%"
-        reason_text = attempt.get(
+        reason_text = attempt.get('selection_reason') or attempt.get(
             'failure_reason',
-            "selected: first coverage-qualified comparison star with a usable target fit",
+            "selected: lowest target-fit residual scatter among the evaluated comparison stars",
         )
         log_info(
             f"  {attempt['label']}{selected_label} ({position_text}): "
@@ -5375,7 +7238,8 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                                                  plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
                                                  skip_low_comparison_coverage_rejection=False,
-                                                 use_impactparameter_rather_than_inclination_to_fit=True):
+                                                 use_impactparameter_rather_than_inclination_to_fit=True,
+                                                 use_eebls_to_initialize_tmid_and_bounds=True):
     if photometry_info.get('best_fit_lc') is None or not comp_stars:
         return []
 
@@ -5404,6 +7268,9 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
     coverage_summary = comparison_star_coverage_summary(
         comp_flux_map,
         skip_rejection=skip_low_comparison_coverage_rejection,
+        validity_mask_func=(
+            robust_flux_floor_mask if use_psf_photometry else valid_comparison_frame_mask
+        ),
     )
 
     for comp_index, position in enumerate(comp_stars):
@@ -5411,7 +7278,10 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         ckey = f"comp{comp_index + 1}"
         comp_flux_series = comp_flux_map[ckey]
 
-        fit_mask = valid_comparison_frame_mask(comp_flux_series)
+        if use_psf_photometry:
+            fit_mask = robust_target_reference_flux_mask(target_flux, comp_flux_series)
+        else:
+            fit_mask = valid_comparison_frame_mask(comp_flux_series)
         coverage_count = coverage_summary[ckey]['coverage_count']
         coverage_total_frame_count = coverage_summary[ckey]['coverage_total_frame_count']
         coverage_reference_count = coverage_summary[ckey]['coverage_reference_count']
@@ -5457,6 +7327,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 final_fit_mode='ns',
                 use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
                 plot_time_range=plot_time_range,
+                use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
             )
             fit_diagnostics = ensure_lightcurve_fit_failure_reason(
                 fit_diagnostics,
@@ -5494,10 +7365,10 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
     return candidate_fit_summaries
 
 
-def normalize_flux_series(flux_values):
+def normalize_flux_series(flux_values, validity_mask_func=valid_comparison_frame_mask):
     flux_values = np.asarray(flux_values, dtype=float)
     normalized = np.full(flux_values.shape, np.nan, dtype=float)
-    finite_mask = np.isfinite(flux_values) & (flux_values > 0)
+    finite_mask = validity_mask_func(flux_values)
     if np.count_nonzero(finite_mask) < 5:
         return normalized
 
@@ -5538,13 +7409,14 @@ def build_normalized_comp_ensemble(normalized_flux_map, exclude_key):
 def comparison_star_coverage_summary(comp_flux_map,
                                      min_fraction=COMPARISON_STAR_MIN_COVERAGE_FRACTION,
                                      min_points=COMPARISON_STAR_MIN_VALID_FRAMES,
-                                     skip_rejection=False):
+                                     skip_rejection=False,
+                                     validity_mask_func=valid_comparison_frame_mask):
     comp_keys = list(comp_flux_map.keys())
     if not comp_keys:
         return {}
 
     coverage_counts = {
-        key: int(np.count_nonzero(valid_comparison_frame_mask(comp_flux_map[key])))
+        key: int(np.count_nonzero(validity_mask_func(comp_flux_map[key])))
         for key in comp_keys
     }
     total_frame_count = max(np.asarray(comp_flux_map[key]).shape[0] for key in comp_keys)
@@ -5592,7 +7464,8 @@ def comparison_star_coverage_summary(comp_flux_map,
     return coverage_summary
 
 
-def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_rejection=False):
+def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_rejection=False,
+                                      validity_mask_func=valid_comparison_frame_mask):
     if not comp_flux_map:
         return {
             'pairwise_matrix': np.empty((0, 0), dtype=float),
@@ -5603,10 +7476,14 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         }
 
     comp_keys = list(comp_flux_map.keys())
-    normalized_flux_map = {key: normalize_flux_series(comp_flux_map[key]) for key in comp_keys}
+    normalized_flux_map = {
+        key: normalize_flux_series(comp_flux_map[key], validity_mask_func=validity_mask_func)
+        for key in comp_keys
+    }
     coverage_summary = comparison_star_coverage_summary(
         comp_flux_map,
         skip_rejection=skip_low_coverage_rejection,
+        validity_mask_func=validity_mask_func,
     )
     eligible_keys = {
         key for key in comp_keys
@@ -5905,6 +7782,7 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
             psf_flux_map,
             airmass,
             skip_low_coverage_rejection=skip_low_comparison_coverage_rejection,
+            validity_mask_func=robust_flux_floor_mask,
         )
         psf_summary.update({
             'method': 'psf',
@@ -5989,7 +7867,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  psf_data, aper_data, target_psf_flux,
                                                  plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
-                                                 use_impactparameter_rather_than_inclination_to_fit=True):
+                                                 use_impactparameter_rather_than_inclination_to_fit=True,
+                                                 use_eebls_to_initialize_tmid_and_bounds=True):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
     if not ranked_summaries:
         return {
@@ -6007,7 +7886,6 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         target_flux = aper_data['target'][:, aperture_index, annulus_index]
 
     attempts = []
-    selected_result = None
     for rank, comp_summary in enumerate(ranked_summaries):
         comp_index = comp_summary['comp_index']
         ckey = comp_summary.get('key', f"comp{comp_index + 1}")
@@ -6020,25 +7898,30 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         else:
             comp_flux = aper_data[ckey][:, aperture_index, annulus_index]
 
+        fit_mask = np.ones(times.shape[0], dtype=bool)
+        if method == 'psf':
+            fit_mask = robust_target_reference_flux_mask(target_flux, comp_flux)
+
         fit_diagnostics = diagnose_lightcurve_fit_inputs(
-            times,
-            target_flux,
-            comp_flux,
-            airmass,
+            times[fit_mask],
+            target_flux[fit_mask],
+            comp_flux[fit_mask],
+            airmass[fit_mask],
             enforce_relative_flux_max=False,
         )
         fit_result, tflux_fit, cflux_fit = fit_lightcurve(
-            times,
-            target_flux,
-            comp_flux,
-            airmass,
+            times[fit_mask],
+            target_flux[fit_mask],
+            comp_flux[fit_mask],
+            airmass[fit_mask],
             ld,
             p_dict,
-            jd_times,
+            jd_times[fit_mask],
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
             use_impactparameter_rather_than_inclination_to_fit=
             use_impactparameter_rather_than_inclination_to_fit,
             plot_time_range=plot_time_range,
+            use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
         )
         fit_diagnostics = ensure_lightcurve_fit_failure_reason(
             fit_diagnostics,
@@ -6073,15 +7956,37 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'failure_reason': fit_diagnostics.get('failure_reason'),
             'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
             'selected': False,
+            'selection_reason': None,
         }
         attempts.append(attempt)
 
-        if fit_result is not None:
-            selected_result = attempt
-            break
-
-    if selected_result is not None:
+    selected_result = None
+    successful_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf))
+    ]
+    if successful_attempts:
+        selected_result = min(
+            successful_attempts,
+            key=lambda attempt: (attempt.get('res_std', np.inf), attempt.get('rank', np.inf)),
+        )
         selected_result['selected'] = True
+        selected_residual = selected_result.get('res_std', np.inf)
+
+        for attempt in attempts:
+            if attempt is selected_result:
+                attempt['selection_reason'] = (
+                    "selected: lowest target-fit residual scatter among the evaluated "
+                    "comparison-star calibration candidates"
+                )
+                continue
+            if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
+                attempt['selection_reason'] = (
+                    "not selected: target-fit residual scatter "
+                    f"{attempt['res_std'] * 100.0:.4f}% was higher than the selected "
+                    f"{selected_residual * 100.0:.4f}%"
+                )
 
     return {
         'ranked_summaries': ranked_summaries,
@@ -6292,6 +8197,9 @@ def main():
                 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
             )
         )
+        use_eebls_tmid_initializer = should_use_eebls_to_initialize_tmid_and_bounds(
+            exotic_infoDict.get('use_eebls_to_initialize_tmid_and_bounds', 'y')
+        )
         use_impactparameter_rather_than_inclination_to_fit = (
             should_use_impactparameter_rather_than_inclination_to_fit(
                 exotic_infoDict.get('use_impactparameter_rather_than_inclination_to_fit', 'y')
@@ -6430,6 +8338,9 @@ def main():
             bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(
                 exotic_infoDict.get('bad_wcs_threshold_percent')
             )
+            pointing_rejection_sigma = get_pointing_rejection_sigma(
+                exotic_infoDict.get('pointing_rejection_sigma')
+            )
             detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
                 exotic_infoDict.get('detect_bad_pixels_before_photometry', 'y')
             )
@@ -6441,6 +8352,36 @@ def main():
             if dropped_wcs_files:
                 times = times[wcs_keep_mask]
                 jd_times = jd_times[wcs_keep_mask]
+                plateStatus.initializeFilenames(list(inputfiles))
+            pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
+            pointing_reference_file = inputfiles[0] if len(inputfiles) else None
+            inputfiles, pointing_keep_mask, dropped_pointing_files = filter_pointing_outlier_frames(
+                inputfiles,
+                pointing_rejection_sigma=pointing_rejection_sigma,
+                ignore_header_wcs=ignore_header_wcs,
+                frame_loader=lambda file_name: load_calibrated_reduction_image(
+                    file_name,
+                    generalDark,
+                    generalBias,
+                    generalFlat,
+                    demosaic_fmt,
+                    demosaic_out,
+                    demosaic_mult,
+                ),
+            )
+            if dropped_pointing_files:
+                if abort_if_reference_frame_rejected(
+                    pointing_reference_file,
+                    dropped_pointing_files,
+                    ordered_inputfiles=pointing_precheck_inputfiles,
+                ):
+                    return
+                times = times[pointing_keep_mask]
+                jd_times = jd_times[pointing_keep_mask]
+                finite_plot_times = times[np.isfinite(times)]
+                full_plot_time_range = None
+                if finite_plot_times.size:
+                    full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
                 plateStatus.initializeFilenames(list(inputfiles))
 
             bad_pixel_reference = None
@@ -6552,8 +8493,22 @@ def main():
                     exotic_infoDict['comp_stars'] = comparison_star_coords(exotic_infoDict['comp_stars'], False)
                     check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
                                              use_nextastro_variability_server=args.use_nextastro_variability_server)
+
+                exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
+                    exotic_infoDict['comp_stars']
+                )
+                for duplicate_message in duplicate_comp_messages:
+                    log_info(duplicate_message)
+
                 # Build RA/Dec for comp after list is finalized (avoid off by one issues, etc
                 ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
+                plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
+            else:
+                exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
+                    exotic_infoDict['comp_stars']
+                )
+                for duplicate_message in duplicate_comp_messages:
+                    log_info(duplicate_message)
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
 
             # alloc psf fitting param
@@ -6592,6 +8547,8 @@ def main():
                 log_info("PSF photometry disabled per optional_info setting.")
             if not use_aperture_photometry:
                 log_info("Aperture photometry disabled per optional_info setting.")
+            if not use_eebls_tmid_initializer:
+                log_info("EEBLS transit initializer disabled per optional_info setting.")
 
             for i, coord in enumerate(exotic_infoDict['comp_stars']):
                 ckey = f"comp{i + 1}"
@@ -6701,13 +8658,6 @@ def main():
                 if i == 0:
                     firstImage = np.copy(imageData)
 
-                log_finding_transformation_progress(
-                    i,
-                    len(inputfiles),
-                    fileName,
-                    use_multiprocess_transform_precompute,
-                )
-
                 use_wcs_alignment = False
                 if not ignore_header_wcs:
                     try:
@@ -6747,14 +8697,8 @@ def main():
 
                         # TODO: Add check for flux on target/comp stars relative to others in the field
                         # in case of cloudy data, large changes, etc.
-                        target_flux_change_ok = True
-                        if not projected_off_frame and i != 0:
-                            target_flux_change_ok = fractional_flux_change_within_limit(
-                                psf_data['target'][i][2],
-                                psf_data['target'][i - 1][2],
-                            )
-
-                        comp_valid = True
+                        current_comp_psf_rows = {}
+                        previous_comp_psf_rows = {}
                         for j in range(len(exotic_infoDict['comp_stars'])):
                             ckey = f"comp{j + 1}"
 
@@ -6766,28 +8710,32 @@ def main():
                                 fast_mode=frame_fast_centroid,
                             )
 
-                            if projected_off_frame:
-                                continue
+                            current_comp_psf_rows[ckey] = psf_data[ckey][i]
                             if i != 0:
-                                comp_valid = comp_valid and (
-                                    centroid_offset_matches_reference(
-                                        psf_data[ckey][i],
-                                        psf_data['target'][i],
-                                        tar_comp_dist[ckey][0],
-                                        tar_comp_dist[ckey][1],
-                                    )
-                                    and fractional_flux_change_within_limit(
-                                        psf_data[ckey][i][2],
-                                        psf_data[ckey][i - 1][2],
-                                    )
-                                )
+                                previous_comp_psf_rows[ckey] = psf_data[ckey][i - 1]
                             else:
                                 tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
                                 tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
 
-                        use_wcs_alignment = projected_off_frame or (target_flux_change_ok and comp_valid)
+                        wcs_alignment_decision = should_keep_header_wcs_alignment(
+                            projected_off_frame,
+                            i,
+                            psf_data['target'][i],
+                            previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
+                            comp_psf_rows=current_comp_psf_rows,
+                            previous_comp_psf_rows=previous_comp_psf_rows,
+                            expected_offsets=tar_comp_dist,
+                        )
+                        use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
                     except Exception:
                         use_wcs_alignment = False
+
+                log_alignment_progress(
+                    i,
+                    len(inputfiles),
+                    fileName,
+                    use_multiprocess_transform_precompute,
+                )
 
                 if not use_wcs_alignment:
                     if i == 0:
@@ -6954,6 +8902,17 @@ def main():
             if aper_data is not None:
                 badmask = badmask | (aper_data["target"][:, 0, 0] == 0) | np.isnan(aper_data["target"][:, 0, 0])
             goodmask = ~badmask
+            global_frame_filter_diagnostic = build_time_rejection_diagnostic(
+                "Target centroid/aperture validity filter",
+                times,
+                goodmask,
+                note="Dropped frames before photometry selection because the target centroid or target aperture photometry was invalid.",
+            )
+            if global_frame_filter_diagnostic is not None and global_frame_filter_diagnostic['dropped_point_count'] > 0:
+                log_lightcurve_filter_diagnostics(
+                    [global_frame_filter_diagnostic],
+                    header="Global reduction frame rejections before photometry selection",
+                )
             if np.sum(goodmask) == 0:
                 log_info("No images to fit...check reference image for alignment (first image of sequence)")
 
@@ -7123,6 +9082,7 @@ def main():
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
+                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                 )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -7132,7 +9092,11 @@ def main():
                 selected_attempt = comparison_fit_search['selected_result']
                 fit_attempts = comparison_fit_search['attempts']
                 if fit_attempts:
-                    comparison_calibration['selected_fit_diagnostics'] = fit_attempts[-1]['fit_diagnostics']
+                    comparison_calibration['selected_fit_diagnostics'] = (
+                        selected_attempt['fit_diagnostics']
+                        if selected_attempt is not None
+                        else fit_attempts[-1]['fit_diagnostics']
+                    )
                     if selected_attempt is None or len(fit_attempts) > 1:
                         log_comparison_calibration_fit_attempt_summaries(
                             fit_attempts,
@@ -7159,9 +9123,10 @@ def main():
                     if selection_basis == 'comparison_field_retry':
                         retry_count = selected_attempt['rank']
                         log_info(
-                            "Comparison-star calibration retry selected "
+                            "Comparison-star calibration target-fit selection chose "
                             f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
-                            f"after {retry_count} better-ranked candidate(s) failed target fitting."
+                            f"after evaluating {retry_count} better-ranked field-stability candidate(s); "
+                            "it delivered the lowest target-fit residual scatter among successful fits."
                         )
 
                     photometry_info.update(best_fit_lc=myfit,
@@ -7198,6 +9163,7 @@ def main():
                                     use_impactparameter_rather_than_inclination_to_fit=
                                     use_impactparameter_rather_than_inclination_to_fit,
                                     plot_time_range=full_plot_time_range,
+                                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                                 )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
@@ -7218,6 +9184,7 @@ def main():
                                     use_impactparameter_rather_than_inclination_to_fit=
                                     use_impactparameter_rather_than_inclination_to_fit,
                                     plot_time_range=full_plot_time_range,
+                                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                                 )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
@@ -7278,6 +9245,7 @@ def main():
                     multiprocess_lightcurve_fits=args.multiprocess_lightcurve_fits,
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
+                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                 )
 
                 best_candidate = target_driven_search['best_candidate']
@@ -7347,6 +9315,7 @@ def main():
                                 use_impactparameter_rather_than_inclination_to_fit=
                                 use_impactparameter_rather_than_inclination_to_fit,
                                 plot_time_range=full_plot_time_range,
+                                use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                             )
                             ref_flux[j] = {
                                 'myfit': vsp_fit,
@@ -7367,6 +9336,7 @@ def main():
                                 use_impactparameter_rather_than_inclination_to_fit=
                                 use_impactparameter_rather_than_inclination_to_fit,
                                 plot_time_range=full_plot_time_range,
+                                use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                             )
                             ref_flux[j] = {
                                 'myfit': vsp_fit,
@@ -7438,6 +9408,27 @@ def main():
             best_fit_lc = photometry_info['best_fit_lc']
             bestCompStar = photometry_info['comp_star_num']
             comp_coords = photometry_info['comp_star_coords']
+            log_lightcurve_filter_diagnostics(
+                getattr(best_fit_lc, 'frame_filter_diagnostics', []),
+                header="Selected lightcurve frame rejections during target fitting",
+            )
+            try:
+                selected_photometry_debug_path = save_selected_photometry_debug_series(
+                    exotic_infoDict['save'],
+                    pDict['pName'],
+                    exotic_infoDict['date'],
+                    best_fit_lc,
+                )
+                if selected_photometry_debug_path is not None:
+                    log_info(
+                        f"Saved selected raw target/reference ratio diagnostics to "
+                        f"{selected_photometry_debug_path}."
+                    )
+            except Exception as e:
+                log_info(
+                    f"Warning: Could not save selected raw target/reference ratio diagnostics ({e}).",
+                    warn=True,
+                )
 
             if fit_every_comparison_candidate and exotic_infoDict['comp_stars']:
                 candidate_fit_summaries = fit_lightcurve_to_every_comparison_candidate(
@@ -7455,6 +9446,7 @@ def main():
                     skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
+                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                 )
                 saved_candidate_fit_count = sum(1 for summary in candidate_fit_summaries if summary['fit'] is not None)
                 failed_candidate_fit_count = len(candidate_fit_summaries) - saved_candidate_fit_count
@@ -7488,7 +9480,7 @@ def main():
             si = np.argsort(best_fit_lc.time)
             dt = np.mean(np.diff(np.sort(best_fit_lc.time)))
             ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
-            time_clip_mask = sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt)
+            time_clip_mask = sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt, times=best_fit_lc.time[si])
             phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
             if hasattr(best_fit_lc, 'residuals') and hasattr(best_fit_lc, 'phase'):
                 phase_clip_mask = phase_bin_sigma_clip(best_fit_lc.residuals[si], best_fit_lc.phase[si], sigma=3, bins=10)
@@ -7500,26 +9492,32 @@ def main():
                                                                sorted_annuli[~time_clip_mask & ~phase_clip_mask])
                 adaptive_clip_mask[~time_clip_mask & ~phase_clip_mask] = retained_mask
             gi = ~(time_clip_mask | phase_clip_mask | adaptive_clip_mask)  # good indexs
+            prefinal_filter_diagnostics = [
+                build_time_rejection_diagnostic(
+                    "Final-fit time sigma clip",
+                    np.asarray(best_fit_lc.time, dtype=float)[si],
+                    ~time_clip_mask,
+                    note="Dropped time-series outliers before the final fit.",
+                ),
+                build_time_rejection_diagnostic(
+                    "Final-fit phase residual clip",
+                    np.asarray(best_fit_lc.time, dtype=float)[si],
+                    ~phase_clip_mask,
+                    note="Dropped phase-binned residual outliers before the final fit.",
+                ),
+                build_time_rejection_diagnostic(
+                    "Final-fit adaptive-aperture clip",
+                    np.asarray(best_fit_lc.time, dtype=float)[si],
+                    ~adaptive_clip_mask,
+                    note="Dropped adaptive-aperture radius outliers before the final fit.",
+                ),
+            ]
             phase_clip_removed = np.count_nonzero(phase_clip_mask & ~time_clip_mask)
             if phase_clip_removed:
                 log_info(f"Removed {phase_clip_removed} phase-binned residual outlier(s) before final fit.")
             adaptive_clip_removed = np.count_nonzero(adaptive_clip_mask)
             if adaptive_clip_removed:
                 log_info(f"Removed {adaptive_clip_removed} adaptive-aperture radius outlier(s) before final fit.")
-
-            # Calculate the proper timeseries uncertainties from the residuals of the out-of-transit data
-            OOT = (best_fit_lc.transit == 1)  # find out-of-transit portion of the lightcurve
-
-            if sum(OOT) <= 1:
-                OOTscatter = np.std(best_fit_lc.residuals)
-                goodNormUnc = OOTscatter * best_fit_lc.airmass_model
-                goodNormUnc = goodNormUnc / np.nanmedian(best_fit_lc.data)
-                goodFluxes = best_fit_lc.data / np.nanmedian(best_fit_lc.data)
-            else:
-                OOTscatter = np.std((best_fit_lc.data / best_fit_lc.airmass_model)[OOT])  # calculate the scatter in the data
-                goodNormUnc = OOTscatter * best_fit_lc.airmass_model  # scale this scatter back up by the airmass model and then adopt these as the uncertainties
-                goodNormUnc = goodNormUnc / np.nanmedian(best_fit_lc.data[OOT])
-                goodFluxes = best_fit_lc.data / np.nanmedian(best_fit_lc.data[OOT])
 
             if np.isnan(best_fit_lc.data).all():
                 log_info("Error: No valid photometry data found.", error=True)
@@ -7528,9 +9526,21 @@ def main():
             apply_lightcurve_mask(best_fit_lc, gi, sort_index=si)
 
             goodTimes = best_fit_lc.time
-            goodFluxes = goodFluxes[si][gi]
-            goodNormUnc = goodNormUnc[si][gi]
             goodAirmasses = best_fit_lc.airmass
+
+            final_fit_series = prepare_final_fit_lightcurve_series(best_fit_lc)
+            if not final_fit_series.get('applied'):
+                log_info(
+                    f"Warning: {final_fit_series.get('note', 'could not prepare the final-fit light curve from the provisional fit.')} "
+                    "Falling back to the provisional detrended light curve arrays.",
+                    warn=True,
+                )
+                goodFluxes = np.asarray(best_fit_lc.detrended, dtype=float)
+                goodNormUnc = np.asarray(best_fit_lc.detrendederr, dtype=float)
+            else:
+                log_info(final_fit_series['note'])
+                goodFluxes = np.asarray(final_fit_series['flux'], dtype=float)
+                goodNormUnc = np.asarray(final_fit_series['unc'], dtype=float)
 
             centroid_positions.update(x_targ=centroid_positions['x_targ'][si][gi],
                                       y_targ=centroid_positions['y_targ'][si][gi],
@@ -7543,10 +9553,20 @@ def main():
                                flux_unc_ref=flux_values['flux_unc_ref'][si][gi])
 
             relative_flux_mask = relative_flux_filter_mask(goodFluxes)
+            prefinal_filter_diagnostics.append(build_time_rejection_diagnostic(
+                "Final relative-flux cap",
+                goodTimes,
+                relative_flux_mask,
+                note=f"Dropped points with normalized flux outside (0, {RELATIVE_FLUX_MAX:g}] before the final fit.",
+            ))
             if np.count_nonzero(relative_flux_mask) == 0:
                 log_info("Error: No valid photometry data found after removing relative flux values above 2.", error=True)
                 return
 
+            log_lightcurve_filter_diagnostics(
+                prefinal_filter_diagnostics,
+                header="Selected lightcurve frame rejections before the final fit",
+            )
             apply_lightcurve_mask(best_fit_lc, relative_flux_mask)
 
             goodTimes = goodTimes[relative_flux_mask]
@@ -7688,6 +9708,10 @@ def main():
             goodFluxes = goodFluxes[relative_flux_mask]
             goodNormUnc = goodNormUnc[relative_flux_mask]
             goodAirmasses = goodAirmasses[relative_flux_mask]
+            finite_plot_times = goodTimes[np.isfinite(goodTimes)]
+            full_plot_time_range = None
+            if finite_plot_times.size:
+                full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
 
         # for k in myfit.bounds.keys():
         #     print(f"{myfit.parameters[k]:.6f} +- {myfit.errors[k]}")
@@ -7718,21 +9742,39 @@ def main():
         }
 
         phase = (goodTimes - prior['tmid']) / prior['per']
-        prior['tmid'] = pDict['midT'] + np.floor(phase).max() * prior['per']
-        upper = pDict['midT'] + 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] + 35 * pDict['pPerUnc'])
-        lower = pDict['midT'] - 35 * pDict['midTUnc'] + np.floor(phase).max() * (pDict['pPer'] - 35 * pDict['pPerUnc'])
-
-        # clip bounds so they're within 1 orbit
-        if upper > prior['tmid'] + 0.25*prior['per']:
-            upper = prior['tmid'] + 0.25*prior['per']
-        if lower < prior['tmid'] - 0.25*prior['per']:
-            lower = prior['tmid'] - 0.25*prior['per']
+        expected_duration = estimate_transit_duration_from_prior_geometry(prior)
+        tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
+            goodTimes,
+            pDict['midT'],
+            prior['per'],
+            pDict['midTUnc'],
+            pDict['pPerUnc'],
+            expected_duration=expected_duration,
+            sigma_multiplier=35.0,
+        )
+        prior['tmid'] = tmid_search_summary['tmid']
+        lower, upper = tmid_search_summary['bounds']
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)
             log_info(f"start:{np.min(goodTimes)}", error=True)
             log_info(f"  end:{np.max(goodTimes)}", error=True)
             log_info(f"prior:{prior['tmid']}", error=True)
+
+        if tmid_search_summary.get('duration_capped'):
+            log_info(tmid_search_summary['note'])
+        if use_eebls_tmid_initializer:
+            tmid_search_summary = estimate_tmid_and_bounds_with_eebls(
+                goodTimes,
+                goodFluxes,
+                goodNormUnc,
+                prior,
+                [lower, upper],
+            )
+            log_info(tmid_search_summary['note'])
+            if tmid_search_summary.get('applied'):
+                prior['tmid'] = tmid_search_summary['tmid']
+                lower, upper = tmid_search_summary['bounds']
 
         final_airmass_span = airmass_span(goodAirmasses)
         airmass_skip_note = None

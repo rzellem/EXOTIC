@@ -1,3 +1,5 @@
+import logging
+
 from exotic.api.ld import LimbDarkening
 
 stellar_params = {
@@ -189,6 +191,21 @@ def test_valid_fwhm_range_swapped_min_max() -> None:
     ld_obj = LimbDarkening(stellar_params)
 
     assert ld_obj.check_fwhm(observed_filter) == True
+
+def test_missing_fwhm_values_do_not_log_errors(caplog) -> None:
+    observed_filter = {
+        'filter': None,
+        'name': None,
+        'wl_min': None,
+        'wl_max': None
+    }
+
+    ld_obj = LimbDarkening(stellar_params)
+
+    with caplog.at_level(logging.ERROR, logger="exotic.api.ld"):
+        assert ld_obj.check_fwhm(observed_filter) == False
+
+    assert "FWHM matching failed" not in caplog.text
 
 def test_invalid_fwhm_range_1() -> None:
     observed_filter = {

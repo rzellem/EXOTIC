@@ -27,7 +27,6 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
-logging.basicConfig(filename='exotic.log', level=logging.DEBUG)
 consoleFormatter = logging.Formatter("%(message)s")
 consoleHandler = logging.StreamHandler(sys.stdout)
 consoleHandler.setFormatter(consoleFormatter)
@@ -211,10 +210,12 @@ class Inputs:
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
+            'use_eebls_to_initialize_tmid_and_bounds': 'y',
             'detect_bad_pixels_before_photometry': 'y',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
             'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0,
+            'pointing_rejection_sigma': 4.0,
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
         }
@@ -438,6 +439,11 @@ class Inputs:
                 'final_fit_baseline_duration_multiplier',
                 'Final Fit Baseline Duration Multiplier',
             ),
+            'use_eebls_to_initialize_tmid_and_bounds': (
+                'use_eebls_to_initialize_tmid_and_bounds',
+                'Use EEBLS to Initialize Tmid and Bounds? (y/n)',
+                'Use EEBLS To Initialize Tmid And Bounds? (y/n)',
+            ),
             'use_impactparameter_rather_than_inclination_to_fit': (
                 'use_impactparameter_rather_than_inclination_to_fit',
                 'Use impact parameter rather than inclination to fit? (y/n)',
@@ -467,6 +473,10 @@ class Inputs:
             'bad_wcs_threshold_percent': (
                 'bad_wcs_threshold_percent',
                 'Bad WCS Threshold Percent',
+            ),
+            'pointing_rejection_sigma': (
+                'pointing_rejection_sigma',
+                'Pointing Rejection Sigma',
             ),
             'pixel_scale': ('Image Scale (Ex: 5.21 arcsecs/pixel)', 'Pixel Scale (Ex: 5.21 arcsecs/pixel)',
                             'Pixel Scale (arsec/pixel)'),

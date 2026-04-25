@@ -336,6 +336,22 @@ def test_get_bad_wcs_threshold_fraction_falls_back_for_invalid_values():
     assert exotic_module.get_bad_wcs_threshold_fraction(101) == pytest.approx(0.03)
 
 
+def test_get_pointing_rejection_sigma_defaults_to_four():
+    assert exotic_module.get_pointing_rejection_sigma(None) == pytest.approx(4.0)
+    assert exotic_module.get_pointing_rejection_sigma("") == pytest.approx(4.0)
+
+
+def test_get_pointing_rejection_sigma_reads_positive_numeric_values():
+    assert exotic_module.get_pointing_rejection_sigma(3) == pytest.approx(3.0)
+    assert exotic_module.get_pointing_rejection_sigma("2.75") == pytest.approx(2.75)
+
+
+def test_get_pointing_rejection_sigma_uses_default_for_invalid_text_and_zero_disables():
+    assert exotic_module.get_pointing_rejection_sigma("not-a-number") == pytest.approx(4.0)
+    assert exotic_module.get_pointing_rejection_sigma(-1) == pytest.approx(4.0)
+    assert exotic_module.get_pointing_rejection_sigma(0) is None
+
+
 def test_display_filename_returns_basename_for_unix_and_windows_paths():
     assert (
         exotic_module._display_filename(
@@ -357,22 +373,52 @@ def test_format_plate_solution_reference_uses_basename_only():
     )
 
 
-def test_log_finding_transformation_progress_prints_basename(monkeypatch):
+def test_log_alignment_progress_prints_basename(monkeypatch):
     stdout = io.StringIO()
     debug_messages = []
 
     monkeypatch.setattr(exotic_module.sys, "stdout", stdout)
     monkeypatch.setattr(exotic_module.log, "debug", lambda message: debug_messages.append(message))
 
-    exotic_module.log_finding_transformation_progress(
+    exotic_module.log_alignment_progress(
         144,
         220,
         "/content/drive/MyDrive/0.Exoplanets/2.Transits/run/frame_145.fits.fz",
         False,
     )
 
-    assert stdout.getvalue() == "Finding transformation 145 of 220 : frame_145.fits.fz\n"
-    assert debug_messages == ["Finding transformation 145 of 220 : frame_145.fits.fz\n"]
+    assert stdout.getvalue() == "Aligning frame 145 of 220 : frame_145.fits.fz\n"
+    assert debug_messages == ["Aligning frame 145 of 220 : frame_145.fits.fz\n"]
+
+
+def test_collect_transform_frame_pointings_logs_alignment_progress(monkeypatch):
+    progress_messages = []
+
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, warn=False, error=False: progress_messages.append((message, warn, error)),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "transformation",
+        lambda image_data, file_name, report_failure=False, reference_image=None: (
+            lambda anchor: np.asarray(anchor, dtype=float)
+        ),
+    )
+
+    frames = ["frame_0001.fits", "frame_0002.fits", "frame_0003.fits"]
+    frame_loader = lambda file_name: np.ones((8, 8), dtype=float)
+
+    positions, usable_mask = exotic_module.collect_transform_frame_pointings(frames, frame_loader=frame_loader)
+
+    assert positions.shape == (3, 2)
+    assert usable_mask.tolist() == [True, True, True]
+    assert [message for message, _, _ in progress_messages] == [
+        "Pointing precheck alignment progress: file 1 of 3 : frame_0001.fits",
+        "Pointing precheck alignment progress: file 2 of 3 : frame_0002.fits",
+        "Pointing precheck alignment progress: file 3 of 3 : frame_0003.fits",
+    ]
 
 
 def test_check_wcs_ignores_header_wcs_when_override_enabled(monkeypatch):
@@ -484,3 +530,160 @@ def test_filter_sparse_missing_wcs_frames_keeps_files_at_three_percent_or_higher
     assert filtered.tolist() == frames
     assert keep_mask.tolist() == [True] * len(frames)
     assert dropped == []
+
+
+def test_filter_pointing_outlier_frames_uses_wcs_when_all_frames_have_wcs(monkeypatch):
+    frames = [f"frame_{i}.fits" for i in range(6)]
+    wcs_positions = np.array(
+        [
+            [100.0, 100.0],
+            [101.0, 100.0],
+            [99.0, 100.0],
+            [100.0, 101.0],
+            [100.0, 99.0],
+            [0.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    monkeypatch.setattr(
+        exotic_module,
+        "collect_wcs_frame_center_pointings",
+        lambda inputfiles: (wcs_positions, np.ones(len(inputfiles), dtype=bool)),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "collect_transform_frame_pointings",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("transform fallback should not be used")),
+    )
+
+    filtered, keep_mask, dropped = exotic_module.filter_pointing_outlier_frames(
+        frames,
+        pointing_rejection_sigma=3.0,
+    )
+
+    assert filtered.tolist() == frames[:-1]
+    assert keep_mask.tolist() == [True, True, True, True, True, False]
+    assert dropped == [frames[-1]]
+
+
+def test_filter_pointing_outlier_frames_falls_back_to_transform_when_wcs_is_incomplete(monkeypatch):
+    frames = [f"frame_{i}.fits" for i in range(6)]
+    transform_positions = np.array(
+        [
+            [50.0, 50.0],
+            [50.5, 49.5],
+            [49.5, 50.5],
+            [50.0, 51.0],
+            [50.0, 49.0],
+            [10.0, 10.0],
+        ],
+        dtype=float,
+    )
+    transform_calls = []
+
+    monkeypatch.setattr(
+        exotic_module,
+        "collect_wcs_frame_center_pointings",
+        lambda inputfiles: (
+            np.full((len(inputfiles), 2), np.nan, dtype=float),
+            np.array([True, True, True, True, False, False], dtype=bool),
+        ),
+    )
+
+    def fake_collect_transform_frame_pointings(inputfiles, frame_loader=None):
+        transform_calls.append((tuple(inputfiles), frame_loader))
+        return transform_positions, np.ones(len(inputfiles), dtype=bool)
+
+    monkeypatch.setattr(exotic_module, "collect_transform_frame_pointings", fake_collect_transform_frame_pointings)
+
+    filtered, keep_mask, dropped = exotic_module.filter_pointing_outlier_frames(
+        frames,
+        pointing_rejection_sigma=3.0,
+    )
+
+    assert len(transform_calls) == 1
+    assert filtered.tolist() == frames[:-1]
+    assert keep_mask.tolist() == [True, True, True, True, True, False]
+    assert dropped == [frames[-1]]
+
+
+def test_abort_if_reference_frame_rejected_reports_error_and_removal_recommendation(monkeypatch):
+    messages = []
+
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, error=False, warn=False: messages.append((message, error, warn)),
+    )
+
+    result = exotic_module.abort_if_reference_frame_rejected(
+        "frame_0001.fits",
+        ["frame_0001.fits", "frame_0002.fits", "frame_0003.fits"],
+        ordered_inputfiles=[
+            "frame_0001.fits",
+            "frame_0002.fits",
+            "frame_0003.fits",
+            "frame_0004.fits",
+        ],
+    )
+
+    assert result is True
+    assert any("first usable image" in message and error for message, error, _ in messages)
+    assert any("frame_0002.fits" in message and error for message, error, _ in messages)
+    assert any(
+        "remove or move these leading rejected frames" in message
+        and "frame_0001.fits, frame_0002.fits, frame_0003.fits" in message
+        and "frame_0004.fits" in message
+        and error
+        for message, error, _ in messages
+    )
+
+
+def test_abort_if_reference_frame_rejected_only_recommends_consecutive_leading_rejections(monkeypatch):
+    messages = []
+
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, error=False, warn=False: messages.append((message, error, warn)),
+    )
+
+    result = exotic_module.abort_if_reference_frame_rejected(
+        "frame_0001.fits",
+        ["frame_0001.fits", "frame_0003.fits"],
+        ordered_inputfiles=[
+            "frame_0001.fits",
+            "frame_0002.fits",
+            "frame_0003.fits",
+            "frame_0004.fits",
+        ],
+    )
+
+    assert result is True
+    assert any(
+        "remove or move this rejected frame" in message
+        and "frame_0001.fits" in message
+        and "frame_0002.fits" in message
+        and "frame_0003.fits" not in message
+        and error
+        for message, error, _ in messages
+    )
+
+
+def test_abort_if_reference_frame_rejected_ignores_non_reference_rejections(monkeypatch):
+    messages = []
+
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, error=False, warn=False: messages.append((message, error, warn)),
+    )
+
+    result = exotic_module.abort_if_reference_frame_rejected(
+        "frame_0001.fits",
+        ["frame_0002.fits", "frame_0003.fits"],
+    )
+
+    assert result is False
+    assert messages == []

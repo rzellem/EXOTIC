@@ -293,7 +293,7 @@ def process_lat_long(val, key):
             v = deg + (((60 * min) + sec) / 3600)
         return add_sign(v)
 
-    m = re.search("^\'?([+-]?\d+\.\d+)", val)
+    m = re.search(r"^'?([+-]?\d+\.\d+)", val)
 
     if m:
         v = float(m.group(1))

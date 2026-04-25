@@ -6,6 +6,7 @@ import json
 
 import numpy as np
 import pytest
+from tenacity import Future, RetryError
 
 fake_barycorrpy = types.ModuleType('barycorrpy')
 fake_utc_tdb = types.ModuleType('barycorrpy.utc_tdb')
@@ -142,6 +143,63 @@ def test_nextastro_variability_logs_json_request_and_response(monkeypatch):
     assert any('NextAstro variability response JSON:' in message for message in logged)
 
 
+def test_nextastro_variability_retries_zstd_415_once_with_gzip(monkeypatch):
+    logged = []
+    encodings = []
+
+    def fake_build_compressed_json_request(payload, content_encoding=None):
+        encoding = content_encoding or 'zstd'
+        body = json.dumps(payload).encode('utf-8')
+        headers = {
+            'Content-Type': 'application/json',
+            'Content-Encoding': encoding,
+        }
+        return body, headers, encoding, len(body), len(body)
+
+    def fake_post(url, data, headers, timeout):
+        encodings.append(headers['Content-Encoding'])
+        if headers['Content-Encoding'] == 'zstd':
+            return DummyResponse(None, status_code=415)
+        return DummyResponse([{'is_in_vsx': 1}])
+
+    monkeypatch.setattr(exotic_module, 'build_compressed_json_request', fake_build_compressed_json_request)
+    monkeypatch.setattr(exotic_module.requests, 'post', fake_post)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+
+    variability_flags = exotic_module.nextastro_variability_test([(10.1, -11.2)])
+
+    assert variability_flags == [True]
+    assert encodings == ['zstd', 'gzip']
+    assert any('rejected zstd-compressed request (HTTP 415)' in message for message in logged)
+
+
+def test_nextastro_variability_caps_retry_attempts_at_five(monkeypatch):
+    attempts = []
+
+    def fake_build_compressed_json_request(payload, content_encoding=None):
+        encoding = content_encoding or 'gzip'
+        body = b'{}'
+        headers = {
+            'Content-Type': 'application/json',
+            'Content-Encoding': encoding,
+        }
+        return body, headers, encoding, len(body), len(body)
+
+    def fake_post(url, data, headers, timeout):
+        attempts.append(headers['Content-Encoding'])
+        return DummyResponse(None, status_code=502)
+
+    monkeypatch.setattr(exotic_module, 'build_compressed_json_request', fake_build_compressed_json_request)
+    monkeypatch.setattr(exotic_module.requests, 'post', fake_post)
+    monkeypatch.setattr(exotic_module.nextastro_variability_test.retry, 'sleep', lambda _: None)
+
+    with pytest.raises(RetryError) as excinfo:
+        exotic_module.nextastro_variability_test([(10.1, -11.2)])
+
+    assert len(attempts) == 5
+    assert excinfo.value.last_attempt.attempt_number == 5
+
+
 def test_check_for_variable_stars_uses_nextastro_flags_to_filter(monkeypatch):
     logged = []
 
@@ -159,6 +217,30 @@ def test_check_for_variable_stars_uses_nextastro_flags_to_filter(monkeypatch):
     assert comp_stars == [[0, 0]]
     assert any('NextAstro flagged variable: False' in message for message in logged)
     assert any('NextAstro flagged variable: True' in message for message in logged)
+
+
+def test_check_for_variable_stars_logs_underlying_nextastro_retry_error(monkeypatch):
+    logged = []
+
+    ra_wcs = np.array([[100.1]])
+    dec_wcs = np.array([[-10.1]])
+    comp_stars = [[0, 0]]
+
+    last_attempt = Future(5)
+    last_attempt.set_exception(RuntimeError('HTTP 502'))
+
+    def raise_retry_error(payload):
+        raise RetryError(last_attempt)
+
+    monkeypatch.setattr(exotic_module, 'nextastro_variability_test', raise_retry_error)
+    monkeypatch.setattr(exotic_module, 'query_variable_star_apis', lambda ra, dec: False)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+
+    exotic_module.check_for_variable_stars(
+        ra_wcs, dec_wcs, comp_stars, use_nextastro_variability_server=True
+    )
+
+    assert any('RetryError after 5 attempts (RuntimeError: HTTP 502)' in message for message in logged)
 
 
 def test_get_wcs_falls_back_to_nextastro_when_nova_fails(monkeypatch):

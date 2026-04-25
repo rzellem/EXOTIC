@@ -129,7 +129,11 @@ def createldgrid(minmu, maxmu, orbp,
     out['LD'] = allcl.T
     out['ERR'] = allel.T
     for i in range(0, len(allcl.T)):
-        log.warning(f">-- LD{int(i)}: {float(allcl.T[i])} +/- {float(allel.T[i])}")
+        ld_value = np.ravel(np.asarray(allcl.T[i], dtype=float))
+        err_value = np.ravel(np.asarray(allel.T[i], dtype=float))
+        if ld_value.size == 0 or err_value.size == 0:
+            continue
+        log.warning(f">-- LD{int(i)}: {float(ld_value[0])} +/- {float(err_value[0])}")
         pass
     return out
 

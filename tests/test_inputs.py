@@ -263,6 +263,21 @@ def test_comp_params_defaults_use_aperture_photometry_to_yes(tmp_path):
     assert inputs.info_dict["use_aperture_photometry"] == "y"
 
 
+def test_comp_params_defaults_fast_aperture_mask_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["fast_aperture_mask"] is False
+
+
 def test_comp_params_defaults_use_adaptive_apertures_to_false(tmp_path):
     init_data = {
         "user_info": {},

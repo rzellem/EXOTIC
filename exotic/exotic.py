@@ -88,7 +88,7 @@ import bottleneck as bn
 import matplotlib.pyplot as plt
 import numpy as np
 # photometry
-from photutils.aperture import CircularAperture
+from photutils.aperture import CircularAperture, CircularAnnulus
 import re
 import requests
 # scipy imports
@@ -754,7 +754,7 @@ def robust_target_reference_flux_mask(target_flux, reference_flux):
 
 def is_fast_aperture_mask_enabled(config_value):
     if config_value is None:
-        return True
+        return False
     if isinstance(config_value, bool):
         return config_value
     if isinstance(config_value, (int, float)):
@@ -766,8 +766,8 @@ def is_fast_aperture_mask_enabled(config_value):
         if normalized in ('n', 'no', 'false', '0', 'exact', 'off'):
             return False
 
-    log_info("Warning: Invalid 'Fast Aperture Mask (y/n)' value; using fast mode.", warn=True)
-    return True
+    log_info("Warning: Invalid 'Fast Aperture Mask (y/n)' value; using exact mode.", warn=True)
+    return False
 
 
 def is_comp_star_required(config_value):
@@ -2444,7 +2444,26 @@ def summarize_adaptive_aperture_usage(psf_rows, aperture_scale, annulus_scale, f
 
     aperture_series = aperture_scale * frame_sigma
     annulus_series = annulus_scale * frame_sigma
-    fwhm_series = 2.355 * frame_sigma
+    fwhm_series = GAUSSIAN_SIGMA_TO_FWHM * frame_sigma
+
+    geometry_rows = [
+        resolve_sky_annulus_geometry(aperture_radius, annulus_width, psf_sigma=sigma)
+        if np.isfinite(aperture_radius) and np.isfinite(annulus_width) and np.isfinite(sigma)
+        else None
+        for aperture_radius, annulus_width, sigma in zip(aperture_series, annulus_series, frame_sigma)
+    ]
+    sky_inner_series = np.array(
+        [np.nan if geometry is None else geometry['inner_radius'] for geometry in geometry_rows],
+        dtype=float,
+    )
+    sky_outer_series = np.array(
+        [np.nan if geometry is None else geometry['outer_radius'] for geometry in geometry_rows],
+        dtype=float,
+    )
+    sky_pixel_series = np.array(
+        [np.nan if geometry is None else geometry['effective_sky_pixels'] for geometry in geometry_rows],
+        dtype=float,
+    )
 
     if not np.any(np.isfinite(aperture_series)) or not np.any(np.isfinite(annulus_series)):
         return None
@@ -2456,6 +2475,9 @@ def summarize_adaptive_aperture_usage(psf_rows, aperture_scale, annulus_scale, f
         'fwhm_series': fwhm_series,
         'aperture_series': aperture_series,
         'annulus_series': annulus_series,
+        'sky_inner_series': sky_inner_series,
+        'sky_outer_series': sky_outer_series,
+        'sky_pixel_series': sky_pixel_series,
         'aperture_median': float(np.nanmedian(aperture_series)),
         'aperture_std': float(np.nanstd(aperture_series)),
         'aperture_min': float(np.nanmin(aperture_series)),
@@ -5026,6 +5048,12 @@ APERTURE_SIGMA_MIN = 1.5
 APERTURE_SIGMA_MAX = 6.0
 ANNULUS_SIGMA_MIN = 6.0
 ANNULUS_SIGMA_MAX = 15.0
+GAUSSIAN_SIGMA_TO_FWHM = 2.355
+SKY_ANNULUS_MIN_GAP_PIXELS = 2.0
+SKY_ANNULUS_MIN_FWHM_MULTIPLIER = 2.0
+SKY_ANNULUS_MIN_EFFECTIVE_PIXELS = 250.0
+SKY_BACKGROUND_SIGMA_CLIP = 3.0
+SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS = 3
 APERTURE_AUTOTUNE_COARSE_APER_POINTS = 5
 APERTURE_AUTOTUNE_COARSE_ANNULUS_POINTS = 4
 APERTURE_AUTOTUNE_REFINED_APER_POINTS = 6
@@ -5384,7 +5412,7 @@ def should_keep_header_wcs_alignment(
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
-def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weightedcenter=True, fast_mode=False):
+def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weightedcenter=False, fast_mode=False):
     stage_start = perf_counter()
     # get sub field in image
     try:
@@ -5450,7 +5478,8 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
                 log.debug(f"Centroid LM fallback failed at {np.round(pos, 2)}: {lm_exc}")
                 return _nan_psf_result()
 
-        # override psf fit results with weighted centroid
+        # Preserve the solved PSF center for subpixel tracking by default.
+        # The weighted-center override remains available as an explicit legacy option.
         if weightedcenter:
             res.x[0] = wx
             res.x[1] = wy
@@ -5487,8 +5516,126 @@ def sigma_clipped_nanmedian(data, sigma=3.0, max_iters=3):
     return bn.nanmedian(clipped), bn.nanstd(clipped)
 
 
+def weighted_nanpercentile(values, weights, percentile):
+    values = np.asarray(values, dtype=float).ravel()
+    weights = np.asarray(weights, dtype=float).ravel()
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0)
+    if not np.any(valid):
+        return np.nan
+
+    values = values[valid]
+    weights = weights[valid]
+    sort_index = np.argsort(values, kind='mergesort')
+    values = values[sort_index]
+    weights = weights[sort_index]
+
+    total_weight = float(np.sum(weights))
+    if not np.isfinite(total_weight) or total_weight <= 0:
+        return np.nan
+
+    if values.size == 1:
+        return float(values[0])
+
+    cumulative = (np.cumsum(weights) - 0.5 * weights) / total_weight
+    target = float(np.clip(percentile, 0.0, 100.0)) / 100.0
+    return float(np.interp(target, cumulative, values, left=values[0], right=values[-1]))
+
+
+def weighted_nanstd(values, weights):
+    values = np.asarray(values, dtype=float).ravel()
+    weights = np.asarray(weights, dtype=float).ravel()
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0)
+    if not np.any(valid):
+        return np.nan
+
+    values = values[valid]
+    weights = weights[valid]
+    total_weight = float(np.sum(weights))
+    if not np.isfinite(total_weight) or total_weight <= 0:
+        return np.nan
+
+    mean = float(np.sum(weights * values) / total_weight)
+    variance = float(np.sum(weights * (values - mean) ** 2) / total_weight)
+    return float(np.sqrt(max(variance, 0.0)))
+
+
+def sigma_clipped_weighted_median(values, weights, sigma=3.0, max_iters=3, high_only=False):
+    values = np.asarray(values, dtype=float).ravel()
+    weights = np.asarray(weights, dtype=float).ravel()
+    keep = np.isfinite(values) & np.isfinite(weights) & (weights > 0)
+    if not np.any(keep):
+        return np.nan, np.nan
+
+    for _ in range(max_iters):
+        center = weighted_nanpercentile(values[keep], weights[keep], 50.0)
+        scatter = weighted_nanstd(values[keep], weights[keep])
+        if not np.isfinite(center):
+            return np.nan, np.nan
+        if not np.isfinite(scatter) or scatter <= 0:
+            break
+
+        if high_only:
+            updated_keep = keep & (values <= center + sigma * scatter)
+        else:
+            updated_keep = keep & (np.abs(values - center) <= sigma * scatter)
+        if np.array_equal(updated_keep, keep):
+            break
+        keep = updated_keep
+
+        if not np.any(keep):
+            return np.nan, np.nan
+
+    return weighted_nanpercentile(values[keep], weights[keep], 50.0), weighted_nanstd(values[keep], weights[keep])
+
+
+def psf_fwhm_from_sigma(sigma):
+    try:
+        sigma = float(sigma)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(sigma) or sigma <= 0:
+        return np.nan
+
+    return float(GAUSSIAN_SIGMA_TO_FWHM * sigma)
+
+
+def resolve_sky_annulus_geometry(
+    aperture_radius,
+    annulus_width,
+    psf_sigma=np.nan,
+    minimum_gap_pixels=SKY_ANNULUS_MIN_GAP_PIXELS,
+    minimum_fwhm_multiplier=SKY_ANNULUS_MIN_FWHM_MULTIPLIER,
+    minimum_sky_pixels=SKY_ANNULUS_MIN_EFFECTIVE_PIXELS,
+):
+    aperture_radius = abs(float(aperture_radius))
+    annulus_width = max(float(annulus_width), 0.0)
+
+    inner_radius = aperture_radius + float(minimum_gap_pixels)
+    fwhm = psf_fwhm_from_sigma(psf_sigma)
+    if np.isfinite(fwhm):
+        inner_radius = max(inner_radius, float(minimum_fwhm_multiplier) * fwhm)
+
+    outer_radius = inner_radius + annulus_width
+    effective_sky_pixels = np.pi * max(outer_radius ** 2 - inner_radius ** 2, 0.0)
+
+    if minimum_sky_pixels is not None and np.isfinite(minimum_sky_pixels) and minimum_sky_pixels > 0:
+        minimum_outer_radius = float(np.sqrt(inner_radius ** 2 + float(minimum_sky_pixels) / np.pi))
+        if minimum_outer_radius > outer_radius:
+            outer_radius = minimum_outer_radius
+            effective_sky_pixels = np.pi * max(outer_radius ** 2 - inner_radius ** 2, 0.0)
+
+    return {
+        'inner_radius': float(inner_radius),
+        'outer_radius': float(outer_radius),
+        'annulus_width': float(max(outer_radius - inner_radius, 0.0)),
+        'effective_sky_pixels': float(effective_sky_pixels),
+        'fwhm': float(fwhm) if np.isfinite(fwhm) else np.nan,
+    }
+
+
 # Method calculates the flux of the star (uses the skybg_phot method to do background sub)
-def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=True):
+def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=False, sigma_hint=np.nan):
     stage_start = perf_counter()
     try:
         # Check for invalid coordinates
@@ -5497,7 +5644,16 @@ def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=True):
 
         # Calculate background if dr > 0
         if dr > 0:
-            bgflux, sigmabg, Nbg = skybg_phot(data, starIndex, xc, yc, r + 2, dr)
+            sky_geometry = resolve_sky_annulus_geometry(r, dr, psf_sigma=sigma_hint)
+            bgflux, sigmabg, Nbg = skybg_phot(
+                data,
+                starIndex,
+                xc,
+                yc,
+                sky_geometry['inner_radius'],
+                sky_geometry['annulus_width'],
+                fast_mode=fast_mode,
+            )
             if not np.isfinite(bgflux):
                 return np.nan, bgflux
         else:
@@ -5521,65 +5677,88 @@ def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=True):
         _record_photometry_stage_timing('aperPhot', perf_counter() - stage_start)
 
 
-def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
-    # create a crude annulus to mask out bright background pixels
-    # the box will not extend beyond the borders of the image
-    image_height, image_width = data.shape
-    xv, yv = mesh_box([xc, yc], np.round(r + dr), maxx=image_width, maxy=image_height)
-    if xv.size == 0 or yv.size == 0:
-        plateStatus.skyBackgroundWarning(starIndex, xc, yc)
-        log.debug(f"Warning: empty sky background box for {xc:.1f}, {yc:.1f}."
-                 f"\nCheck if star is present or close to border.")
-        return np.nan, np.nan, 0
+def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False, fast_mode=False):
+    # The sky annulus uses an inner radius r and an outer radius r + dr.
+    # Callers are responsible for choosing r and dr from the aperture radius and PSF size.
+    annulus = CircularAnnulus(positions=[(xc, yc)], r_in=float(r), r_out=float(r + dr))
+    mask_method = 'center' if fast_mode else 'exact'
+    annulus_mask = annulus.to_mask(method=mask_method)[0]
+    annulus_cutout = annulus_mask.cutout(data, fill_value=np.nan)
 
-    r_inner2 = float(r) ** 2
-    r_outer2 = float(r + dr) ** 2
-    rv2 = (xv - xc) ** 2 + (yv - yc) ** 2
-    mask = (rv2 > r_inner2) & (rv2 < r_outer2)
-    if not np.any(mask):
+    if annulus_cutout is None:
         plateStatus.skyBackgroundWarning(starIndex, xc, yc)
         log.debug(f"Warning: empty sky background annulus for {xc:.1f}, {yc:.1f}."
                  f"\nCheck if star is present or close to border.")
         return np.nan, np.nan, 0
 
-    annulus_pixels = np.asarray(data[yv, xv][mask], dtype=float)
-    if annulus_pixels.size == 0:
+    annulus_cutout = np.asarray(annulus_cutout, dtype=float)
+    annulus_weights = np.asarray(annulus_mask.data, dtype=float)
+    valid_mask = np.isfinite(annulus_cutout) & np.isfinite(annulus_weights) & (annulus_weights > 0)
+    if not np.any(valid_mask):
         plateStatus.skyBackgroundWarning(starIndex, xc, yc)
         log.debug(f"Warning: no valid sky background pixels for {xc:.1f}, {yc:.1f}."
                  f"\nCheck if star is present or close to border.")
         return np.nan, np.nan, 0
 
+    annulus_pixels = annulus_cutout[valid_mask]
+    annulus_pixel_weights = annulus_weights[valid_mask]
+
     try:
-        cutoff = np.nanpercentile(annulus_pixels, ptol)
+        cutoff = weighted_nanpercentile(annulus_pixels, annulus_pixel_weights, ptol)
     except (IndexError, ValueError):
         plateStatus.skyBackgroundWarning(starIndex, xc, yc)
         log.debug(f"Warning: IndexError, problem computing sky bg for {xc:.1f}, {yc:.1f}."
                  f"\nCheck if star is present or close to border.")
         return np.nan, np.nan, 0
 
-    dat = np.array(data[yv, xv], dtype=float)
-    dat[dat > cutoff] = np.nan  # ignore pixels brighter than percentile
+    if not np.isfinite(cutoff):
+        plateStatus.skyBackgroundWarning(starIndex, xc, yc)
+        log.debug(f"Warning: invalid cutoff while computing sky bg for {xc:.1f}, {yc:.1f}.")
+        return np.nan, np.nan, 0
+
+    clipped_keep = annulus_pixels <= cutoff
+    clipped_pixels = annulus_pixels[clipped_keep]
+    clipped_weights = annulus_pixel_weights[clipped_keep]
+    if clipped_pixels.size == 0:
+        plateStatus.skyBackgroundWarning(starIndex, xc, yc)
+        log.debug(f"Warning: percentile clipping removed all sky background pixels for {xc:.1f}, {yc:.1f}.")
+        return np.nan, np.nan, 0
+
+    dat = np.full_like(annulus_cutout, np.nan, dtype=float)
+    dat[valid_mask] = annulus_cutout[valid_mask]
+    dat[valid_mask & (annulus_cutout > cutoff)] = np.nan
 
     if debug:
-        minb = data[yv, xv][mask].min()
-        maxb = data[yv, xv][mask].mean() + 3 * data[yv, xv][mask].std()
-        nanmask = np.nan * np.zeros(mask.shape)
-        nanmask[mask] = 1
-        bgsky = data[yv, xv] * nanmask
-        cmed, _ = sigma_clipped_nanmedian(dat.flatten(), sigma=3.0, max_iters=3)
-        amed, _ = sigma_clipped_nanmedian(bgsky.flatten(), sigma=3.0, max_iters=3)
+        minb = float(np.nanmin(annulus_pixels))
+        maxb = float(np.nanmean(annulus_pixels) + 3 * np.nanstd(annulus_pixels))
+        bgsky = np.full_like(annulus_cutout, np.nan, dtype=float)
+        bgsky[valid_mask] = annulus_cutout[valid_mask]
+        cmed, _ = sigma_clipped_weighted_median(
+            clipped_pixels,
+            clipped_weights,
+            sigma=SKY_BACKGROUND_SIGMA_CLIP,
+            max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS,
+            high_only=True,
+        )
+        amed, _ = sigma_clipped_weighted_median(
+            annulus_pixels,
+            annulus_pixel_weights,
+            sigma=SKY_BACKGROUND_SIGMA_CLIP,
+            max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS,
+            high_only=True,
+        )
 
         fig, ax = plt.subplots(2, 2, figsize=(9, 9))
-        im = ax[0, 0].imshow(data[yv, xv], vmin=minb, vmax=maxb, cmap='inferno')
+        im = ax[0, 0].imshow(annulus_cutout, vmin=minb, vmax=maxb, cmap='inferno')
         ax[0, 0].set_title("Original Data")
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         divider = make_axes_locatable(ax[0, 0])
         cax = divider.append_axes('right', size='5%', pad=0.05)
         fig.colorbar(im, cax=cax, orientation='vertical')
 
-        ax[1, 0].hist(bgsky.flatten(), label=f'Sky Annulus ({np.nanmedian(bgsky):.1f}, {amed:.1f})',
+        ax[1, 0].hist(annulus_pixels, label=f'Sky Annulus ({np.nanmedian(annulus_pixels):.1f}, {amed:.1f})',
                       alpha=0.5, bins=np.arange(minb, maxb))
-        ax[1, 0].hist(dat.flatten(), label=f'Clipped ({np.nanmedian(dat):.1f}, {cmed:.1f})', alpha=0.5,
+        ax[1, 0].hist(clipped_pixels, label=f'Clipped ({np.nanmedian(clipped_pixels):.1f}, {cmed:.1f})', alpha=0.5,
                       bins=np.arange(minb, maxb))
         ax[1, 0].legend(loc='best')
         ax[1, 0].set_title("Sky Background")
@@ -5592,9 +5771,14 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False):
         ax[0, 1].set_title("Sky Annulus")
         plt.tight_layout()
         plt.show()
-    dat_flat = dat.ravel()
-    sky_median, sky_sigma = sigma_clipped_nanmedian(dat_flat, sigma=3.0, max_iters=3)
-    return sky_median, sky_sigma, np.sum(mask)
+    sky_median, sky_sigma = sigma_clipped_weighted_median(
+        clipped_pixels,
+        clipped_weights,
+        sigma=SKY_BACKGROUND_SIGMA_CLIP,
+        max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS,
+        high_only=True,
+    )
+    return sky_median, sky_sigma, float(np.sum(annulus_pixel_weights))
 
 def process_dark_frames(dark_files):
     """Process dark frames and return the master dark."""
@@ -6087,10 +6271,27 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
             aper = float(aper[0])
             annulus = float(annulus[0])
 
-        tFlux = aperPhot(imageData, 0, psf_data['target'][i, 0], psf_data['target'][i, 1], aper, annulus,
-                         fast_mode=fast_aperture_mask)[0]
-        cFlux = aperPhot(imageData, 1, psf_data['comp'][i, 0], psf_data['comp'][i, 1], aper, annulus,
-                         fast_mode=fast_aperture_mask)[0]
+        comp_frame_sigma = psf_sigma_from_fit(psf_data['comp'][i], fallback_sigma=frame_sigma)
+        tFlux = aperPhot(
+            imageData,
+            0,
+            psf_data['target'][i, 0],
+            psf_data['target'][i, 1],
+            aper,
+            annulus,
+            fast_mode=fast_aperture_mask,
+            sigma_hint=frame_sigma,
+        )[0]
+        cFlux = aperPhot(
+            imageData,
+            1,
+            psf_data['comp'][i, 0],
+            psf_data['comp'][i, 1],
+            aper,
+            annulus,
+            fast_mode=fast_aperture_mask,
+            sigma_hint=comp_frame_sigma,
+        )[0]
         norm_flux.append(tFlux / cFlux)
 
         # close file + delete from memory
@@ -7589,7 +7790,7 @@ def initialize_aperture_data_store(frame_count, aperture_count, annulus_count, c
     return aper_data
 
 
-def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=True):
+def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan):
     flux_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
     bg_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
 
@@ -7613,7 +7814,20 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
             stage_start = perf_counter()
             try:
                 if annulus_width > 0:
-                    bgflux, _, _ = skybg_phot(data, star_index, xc, yc, float(aperture_radius) + 2, float(annulus_width))
+                    sky_geometry = resolve_sky_annulus_geometry(
+                        aperture_radius=float(aperture_radius),
+                        annulus_width=float(annulus_width),
+                        psf_sigma=sigma_hint,
+                    )
+                    bgflux, _, _ = skybg_phot(
+                        data,
+                        star_index,
+                        xc,
+                        yc,
+                        sky_geometry['inner_radius'],
+                        sky_geometry['annulus_width'],
+                        fast_mode=fast_mode,
+                    )
                 else:
                     bgflux = 0
 
@@ -7648,12 +7862,14 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         frame_apertures,
         frame_annuli,
         fast_mode=fast_aperture_mask,
+        sigma_hint=frame_sigma,
     )
     aper_data['target'][frame_index] = target_flux
     aper_data['target_bg'][frame_index] = target_bg
 
     for comp_idx in range(comp_star_count):
         ckey = f"comp{comp_idx + 1}"
+        comp_sigma = psf_sigma_from_fit(psf_data[ckey][frame_index], fallback_sigma=frame_sigma)
         comp_flux, comp_bg = compute_star_aperture_grid(
             image_data,
             comp_idx + 1,
@@ -7662,6 +7878,7 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
             frame_apertures,
             frame_annuli,
             fast_mode=fast_aperture_mask,
+            sigma_hint=comp_sigma,
         )
         aper_data[ckey][frame_index] = comp_flux
         aper_data[f"{ckey}_bg"][frame_index] = comp_bg
@@ -9605,11 +9822,22 @@ def main():
                 opt_method = "Aperture"
                 min_aper_fov = float(display_aperture)
                 min_annulus_fov = float(display_annulus)
-            
-            plot_fov(display_aperture, display_annulus, sigma_display,
+
+            fov_aperture = min_aper_fov if opt_method == "PSF" else float(display_aperture)
+            fov_annulus = min_annulus_fov if opt_method == "PSF" else float(display_annulus)
+            fov_sky_geometry = resolve_sky_annulus_geometry(
+                fov_aperture,
+                fov_annulus,
+                psf_sigma=sigma_display,
+            )
+
+            plot_fov(fov_aperture, fov_annulus, sigma_display,
                      centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                      centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
-                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov)
+                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'],
+                     exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov,
+                     sky_inner_radius=fov_sky_geometry['inner_radius'],
+                     sky_outer_radius=fov_sky_geometry['outer_radius'])
 
             plot_centroids(centroid_positions['x_targ'], centroid_positions['y_targ'],
                            centroid_positions['x_ref'], centroid_positions['y_ref'],

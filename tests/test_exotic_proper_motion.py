@@ -33,6 +33,7 @@ fake_colour_demosaicing.demosaicing_CFA_Bayer_bilinear = lambda *args, **kwargs:
 fake_photutils = types.ModuleType("photutils")
 fake_photutils_aperture = types.ModuleType("photutils.aperture")
 fake_photutils_aperture.CircularAperture = type("CircularAperture", (), {})
+fake_photutils_aperture.CircularAnnulus = type("CircularAnnulus", (), {})
 fake_photutils_detection = types.ModuleType("photutils.detection")
 fake_photutils_detection.DAOStarFinder = type("DAOStarFinder", (), {})
 fake_ldtk = types.ModuleType("ldtk")
@@ -113,6 +114,7 @@ from exotic.exotic import (
     phase_bin_sigma_clip,
     prepare_final_fit_lightcurve_series,
     representative_psf_sigma,
+    resolve_sky_annulus_geometry,
     run_target_driven_photometry_search,
     resolve_frame_aperture_radii,
     robust_flux_floor_mask,
@@ -661,6 +663,14 @@ def test_resolve_frame_aperture_radii_scales_sigma_grid():
 
     assert np.allclose(apertures, np.array([3.0, 4.5]))
     assert np.allclose(annuli, np.array([12.0, 15.0]))
+
+
+def test_resolve_sky_annulus_geometry_enforces_fwhm_floor_and_min_sky_pixels():
+    geometry = resolve_sky_annulus_geometry(aperture_radius=1.5, annulus_width=2.0, psf_sigma=1.0)
+
+    assert geometry["inner_radius"] == pytest.approx(2.0 * 2.355)
+    assert geometry["effective_sky_pixels"] == pytest.approx(250.0, abs=1e-9)
+    assert geometry["annulus_width"] > 2.0
 
 
 def test_representative_psf_sigma_uses_valid_frames_and_fallback():

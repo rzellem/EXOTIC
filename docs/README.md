@@ -214,7 +214,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
             "Filter Minimum Wavelength (nm)": null,
             "Filter Maximum Wavelength (nm)": null,
-            "Fast Aperture Mask (y/n)": true,
+            "Fast Aperture Mask (y/n)": false,
             "use_psf_photometry": "y",
             "use_aperture_photometry": "y",
             "detrend_on_outoftransit_baseline": true,

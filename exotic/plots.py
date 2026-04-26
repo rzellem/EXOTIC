@@ -49,7 +49,8 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target_name}_{date}.pdf")
     plt.close()
 
-def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date, opt_method, min_aper_fov, min_annulus_fov):
+def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date,
+             opt_method, min_aper_fov, min_annulus_fov, sky_inner_radius=None, sky_outer_radius=None):
 
     ref_circle, ref_circle_sky = None, None
     picframe = 10. * (aper + 15. * sigma)
@@ -68,13 +69,27 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         # Create the target circles
         # We are using abs(aper) to account for a negative aperture in case EXOTIC is not using a comparison star
+        if sky_inner_radius is None or sky_outer_radius is None:
+            local_sky_inner_radius = abs(aper) + 2.0
+            if np.isfinite(sigma) and sigma > 0:
+                local_sky_inner_radius = max(local_sky_inner_radius, 2.0 * 2.355 * float(sigma))
+            local_sky_outer_radius = max(
+                local_sky_inner_radius + annulus,
+                np.sqrt(local_sky_inner_radius ** 2 + 250.0 / np.pi),
+            )
+        else:
+            local_sky_inner_radius = float(sky_inner_radius)
+            local_sky_outer_radius = float(sky_outer_radius)
+
         target_circle = plt.Circle((x_targ, y_targ), abs(aper), color=outer_circle_color, fill=False, ls='-')
-        target_circle_sky = plt.Circle((x_targ, y_targ), abs(aper) + annulus, color=outer_circle_color, fill=False, ls='-')
+        target_circle_sky_inner = plt.Circle((x_targ, y_targ), local_sky_inner_radius, color=outer_circle_color, fill=False, ls='--')
+        target_circle_sky_outer = plt.Circle((x_targ, y_targ), local_sky_outer_radius, color=outer_circle_color, fill=False, ls='-')
 
         # IF EXOTIC is using a comparison star, create its circles
         if aper >= 0:
             ref_circle = plt.Circle((x_ref, y_ref), aper, color=outer_circle_color, fill=False, ls='-')
-            ref_circle_sky = plt.Circle((x_ref, y_ref), aper + annulus, color=outer_circle_color, fill=False, ls='-')
+            ref_circle_sky_inner = plt.Circle((x_ref, y_ref), local_sky_inner_radius, color=outer_circle_color, fill=False, ls='--')
+            ref_circle_sky = plt.Circle((x_ref, y_ref), local_sky_outer_radius, color=outer_circle_color, fill=False, ls='-')
 
         interval = ZScaleInterval()
         vmin, vmax = interval.get_limits(image)
@@ -85,14 +100,16 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         fig.colorbar(im)
 
         ax.add_artist(target_circle)
-        ax.add_artist(target_circle_sky)
-        ax.text(x_targ + abs(aper) + annulus + 5, y_targ, targ_name, color='w', fontsize=10,
+        ax.add_artist(target_circle_sky_inner)
+        ax.add_artist(target_circle_sky_outer)
+        ax.text(x_targ + local_sky_outer_radius + 5, y_targ, targ_name, color='w', fontsize=10,
                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
         if aper >= 0: #EXOTIC is using a comparison star
             ax.add_artist(ref_circle)
+            ax.add_artist(ref_circle_sky_inner)
             ax.add_artist(ref_circle_sky)
-            ax.text(x_ref + aper + annulus + 5, y_ref, 'Comp Star', color='w', fontsize=10,
+            ax.text(x_ref + local_sky_outer_radius + 5, y_ref, 'Comp Star', color='w', fontsize=10,
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
         handles = []
@@ -387,9 +404,9 @@ def plot_adaptive_aperture_diagnostics(times, aperture_series, annulus_series, f
     axes[0, 0].grid(alpha=0.25)
 
     annulus_mask = valid_time & valid_annulus
-    axes[0, 1].set_title("Annulus Radius vs Time")
+    axes[0, 1].set_title("Annulus Width vs Time")
     axes[0, 1].set_xlabel(f"Time [BJD_TDB-{time_zero:.5f}]")
-    axes[0, 1].set_ylabel("Annulus Radius [px]")
+    axes[0, 1].set_ylabel("Annulus Width [px]")
     if np.any(annulus_mask):
         axes[0, 1].plot(times[annulus_mask] - time_zero, annulus_series[annulus_mask], color='tab:orange',
                         marker='o', ms=3, lw=1.1)

@@ -206,7 +206,7 @@ class Inputs:
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
-            'fast_aperture_mask': True, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
+            'fast_aperture_mask': False, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,

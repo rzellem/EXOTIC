@@ -51,7 +51,7 @@ if not _module_available("pyvo"):
 if not _module_available("photutils"):
     _install_stub_module("photutils")
 if not _module_available("photutils.aperture"):
-    _install_stub_module("photutils.aperture", CircularAperture=object)
+    _install_stub_module("photutils.aperture", CircularAperture=object, CircularAnnulus=object)
 if not _module_available("photutils.detection"):
     _install_stub_module("photutils.detection", DAOStarFinder=_DummyDAOStarFinder)
 if not _module_available("colour_demosaicing"):
@@ -193,6 +193,36 @@ def test_fit_centroid_reports_consistent_background_between_fast_and_full_modes(
     assert full_result[6] == pytest.approx(fast_result[6], abs=1e-8)
 
 
+def test_fit_centroid_full_mode_preserves_psf_subpixel_solution():
+    rng = np.random.default_rng(7)
+    true_center = (40.3, 35.7)
+    image = _gaussian_image(
+        center=true_center,
+        amplitude=120.0,
+        sigma=0.8,
+        background=1000.0,
+    )
+    image += rng.normal(0.0, 20.0, size=image.shape)
+
+    full_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=False)
+    psf_result = exotic_module.fit_centroid(
+        image,
+        [40.0, 36.0],
+        0,
+        fast_mode=False,
+        weightedcenter=False,
+    )
+    moment_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=True)
+
+    assert full_result[0] == pytest.approx(psf_result[0], abs=1e-6)
+    assert full_result[1] == pytest.approx(psf_result[1], abs=1e-6)
+
+    psf_error = np.hypot(psf_result[0] - true_center[0], psf_result[1] - true_center[1])
+    moment_error = np.hypot(moment_result[0] - true_center[0], moment_result[1] - true_center[1])
+
+    assert psf_error < moment_error
+
+
 def test_fit_centroid_or_warn_out_of_frame_skips_centroid_fit(monkeypatch):
     image = np.zeros((40, 50), dtype=float)
     out_of_frame_warnings = []
@@ -218,14 +248,20 @@ def test_skybg_phot_returns_nan_when_annulus_box_is_empty(monkeypatch):
     image = np.zeros((20, 20), dtype=float)
     sky_warnings = []
 
-    monkeypatch.setattr(
-        exotic_module,
-        "mesh_box",
-        lambda *args, **kwargs: (
-            np.empty((0, 0), dtype=int),
-            np.empty((0, 0), dtype=int),
-        ),
-    )
+    class _EmptyAnnulusMask:
+        data = np.empty((0, 0), dtype=float)
+
+        def cutout(self, *args, **kwargs):
+            return None
+
+    class _EmptyCircularAnnulus:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def to_mask(self, *args, **kwargs):
+            return [_EmptyAnnulusMask()]
+
+    monkeypatch.setattr(exotic_module, "CircularAnnulus", _EmptyCircularAnnulus)
     monkeypatch.setattr(
         exotic_module.plateStatus,
         "skyBackgroundWarning",
@@ -238,6 +274,30 @@ def test_skybg_phot_returns_nan_when_annulus_box_is_empty(monkeypatch):
     assert np.isnan(sigmabg)
     assert nbg == 0
     assert sky_warnings == [(0, 30.0, 30.0)]
+
+
+@pytest.mark.skipif(not _module_available("photutils.aperture"), reason="requires photutils aperture masks")
+def test_skybg_phot_exact_annulus_uses_fractional_pixel_area():
+    image = np.ones((80, 80), dtype=float)
+
+    bgflux, sigmabg, nbg = exotic_module.skybg_phot(image, 0, 40.3, 35.7, r=3.0, dr=2.0, fast_mode=False)
+
+    assert bgflux == pytest.approx(1.0, abs=1e-8)
+    assert sigmabg == pytest.approx(0.0, abs=1e-8)
+    assert nbg == pytest.approx(np.pi * ((3.0 + 2.0) ** 2 - 3.0 ** 2), rel=1e-3)
+    assert not np.isclose(nbg, round(nbg), atol=1e-6)
+
+
+@pytest.mark.skipif(not _module_available("photutils.aperture"), reason="requires photutils aperture masks")
+def test_skybg_phot_high_side_clipping_rejects_hot_pixel():
+    image = np.full((80, 80), 100.0, dtype=float)
+    image[40, 55] = 10000.0
+
+    bgflux, sigmabg, nbg = exotic_module.skybg_phot(image, 0, 40.0, 40.0, r=10.0, dr=10.0, fast_mode=False)
+
+    assert bgflux == pytest.approx(100.0, abs=1e-8)
+    assert sigmabg == pytest.approx(0.0, abs=1e-8)
+    assert nbg > 250.0
 
 
 def test_check_target_pixel_wcs_keeps_input_coords_when_wcs_target_is_off_frame(monkeypatch):

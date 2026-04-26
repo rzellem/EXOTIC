@@ -39,6 +39,7 @@ fake_colour_demosaicing.demosaicing_CFA_Bayer_bilinear = lambda *args, **kwargs:
 fake_photutils = types.ModuleType("photutils")
 fake_photutils_aperture = types.ModuleType("photutils.aperture")
 fake_photutils_aperture.CircularAperture = type("CircularAperture", (), {})
+fake_photutils_aperture.CircularAnnulus = type("CircularAnnulus", (), {})
 fake_photutils_detection = types.ModuleType("photutils.detection")
 fake_photutils_detection.DAOStarFinder = type("DAOStarFinder", (), {})
 fake_ldtk = types.ModuleType("ldtk")

@@ -130,6 +130,7 @@ def test_import_exotic_avoids_unused_astroquery_modules():
             fake_photutils = types.ModuleType("photutils")
             fake_photutils_aperture = types.ModuleType("photutils.aperture")
             fake_photutils_aperture.CircularAperture = type("CircularAperture", (), {})
+            fake_photutils_aperture.CircularAnnulus = type("CircularAnnulus", (), {})
             fake_photutils_detection = types.ModuleType("photutils.detection")
             fake_photutils_detection.DAOStarFinder = type("DAOStarFinder", (), {})
             fake_ldtk = types.ModuleType("ldtk")

@@ -183,6 +183,8 @@ RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
 RPRS_SEARCH_BOUND_MAX = 0.30
 RPRS_RETRY_MIN_HALF_WIDTH = 0.05
+INITIAL_RPRS_BOUND_LOWER_SCALE = 0.25
+INITIAL_RPRS_BOUND_UPPER_SCALE = 3.0
 FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER = 0.5
 EEBLS_DURATION_GRID_SIZE = 15
 EEBLS_DURATION_MIN_FRACTION = 0.5
@@ -436,6 +438,29 @@ def annotate_rprs_posterior_refit(fit, applied, note=None, history=None):
         fit.rprs_posterior_refit_std = None
         fit.rprs_posterior_refit_original_bounds = None
         fit.rprs_posterior_refit_bounds = None
+
+
+def build_initial_rprs_bounds(
+    rprs,
+    lower_scale=INITIAL_RPRS_BOUND_LOWER_SCALE,
+    upper_scale=INITIAL_RPRS_BOUND_UPPER_SCALE,
+):
+    try:
+        rprs = float(rprs)
+        lower_scale = float(lower_scale)
+        upper_scale = float(upper_scale)
+    except (TypeError, ValueError):
+        return [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+
+    if not np.isfinite(rprs) or rprs <= 0:
+        return [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+
+    lower_bound = max(RPRS_SEARCH_BOUND_MIN, lower_scale * rprs)
+    upper_bound = upper_scale * rprs
+    if not np.isfinite(upper_bound) or upper_bound <= lower_bound:
+        upper_bound = max(lower_bound + np.finfo(float).eps, rprs)
+
+    return [float(lower_bound), float(upper_bound)]
 
 
 def clone_lightcurve_bounds(bounds):
@@ -6560,7 +6585,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             lower, upper = tmid_search_summary['bounds']
 
     mybounds = {
-        'rprs': [0, prior['rprs'] * 1.25],
+        'rprs': build_initial_rprs_bounds(prior['rprs']),
         'tmid': [lower, upper],
         'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
     }
@@ -10466,7 +10491,7 @@ def main():
             )
 
         mybounds = {
-            'rprs': [0, prior['rprs'] * 1.25],
+            'rprs': build_initial_rprs_bounds(prior['rprs']),
             'tmid': [lower, upper],
             'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
         }

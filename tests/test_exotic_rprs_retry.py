@@ -84,11 +84,23 @@ sys.modules.setdefault("exotic.api.elca", fake_elca)
 sys.modules.setdefault("exotic.api.ld", fake_ld)
 
 from exotic.exotic import (  # noqa: E402
+    INITIAL_RPRS_BOUND_LOWER_SCALE,
+    INITIAL_RPRS_BOUND_UPPER_SCALE,
     RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
     RPRS_SEARCH_BOUND_MAX,
     RPRS_SEARCH_BOUND_MIN,
+    build_initial_rprs_bounds,
     run_nested_lightcurve_fit_with_rprs_posterior_retry,
 )
+
+
+def test_build_initial_rprs_bounds_uses_wider_asymmetric_search_box():
+    bounds = build_initial_rprs_bounds(0.1)
+
+    assert bounds == pytest.approx([
+        INITIAL_RPRS_BOUND_LOWER_SCALE * 0.1,
+        INITIAL_RPRS_BOUND_UPPER_SCALE * 0.1,
+    ])
 
 
 def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):
@@ -166,17 +178,17 @@ def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):
         np.asarray([call["bounds"]["rprs"] for call in captured["calls"]], dtype=float),
         np.asarray([
             [0.0, 0.125],
-            [0.128, 0.188],
-            [0.157, 0.207],
-            [0.174, 0.214],
-            [0.186, 0.216],
-            [0.191, 0.221],
+            [0.108, 0.208],
+            [0.132, 0.232],
+            [0.144, 0.244],
+            [0.151, 0.251],
+            [0.156, 0.256],
         ], dtype=float),
     )
     assert fit.rprs_posterior_refit_applied is True
     assert fit.rprs_posterior_refit_count == 5
     assert fit.rprs_posterior_refit_edge == "upper"
-    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.191, 0.221])
+    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.156, 0.256])
     assert "after 5 retries" in fit.rprs_posterior_refit_note
 
 
@@ -248,10 +260,10 @@ def test_rprs_posterior_retry_caps_retry_bounds_at_exoplanet_limit(monkeypatch):
     assert len(captured["calls"]) == 2
     assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.0, 0.25])
     assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.275)
-    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.175, RPRS_SEARCH_BOUND_MAX])
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.15, RPRS_SEARCH_BOUND_MAX])
     assert fit.rprs_posterior_refit_applied is True
     assert fit.rprs_posterior_refit_count == 1
-    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.175, RPRS_SEARCH_BOUND_MAX])
+    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.15, RPRS_SEARCH_BOUND_MAX])
 
 
 def test_rprs_posterior_retry_stops_at_maximum_exoplanet_range(monkeypatch):

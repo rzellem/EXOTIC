@@ -90,6 +90,9 @@ from exotic.exotic import (
     check_coordinates,
     cheap_lightcurve_prescore,
     centroid_offset_matches_reference,
+    choose_centroid_seed_position,
+    apply_comparison_star_suitability_outlier_rejection,
+    comparison_calibration_selection_reason,
     comparison_candidate_fit_selection_reason,
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
@@ -114,6 +117,7 @@ from exotic.exotic import (
     phase_bin_sigma_clip,
     prepare_final_fit_lightcurve_series,
     representative_psf_sigma,
+    ranked_comparison_calibration_summaries,
     resolve_sky_annulus_geometry,
     run_target_driven_photometry_search,
     resolve_frame_aperture_radii,
@@ -129,6 +133,7 @@ from exotic.exotic import (
     should_fit_lightcurve_to_every_comparison_candidate,
     should_detect_bad_pixels_before_photometry,
     should_use_aperture_photometry,
+    should_pick_comparison_by_eebls_snr,
     should_use_psf_photometry,
     should_skip_low_comparison_coverage_rejection,
     should_use_fast_target_centroid,
@@ -534,6 +539,13 @@ def test_should_use_eebls_to_initialize_tmid_and_bounds_parses_values():
     assert should_use_eebls_to_initialize_tmid_and_bounds(True) is True
 
 
+def test_should_pick_comparison_by_eebls_snr_parses_values():
+    assert should_pick_comparison_by_eebls_snr(None) is True
+    assert should_pick_comparison_by_eebls_snr("y") is True
+    assert should_pick_comparison_by_eebls_snr("n") is False
+    assert should_pick_comparison_by_eebls_snr(True) is True
+
+
 def test_build_time_rejection_diagnostic_groups_contiguous_ranges():
     times = np.array([1.0, 1.1, 1.2, 1.5, 1.6, 2.0], dtype=float)
     keep_mask = np.array([True, False, False, True, False, True], dtype=bool)
@@ -671,6 +683,19 @@ def test_resolve_sky_annulus_geometry_enforces_fwhm_floor_and_min_sky_pixels():
     assert geometry["inner_radius"] == pytest.approx(2.0 * 2.355)
     assert geometry["effective_sky_pixels"] == pytest.approx(250.0, abs=1e-9)
     assert geometry["annulus_width"] > 2.0
+
+
+def test_choose_centroid_seed_position_prefers_previous_fit_for_small_predicted_jumps():
+    seed = choose_centroid_seed_position([100.8, 200.2], previous_psf_row=np.array([100.2, 199.9, 1, 1, 1, 0, 0]))
+    np.testing.assert_allclose(seed, np.array([100.2, 199.9]))
+
+
+def test_choose_centroid_seed_position_falls_back_to_predicted_for_large_jump_or_invalid_previous():
+    seed_far = choose_centroid_seed_position([110.0, 210.0], previous_psf_row=np.array([100.0, 200.0, 1, 1, 1, 0, 0]))
+    seed_nan = choose_centroid_seed_position([110.0, 210.0], previous_psf_row=np.array([np.nan, 200.0, 1, 1, 1, 0, 0]))
+
+    np.testing.assert_allclose(seed_far, np.array([110.0, 210.0]))
+    np.testing.assert_allclose(seed_nan, np.array([110.0, 210.0]))
 
 
 def test_representative_psf_sigma_uses_valid_frames_and_fallback():
@@ -914,6 +939,7 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
             "selected": False,
             "fit": None,
             "res_std": np.inf,
+            "eebls_snr": np.nan,
             "coverage_count": 1,
             "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
@@ -928,6 +954,7 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
             "selected": True,
             "fit": object(),
             "res_std": 0.01,
+            "eebls_snr": 6.5,
             "coverage_count": 3,
             "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
@@ -941,13 +968,20 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
 
     log_comparison_candidate_fit_summaries(
         candidate_fit_summaries,
-        {"selection_basis": "comparison_field", "comp_star_num": 2, "min_std": 0.01},
+        {
+            "selection_basis": "comparison_field",
+            "selection_metric": "eebls_snr",
+            "comp_star_num": 2,
+            "min_std": 0.01,
+            "comparison_eebls_snr": 6.5,
+        },
     )
 
     assert any("Selection basis: comparison-field" in message for message in logged)
+    assert any("Selection metric: EEBLS SNR" in message for message in logged)
     assert any("coverage=1 valid frame(s) out of 3 total; min_required=2; peer_median=3.0" in message for message in logged)
     assert any("Comp 1" in message and "reason=comparison candidate rejected after iterative low-coverage clipping" in message for message in logged)
-    assert any("Comp 2 [selected]" in message and "comparison-field calibration ranked this star best" in message for message in logged)
+    assert any("Comp 2 [selected]" in message and "eebls_snr=6.50" in message and "comparison-field calibration ranked this star best" in message for message in logged)
     assert any("parameters: fit_method=ultranest" in message for message in logged)
 
 
@@ -967,6 +1001,7 @@ def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monke
             "coverage_min_required_count": 2,
             "fit": None,
             "res_std": np.inf,
+            "eebls_snr": np.nan,
             "fit_point_count": 0,
             "fit_diagnostics": {"usable_point_count": 0},
             "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during target/reference ratio screening (non-finite=0, >2x=3, finite ratio range=3.0000 to 3.0000).",
@@ -983,6 +1018,7 @@ def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monke
             "coverage_min_required_count": 2,
             "fit": object(),
             "res_std": 0.01,
+            "eebls_snr": 5.2,
             "fit_point_count": 3,
             "fit_diagnostics": {"usable_point_count": 3},
             "failure_reason": None,
@@ -995,7 +1031,7 @@ def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monke
     assert any("Comparison-star calibration target-fit diagnostics:" in message for message in logged)
     assert any("Photometry method: Aperture photometry (aper=7.05px, annulus=22.73px)" in message for message in logged)
     assert any("Comp 1" in message and "reason=relative-flux filtering left 0 usable point(s)" in message for message in logged)
-    assert any("Comp 2 [selected]" in message and "fit_points=3" in message for message in logged)
+    assert any("Comp 2 [selected]" in message and "eebls_snr=5.20" in message and "fit_points=3" in message for message in logged)
     assert any("parameters: fit_method=ultranest" in message for message in logged)
 
 
@@ -1012,6 +1048,7 @@ def test_log_target_fit_candidate_summaries_includes_methods_and_reasons(monkeyp
             "prescore": 0.005,
             "fit": None,
             "res_std": np.inf,
+            "eebls_snr": np.nan,
             "coverage_count": 3,
             "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
@@ -1051,6 +1088,22 @@ def test_comparison_candidate_fit_selection_reason_describes_comparison_field_re
     assert "fell back to this star" in reason
 
 
+def test_comparison_calibration_selection_reason_reports_suitability_outlier_rejection():
+    reason = comparison_calibration_selection_reason(
+        {
+            "selected": False,
+            "coverage_rejected": False,
+            "aggregate_score": 0.139668,
+            "suitability_outlier_rejected": True,
+            "suitability_high_threshold": 0.0398471675,
+        },
+        best_comp_score=0.021654,
+    )
+
+    assert "rejected by high-side sigma clipping" in reason
+    assert "13.9668%" in reason
+
+
 def test_comparison_star_stability_summary_penalizes_variable_candidates():
     airmass = np.linspace(1.0, 1.5, 6)
     summary = comparison_star_stability_summary(
@@ -1065,6 +1118,86 @@ def test_comparison_star_stability_summary_penalizes_variable_candidates():
     assert np.isfinite(summary["field_score"])
     assert summary["best_comp_index"] in (0, 1)
     assert summary["comp_summaries"][2]["aggregate_score"] > summary["comp_summaries"][0]["aggregate_score"]
+
+
+def test_apply_comparison_star_suitability_outlier_rejection_rejects_high_tail():
+    comp_summaries = [
+        {"label": "Comp 1", "aggregate_score": 0.139668, "coverage_rejected": False},
+        {"label": "Comp 2", "aggregate_score": 0.051809, "coverage_rejected": False},
+        {"label": "Comp 3", "aggregate_score": 0.024802, "coverage_rejected": False},
+        {"label": "Comp 4", "aggregate_score": 0.027680, "coverage_rejected": False},
+        {"label": "Comp 5", "aggregate_score": 0.036997, "coverage_rejected": False},
+        {"label": "Comp 6", "aggregate_score": 0.037970, "coverage_rejected": False},
+        {"label": "Comp 7", "aggregate_score": 0.023458, "coverage_rejected": False},
+        {"label": "Comp 8", "aggregate_score": 0.021654, "coverage_rejected": False},
+        {"label": "Comp 9", "aggregate_score": 0.025084, "coverage_rejected": False},
+        {"label": "Comp 10", "aggregate_score": 0.024918, "coverage_rejected": False},
+    ]
+
+    result = apply_comparison_star_suitability_outlier_rejection(comp_summaries)
+
+    assert result["rejected_indices"] == [0, 1]
+    assert comp_summaries[0]["suitability_outlier_rejected"] is True
+    assert comp_summaries[1]["suitability_outlier_rejected"] is True
+    assert comp_summaries[4]["suitability_outlier_rejected"] is False
+    assert comp_summaries[5]["suitability_outlier_rejected"] is False
+    assert 0.037970 < result["high_threshold"] < 0.051809
+
+
+def test_comparison_star_stability_summary_iterates_after_suitability_outlier_rejection(monkeypatch):
+    monkeypatch.setattr(
+        "exotic.exotic.normalize_flux_series",
+        lambda flux_values, validity_mask_func=None: np.asarray(flux_values, dtype=float),
+    )
+    monkeypatch.setattr(
+        "exotic.exotic.normalized_ratio_series",
+        lambda flux_a, flux_b: np.array([1.0], dtype=float),
+    )
+
+    def fake_build_normalized_comp_ensemble(normalized_flux_map, exclude_key):
+        comp_index = float(exclude_key.replace("comp", ""))
+        return np.array([-float(len(normalized_flux_map)), comp_index], dtype=float)
+
+    def fake_prescore(tflux, cflux, airmass, enforce_relative_flux_max=False):
+        comp_index = int(np.rint(np.asarray(tflux, dtype=float).flat[0]))
+        reference = np.asarray(cflux, dtype=float).reshape(-1)
+        if reference.size == 0:
+            return np.inf
+        if np.allclose(reference, 1.0):
+            return 0.0
+        if reference[0] < 0:
+            active_count = int(np.rint(abs(reference[0])))
+            ensemble_scores = {
+                6: {1: 10.0, 2: 2.5, 3: 1.0, 4: 1.1, 5: 1.2, 6: 1.4},
+                5: {2: 4.0, 3: 1.0, 4: 1.1, 5: 1.2, 6: 1.4},
+                4: {3: 1.0, 4: 1.1, 5: 1.2, 6: 1.4},
+            }
+            return ensemble_scores.get(active_count, {}).get(comp_index, 1.0)
+        return 0.5
+
+    monkeypatch.setattr(
+        "exotic.exotic.build_normalized_comp_ensemble",
+        fake_build_normalized_comp_ensemble,
+    )
+    monkeypatch.setattr("exotic.exotic.cheap_lightcurve_prescore", fake_prescore)
+
+    summary = comparison_star_stability_summary(
+        {
+            "comp1": np.array([1.0], dtype=float),
+            "comp2": np.array([2.0], dtype=float),
+            "comp3": np.array([3.0], dtype=float),
+            "comp4": np.array([4.0], dtype=float),
+            "comp5": np.array([5.0], dtype=float),
+            "comp6": np.array([6.0], dtype=float),
+        },
+        np.array([1.0], dtype=float),
+    )
+
+    assert summary["suitability_outlier_rejected_count"] == 2
+    assert summary["comp_summaries"][0]["suitability_outlier_rejected"] is True
+    assert summary["comp_summaries"][1]["suitability_outlier_rejected"] is True
+    assert summary["comp_summaries"][2]["suitability_outlier_rejected"] is False
+    assert summary["best_comp_index"] == 2
 
 
 def test_comparison_star_coverage_summary_rejects_sparse_candidates():
@@ -2107,6 +2240,116 @@ def test_fit_ranked_comparison_calibration_candidates_selects_lowest_residual_su
     assert result["attempts"][0]["selection_reason"].startswith("not selected: target-fit residual scatter")
 
 
+def test_ranked_comparison_calibration_summaries_skip_suitability_outliers():
+    ranked = ranked_comparison_calibration_summaries(
+        {
+            "comp_summaries": [
+                {"comp_index": 0, "aggregate_score": 0.139668, "coverage_rejected": False, "suitability_outlier_rejected": True},
+                {"comp_index": 1, "aggregate_score": 0.051809, "coverage_rejected": False, "suitability_outlier_rejected": True},
+                {"comp_index": 2, "aggregate_score": 0.024802, "coverage_rejected": False, "suitability_outlier_rejected": False},
+                {"comp_index": 3, "aggregate_score": 0.027680, "coverage_rejected": False, "suitability_outlier_rejected": False},
+            ]
+        }
+    )
+
+    assert [summary["comp_index"] for summary in ranked] == [2, 3]
+
+
+def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_snr(monkeypatch):
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    def fake_fit_lightcurve(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        comp_marker = int(np.nanmedian(cflux))
+        if comp_marker == 50:
+            residual_level = 0.01
+            eebls_snr = 4.0
+        else:
+            residual_level = 0.02
+            eebls_snr = 7.5
+
+        residuals = residual_level * np.array([-1.0, 1.0, -1.0, 1.0, -1.0, 1.0], dtype=float)
+        fit = types.SimpleNamespace(
+            residuals=residuals,
+            data=np.ones_like(residuals),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            eebls_diagnostic_depth_snr=eebls_snr,
+        )
+        return fit, np.asarray(tflux, dtype=float), np.asarray(cflux, dtype=float)
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0}
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+        "comp2": np.full((6, 1, 1), 40.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {
+                "label": "Comp 1",
+                "position": (10.0, 10.0),
+                "aggregate_score": 0.01,
+                "coverage_count": 6,
+                "coverage_total_frame_count": 6,
+                "coverage_reference_count": 6.0,
+                "coverage_min_required_count": 5,
+                "coverage_rejected": False,
+                "comp_index": 0,
+            },
+            {
+                "label": "Comp 2",
+                "position": (20.0, 20.0),
+                "aggregate_score": 0.02,
+                "coverage_count": 6,
+                "coverage_total_frame_count": 6,
+                "coverage_reference_count": 6.0,
+                "coverage_min_required_count": 5,
+                "coverage_rejected": False,
+                "comp_index": 1,
+            },
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld,
+        p_dict,
+        comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+        pick_comparison_by_eebls_snr=True,
+    )
+
+    assert result["selection_metric"] == "eebls_snr"
+    assert result["selected_result"]["comp_index"] == 1
+    assert result["selected_result"]["eebls_snr"] == pytest.approx(7.5)
+    assert "highest EEBLS SNR" in result["selected_result"]["selection_reason"]
+    assert result["attempts"][0]["selection_reason"].startswith("not selected: EEBLS SNR")
+
+
 def test_fit_lightcurve_refines_nested_tmid_bounds_from_two_sided_lm_fit(monkeypatch):
     captured_calls = []
 
@@ -2338,6 +2581,87 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
     assert result["best_candidate"]["method"] == "aperture"
     assert result["best_candidate"]["comp_index"] == 0
     assert result["min_std"] == pytest.approx(0.01)
+
+
+def test_run_target_driven_photometry_search_can_prefer_highest_eebls_snr(monkeypatch):
+    class DummyFit:
+        def __init__(self, residual_level, eebls_snr):
+            self.residuals = np.full(6, residual_level)
+            self.data = np.ones(6)
+            self.eebls_diagnostic_depth_snr = eebls_snr
+
+    def fake_evaluate(task):
+        _, tflux, cflux, *_ = task
+        cflux = np.asarray(cflux, dtype=float)
+        tflux = np.asarray(tflux, dtype=float)
+        if np.allclose(cflux, 20.0):
+            return {"myfit": DummyFit(0.01, 4.0), "res_std": 0.01, "eebls_snr": 4.0}, tflux, cflux
+        if np.allclose(cflux, 40.0):
+            return {"myfit": DummyFit(0.02, 9.0), "res_std": 0.02, "eebls_snr": 9.0}, tflux, cflux
+        raise AssertionError("Unexpected candidate flux passed to evaluator.")
+
+    monkeypatch.setattr("exotic.exotic.evaluate_lightcurve_candidate", fake_evaluate)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+    psf_target_amp = 20.0 / (2.0 * np.pi)
+    psf_comp_amp = 20.0 / (2.0 * np.pi)
+    psf_data = {
+        "target": np.column_stack([
+            np.zeros(6),
+            np.zeros(6),
+            np.full(6, psf_target_amp),
+            np.ones(6),
+            np.ones(6),
+        ]),
+        "comp1": np.column_stack([
+            np.ones(6),
+            np.ones(6),
+            np.full(6, psf_comp_amp),
+            np.ones(6),
+            np.ones(6),
+        ]),
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 40.0),
+        "comp1": np.full((6, 1, 1), 40.0),
+    }
+
+    result = run_target_driven_photometry_search(
+        times,
+        jd_times,
+        airmass,
+        ld,
+        p_dict,
+        comp_stars=[[100.0, 200.0]],
+        psf_data=psf_data,
+        aper_data=aper_data,
+        apers=np.array([5.0]),
+        annuli=np.array([12.0]),
+        sigma=1.0,
+        require_comp_star=True,
+        use_psf_photometry=True,
+        use_aperture_photometry=True,
+        pick_comparison_by_eebls_snr=True,
+    )
+
+    assert result["selection_metric"] == "eebls_snr"
+    assert result["best_candidate"]["method"] == "aperture"
+    assert result["selected_eebls_snr"] == pytest.approx(9.0)
+    assert result["min_std"] == pytest.approx(0.02)
 
 
 def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidate(monkeypatch):

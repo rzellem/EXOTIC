@@ -168,6 +168,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "detrend_on_outoftransit_baseline": true,
             "final_fit_baseline_duration_multiplier": 1.0,
             "use_eebls_to_initialize_tmid_and_bounds": "y",
+            "pick_comparison_by_eebls_snr": "y",
             "use_impactparameter_rather_than_inclination_to_fit": "y",
             "Use target-driven comp selection rather than comp-driven comp selection": "n",
             "require_comp_star": "y",

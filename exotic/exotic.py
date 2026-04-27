@@ -174,6 +174,9 @@ COMPARISON_STAR_MIN_COVERAGE_FRACTION = 0.8
 COMPARISON_STAR_MIN_VALID_FRAMES = 5
 COMPARISON_STAR_COVERAGE_SIGMA = 3.0
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
+COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA = 4.25
+COMPARISON_STAR_SUITABILITY_MIN_CANDIDATES = 5
+COMPARISON_STAR_SUITABILITY_MAX_ITERS = 10
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
@@ -844,6 +847,28 @@ def should_fit_lightcurve_to_every_comparison_candidate(config_value):
     return False
 
 
+def should_pick_comparison_by_eebls_snr(config_value):
+    if config_value is None:
+        return True
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'pick_comparison_by_eebls_snr' value; "
+        "keeping EEBLS SNR comparison selection enabled.",
+        warn=True,
+    )
+    return True
+
+
 def should_use_psf_photometry(config_value):
     if config_value is None:
         return True
@@ -1403,6 +1428,52 @@ def estimate_tmid_and_bounds_with_eebls(times, flux_values, flux_errors, prior, 
         ),
     })
     return summary
+
+
+def annotate_lightcurve_tmid_search(fit, summary):
+    if fit is None:
+        return
+
+    fit.initial_tmid_search_method = summary.get('method')
+    fit.initial_tmid_search_applied = bool(summary.get('applied'))
+    fit.initial_tmid_search_tmid = summary.get('tmid')
+    fit.initial_tmid_search_bounds = summary.get('bounds')
+    fit.initial_tmid_search_duration = summary.get('duration')
+    fit.initial_tmid_search_depth = summary.get('depth')
+    fit.initial_tmid_search_depth_snr = summary.get('depth_snr')
+    fit.initial_tmid_search_note = summary.get('note')
+
+
+def annotate_lightcurve_eebls_diagnostic(fit, summary):
+    if fit is None:
+        return
+
+    summary = {} if summary is None else dict(summary)
+    fit.eebls_diagnostic_computed = bool(summary)
+    fit.eebls_diagnostic_method = summary.get('method')
+    fit.eebls_diagnostic_applied = bool(summary.get('applied'))
+    fit.eebls_diagnostic_tmid = summary.get('tmid')
+    fit.eebls_diagnostic_bounds = summary.get('bounds')
+    fit.eebls_diagnostic_duration = summary.get('duration')
+    fit.eebls_diagnostic_depth = summary.get('depth')
+    fit.eebls_diagnostic_depth_snr = summary.get('depth_snr')
+    fit.eebls_diagnostic_note = summary.get('note')
+
+
+def extract_lightcurve_fit_eebls_snr(fit):
+    if fit is None:
+        return np.nan
+
+    for attr_name in ('eebls_diagnostic_depth_snr', 'initial_tmid_search_depth_snr'):
+        value = getattr(fit, attr_name, np.nan)
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(numeric_value):
+            return numeric_value
+
+    return np.nan
 
 
 def should_use_impactparameter_rather_than_inclination_to_fit(config_value):
@@ -5308,6 +5379,21 @@ def centroid_position_is_finite(psf_row):
     return bool(np.all(np.isfinite(coords)))
 
 
+def choose_centroid_seed_position(predicted_pos, previous_psf_row=None, max_offset_pixels=5.0):
+    predicted = np.asarray(predicted_pos, dtype=float).reshape(-1)
+    if predicted.size < 2 or not np.all(np.isfinite(predicted[:2])):
+        return np.array([np.nan, np.nan], dtype=float)
+
+    if not centroid_position_is_finite(previous_psf_row):
+        return np.array(predicted[:2], dtype=float)
+
+    previous = np.asarray(previous_psf_row[:2], dtype=float)
+    if np.hypot(*(previous - predicted[:2])) > float(max_offset_pixels):
+        return np.array(predicted[:2], dtype=float)
+
+    return previous.astype(float, copy=True)
+
+
 def centroid_offset_matches_reference(psf_a, psf_b, expected_dx, expected_dy,
                                       tolerance=WCS_REFERENCE_GEOMETRY_TOLERANCE_PIXELS):
     if not centroid_position_is_finite(psf_a) or not centroid_position_is_finite(psf_b):
@@ -6175,16 +6261,24 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 
                 projected_coords = np.array([[tx, ty], [cx, cy]], dtype=float)
                 projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
+                target_seed = choose_centroid_seed_position(
+                    [tx, ty],
+                    None if i == 0 else psf_data['target'][i - 1],
+                )
+                comp_seed = choose_centroid_seed_position(
+                    [cx, cy],
+                    None if i == 0 else psf_data['comp'][i - 1],
+                )
 
                 psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
                     imageData,
-                    [tx, ty],
+                    target_seed,
                     0,
                     fast_mode=target_fast_centroid,
                 )
                 psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
                     imageData,
-                    [cx, cy],
+                    comp_seed,
                     1,
                     fast_mode=frame_fast_centroid,
                 )
@@ -6223,17 +6317,25 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 dtype=float,
             )
             tx, ty = transformed_coords[0]
+            target_seed = choose_centroid_seed_position(
+                [tx, ty],
+                None if i == 0 else psf_data['target'][i - 1],
+            )
             psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
                 imageData,
-                [tx, ty],
+                target_seed,
                 0,
                 fast_mode=target_fast_centroid,
             )
 
             cx, cy = transformed_coords[1]
+            comp_seed = choose_centroid_seed_position(
+                [cx, cy],
+                None if i == 0 else psf_data['comp'][i - 1],
+            )
             psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
                 imageData,
-                [cx, cy],
+                comp_seed,
                 1,
                 fast_mode=frame_fast_centroid,
             )
@@ -6316,7 +6418,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    final_fit_mode='lm',
                    use_impactparameter_rather_than_inclination_to_fit=True,
                    plot_time_range=None,
-                   use_eebls_to_initialize_tmid_and_bounds=True):
+                   use_eebls_to_initialize_tmid_and_bounds=True,
+                   compute_eebls_diagnostics=False):
     # remove outliers
     plot_time_range = np.asarray(times if plot_time_range is None else plot_time_range, dtype=float)
     si = np.argsort(times)
@@ -6442,15 +6545,17 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
 
     if tmid_search_summary.get('duration_capped'):
         log_info(tmid_search_summary['note'])
-    if use_eebls_to_initialize_tmid_and_bounds:
-        tmid_search_summary = estimate_tmid_and_bounds_with_eebls(
+    eebls_search_summary = None
+    if use_eebls_to_initialize_tmid_and_bounds or compute_eebls_diagnostics:
+        eebls_search_summary = estimate_tmid_and_bounds_with_eebls(
             arrayTimes,
             arrayFinalFlux,
             arrayNormUnc,
             prior,
             [lower, upper],
         )
-        if tmid_search_summary.get('applied'):
+        if use_eebls_to_initialize_tmid_and_bounds and eebls_search_summary.get('applied'):
+            tmid_search_summary = eebls_search_summary
             prior['tmid'] = tmid_search_summary['tmid']
             lower, upper = tmid_search_summary['bounds']
 
@@ -6488,12 +6593,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     myfit = apply_plot_time_range(myfit, plot_time_range)
     annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
     annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
-    if myfit is not None:
-        myfit.initial_tmid_search_method = tmid_search_summary.get('method')
-        myfit.initial_tmid_search_applied = bool(tmid_search_summary.get('applied'))
-        myfit.initial_tmid_search_tmid = tmid_search_summary.get('tmid')
-        myfit.initial_tmid_search_bounds = tmid_search_summary.get('bounds')
-        myfit.initial_tmid_search_note = tmid_search_summary.get('note')
+    annotate_lightcurve_tmid_search(myfit, tmid_search_summary)
+    annotate_lightcurve_eebls_diagnostic(myfit, eebls_search_summary)
 
     if (
         myfit is not None
@@ -6533,12 +6634,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             myfit = apply_plot_time_range(myfit, plot_time_range)
             annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
             annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
-            if myfit is not None:
-                myfit.initial_tmid_search_method = tmid_search_summary.get('method')
-                myfit.initial_tmid_search_applied = bool(tmid_search_summary.get('applied'))
-                myfit.initial_tmid_search_tmid = tmid_search_summary.get('tmid')
-                myfit.initial_tmid_search_bounds = tmid_search_summary.get('bounds')
-                myfit.initial_tmid_search_note = tmid_search_summary.get('note')
+            annotate_lightcurve_tmid_search(myfit, tmid_search_summary)
+            annotate_lightcurve_eebls_diagnostic(myfit, eebls_search_summary)
 
     debug_phase_clip_keep_mask = np.ones(np.count_nonzero(debug_initial_sigma_keep_mask), dtype=bool)
     if final_fit_mode == 'ns' and myfit is not None:
@@ -6564,11 +6661,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
         annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
         if myfit is not None:
-            myfit.initial_tmid_search_method = tmid_search_summary.get('method')
-            myfit.initial_tmid_search_applied = bool(tmid_search_summary.get('applied'))
-            myfit.initial_tmid_search_tmid = tmid_search_summary.get('tmid')
-            myfit.initial_tmid_search_bounds = tmid_search_summary.get('bounds')
-            myfit.initial_tmid_search_note = tmid_search_summary.get('note')
+            annotate_lightcurve_tmid_search(myfit, tmid_search_summary)
+            annotate_lightcurve_eebls_diagnostic(myfit, eebls_search_summary)
             annotate_nested_tmid_refinement(
                 myfit,
                 nested_refinement.get('applied', False),
@@ -6789,6 +6883,7 @@ def evaluate_lightcurve_candidate(task):
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
         use_eebls_to_initialize_tmid_and_bounds,
+        compute_eebls_diagnostics,
     ) = task
     fit_diagnostics = diagnose_lightcurve_fit_inputs(
         times,
@@ -6810,6 +6905,7 @@ def evaluate_lightcurve_candidate(task):
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         plot_time_range=plot_time_range,
         use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+        compute_eebls_diagnostics=compute_eebls_diagnostics,
     )
     fit_diagnostics = ensure_lightcurve_fit_failure_reason(
         fit_diagnostics,
@@ -6824,6 +6920,7 @@ def evaluate_lightcurve_candidate(task):
     return {
         'myfit': myfit,
         'res_std': res_std,
+        'eebls_snr': extract_lightcurve_fit_eebls_snr(myfit),
         'fit_diagnostics': fit_diagnostics,
         'failure_reason': fit_diagnostics.get('failure_reason'),
         'fit_point_count': 0 if tflux_fit is None else int(len(tflux_fit)),
@@ -6962,7 +7059,8 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
                               plot_time_range=None,
                               disable_vertical_flux_normalization=False,
                               use_impactparameter_rather_than_inclination_to_fit=True,
-                              use_eebls_to_initialize_tmid_and_bounds=True):
+                              use_eebls_to_initialize_tmid_and_bounds=True,
+                              compute_eebls_diagnostics=True):
     candidate_mask = np.asarray(candidate['mask'], dtype=bool)
 
     if candidate['method'] == 'psf':
@@ -6994,6 +7092,7 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
         disable_vertical_flux_normalization,
         use_impactparameter_rather_than_inclination_to_fit,
         use_eebls_to_initialize_tmid_and_bounds,
+        compute_eebls_diagnostics,
     )
 
 
@@ -7007,7 +7106,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
                                         use_aperture_photometry=True,
                                         multiprocess_lightcurve_fits=None,
                                         use_impactparameter_rather_than_inclination_to_fit=True,
-                                        use_eebls_to_initialize_tmid_and_bounds=True):
+                                        use_eebls_to_initialize_tmid_and_bounds=True,
+                                        pick_comparison_by_eebls_snr=True):
     candidate_jobs = build_target_fit_candidate_jobs(
         psf_data,
         aper_data,
@@ -7030,6 +7130,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             'best_candidate': None,
             'best_fit_lc': None,
             'min_std': np.inf,
+            'selection_metric': 'residual_scatter',
+            'selected_eebls_snr': np.nan,
             'flux_tar': None,
             'flux_ref': None,
         }
@@ -7048,6 +7150,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+            compute_eebls_diagnostics=True,
         )
         for candidate in shortlist
     ]
@@ -7059,27 +7162,56 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
     else:
         fit_results = [evaluate_lightcurve_candidate(task) for task in fit_tasks]
 
+    candidate_summaries = []
+    successful_candidates = []
+    for candidate, result in zip(shortlist, fit_results):
+        fit_meta, tflux_fit, cflux_fit = result
+        summary = summarize_target_fit_candidate(candidate, fit_meta, comp_stars)
+        candidate_summaries.append(summary)
+
+        if fit_meta is None or fit_meta.get('myfit') is None:
+            continue
+        successful_candidates.append((summary, candidate, fit_meta, tflux_fit, cflux_fit))
+
     best_candidate = None
     best_fit_lc = None
     best_res_std = np.inf
     best_tflux = None
     best_cflux = None
-    candidate_summaries = []
-    for candidate, result in zip(shortlist, fit_results):
-        fit_meta, tflux_fit, cflux_fit = result
-        candidate_summaries.append(summarize_target_fit_candidate(candidate, fit_meta, comp_stars))
+    selection_metric = 'residual_scatter'
+    selected_eebls_snr = np.nan
+    if successful_candidates:
+        if pick_comparison_by_eebls_snr and any(
+            np.isfinite(summary.get('eebls_snr', np.nan))
+            for summary, _, _, _, _ in successful_candidates
+        ):
+            selection_metric = 'eebls_snr'
+            selected_entry = min(
+                successful_candidates,
+                key=lambda item: (
+                    0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
+                    -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
+                    item[0].get('res_std', np.inf),
+                    item[0].get('prescore', np.inf),
+                    item[0].get('comp_index', np.inf),
+                ),
+            )
+        else:
+            selected_entry = min(
+                successful_candidates,
+                key=lambda item: (
+                    item[0].get('res_std', np.inf),
+                    0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
+                    -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
+                    item[0].get('prescore', np.inf),
+                    item[0].get('comp_index', np.inf),
+                ),
+            )
 
-        if fit_meta is None or fit_meta.get('myfit') is None:
-            continue
-
-        if fit_meta['res_std'] < best_res_std:
-            best_candidate = candidate
-            best_fit_lc = fit_meta['myfit']
-            best_res_std = fit_meta['res_std']
-            best_tflux = tflux_fit
-            best_cflux = cflux_fit
-
-    if best_candidate is not None:
+        selected_summary, best_candidate, fit_meta, best_tflux, best_cflux = selected_entry
+        best_fit_lc = fit_meta['myfit']
+        best_res_std = selected_summary.get('res_std', np.inf)
+        selected_eebls_snr = selected_summary.get('eebls_snr', np.nan)
         best_identity = target_fit_candidate_identity(best_candidate)
         for summary in candidate_summaries:
             summary['selected'] = target_fit_candidate_identity(summary) == best_identity
@@ -7091,6 +7223,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         'best_candidate': best_candidate,
         'best_fit_lc': best_fit_lc,
         'min_std': best_res_std,
+        'selection_metric': selection_metric,
+        'selected_eebls_snr': selected_eebls_snr,
         'flux_tar': best_tflux,
         'flux_ref': best_cflux,
     }
@@ -7175,6 +7309,24 @@ def format_comp_star_coverage_text(summary):
     return coverage_text
 
 
+def format_eebls_snr(value):
+    if value is None:
+        return "n/a"
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+
+    return "n/a" if not np.isfinite(numeric_value) else f"{numeric_value:.2f}"
+
+
+def comparison_selection_metric_label(selection_metric):
+    if selection_metric == 'eebls_snr':
+        return "EEBLS SNR"
+    return "target-fit residual scatter"
+
+
 def target_fit_candidate_identity(candidate):
     return (
         candidate.get('method'),
@@ -7202,6 +7354,7 @@ def summarize_target_fit_candidate(candidate, fit_meta, comp_stars):
         'coverage_min_required_count': candidate.get('coverage_min_required_count', 0),
         'coverage_rejected': candidate.get('coverage_rejected', False),
         'fit_point_count': fit_meta.get('fit_point_count', 0),
+        'eebls_snr': fit_meta.get('eebls_snr', np.nan),
         'fit_diagnostics': fit_meta.get('fit_diagnostics') or {},
         'failure_reason': fit_meta.get('failure_reason'),
         'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
@@ -7230,6 +7383,7 @@ def log_comparison_calibration_fit_attempt_summaries(attempts, method_label):
         residual_text = "n/a"
         if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
             residual_text = f"{attempt['res_std'] * 100.0:.4f}%"
+        eebls_text = format_eebls_snr(attempt.get('eebls_snr', np.nan))
         reason_text = attempt.get('selection_reason') or attempt.get(
             'failure_reason',
             "selected: lowest target-fit residual scatter among the evaluated comparison stars",
@@ -7238,7 +7392,7 @@ def log_comparison_calibration_fit_attempt_summaries(attempts, method_label):
             f"  {attempt['label']}{selected_label} ({position_text}): "
             f"suitability={suitability_text}, coverage={coverage_text}, "
             f"usable_after_filters={usable_point_count}, fit_points={attempt.get('fit_point_count', 0)}, "
-            f"residual_scatter={residual_text}, reason={reason_text}"
+            f"eebls_snr={eebls_text}, residual_scatter={residual_text}, reason={reason_text}"
         )
         parameter_summary = attempt.get('parameter_summary')
         if parameter_summary:
@@ -7263,6 +7417,7 @@ def log_target_fit_candidate_summaries(candidate_summaries, max_entries=10):
         residual_text = "n/a"
         if summary.get('fit') is not None and np.isfinite(summary.get('res_std', np.inf)):
             residual_text = f"{summary['res_std'] * 100.0:.4f}%"
+        eebls_text = format_eebls_snr(summary.get('eebls_snr', np.nan))
         reason_text = summary.get(
             'failure_reason',
             "selected: lowest target-fit residual scatter in the evaluated shortlist",
@@ -7271,7 +7426,7 @@ def log_target_fit_candidate_summaries(candidate_summaries, max_entries=10):
             f"  {summary['label']}{selected_label} ({position_text}) with {summary['method_label']}: "
             f"prescore={prescore_text}, coverage={coverage_text}, "
             f"usable_after_filters={usable_point_count}, fit_points={summary.get('fit_point_count', 0)}, "
-            f"residual_scatter={residual_text}, reason={reason_text}"
+            f"eebls_snr={eebls_text}, residual_scatter={residual_text}, reason={reason_text}"
         )
         parameter_summary = summary.get('parameter_summary')
         if parameter_summary:
@@ -7286,13 +7441,22 @@ def log_target_fit_candidate_summaries(candidate_summaries, max_entries=10):
 
 def comparison_calibration_selection_reason(summary, best_comp_score):
     if summary.get('selected'):
-        return "selected: lowest suitability score among coverage-qualified comparison stars for this method"
+        return "selected: lowest suitability score among coverage-qualified, sigma-clip-qualified comparison stars for this method"
 
     if summary.get('coverage_rejected'):
         return (
             "not selected: low coverage "
             f"({summary['coverage_count']} < {summary['coverage_min_required_count']} valid frames)"
         )
+
+    if summary.get('suitability_outlier_rejected'):
+        threshold = summary.get('suitability_high_threshold', np.nan)
+        if np.isfinite(threshold):
+            return (
+                "not selected: suitability score was rejected by high-side sigma clipping "
+                f"({summary['aggregate_score'] * 100.0:.4f}% > {threshold * 100.0:.4f}%)"
+            )
+        return "not selected: suitability score was rejected by high-side sigma clipping"
 
     aggregate_score = summary.get('aggregate_score', np.inf)
     if not np.isfinite(aggregate_score):
@@ -7314,9 +7478,12 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
         return summary['failure_reason']
 
     selection_basis = photometry_info.get('selection_basis', 'target_fit')
+    selection_metric = photometry_info.get('selection_metric', 'residual_scatter')
     selected_comp_num = photometry_info.get('comp_star_num')
     selected_res_std = photometry_info.get('min_std', np.inf)
     candidate_res_std = summary.get('res_std', np.inf)
+    selected_eebls_snr = photometry_info.get('comparison_eebls_snr', np.nan)
+    candidate_eebls_snr = summary.get('eebls_snr', np.nan)
 
     if summary.get('selected'):
         if selection_basis == 'comparison_field':
@@ -7326,6 +7493,8 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
                 "selected: comparison-field calibration fell back to this star "
                 "after better-ranked candidates failed target fitting"
             )
+        if selection_metric == 'eebls_snr' and np.isfinite(candidate_eebls_snr):
+            return "selected: highest EEBLS SNR in the chosen search"
         return "selected: lowest target-fit residual scatter in the chosen search"
 
     if selection_basis == 'comparison_field':
@@ -7339,6 +7508,20 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
             "not selected: comparison-field fallback chose "
             f"Comp {selected_comp_num} after better-ranked candidate(s) failed target fitting"
         )
+
+    if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
+        if not np.isfinite(candidate_eebls_snr):
+            return "not selected: no finite EEBLS SNR was available for this candidate"
+        if candidate_eebls_snr < selected_eebls_snr - 1e-12:
+            return (
+                "not selected: EEBLS SNR was "
+                f"{candidate_eebls_snr:.2f} vs {selected_eebls_snr:.2f} for the selected fit"
+            )
+        if candidate_eebls_snr > selected_eebls_snr + 1e-12:
+            return (
+                "not selected: this post-selection diagnostic fit has a stronger "
+                "EEBLS box signal than the selected fit; the earlier search did not choose it"
+            )
 
     if np.isfinite(candidate_res_std) and np.isfinite(selected_res_std):
         if candidate_res_std > selected_res_std + 1e-12:
@@ -7412,6 +7595,10 @@ def log_comparison_candidate_fit_summaries(candidate_fit_summaries, photometry_i
     selection_basis = photometry_info.get('selection_basis', 'target_fit').replace('_', '-')
     log_info("\nComparison-star lightcurve fit diagnostics:")
     log_info(f"Selection basis: {selection_basis}")
+    log_info(
+        "Selection metric: "
+        f"{comparison_selection_metric_label(photometry_info.get('selection_metric', 'residual_scatter'))}"
+    )
 
     for summary in candidate_fit_summaries:
         selected_label = " [selected]" if summary.get('selected') else ""
@@ -7422,12 +7609,13 @@ def log_comparison_candidate_fit_summaries(candidate_fit_summaries, photometry_i
         residual_text = "n/a"
         if summary.get('fit') is not None and np.isfinite(summary.get('res_std', np.inf)):
             residual_text = f"{summary['res_std'] * 100.0:.4f}%"
+        eebls_text = format_eebls_snr(summary.get('eebls_snr', np.nan))
         reason_text = comparison_candidate_fit_selection_reason(summary, photometry_info)
         log_info(
             f"  {summary['label']}{selected_label} ({position_text}): "
             f"coverage={coverage_text}, "
             f"usable_after_filters={usable_point_count}, fit_points={summary['fit_point_count']}, "
-            f"residual_scatter={residual_text}, reason={reason_text}"
+            f"eebls_snr={eebls_text}, residual_scatter={residual_text}, reason={reason_text}"
         )
         parameter_summary = summary.get('parameter_summary')
         if parameter_summary:
@@ -7529,6 +7717,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
                 plot_time_range=plot_time_range,
                 use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+                compute_eebls_diagnostics=True,
             )
             fit_diagnostics = ensure_lightcurve_fit_failure_reason(
                 fit_diagnostics,
@@ -7551,6 +7740,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
             'selected': selected_comp_star_num == comp_index + 1,
             'fit': fit_result,
             'res_std': res_std,
+            'eebls_snr': extract_lightcurve_fit_eebls_snr(fit_result),
             'coverage_count': coverage_count,
             'coverage_total_frame_count': coverage_total_frame_count,
             'coverage_reference_count': coverage_reference_count,
@@ -7665,6 +7855,70 @@ def comparison_star_coverage_summary(comp_flux_map,
     return coverage_summary
 
 
+def apply_comparison_star_suitability_outlier_rejection(
+    comp_summaries,
+    sigma=COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA,
+    min_candidates=COMPARISON_STAR_SUITABILITY_MIN_CANDIDATES,
+    eligible_indices=None,
+):
+    if eligible_indices is None:
+        eligible_indices = [
+            index
+            for index, summary in enumerate(comp_summaries)
+            if (
+                not summary.get('coverage_rejected')
+                and np.isfinite(summary.get('aggregate_score', np.inf))
+            )
+        ]
+    else:
+        eligible_indices = [
+            int(index)
+            for index in eligible_indices
+            if (
+                0 <= int(index) < len(comp_summaries)
+                and not comp_summaries[int(index)].get('coverage_rejected')
+                and np.isfinite(comp_summaries[int(index)].get('aggregate_score', np.inf))
+            )
+        ]
+    clipping_candidate_floor = max(3, int(min_candidates))
+    reference_score = np.nan
+    scatter = np.nan
+    high_threshold = np.nan
+    kept_indices = list(eligible_indices)
+    rejected_index_set = set()
+
+    if len(eligible_indices) >= clipping_candidate_floor:
+        eligible_scores = np.asarray(
+            [comp_summaries[index]['aggregate_score'] for index in eligible_indices],
+            dtype=float,
+        )
+        if eligible_scores.size and np.any(np.isfinite(eligible_scores)):
+            reference_score = float(np.nanmedian(eligible_scores))
+            scatter = robust_scatter(eligible_scores)
+            if np.isfinite(scatter) and scatter > 0:
+                high_threshold = reference_score + float(sigma) * scatter
+                kept_indices = [
+                    index for index in eligible_indices
+                    if comp_summaries[index]['aggregate_score'] <= high_threshold
+                ]
+                rejected_index_set = set(eligible_indices) - set(kept_indices)
+
+    for index, summary in enumerate(comp_summaries):
+        summary['suitability_outlier_rejected'] = index in rejected_index_set
+        summary['suitability_reference_score'] = reference_score
+        summary['suitability_scatter'] = scatter
+        summary['suitability_high_threshold'] = high_threshold
+
+    return {
+        'eligible_indices': eligible_indices,
+        'active_indices': kept_indices,
+        'rejected_indices': sorted(rejected_index_set),
+        'reference_score': reference_score,
+        'scatter': scatter,
+        'high_threshold': high_threshold,
+    }
+
+
 def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_rejection=False,
                                       validity_mask_func=valid_comparison_frame_mask):
     if not comp_flux_map:
@@ -7674,6 +7928,10 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
             'field_score': np.inf,
             'best_comp_index': None,
             'best_comp_score': np.inf,
+            'suitability_outlier_rejected_count': 0,
+            'suitability_high_threshold': np.nan,
+            'suitability_reference_score': np.nan,
+            'suitability_scatter': np.nan,
         }
 
     comp_keys = list(comp_flux_map.keys())
@@ -7686,75 +7944,159 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         skip_rejection=skip_low_coverage_rejection,
         validity_mask_func=validity_mask_func,
     )
-    eligible_keys = {
+    coverage_qualified_keys = [
         key for key in comp_keys
         if not coverage_summary[key]['coverage_rejected']
-    }
-    pairwise_matrix = np.full((len(comp_keys), len(comp_keys)), np.nan, dtype=float)
-    comp_summaries = []
+    ]
 
-    for i, key in enumerate(comp_keys):
-        normalized_flux = normalized_flux_map[key]
-        self_score = cheap_lightcurve_prescore(normalized_flux, np.ones(normalized_flux.shape[0]), airmass)
-        pairwise_scores = []
-        pairwise_series = {}
+    def build_stability_iteration(active_keys):
+        active_key_set = set(active_keys)
+        active_flux_map = {
+            eligible_key: normalized_flux_map[eligible_key]
+            for eligible_key in active_keys
+        }
+        pairwise_matrix = np.full((len(comp_keys), len(comp_keys)), np.nan, dtype=float)
+        comp_summaries = []
 
-        for j, other_key in enumerate(comp_keys):
-            if i == j or other_key not in eligible_keys:
+        for i, key in enumerate(comp_keys):
+            normalized_flux = normalized_flux_map[key]
+            self_score = cheap_lightcurve_prescore(normalized_flux, np.ones(normalized_flux.shape[0]), airmass)
+            pairwise_scores = []
+            pairwise_series = {}
+
+            for j, other_key in enumerate(comp_keys):
+                if i == j or other_key not in active_key_set:
+                    continue
+                other_flux = normalized_flux_map[other_key]
+                score = cheap_lightcurve_prescore(normalized_flux, other_flux, airmass)
+                pairwise_matrix[i, j] = score
+                pairwise_series[f"vs {j + 1}"] = normalized_ratio_series(normalized_flux, other_flux)
+                if np.isfinite(score):
+                    pairwise_scores.append(float(score))
+
+            ensemble_flux = build_normalized_comp_ensemble(active_flux_map, key)
+            ensemble_score = np.inf
+            ensemble_ratio_series = np.full(normalized_flux.shape, np.nan, dtype=float)
+            if ensemble_flux is not None:
+                ensemble_score = cheap_lightcurve_prescore(normalized_flux, ensemble_flux, airmass)
+                ensemble_ratio_series = normalized_ratio_series(normalized_flux, ensemble_flux)
+
+            if pairwise_scores:
+                pairwise_median = float(np.nanmedian(pairwise_scores))
+                pairwise_max = float(np.nanmax(pairwise_scores))
+                pairwise_upper = float(np.nanpercentile(pairwise_scores, 75))
+            else:
+                pairwise_median = np.inf
+                pairwise_max = np.inf
+                pairwise_upper = np.inf
+
+            aggregate_inputs = [score for score in (ensemble_score, pairwise_upper) if np.isfinite(score)]
+            aggregate_score = max(aggregate_inputs) if aggregate_inputs else self_score
+            if coverage_summary[key]['coverage_rejected']:
+                aggregate_score = np.inf
+
+            comp_summaries.append({
+                'comp_index': i,
+                'key': key,
+                'label': f"Comp {i + 1}",
+                'pairwise_median_score': pairwise_median,
+                'pairwise_max_score': pairwise_max,
+                'ensemble_score': float(ensemble_score) if np.isfinite(ensemble_score) else np.inf,
+                'self_score': float(self_score) if np.isfinite(self_score) else np.inf,
+                'aggregate_score': float(aggregate_score) if np.isfinite(aggregate_score) else np.inf,
+                'valid_pair_count': len(pairwise_scores),
+                'pairwise_ratio_series': pairwise_series,
+                'ensemble_ratio_series': ensemble_ratio_series,
+                'coverage_count': coverage_summary[key]['coverage_count'],
+                'coverage_total_frame_count': coverage_summary[key]['coverage_total_frame_count'],
+                'coverage_reference_count': coverage_summary[key]['coverage_reference_count'],
+                'coverage_min_required_count': coverage_summary[key]['coverage_min_required_count'],
+                'coverage_rejected': coverage_summary[key]['coverage_rejected'],
+                'suitability_outlier_rejected': False,
+                'suitability_reference_score': np.nan,
+                'suitability_scatter': np.nan,
+                'suitability_high_threshold': np.nan,
+            })
+
+        return pairwise_matrix, comp_summaries
+
+    active_keys = list(coverage_qualified_keys)
+    rejected_outlier_keys = set()
+    rejection_metadata = {}
+    for _ in range(COMPARISON_STAR_SUITABILITY_MAX_ITERS):
+        _, iteration_summaries = build_stability_iteration(active_keys)
+        active_indices = [comp_keys.index(key) for key in active_keys]
+        outlier_summary = apply_comparison_star_suitability_outlier_rejection(
+            iteration_summaries,
+            eligible_indices=active_indices,
+        )
+        newly_rejected_indices = outlier_summary['rejected_indices']
+        if not newly_rejected_indices:
+            break
+
+        newly_rejected_keys = [comp_keys[index] for index in newly_rejected_indices]
+        if len(active_keys) - len(newly_rejected_keys) < 3:
+            break
+
+        for index in newly_rejected_indices:
+            key = comp_keys[index]
+            if key in rejection_metadata:
                 continue
-            other_flux = normalized_flux_map[other_key]
-            score = cheap_lightcurve_prescore(normalized_flux, other_flux, airmass)
-            pairwise_matrix[i, j] = score
-            pairwise_series[f"vs {j + 1}"] = normalized_ratio_series(normalized_flux, other_flux)
-            if np.isfinite(score):
-                pairwise_scores.append(float(score))
+            rejection_metadata[key] = {
+                'reference_score': outlier_summary['reference_score'],
+                'scatter': outlier_summary['scatter'],
+                'high_threshold': outlier_summary['high_threshold'],
+            }
+        rejected_outlier_keys.update(newly_rejected_keys)
+        active_keys = [key for key in active_keys if key not in rejected_outlier_keys]
 
-        eligible_flux_map = {eligible_key: normalized_flux_map[eligible_key] for eligible_key in eligible_keys}
-        ensemble_flux = build_normalized_comp_ensemble(eligible_flux_map, key)
-        ensemble_score = np.inf
-        ensemble_ratio_series = np.full(normalized_flux.shape, np.nan, dtype=float)
-        if ensemble_flux is not None:
-            ensemble_score = cheap_lightcurve_prescore(normalized_flux, ensemble_flux, airmass)
-            ensemble_ratio_series = normalized_ratio_series(normalized_flux, ensemble_flux)
+    pairwise_matrix, comp_summaries = build_stability_iteration(active_keys)
+    final_active_scores = np.asarray(
+        [
+            summary['aggregate_score']
+            for summary in comp_summaries
+            if summary['key'] in set(active_keys) and np.isfinite(summary['aggregate_score'])
+        ],
+        dtype=float,
+    )
+    final_reference_score = np.nan
+    final_scatter = np.nan
+    final_high_threshold = np.nan
+    if final_active_scores.size and np.any(np.isfinite(final_active_scores)):
+        final_reference_score = float(np.nanmedian(final_active_scores))
+        final_scatter = robust_scatter(final_active_scores)
+        if np.isfinite(final_scatter) and final_scatter > 0:
+            final_high_threshold = (
+                final_reference_score + COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA * final_scatter
+            )
 
-        if pairwise_scores:
-            pairwise_median = float(np.nanmedian(pairwise_scores))
-            pairwise_max = float(np.nanmax(pairwise_scores))
-            pairwise_upper = float(np.nanpercentile(pairwise_scores, 75))
+    for summary in comp_summaries:
+        rejection_info = rejection_metadata.get(summary['key'])
+        if rejection_info is not None:
+            summary['suitability_outlier_rejected'] = True
+            summary['suitability_reference_score'] = rejection_info['reference_score']
+            summary['suitability_scatter'] = rejection_info['scatter']
+            summary['suitability_high_threshold'] = rejection_info['high_threshold']
         else:
-            pairwise_median = np.inf
-            pairwise_max = np.inf
-            pairwise_upper = np.inf
+            summary['suitability_outlier_rejected'] = False
+            summary['suitability_reference_score'] = final_reference_score
+            summary['suitability_scatter'] = final_scatter
+            summary['suitability_high_threshold'] = final_high_threshold
 
-        aggregate_inputs = [score for score in (ensemble_score, pairwise_upper) if np.isfinite(score)]
-        aggregate_score = max(aggregate_inputs) if aggregate_inputs else self_score
-        if coverage_summary[key]['coverage_rejected']:
-            aggregate_score = np.inf
-
-        comp_summaries.append({
-            'comp_index': i,
-            'key': key,
-            'label': f"Comp {i + 1}",
-            'pairwise_median_score': pairwise_median,
-            'pairwise_max_score': pairwise_max,
-            'ensemble_score': float(ensemble_score) if np.isfinite(ensemble_score) else np.inf,
-            'self_score': float(self_score) if np.isfinite(self_score) else np.inf,
-            'aggregate_score': float(aggregate_score) if np.isfinite(aggregate_score) else np.inf,
-            'valid_pair_count': len(pairwise_scores),
-            'pairwise_ratio_series': pairwise_series,
-            'ensemble_ratio_series': ensemble_ratio_series,
-            'coverage_count': coverage_summary[key]['coverage_count'],
-            'coverage_total_frame_count': coverage_summary[key]['coverage_total_frame_count'],
-            'coverage_reference_count': coverage_summary[key]['coverage_reference_count'],
-            'coverage_min_required_count': coverage_summary[key]['coverage_min_required_count'],
-            'coverage_rejected': coverage_summary[key]['coverage_rejected'],
-        })
-
-    finite_comp_scores = [summary['aggregate_score'] for summary in comp_summaries if np.isfinite(summary['aggregate_score'])]
+    finite_comp_scores = [
+        summary['aggregate_score']
+        for summary in comp_summaries
+        if (
+            np.isfinite(summary['aggregate_score'])
+            and not summary.get('suitability_outlier_rejected')
+        )
+    ]
     field_score = float(np.nanmedian(finite_comp_scores)) if finite_comp_scores else np.inf
     best_comp_index = None
     best_comp_score = np.inf
     for summary in comp_summaries:
+        if summary.get('suitability_outlier_rejected'):
+            continue
         if summary['aggregate_score'] < best_comp_score:
             best_comp_score = summary['aggregate_score']
             best_comp_index = summary['comp_index']
@@ -7765,6 +8107,10 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         'field_score': field_score,
         'best_comp_index': best_comp_index,
         'best_comp_score': best_comp_score,
+        'suitability_outlier_rejected_count': len(rejected_outlier_keys),
+        'suitability_high_threshold': final_high_threshold,
+        'suitability_reference_score': final_reference_score,
+        'suitability_scatter': final_scatter,
     }
 
 
@@ -8067,6 +8413,8 @@ def ranked_comparison_calibration_summaries(comparison_calibration):
         aggregate_score = summary.get('aggregate_score', np.inf)
         if summary.get('coverage_rejected'):
             continue
+        if summary.get('suitability_outlier_rejected'):
+            continue
         if not np.isfinite(aggregate_score):
             continue
         ranked_summaries.append(summary)
@@ -8085,7 +8433,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
-                                                 use_eebls_to_initialize_tmid_and_bounds=True):
+                                                 use_eebls_to_initialize_tmid_and_bounds=True,
+                                                 pick_comparison_by_eebls_snr=True):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
     if not ranked_summaries:
         return {
@@ -8139,6 +8488,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             use_impactparameter_rather_than_inclination_to_fit,
             plot_time_range=plot_time_range,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+            compute_eebls_diagnostics=True,
         )
         fit_diagnostics = ensure_lightcurve_fit_failure_reason(
             fit_diagnostics,
@@ -8169,6 +8519,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'cflux_fit': cflux_fit,
             'fit_diagnostics': fit_diagnostics,
             'res_std': res_std,
+            'eebls_snr': extract_lightcurve_fit_eebls_snr(fit_result),
             'fit_point_count': 0 if tflux_fit is None else int(len(tflux_fit)),
             'failure_reason': fit_diagnostics.get('failure_reason'),
             'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
@@ -8183,32 +8534,73 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         for attempt in attempts
         if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf))
     ]
+    selection_metric = 'residual_scatter'
     if successful_attempts:
-        selected_result = min(
-            successful_attempts,
-            key=lambda attempt: (attempt.get('res_std', np.inf), attempt.get('rank', np.inf)),
-        )
+        if pick_comparison_by_eebls_snr and any(
+            np.isfinite(attempt.get('eebls_snr', np.nan))
+            for attempt in successful_attempts
+        ):
+            selection_metric = 'eebls_snr'
+            selected_result = min(
+                successful_attempts,
+                key=lambda attempt: (
+                    0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                    -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                    attempt.get('res_std', np.inf),
+                    attempt.get('rank', np.inf),
+                ),
+            )
+        else:
+            selected_result = min(
+                successful_attempts,
+                key=lambda attempt: (
+                    attempt.get('res_std', np.inf),
+                    0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                    -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                    attempt.get('rank', np.inf),
+                ),
+            )
         selected_result['selected'] = True
         selected_residual = selected_result.get('res_std', np.inf)
+        selected_eebls_snr = selected_result.get('eebls_snr', np.nan)
 
         for attempt in attempts:
             if attempt is selected_result:
-                attempt['selection_reason'] = (
-                    "selected: lowest target-fit residual scatter among the evaluated "
-                    "comparison-star calibration candidates"
-                )
+                if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
+                    attempt['selection_reason'] = (
+                        "selected: highest EEBLS SNR among the evaluated "
+                        "comparison-star calibration candidates"
+                    )
+                else:
+                    attempt['selection_reason'] = (
+                        "selected: lowest target-fit residual scatter among the evaluated "
+                        "comparison-star calibration candidates"
+                    )
                 continue
             if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
-                attempt['selection_reason'] = (
-                    "not selected: target-fit residual scatter "
-                    f"{attempt['res_std'] * 100.0:.4f}% was higher than the selected "
-                    f"{selected_residual * 100.0:.4f}%"
-                )
+                if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
+                    if np.isfinite(attempt.get('eebls_snr', np.nan)):
+                        attempt['selection_reason'] = (
+                            "not selected: EEBLS SNR "
+                            f"{attempt['eebls_snr']:.2f} was lower than the selected "
+                            f"{selected_eebls_snr:.2f}"
+                        )
+                    else:
+                        attempt['selection_reason'] = (
+                            "not selected: no finite EEBLS SNR was available for this candidate"
+                        )
+                else:
+                    attempt['selection_reason'] = (
+                        "not selected: target-fit residual scatter "
+                        f"{attempt['res_std'] * 100.0:.4f}% was higher than the selected "
+                        f"{selected_residual * 100.0:.4f}%"
+                    )
 
     return {
         'ranked_summaries': ranked_summaries,
         'attempts': attempts,
         'selected_result': selected_result,
+        'selection_metric': selection_metric,
     }
 
 
@@ -8416,6 +8808,9 @@ def main():
         )
         use_eebls_tmid_initializer = should_use_eebls_to_initialize_tmid_and_bounds(
             exotic_infoDict.get('use_eebls_to_initialize_tmid_and_bounds', 'y')
+        )
+        pick_comparison_by_eebls_snr = should_pick_comparison_by_eebls_snr(
+            exotic_infoDict.get('pick_comparison_by_eebls_snr', 'y')
         )
         use_impactparameter_rather_than_inclination_to_fit = (
             should_use_impactparameter_rather_than_inclination_to_fit(
@@ -8766,6 +9161,8 @@ def main():
                 log_info("Aperture photometry disabled per optional_info setting.")
             if not use_eebls_tmid_initializer:
                 log_info("EEBLS transit initializer disabled per optional_info setting.")
+            if not pick_comparison_by_eebls_snr:
+                log_info("Comparison-star selection by EEBLS SNR disabled per optional_info setting.")
 
             for i, coord in enumerate(exotic_infoDict['comp_stars']):
                 ckey = f"comp{i + 1}"
@@ -8841,16 +9238,10 @@ def main():
                 plateStatus.setCurrentFilename(fileName)
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
                                  ignore_missing_end=True)
-                if use_psf_photometry:
-                    # Keep PSF photometry on one consistent measurement path for reduction frames.
-                    frame_fast_centroid = False
-                    target_fast_centroid = False
-                else:
-                    frame_fast_centroid = should_use_fast_centroid(i)
-                    target_fast_centroid = should_use_fast_target_centroid(
-                        i,
-                        adaptive_apertures=use_adaptive_apertures,
-                    )
+                # Final reductions should always use the full centroid fit so the
+                # centroid series does not inherit the fast moment-estimator cadence.
+                frame_fast_centroid = False
+                target_fast_centroid = False
 
                 extension = 0
                 image_header = hdul[extension].header
@@ -8904,10 +9295,14 @@ def main():
                             dtype=float,
                         )
                         projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
+                        target_seed = choose_centroid_seed_position(
+                            [tx, ty],
+                            None if i == 0 else psf_data['target'][i - 1],
+                        )
 
                         psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
                             imageData,
-                            [tx, ty],
+                            target_seed,
                             0,
                             fast_mode=target_fast_centroid,
                         )
@@ -8920,9 +9315,13 @@ def main():
                             ckey = f"comp{j + 1}"
 
                             cx, cy = pix_x[j + 1], pix_y[j + 1]
+                            comp_seed = choose_centroid_seed_position(
+                                [cx, cy],
+                                None if i == 0 else psf_data[ckey][i - 1],
+                            )
                             psf_data[ckey][i] = fit_centroid_or_warn_out_of_frame(
                                 imageData,
-                                [cx, cy],
+                                comp_seed,
                                 j + 1,
                                 fast_mode=frame_fast_centroid,
                             )
@@ -8962,9 +9361,13 @@ def main():
 
                     transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
                     tx, ty = transformed_coords[0]
+                    target_seed = choose_centroid_seed_position(
+                        [tx, ty],
+                        None if i == 0 else psf_data['target'][i - 1],
+                    )
                     psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
                         imageData,
-                        [tx, ty],
+                        target_seed,
                         0,
                         fast_mode=target_fast_centroid,
                     )
@@ -8973,9 +9376,13 @@ def main():
                         ckey = f"comp{j + 1}"
 
                         cx, cy = transformed_coords[j + 1]
+                        comp_seed = choose_centroid_seed_position(
+                            [cx, cy],
+                            None if i == 0 else psf_data[ckey][i - 1],
+                        )
                         psf_data[ckey][i] = fit_centroid_or_warn_out_of_frame(
                             imageData,
-                            [cx, cy],
+                            comp_seed,
                             j + 1,
                             fast_mode=frame_fast_centroid,
                         )
@@ -9201,6 +9608,8 @@ def main():
                 'adaptive_summary': None,
                 'calibration_field_score': np.inf,
                 'selection_basis': 'target_fit',
+                'selection_metric': 'residual_scatter',
+                'comparison_eebls_snr': np.nan,
             }
 
             comparison_calibration = None
@@ -9225,6 +9634,20 @@ def main():
                 log_info("\nCalibrating comparison stars before target fitting. Please wait.")
                 log_info(f"Comparison-star field method: {comparison_calibration['method_label']}")
                 log_info(f"Comparison-star field score: {comparison_calibration['field_score'] * 100.0:.4f}%")
+                if comparison_calibration.get('suitability_outlier_rejected_count', 0) > 0:
+                    threshold = comparison_calibration.get('suitability_high_threshold', np.nan)
+                    if np.isfinite(threshold):
+                        log_info(
+                            "Comparison-star field sigma clipping rejected "
+                            f"{comparison_calibration['suitability_outlier_rejected_count']} high-suitability "
+                            f"outlier(s) above {threshold * 100.0:.4f}% before target-fit evaluation."
+                        )
+                    else:
+                        log_info(
+                            "Comparison-star field sigma clipping rejected "
+                            f"{comparison_calibration['suitability_outlier_rejected_count']} high-suitability "
+                            "outlier(s) before target-fit evaluation."
+                        )
                 for summary in comparison_calibration['comp_summaries']:
                     aggregate_text = "n/a" if not np.isfinite(summary['aggregate_score']) else f"{summary['aggregate_score'] * 100.0:.4f}%"
                     ensemble_text = "n/a" if not np.isfinite(summary['ensemble_score']) else f"{summary['ensemble_score'] * 100.0:.4f}%"
@@ -9234,6 +9657,8 @@ def main():
                     coverage_text = f"coverage={format_comp_star_coverage_text(summary)}"
                     if summary['coverage_rejected']:
                         coverage_text += " [rejected: low coverage]"
+                    if summary.get('suitability_outlier_rejected'):
+                        coverage_text += " [rejected: high suitability outlier]"
                     log_info(
                         f"  {summary['label']}{selected_label} ({position_text}): suitability={aggregate_text}, "
                         f"ensemble={ensemble_text}, pairwise_median={pairwise_text}, "
@@ -9300,6 +9725,7 @@ def main():
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                    pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
                 )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -9343,7 +9769,8 @@ def main():
                             "Comparison-star calibration target-fit selection chose "
                             f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
                             f"after evaluating {retry_count} better-ranked field-stability candidate(s); "
-                            "it delivered the lowest target-fit residual scatter among successful fits."
+                            f"it delivered the best {comparison_selection_metric_label(comparison_fit_search['selection_metric'])} "
+                            "among successful fits."
                         )
 
                     photometry_info.update(best_fit_lc=myfit,
@@ -9355,7 +9782,9 @@ def main():
                                            aperture_index=selected_a,
                                            annulus_index=selected_an,
                                            calibration_field_score=comparison_calibration['field_score'],
-                                           selection_basis=selection_basis)
+                                           selection_basis=selection_basis,
+                                           selection_metric=comparison_fit_search.get('selection_metric', 'residual_scatter'),
+                                           comparison_eebls_snr=selected_attempt.get('eebls_snr', np.nan))
 
                     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
                                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
@@ -9463,6 +9892,7 @@ def main():
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                    pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
                 )
 
                 best_candidate = target_driven_search['best_candidate']
@@ -9483,6 +9913,8 @@ def main():
                         aperture_index=best_candidate['a'],
                         annulus_index=best_candidate['an'],
                         selection_basis='target_fit',
+                        selection_metric=target_driven_search.get('selection_metric', 'residual_scatter'),
+                        comparison_eebls_snr=target_driven_search.get('selected_eebls_snr', np.nan),
                     )
 
                     flux_values.update(
@@ -9587,6 +10019,16 @@ def main():
             log_info("\n\n*********************************************")
             if np.isfinite(photometry_info['calibration_field_score']):
                 log_info(f"Comparison-Star Field Score: {round(photometry_info['calibration_field_score'] * 100, 4)}%")
+            summary_min_aperture = photometry_info.get('min_aperture')
+            if photometry_info.get('comp_star_num') is not None or (
+                summary_min_aperture is not None and summary_min_aperture < 0
+            ):
+                log_info(
+                    "Comparison Selection Metric: "
+                    f"{comparison_selection_metric_label(photometry_info.get('selection_metric', 'residual_scatter'))}"
+                )
+            if np.isfinite(photometry_info.get('comparison_eebls_snr', np.nan)):
+                log_info(f"Selected Comparison EEBLS SNR: {photometry_info['comparison_eebls_snr']:.2f}")
             selected_method_label = selected_photometry_method_label(photometry_info)
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')

@@ -158,6 +158,8 @@ def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
                 "pairwise_max_score": 0.0014,
                 "self_score": 0.0009,
                 "valid_pair_count": 2,
+                "coverage_rejected": False,
+                "suitability_outlier_rejected": False,
             },
             {
                 "label": "Comp 2",
@@ -169,6 +171,8 @@ def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
                 "pairwise_max_score": 0.0035,
                 "self_score": 0.0012,
                 "valid_pair_count": 2,
+                "coverage_rejected": False,
+                "suitability_outlier_rejected": True,
             },
         ],
         0,
@@ -176,6 +180,7 @@ def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
 
     text = summary_path.read_text()
     assert "# Selected comparison star,1" in text
+    assert "suitability_outlier_rejected" in text
     assert "Comp 1,101,202,true" in text
 
 

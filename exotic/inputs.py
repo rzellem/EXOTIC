@@ -211,6 +211,7 @@ class Inputs:
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
             'use_eebls_to_initialize_tmid_and_bounds': 'y',
+            'pick_comparison_by_eebls_snr': 'y',
             'detect_bad_pixels_before_photometry': 'y',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
@@ -443,6 +444,11 @@ class Inputs:
                 'use_eebls_to_initialize_tmid_and_bounds',
                 'Use EEBLS to Initialize Tmid and Bounds? (y/n)',
                 'Use EEBLS To Initialize Tmid And Bounds? (y/n)',
+            ),
+            'pick_comparison_by_eebls_snr': (
+                'pick_comparison_by_eebls_snr',
+                'Pick Comparison by EEBLS SNR? (y/n)',
+                'Pick comparison by EEBLS SNR? (y/n)',
             ),
             'use_impactparameter_rather_than_inclination_to_fit': (
                 'use_impactparameter_rather_than_inclination_to_fit',

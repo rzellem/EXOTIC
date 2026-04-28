@@ -40,8 +40,12 @@ from astropy import units as u
 import builtins
 from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
+import faulthandler
 import io
 from itertools import cycle
+import multiprocessing
+import os
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
@@ -63,12 +67,50 @@ try:
 except ImportError:
     from .ultranest_utils import run_reactive_sampler
 
-if not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False):
-    print("Importing modules. Please wait.......")
+if (
+    multiprocessing.current_process().name == "MainProcess"
+    and not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False)
+):
+    print("Importing modules. Please wait.......", flush=True)
     builtins._EXOTIC_IMPORTING_MODULES_PRINTED = True
 
-with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-    from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit as _pylightcurve_transit
+
+def _pylightcurve_import_watchdog_seconds():
+    try:
+        return float(os.environ.get("EXOTIC_IMPORT_WATCHDOG_SECONDS", "120"))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _start_import_watchdog():
+    timeout = _pylightcurve_import_watchdog_seconds()
+    if timeout <= 0:
+        return False
+
+    try:
+        if not faulthandler.is_enabled():
+            faulthandler.enable(file=sys.__stdout__, all_threads=True)
+        faulthandler.dump_traceback_later(timeout, repeat=True, file=sys.__stdout__)
+        return True
+    except Exception:
+        return False
+
+
+def _load_pylightcurve_symbols():
+    watchdog_started = _start_import_watchdog()
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit
+        return eclipse_mid_time, transit
+    finally:
+        if watchdog_started:
+            try:
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                pass
+
+
+eclipse_mid_time, _pylightcurve_transit = _load_pylightcurve_symbols()
 
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value

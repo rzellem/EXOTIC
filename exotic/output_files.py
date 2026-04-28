@@ -1,5 +1,5 @@
 from json import dump, dumps
-from numpy import mean, median, std
+from numpy import mean, std
 from pathlib import Path
 import numpy as np
 
@@ -53,6 +53,70 @@ def aavso_detrend_model(fit):
     return np.asarray(fit.airmass_model, dtype=float)
 
 
+def finite_float(value, default=np.nan):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+    return value if np.isfinite(value) else default
+
+
+def format_parameter_with_error(value, error):
+    value = finite_float(value)
+    error = finite_float(error)
+    if not np.isfinite(value):
+        return None
+    if np.isfinite(error) and error >= 0:
+        return f"{round_to_2(value, error)} +/- {round_to_2(error)}"
+    return f"{round_to_2(value)} +/- n/a"
+
+
+def fit_impact_parameter_value_error(fit):
+    parameters = getattr(fit, 'parameters', {}) or {}
+    errors = getattr(fit, 'errors', {}) or {}
+    sample_parameters = getattr(fit, 'sample_parameters', {}) or {}
+    sample_errors = getattr(fit, 'sample_errors', {}) or {}
+
+    if 'b' in sample_parameters:
+        impact_parameter = finite_float(sample_parameters.get('b'))
+        impact_error = finite_float(sample_errors.get('b'))
+        if np.isfinite(impact_parameter):
+            return impact_parameter, impact_error
+
+    if 'b' in parameters:
+        impact_parameter = finite_float(parameters.get('b'))
+        impact_error = finite_float(errors.get('b'))
+        if np.isfinite(impact_parameter):
+            return impact_parameter, impact_error
+
+    ars = finite_float(parameters.get('ars'))
+    inc = finite_float(parameters.get('inc'))
+    if not np.isfinite(ars) or not np.isfinite(inc):
+        return np.nan, np.nan
+
+    ecc = finite_float(parameters.get('ecc'), 0.0)
+    omega = np.deg2rad(finite_float(parameters.get('omega'), 0.0))
+    denominator = 1.0 + ecc * np.sin(omega)
+    if not np.isfinite(denominator) or np.isclose(denominator, 0.0):
+        return np.nan, np.nan
+
+    scale_factor = (1.0 - ecc ** 2) / denominator
+    inc_rad = np.deg2rad(inc)
+    impact_parameter = scale_factor * ars * np.cos(inc_rad)
+
+    ars_error = finite_float(errors.get('ars'))
+    inc_error = finite_float(errors.get('inc'))
+    if np.isfinite(ars_error) and np.isfinite(inc_error):
+        impact_error = np.hypot(
+            scale_factor * np.cos(inc_rad) * ars_error,
+            scale_factor * ars * np.sin(inc_rad) * np.deg2rad(inc_error),
+        )
+    else:
+        impact_error = np.nan
+
+    return float(impact_parameter), float(impact_error) if np.isfinite(impact_error) else np.nan
+
+
 class OutputFiles:
     def __init__(self, fit, p_dict, i_dict, durs):
         self.fit = fit
@@ -77,6 +141,23 @@ class OutputFiles:
                                min_annul=None, adaptive_summary=None):
         params_file = self.dir / "temp" / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
+        transit_qc = getattr(self.fit, 'transit_qc', None)
+        qc_residual_scatter = np.nan
+        if isinstance(transit_qc, dict):
+            qc_residual_scatter = transit_qc.get('residual_scatter', np.nan)
+        if not np.isfinite(qc_residual_scatter):
+            residuals = np.asarray(getattr(self.fit, 'residuals', np.array([])), dtype=float)
+            data = np.asarray(getattr(self.fit, 'data', np.array([])), dtype=float)
+            if residuals.size and data.size:
+                if residuals.shape == data.shape:
+                    median_flux = np.nanmedian(data)
+                    if np.isfinite(median_flux) and median_flux != 0:
+                        qc_residual_scatter = float(np.std(residuals) / median_flux)
+                elif residuals.size == 1:
+                    median_flux = np.nanmedian(data)
+                    if np.isfinite(median_flux) and median_flux != 0:
+                        qc_residual_scatter = float(abs(residuals.reshape(-1)[0]) / median_flux)
+
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
                                        f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
@@ -86,8 +167,19 @@ class OutputFiles:
                                        f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
             "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
                                                    f"{round_to_2(self.fit.errors['inc'])} ",
-            "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * std(self.fit.residuals / median(self.fit.data)))} %",
         }
+        ars_text = format_parameter_with_error(
+            self.fit.parameters.get('ars'),
+            self.fit.errors.get('ars'),
+        )
+        if ars_text is not None:
+            params_num["Ratio of Distance to Stellar Radius (a/Rs)"] = ars_text
+        impact_parameter, impact_error = fit_impact_parameter_value_error(self.fit)
+        impact_text = format_parameter_with_error(impact_parameter, impact_error)
+        if impact_text is not None:
+            params_num["Impact Parameter (b)"] = impact_text
+        if np.isfinite(qc_residual_scatter):
+            params_num["Residual scatter around full model fit"] = f"{qc_residual_scatter * 100.0:.4f} %"
         if getattr(self.fit, 'airmass_fit_skipped', False):
             params_num["Airmass correction"] = getattr(
                 self.fit,
@@ -109,6 +201,64 @@ class OutputFiles:
                 f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
                 f"{round_to_2(self.fit.errors['a2'])}"
             )
+
+        if isinstance(transit_qc, dict) and transit_qc:
+            qc_status = transit_qc.get('status')
+            qc_summary = transit_qc.get('summary')
+            qc_notes = transit_qc.get('notes') or []
+            qc_delta_bic = transit_qc.get('delta_bic', np.nan)
+            qc_delta_chi2 = transit_qc.get('delta_chi2', np.nan)
+            qc_rprs_sigma = transit_qc.get('rprs_sigma', np.nan)
+            qc_duration_ratio = transit_qc.get('duration_ratio', np.nan)
+            qc_eebls_depth_snr = transit_qc.get('eebls_depth_snr', np.nan)
+            qc_deviation_metric = transit_qc.get('deviation_from_expected_value', np.nan)
+            qc_tmid_deviation_sigma = transit_qc.get('tmid_deviation_sigma', np.nan)
+            qc_rprs_deviation_sigma = transit_qc.get('rprs_deviation_sigma', np.nan)
+            qc_sigma_threshold = transit_qc.get('deviation_sigma_threshold', np.nan)
+            qc_ktmf = transit_qc.get('ktmf_metric', np.nan)
+            qc_ktmf_contributions = transit_qc.get('ktmf_contributions') or []
+
+            if qc_status:
+                params_num["Transit detection QC"] = str(qc_status).upper()
+            if qc_summary:
+                params_num["Transit vs flat model"] = qc_summary
+            if np.isfinite(qc_delta_bic):
+                params_num["Transit vs flat Delta BIC"] = f"{qc_delta_bic:.2f}"
+            if np.isfinite(qc_delta_chi2):
+                params_num["Transit vs flat Delta chi2"] = f"{qc_delta_chi2:.2f}"
+            if np.isfinite(qc_rprs_sigma):
+                params_num["Transit depth significance"] = f"{qc_rprs_sigma:.2f} sigma"
+            if np.isfinite(qc_duration_ratio):
+                params_num["Transit duration consistency"] = f"{qc_duration_ratio:.2f}x modeled duration"
+            if np.isfinite(qc_eebls_depth_snr):
+                params_num["EEBLS depth SNR"] = f"{qc_eebls_depth_snr:.2f}"
+            if np.isfinite(qc_deviation_metric):
+                params_num["Deviation From Expected Value"] = f"{qc_deviation_metric:.2f} / 1.00"
+            if np.isfinite(qc_sigma_threshold):
+                params_num["Expected-value QC threshold"] = f"{qc_sigma_threshold:.2f} sigma"
+            if np.isfinite(qc_tmid_deviation_sigma):
+                params_num["Expected-value Tmid deviation"] = f"{qc_tmid_deviation_sigma:.2f} sigma"
+            if np.isfinite(qc_rprs_deviation_sigma):
+                params_num["Expected-value Rp/R* deviation"] = f"{qc_rprs_deviation_sigma:.2f} sigma"
+            if np.isfinite(qc_ktmf):
+                params_num["KTMF"] = f"{qc_ktmf:.2f} / 5.00"
+            for contribution_index, contribution in enumerate(qc_ktmf_contributions, start=1):
+                label = contribution.get('label', f'Component {contribution_index}')
+                detail = contribution.get('detail') or 'n/a'
+                available = bool(contribution.get('available'))
+                points = float(contribution.get('points', 0.0) or 0.0)
+                max_points = float(contribution.get('max_points', 0.0) or 0.0)
+                score = contribution.get('score', np.nan)
+                if available and np.isfinite(score):
+                    params_num[f"KTMF contribution {contribution_index}"] = (
+                        f"{label}: +{points:.2f}/{max_points:.2f} (score={score:.2f}; {detail})"
+                    )
+                else:
+                    params_num[f"KTMF contribution {contribution_index}"] = (
+                        f"{label}: +0.00/0.00 (unavailable; {detail})"
+                    )
+            if qc_notes:
+                params_num["Transit QC notes"] = " ".join(str(note) for note in qc_notes)
 
         if vsp_params:
             params_num["Variable Reference Star"] = f"AAVSO Label: {vsp_params[0]['cname']}, " + \

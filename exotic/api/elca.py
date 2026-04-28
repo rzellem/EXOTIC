@@ -43,8 +43,12 @@ from astropy.time import Time
 import builtins
 import copy
 from contextlib import redirect_stderr, redirect_stdout
+import faulthandler
 import io
 from itertools import cycle
+import multiprocessing
+import os
+import sys
 import bottleneck as bn
 import matplotlib.pyplot as plt
 import numpy as np
@@ -69,12 +73,52 @@ try:
 except ImportError:
     from .ultranest_utils import run_reactive_sampler
 
-if not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False):
-    print("Importing modules. Please wait.......")
+BAD_LOG_LIKELIHOOD = -1.0e100
+
+if (
+    multiprocessing.current_process().name == "MainProcess"
+    and not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False)
+):
+    print("Importing modules. Please wait.......", flush=True)
     builtins._EXOTIC_IMPORTING_MODULES_PRINTED = True
 
-with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-    from pylightcurve.models.exoplanet_lc import transit as pytransit
+
+def _pylightcurve_import_watchdog_seconds():
+    try:
+        return float(os.environ.get("EXOTIC_IMPORT_WATCHDOG_SECONDS", "120"))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _start_import_watchdog():
+    timeout = _pylightcurve_import_watchdog_seconds()
+    if timeout <= 0:
+        return False
+
+    try:
+        if not faulthandler.is_enabled():
+            faulthandler.enable(file=sys.__stdout__, all_threads=True)
+        faulthandler.dump_traceback_later(timeout, repeat=True, file=sys.__stdout__)
+        return True
+    except Exception:
+        return False
+
+
+def _load_pylightcurve_transit():
+    watchdog_started = _start_import_watchdog()
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            from pylightcurve.models.exoplanet_lc import transit
+        return transit
+    finally:
+        if watchdog_started:
+            try:
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                pass
+
+
+pytransit = _load_pylightcurve_transit()
 
 
 def weightedflux(flux, gw, nearest):
@@ -125,6 +169,41 @@ def inclination_from_impact_parameter(values, impact_parameter):
         scale = np.where(np.isclose(scale, 0.0), np.finfo(float).eps, scale)
     cosi = np.clip(np.asarray(impact_parameter, dtype=float) / scale, -1.0, 1.0)
     return np.rad2deg(np.arccos(cosi))
+
+
+def transit_duration(values):
+    try:
+        period = float(values['per'])
+        rprs = float(values['rprs'])
+        ars = float(values['ars'])
+        inc = float(values['inc'])
+    except (KeyError, TypeError, ValueError):
+        return np.nan
+
+    if (
+        not np.isfinite(period) or period <= 0
+        or not np.isfinite(rprs) or rprs < 0
+        or not np.isfinite(ars) or ars <= 0
+        or not np.isfinite(inc)
+    ):
+        return np.nan
+
+    ecc = values.get('ecc', 0.0)
+    omega = np.deg2rad(values.get('omega', 0.0))
+    sin_inc = np.sin(np.deg2rad(inc))
+    if not np.isfinite(sin_inc) or sin_inc <= 0:
+        return np.nan
+
+    impact_scale = ars * (1.0 - ecc ** 2) / max(np.finfo(float).eps, 1.0 + ecc * np.sin(omega))
+    impact_parameter = impact_scale * np.cos(np.deg2rad(inc))
+    chord_sq = (1.0 + rprs) ** 2 - impact_parameter ** 2
+    if not np.isfinite(chord_sq) or chord_sq <= 0 or not np.isfinite(impact_scale) or impact_scale <= 0:
+        return np.nan
+
+    argument = np.sqrt(chord_sq) / (impact_scale * sin_inc)
+    argument = float(np.clip(argument, -1.0, 1.0))
+    duration = (period / np.pi) * np.arcsin(argument)
+    return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
 
 
 def get_phase(times, per, tmid):
@@ -362,6 +441,7 @@ class lc_fitter(object):
         jd_times=None,
         verbose=True,
         use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
     ):
         self.time = time
         self.data = data
@@ -376,6 +456,7 @@ class lc_fitter(object):
         self.mode = mode
         self.neighbors = neighbors
         self.use_impactparameter_rather_than_inclination_to_fit = use_impactparameter_rather_than_inclination_to_fit
+        self.duration_prior = copy.deepcopy(duration_prior) if isinstance(duration_prior, dict) else None
         self.results = None
         self.sampled_keys = list(bounds.keys())
         self.sample_bounds = copy.deepcopy(bounds)
@@ -471,8 +552,26 @@ class lc_fitter(object):
         for key, sampled_key in zip(bound_keys, sampled_keys):
             if key == 'inc' and sampled_key == 'b':
                 inc_lower, inc_upper = self.bounds[key]
-                lower = float(np.min(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
-                upper = float(np.max(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
+                if 'ars' in self.bounds:
+                    ars_lower, ars_upper = self.bounds['ars']
+                    b_corners = []
+                    for ars_value in (ars_lower, ars_upper):
+                        corner_values = copy.deepcopy(values)
+                        corner_values['ars'] = float(ars_value)
+                        b_corners.extend(
+                            np.asarray(
+                                impact_parameter_from_inclination(
+                                    corner_values,
+                                    np.array([inc_lower, inc_upper], dtype=float),
+                                ),
+                                dtype=float,
+                            ).reshape(-1).tolist()
+                        )
+                    lower = float(np.min(b_corners))
+                    upper = float(np.max(b_corners))
+                else:
+                    lower = float(np.min(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
+                    upper = float(np.max(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
                 sample_bounds[sampled_key] = [lower, upper]
             else:
                 sample_bounds[sampled_key] = list(self.bounds[key])
@@ -480,6 +579,13 @@ class lc_fitter(object):
 
     def _sample_point_from_unit_cube(self, upars, bound_keys=None):
         bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
+        upars_array = np.asarray(upars, dtype=float)
+        if upars_array.ndim == 2:
+            return np.asarray([
+                self._sample_point_from_unit_cube(row, bound_keys)
+                for row in upars_array
+            ], dtype=float)
+
         boundarray = np.array([self.bounds[k] for k in bound_keys], dtype=float)
         physical = copy.deepcopy(self.prior)
         sample_point = np.zeros(len(bound_keys), dtype=float)
@@ -487,11 +593,11 @@ class lc_fitter(object):
         for i, key in enumerate(bound_keys):
             if key == 'inc' and self._uses_internal_impact_parameter():
                 continue
-            physical[key] = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars[i]
+            physical[key] = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars_array[i]
 
         for i, key in enumerate(bound_keys):
             if key == 'inc' and self._uses_internal_impact_parameter():
-                inc = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars[i]
+                inc = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars_array[i]
                 sample_point[i] = impact_parameter_from_inclination(physical, inc)
             else:
                 sample_point[i] = physical[key]
@@ -778,7 +884,7 @@ class lc_fitter(object):
         new_lower = float(mode - radius)
         new_upper = float(mode + radius)
         if lower_bound >= 0:
-            new_lower = max(float(lower_bound), new_lower)
+            new_lower = max(0.0, new_lower)
         diagnostics['bounds'] = [new_lower, new_upper]
         diagnostics['reason'] = (
             f"posterior peaks against the {clipped_edge} search bound "
@@ -1267,20 +1373,57 @@ class lc_fitter(object):
         def physical_from_sample_point(sample_point):
             return self._physical_values_from_sample_point(sample_point, bound_keys, sampled_keys)
 
-        def loglike(pars):
-            # chi-squared
+        def single_loglike(pars):
             physical = physical_from_sample_point(pars)
-            model = transit(self.time, physical)
-            model *= airmass_trend(
-                physical.get('a2', 0),
-                self.airmass,
-                reference=self._get_airmass_reference(),
-            )
-            if self._has_free_flux_baseline():
-                model *= get_flux_baseline(physical)
-            else:
-                model *= solve_flux_baseline(model, self.data, self.dataerr)
-            return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
+            duration_prior = self.duration_prior if isinstance(self.duration_prior, dict) else None
+            duration_loglike = 0.0
+            if duration_prior and duration_prior.get('applied'):
+                expected_duration = duration_prior.get('expected_duration', np.nan)
+                sigma_log_duration = duration_prior.get('sigma_log_duration', np.nan)
+                if (
+                    np.isfinite(expected_duration)
+                    and expected_duration > 0
+                    and np.isfinite(sigma_log_duration)
+                    and sigma_log_duration > 0
+                ):
+                    duration = transit_duration(physical)
+                    if not np.isfinite(duration) or duration <= 0:
+                        return BAD_LOG_LIKELIHOOD
+                    duration_log_residual = np.log(duration / expected_duration)
+                    duration_loglike = -0.5 * (duration_log_residual / sigma_log_duration) ** 2
+            try:
+                model = np.asarray(transit(self.time, physical), dtype=float)
+                model *= airmass_trend(
+                    physical.get('a2', 0),
+                    self.airmass,
+                    reference=self._get_airmass_reference(),
+                )
+                if self._has_free_flux_baseline():
+                    model *= get_flux_baseline(physical)
+                else:
+                    model *= solve_flux_baseline(model, self.data, self.dataerr)
+            except Exception:
+                return BAD_LOG_LIKELIHOOD
+
+            if (
+                model.shape != np.asarray(self.data).shape
+                or not np.all(np.isfinite(model))
+                or not np.all(np.isfinite(self.data))
+                or not np.all(np.isfinite(self.dataerr))
+                or np.any(np.asarray(self.dataerr) <= 0)
+            ):
+                return BAD_LOG_LIKELIHOOD
+
+            residuals = (self.data - model) / self.dataerr
+            chi2 = np.sum(residuals ** 2)
+            logl = -0.5 * chi2 + duration_loglike
+            return float(logl) if np.isfinite(logl) else BAD_LOG_LIKELIHOOD
+
+        def loglike(pars):
+            pars_array = np.asarray(pars, dtype=float)
+            if pars_array.ndim == 2:
+                return np.asarray([single_loglike(row) for row in pars_array], dtype=float)
+            return single_loglike(pars_array)
 
         def prior_transform(upars):
             # transform unit cube to prior volume

@@ -509,6 +509,212 @@ def test_nested_fit_reports_inclination_from_internal_impact_parameter(monkeypat
     assert fit.errors["inc"] > 0
 
 
+def test_nested_fit_tracks_free_ars_with_internal_impact_parameter(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 101)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = elca.transit(time, prior)
+
+    class DummySampler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    ml_values = prior.copy()
+    ml_values["ars"] = 12.3
+    b_ml = float(elca.impact_parameter_from_inclination(ml_values, 88.8))
+    sample_points = np.array(
+        [
+            [0.100, 12.10, b_ml - 0.02, 0.0000],
+            [0.101, 12.20, b_ml - 0.01, 0.0002],
+            [0.099, 12.40, b_ml + 0.01, -0.0001],
+            [0.100, 12.50, b_ml + 0.02, 0.0001],
+        ]
+    )
+
+    monkeypatch.setattr(elca, "ReactiveNestedSampler", DummySampler)
+    monkeypatch.setattr(
+        elca,
+        "run_reactive_sampler",
+        lambda *args, **kwargs: {
+            "maximum_likelihood": {"point": np.array([0.100, 12.30, b_ml, 0.0])},
+            "posterior": {
+                "stdev": np.array([0.005, 0.1, 0.02, 0.0005]),
+                "errlo": np.array([-0.005, -0.1, -0.02, -0.0005]),
+                "errup": np.array([0.005, 0.1, 0.02, 0.0005]),
+            },
+            "weighted_samples": {
+                "points": sample_points,
+                "logl": np.array([-4.0, -3.0, -3.2, -3.8]),
+            },
+            "samples": sample_points.copy(),
+        },
+    )
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "ars": [11.5, 12.5], "inc": [87.0, 89.5], "tmid": [-0.005, 0.005]},
+        mode="ns",
+        verbose=False,
+    )
+
+    bounds_values = []
+    for ars_value in (11.5, 12.5):
+        corner_values = prior.copy()
+        corner_values["ars"] = ars_value
+        bounds_values.extend(
+            np.asarray(
+                elca.impact_parameter_from_inclination(corner_values, np.array([87.0, 89.5])),
+                dtype=float,
+            ).reshape(-1).tolist()
+        )
+
+    assert fit.sampled_keys == ["rprs", "ars", "b", "tmid"]
+    assert fit.parameters["ars"] == pytest.approx(12.3, abs=1e-12)
+    assert fit.parameters["inc"] == pytest.approx(88.8, abs=1e-6)
+    assert fit.sample_bounds["b"] == pytest.approx([min(bounds_values), max(bounds_values)])
+
+
+def test_nested_fit_duration_prior_penalizes_wrong_transit_length(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(0.20, 0.30, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = np.ones_like(time)
+    data[0] += 1e-4
+
+    class DummySampler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    captured = {}
+    good_point = np.array([prior["rprs"], prior["ars"], prior["inc"], prior["tmid"]], dtype=float)
+    bad_point = np.array([prior["rprs"], 30.0, prior["inc"], prior["tmid"]], dtype=float)
+
+    monkeypatch.setattr(elca, "ReactiveNestedSampler", DummySampler)
+
+    def fake_run_reactive_sampler(sampler, *args, **kwargs):
+        loglike = sampler.args[1]
+        captured["good"] = float(loglike(good_point))
+        captured["bad"] = float(loglike(bad_point))
+        return {
+            "maximum_likelihood": {"point": good_point.copy()},
+            "posterior": {
+                "stdev": np.array([0.001, 0.1, 0.05, 0.0001]),
+                "errlo": np.array([-0.001, -0.1, -0.05, -0.0001]),
+                "errup": np.array([0.001, 0.1, 0.05, 0.0001]),
+            },
+            "weighted_samples": {
+                "points": np.vstack([good_point, bad_point]),
+                "logl": np.array([captured["good"], captured["bad"]]),
+            },
+            "samples": np.vstack([good_point, bad_point]),
+        }
+
+    monkeypatch.setattr(elca, "run_reactive_sampler", fake_run_reactive_sampler)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "ars": [10.0, 35.0], "inc": [88.5, 89.5], "tmid": [-0.005, 0.005]},
+        mode="ns",
+        verbose=False,
+        use_impactparameter_rather_than_inclination_to_fit=False,
+        duration_prior={
+            "applied": True,
+            "expected_duration": elca.transit_duration(prior),
+            "sigma_log_duration": 0.05,
+        },
+    )
+
+    expected_penalty = -0.5 * (
+        np.log(elca.transit_duration({"per": prior["per"], "rprs": prior["rprs"], "ars": 30.0, "inc": prior["inc"], "ecc": prior["ecc"], "omega": prior["omega"]}) / elca.transit_duration(prior))
+        / 0.05
+    ) ** 2
+
+    assert fit.parameters["ars"] == pytest.approx(prior["ars"], abs=1e-12)
+    assert captured["good"] > captured["bad"]
+    assert (captured["bad"] - captured["good"]) == pytest.approx(expected_penalty, rel=1e-6, abs=1e-6)
+
+
+def test_nested_fit_duration_prior_returns_finite_floor_for_invalid_geometry(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = elca.transit(time, prior)
+
+    class DummySampler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    captured = {}
+    good_point = np.array([prior["rprs"], prior["ars"], prior["inc"], prior["tmid"]], dtype=float)
+    invalid_point = np.array([prior["rprs"], 50.0, 80.0, prior["tmid"]], dtype=float)
+
+    monkeypatch.setattr(elca, "ReactiveNestedSampler", DummySampler)
+
+    def fake_run_reactive_sampler(sampler, *args, **kwargs):
+        loglike = sampler.args[1]
+        prior_transform = sampler.args[2]
+        captured["invalid"] = float(loglike(invalid_point))
+        captured["vector"] = np.asarray(loglike(np.vstack([good_point, invalid_point])), dtype=float)
+        captured["transformed"] = prior_transform(np.full((2, 4), 0.5, dtype=float))
+        return {
+            "maximum_likelihood": {"point": good_point.copy()},
+            "posterior": {
+                "stdev": np.array([0.001, 0.1, 0.05, 0.0001]),
+                "errlo": np.array([-0.001, -0.1, -0.05, -0.0001]),
+                "errup": np.array([0.001, 0.1, 0.05, 0.0001]),
+            },
+            "weighted_samples": {
+                "points": np.vstack([good_point, invalid_point]),
+                "logl": captured["vector"],
+            },
+            "samples": np.vstack([good_point, invalid_point]),
+        }
+
+    monkeypatch.setattr(elca, "run_reactive_sampler", fake_run_reactive_sampler)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "ars": [10.0, 50.0], "inc": [80.0, 89.5], "tmid": [-0.005, 0.005]},
+        mode="ns",
+        verbose=False,
+        use_impactparameter_rather_than_inclination_to_fit=False,
+        duration_prior={
+            "applied": True,
+            "expected_duration": elca.transit_duration(prior),
+            "sigma_log_duration": 0.05,
+        },
+    )
+
+    assert fit.parameters["ars"] == pytest.approx(prior["ars"], abs=1e-12)
+    assert np.isfinite(captured["invalid"])
+    assert captured["invalid"] == pytest.approx(elca.BAD_LOG_LIKELIHOOD)
+    assert captured["vector"].shape == (2,)
+    assert np.all(np.isfinite(captured["vector"]))
+    assert captured["vector"][1] == pytest.approx(elca.BAD_LOG_LIKELIHOOD)
+    assert np.asarray(captured["transformed"]).shape == (2, 4)
+
+
 def test_rprs_posterior_recenter_diagnostics_detect_upper_bound_clipping(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)
@@ -544,6 +750,43 @@ def test_rprs_posterior_recenter_diagnostics_detect_upper_bound_clipping(monkeyp
     assert diagnostics["upper_edge_peak_fraction"] >= 0.20
     assert diagnostics["bounds"][0] >= 0.0
     assert diagnostics["bounds"][1] > 0.15
+
+
+def test_ars_posterior_recenter_diagnostics_detect_lower_bound_clipping(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.prior = make_prior()
+    fit.bounds = {"ars": [10.0, 15.0], "tmid": [-0.005, 0.005]}
+    fit.sampled_keys = ["ars", "tmid"]
+    fit.sample_bounds = {"ars": [10.0, 15.0], "tmid": [-0.005, 0.005]}
+
+    ars_samples = np.concatenate([
+        np.linspace(10.001, 10.040, 30),
+        np.linspace(10.060, 10.800, 12),
+    ])
+    tmid_samples = np.linspace(-2e-4, 2e-4, ars_samples.size)
+    points = np.column_stack([ars_samples, tmid_samples])
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-6.0, -3.0, ars_samples.size),
+        },
+        "samples": points.copy(),
+    }
+
+    diagnostics = fit.get_parameter_posterior_recenter_diagnostics("ars")
+
+    assert diagnostics["clipped"] is True
+    assert diagnostics["edge"] == "lower"
+    assert diagnostics["mode"] < 10.5
+    assert diagnostics["std"] > 0
+    assert diagnostics["lower_edge_peak_fraction"] >= 0.20
+    assert diagnostics["bounds"][0] < 10.0
+    assert diagnostics["bounds"][0] >= 0.0
 
 
 def test_rprs_posterior_recenter_diagnostics_ignores_upper_edge_below_twenty_percent(monkeypatch, tmp_path):

@@ -57,9 +57,15 @@ warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
 # standard imports
 import argparse
+import copy
+import faulthandler
+from functools import lru_cache
 import json
 import hashlib
 import os
+import sys
+import threading
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from time import sleep, perf_counter
 # Image alignment import
@@ -127,9 +133,21 @@ try:  # nea
 except ImportError:  # package import
     from api.nea import NASAExoplanetArchive
 try:  # output files
-    from output_files import OutputFiles, AIDOutputFiles, save_comp_star_calibration_summary
+    from output_files import (
+        OutputFiles,
+        AIDOutputFiles,
+        fit_impact_parameter_value_error,
+        format_parameter_with_error,
+        save_comp_star_calibration_summary,
+    )
 except ImportError:  # package import
-    from .output_files import OutputFiles, AIDOutputFiles, save_comp_star_calibration_summary
+    from .output_files import (
+        OutputFiles,
+        AIDOutputFiles,
+        fit_impact_parameter_value_error,
+        format_parameter_with_error,
+        save_comp_star_calibration_summary,
+    )
 try:
     from plate_status import PlateStatus
 except ImportError:
@@ -166,8 +184,14 @@ plt.style.use(astropy_mpl_style)
 
 # logging -- https://docs.python.org/3/library/logging.html
 log = logging.getLogger(__name__)
+_RUNTIME_LOGGING_CONFIGURED = False
+_EXCEPTION_HOOKS_INSTALLED = False
+_UNHANDLED_EXCEPTION_LOGGED = False
+_BJD_FALLBACK_WARNING_LOGGED = False
+_RUNTIME_FILE_HANDLER_NAME = "exotic-runtime-file"
+_RUNTIME_CONSOLE_HANDLER_NAME = "exotic-runtime-console"
 _mid_transit_warning_reported = False
-RELATIVE_FLUX_MAX = 2.0
+RELATIVE_FLUX_MAX = 2.0  # Legacy threshold retained for compatibility; no longer used as a hard rejection cap.
 AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
 LIGHTCURVE_MIN_VALID_POINTS = 5
 COMPARISON_STAR_MIN_COVERAGE_FRACTION = 0.8
@@ -177,14 +201,28 @@ COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA = 4.25
 COMPARISON_STAR_SUITABILITY_MIN_CANDIDATES = 5
 COMPARISON_STAR_SUITABILITY_MAX_ITERS = 10
+COMPARISON_IMAGE_OUTLIER_SIGMA = COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA
+COMPARISON_IMAGE_OUTLIER_MIN_ACTIVE_STARS = 3
+COMPARISON_IMAGE_OUTLIER_MIN_VALID_PAIRS = 2
+COMPARISON_IMAGE_OUTLIER_MIN_SCATTER = 1e-4
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
-RPRS_SEARCH_BOUND_MAX = 0.30
+RPRS_SEARCH_BOUND_MAX = 1.0
 RPRS_RETRY_MIN_HALF_WIDTH = 0.05
 INITIAL_RPRS_BOUND_LOWER_SCALE = 0.25
 INITIAL_RPRS_BOUND_UPPER_SCALE = 3.0
+ARS_SEARCH_BOUND_MIN = 1e-6
+ARS_SEARCH_BOUND_FALLBACK_MAX = 100.0
+ARS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
+ARS_RETRY_MIN_HALF_WIDTH = 0.0
+INITIAL_ARS_BOUND_SIGMA_MULTIPLIER = 5.0
+INITIAL_ARS_BOUND_FALLBACK_RELATIVE_HALF_WIDTH = 0.25
+DURATION_PRIOR_MONTE_CARLO_SAMPLES = 256
+DURATION_PRIOR_MIN_VALID_MONTE_CARLO_SAMPLES = 64
+DURATION_PRIOR_MIN_RELATIVE_SIGMA = 0.05
+DURATION_PRIOR_FALLBACK_RELATIVE_SIGMA = 0.15
 FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER = 0.5
 EEBLS_DURATION_GRID_SIZE = 15
 EEBLS_DURATION_MIN_FRACTION = 0.5
@@ -217,6 +255,24 @@ BAD_PIXEL_NEIGHBOR_FOOTPRINT = np.array(
      [1, 1, 1]],
     dtype=bool,
 )
+TRANSIT_QC_DELTA_BIC_FAIL_THRESHOLD = 6.0
+TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD = 10.0
+TRANSIT_QC_MIN_RPRS_SIGMA = 3.0
+TRANSIT_QC_MARGINAL_RPRS_SIGMA = 5.0
+TRANSIT_QC_MIN_EEBLS_SNR = 4.0
+TRANSIT_QC_DURATION_RATIO_MIN = 0.5
+TRANSIT_QC_DURATION_RATIO_MAX = 2.0
+TRANSIT_QC_DEFAULT_A2_BOUNDS = (-3.0, 3.0)
+TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT = True
+TRANSIT_QC_DEVIATION_SIGMA_DEFAULT = 5.0
+TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS = {
+    'model_evidence': 0.8,
+    'deviation_from_expected_value': 1.5,
+    'residual_scatter': 0.7,
+    'rprs_significance': 0.5,
+    'duration_consistency': 0.75,
+    'eebls_depth_snr': 0.75,
+}
 
 
 def airmass_span(airmass):
@@ -320,11 +376,41 @@ def annotate_nested_tmid_refinement(
     fit.nested_tmid_refinement_tmid_bounds = refined_tmid_bounds
 
 
+def annotate_duration_prior(fit, duration_prior):
+    if fit is None:
+        return
+
+    summary = duration_prior if isinstance(duration_prior, dict) else {}
+    fit.duration_prior_applied = bool(summary.get('applied', False))
+    fit.duration_prior_note = summary.get('note')
+    fit.duration_prior_expected_duration = coerce_finite_transit_qc_scalar(
+        summary.get('expected_duration', np.nan)
+    )
+    fit.duration_prior_sigma_log = coerce_finite_transit_qc_scalar(
+        summary.get('sigma_log_duration', np.nan)
+    )
+    fit.duration_prior_relative_sigma = coerce_finite_transit_qc_scalar(
+        summary.get('relative_sigma', np.nan)
+    )
+    fit.duration_prior_source = summary.get('source')
+
+
 def annotate_lightcurve_filter_diagnostics(fit, diagnostics):
     if fit is None:
         return
 
     fit.frame_filter_diagnostics = [dict(diagnostic) for diagnostic in (diagnostics or [])]
+
+
+def prepend_lightcurve_filter_diagnostic(fit, diagnostic):
+    if fit is None or not diagnostic:
+        return
+
+    existing = getattr(fit, 'frame_filter_diagnostics', [])
+    diagnostics = [dict(diagnostic)]
+    if isinstance(existing, list):
+        diagnostics.extend(dict(item) for item in existing if isinstance(item, dict))
+    fit.frame_filter_diagnostics = diagnostics
 
 
 def annotate_selected_photometry_debug(
@@ -356,6 +442,1611 @@ def annotate_selected_photometry_debug(
         'initial_sigma_keep_mask': sigma_keep_mask.copy(),
         'phase_clip_keep_mask_on_sigma_filtered': phase_keep_mask.copy(),
     }
+
+
+def transit_qc_airmass_reference(airmass):
+    values = np.asarray(airmass, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0
+    return float(np.nanmean(finite))
+
+
+def transit_qc_airmass_trend(a2, airmass, reference=None):
+    values = np.asarray(airmass, dtype=float)
+    if reference is None:
+        reference = transit_qc_airmass_reference(values)
+    return np.exp(float(a2) * (values - float(reference)))
+
+
+def solve_transit_qc_flux_baseline(systematics, data, dataerr=None):
+    systematics = np.asarray(systematics, dtype=float)
+    data = np.asarray(data, dtype=float)
+    if systematics.shape != data.shape:
+        return np.nan
+
+    weights = np.ones(systematics.shape, dtype=float)
+    if dataerr is not None:
+        dataerr = np.asarray(dataerr, dtype=float)
+        if dataerr.shape != data.shape:
+            dataerr = None
+        else:
+            weights = np.zeros(systematics.shape, dtype=float)
+            valid_err = np.isfinite(dataerr) & (dataerr > 0)
+            weights[valid_err] = 1.0 / (dataerr[valid_err] ** 2)
+
+    mask = np.isfinite(systematics) & np.isfinite(data) & (systematics != 0)
+    if dataerr is not None:
+        mask &= np.isfinite(weights) & (weights > 0)
+
+    if not np.any(mask):
+        return np.nan
+
+    masked_systematics = systematics[mask]
+    masked_data = data[mask]
+    masked_weights = weights[mask]
+    denom = np.sum(masked_weights * masked_systematics ** 2)
+    if np.isfinite(denom) and denom > 0:
+        baseline = np.sum(masked_weights * masked_data * masked_systematics) / denom
+        if np.isfinite(baseline):
+            return float(baseline)
+
+    ratio = masked_data / masked_systematics
+    ratio = ratio[np.isfinite(ratio)]
+    if ratio.size == 0:
+        return np.nan
+    return float(np.nanmedian(ratio))
+
+
+def compute_transit_qc_model_chi2(data, model, dataerr=None):
+    data = np.asarray(data, dtype=float)
+    model = np.asarray(model, dtype=float)
+    if data.shape != model.shape:
+        return np.nan, 0
+
+    mask = np.isfinite(data) & np.isfinite(model)
+    if dataerr is not None:
+        dataerr = np.asarray(dataerr, dtype=float)
+        if dataerr.shape != data.shape:
+            dataerr = None
+        else:
+            mask &= np.isfinite(dataerr) & (dataerr > 0)
+
+    point_count = int(np.count_nonzero(mask))
+    if point_count == 0:
+        return np.nan, 0
+
+    residuals = data[mask] - model[mask]
+    if dataerr is not None:
+        chi2 = np.sum((residuals / dataerr[mask]) ** 2)
+    else:
+        chi2 = np.sum(residuals ** 2)
+    return float(chi2), point_count
+
+
+def compute_transit_qc_bic(chi2, point_count, parameter_count):
+    try:
+        chi2 = float(chi2)
+        point_count = int(point_count)
+        parameter_count = int(parameter_count)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(chi2) or point_count <= 0 or parameter_count <= 0:
+        return np.nan
+    return float(chi2 + parameter_count * np.log(point_count))
+
+
+def clip_unit_interval(value):
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(numeric_value):
+        return np.nan
+    return float(np.clip(numeric_value, 0.0, 1.0))
+
+
+def transit_qc_residual_scatter(data, model):
+    data = np.asarray(data, dtype=float)
+    model = np.asarray(model, dtype=float)
+    if data.shape != model.shape or data.size == 0:
+        return np.nan
+
+    mask = np.isfinite(data) & np.isfinite(model)
+    if not np.any(mask):
+        return np.nan
+
+    median_flux = np.nanmedian(data[mask])
+    if not np.isfinite(median_flux) or median_flux == 0:
+        return np.nan
+
+    residuals = data[mask] - model[mask]
+    return float(np.std(residuals) / median_flux)
+
+
+def transit_qc_deviation_score_from_sigma(sigma_offset, sigma_threshold):
+    try:
+        sigma_offset = abs(float(sigma_offset))
+        sigma_threshold = float(sigma_threshold)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(sigma_offset) or not np.isfinite(sigma_threshold) or sigma_threshold <= 0:
+        return np.nan
+
+    return float(max(0.0, 1.0 - sigma_offset / sigma_threshold))
+
+
+def transit_qc_duration_score(duration_ratio):
+    try:
+        duration_ratio = float(duration_ratio)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(duration_ratio) or duration_ratio <= 0:
+        return np.nan
+
+    max_log_deviation = np.log(TRANSIT_QC_DURATION_RATIO_MAX)
+    if not np.isfinite(max_log_deviation) or max_log_deviation <= 0:
+        return np.nan
+
+    score = 1.0 - abs(np.log(duration_ratio)) / max_log_deviation
+    return float(np.clip(score, 0.0, 1.0))
+
+
+def transit_qc_saturating_score(value, scale):
+    try:
+        value = float(value)
+        scale = float(scale)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(value) or not np.isfinite(scale) or scale <= 0:
+        return np.nan
+
+    return float(np.clip(1.0 - np.exp(-max(value, 0.0) / scale), 0.0, 1.0))
+
+
+def transit_qc_residual_scatter_score(residual_scatter, reference_scatter=0.005):
+    try:
+        residual_scatter = float(residual_scatter)
+        reference_scatter = float(reference_scatter)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(residual_scatter) or residual_scatter < 0 or not np.isfinite(reference_scatter) or reference_scatter <= 0:
+        return np.nan
+
+    return float(np.clip(1.0 / (1.0 + residual_scatter / reference_scatter), 0.0, 1.0))
+
+
+def transit_qc_mean_available_score(*scores):
+    finite_scores = [float(score) for score in scores if np.isfinite(score)]
+    if not finite_scores:
+        return np.nan
+    return float(np.clip(np.mean(finite_scores), 0.0, 1.0))
+
+
+def coerce_finite_transit_qc_scalar(value):
+    if value is None:
+        return np.nan
+
+    if isinstance(value, (list, tuple, np.ndarray)):
+        array_value = np.asarray(value)
+        if array_value.size != 1:
+            return np.nan
+        value = array_value.reshape(-1)[0]
+
+    try:
+        numeric_value = float(value.strip()) if isinstance(value, str) else float(value)
+    except (AttributeError, TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(numeric_value):
+        return np.nan
+    return float(numeric_value)
+
+
+def fit_transit_qc_expected_context(fit):
+    if fit is None:
+        return {}
+
+    return {
+        'expected_tmid': coerce_finite_transit_qc_scalar(
+            getattr(fit, 'transit_qc_expected_tmid', np.nan)
+        ),
+        'expected_tmid_unc': coerce_finite_transit_qc_scalar(
+            getattr(fit, 'transit_qc_expected_tmid_unc', np.nan)
+        ),
+        'expected_rprs': coerce_finite_transit_qc_scalar(
+            getattr(fit, 'transit_qc_expected_rprs', np.nan)
+        ),
+        'expected_rprs_unc': coerce_finite_transit_qc_scalar(
+            getattr(fit, 'transit_qc_expected_rprs_unc', np.nan)
+        ),
+        'use_deviation_from_expected_transit_in_qc': should_use_deviation_from_expected_transit_in_qc(
+            getattr(
+                fit,
+                'transit_qc_use_deviation_from_expected_transit_in_qc',
+                TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT,
+            )
+        ),
+        'deviation_sigma_threshold': parse_deviation_from_expected_transit_in_qc_sigma(
+            getattr(
+                fit,
+                'transit_qc_deviation_sigma_threshold',
+                TRANSIT_QC_DEVIATION_SIGMA_DEFAULT,
+            )
+        ),
+    }
+
+
+def annotate_transit_qc_expected_values(fit, planet_dict):
+    if fit is None or not isinstance(planet_dict, dict):
+        return
+
+    expected_tmid = coerce_finite_transit_qc_scalar(
+        getattr(fit, 'initial_tmid_search_tmid', np.nan)
+    )
+    expected_tmid_unc = coerce_finite_transit_qc_scalar(
+        getattr(fit, 'initial_tmid_search_uncertainty', np.nan)
+    )
+    if not np.isfinite(expected_tmid):
+        expected_tmid = coerce_finite_transit_qc_scalar(planet_dict.get('midT', np.nan))
+    if not np.isfinite(expected_tmid_unc):
+        expected_tmid_unc = coerce_finite_transit_qc_scalar(planet_dict.get('midTUnc', np.nan))
+
+    fit.transit_qc_expected_tmid = expected_tmid
+    fit.transit_qc_expected_tmid_unc = expected_tmid_unc
+    fit.transit_qc_expected_rprs = coerce_finite_transit_qc_scalar(
+        planet_dict.get('rprs', np.nan)
+    )
+    fit.transit_qc_expected_rprs_unc = coerce_finite_transit_qc_scalar(
+        planet_dict.get('rprsUnc', np.nan)
+    )
+    fit.transit_qc_use_deviation_from_expected_transit_in_qc = should_use_deviation_from_expected_transit_in_qc(
+        planet_dict.get(
+            'use_deviation_from_expected_transit_in_qc',
+            TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT,
+        )
+    )
+    fit.transit_qc_deviation_sigma_threshold = parse_deviation_from_expected_transit_in_qc_sigma(
+        planet_dict.get(
+            'deviation_from_expected_transit_in_qc_sigma',
+            TRANSIT_QC_DEVIATION_SIGMA_DEFAULT,
+        )
+    )
+
+
+def annotate_transit_qc_fit_context(
+    fit,
+    planet_dict=None,
+    tmid_search_summary=None,
+    eebls_search_summary=None,
+):
+    if fit is None:
+        return
+
+    if tmid_search_summary is not None:
+        annotate_lightcurve_tmid_search(fit, tmid_search_summary)
+    if eebls_search_summary is not None:
+        annotate_lightcurve_eebls_diagnostic(fit, eebls_search_summary)
+    annotate_transit_qc_expected_values(fit, planet_dict)
+
+
+def copy_transit_qc_expected_values(source_fit, target_fit):
+    if source_fit is None or target_fit is None:
+        return
+
+    for attr in (
+        'transit_qc_expected_tmid',
+        'transit_qc_expected_tmid_unc',
+        'transit_qc_expected_rprs',
+        'transit_qc_expected_rprs_unc',
+        'transit_qc_use_deviation_from_expected_transit_in_qc',
+        'transit_qc_deviation_sigma_threshold',
+    ):
+        if hasattr(source_fit, attr):
+            setattr(target_fit, attr, getattr(source_fit, attr))
+
+
+def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=True):
+    summary = {
+        'enabled': bool(enabled),
+        'sigma_threshold': sigma_threshold,
+        'tmid_deviation_sigma': np.nan,
+        'rprs_deviation_sigma': np.nan,
+        'tmid_deviation_score': np.nan,
+        'rprs_deviation_score': np.nan,
+        'deviation_from_expected_value': np.nan,
+        'available': False,
+        'failed': False,
+        'notes': [],
+    }
+    if fit is None or not enabled:
+        return summary
+
+    parameters = getattr(fit, 'parameters', {}) or {}
+    expected = fit_transit_qc_expected_context(fit)
+    sigma_threshold = expected.get('deviation_sigma_threshold', sigma_threshold)
+    summary['sigma_threshold'] = sigma_threshold
+
+    expected_tmid = expected.get('expected_tmid', np.nan)
+    expected_tmid_unc = expected.get('expected_tmid_unc', np.nan)
+    fitted_tmid = parameters.get('tmid', np.nan)
+    if (
+        np.isfinite(expected_tmid)
+        and np.isfinite(expected_tmid_unc)
+        and expected_tmid_unc > 0
+        and np.isfinite(fitted_tmid)
+    ):
+        tmid_sigma = float(abs(fitted_tmid - expected_tmid) / expected_tmid_unc)
+        summary['tmid_deviation_sigma'] = tmid_sigma
+        summary['tmid_deviation_score'] = transit_qc_deviation_score_from_sigma(tmid_sigma, sigma_threshold)
+
+    expected_rprs = expected.get('expected_rprs', np.nan)
+    expected_rprs_unc = expected.get('expected_rprs_unc', np.nan)
+    fitted_rprs = parameters.get('rprs', np.nan)
+    if (
+        np.isfinite(expected_rprs)
+        and np.isfinite(expected_rprs_unc)
+        and expected_rprs_unc > 0
+        and np.isfinite(fitted_rprs)
+    ):
+        rprs_sigma = float(abs(fitted_rprs - expected_rprs) / expected_rprs_unc)
+        summary['rprs_deviation_sigma'] = rprs_sigma
+        summary['rprs_deviation_score'] = transit_qc_deviation_score_from_sigma(rprs_sigma, sigma_threshold)
+
+    component_scores = [
+        score
+        for score in (summary['tmid_deviation_score'], summary['rprs_deviation_score'])
+        if np.isfinite(score)
+    ]
+    summary['available'] = bool(component_scores)
+    if component_scores:
+        summary['deviation_from_expected_value'] = float(min(component_scores))
+
+    if np.isfinite(summary['tmid_deviation_sigma']):
+        summary['notes'].append(
+            f"Expected-value Tmid deviation: {summary['tmid_deviation_sigma']:.2f} sigma."
+        )
+    if np.isfinite(summary['rprs_deviation_sigma']):
+        summary['notes'].append(
+            f"Expected-value Rp/R* deviation: {summary['rprs_deviation_sigma']:.2f} sigma."
+        )
+
+    for label, sigma_value in (
+        ('Tmid', summary['tmid_deviation_sigma']),
+        ('Rp/R*', summary['rprs_deviation_sigma']),
+    ):
+        if np.isfinite(sigma_value) and np.isfinite(sigma_threshold) and sigma_threshold > 0 and sigma_value > sigma_threshold:
+            summary['failed'] = True
+            summary['notes'].append(
+                f"{label} differs from the expected value by more than {sigma_threshold:.2f} sigma."
+            )
+
+    return summary
+
+
+def compute_transit_qc_ktmf(summary):
+    if not isinstance(summary, dict):
+        return np.nan, []
+
+    delta_bic_score = transit_qc_saturating_score(
+        summary.get('delta_bic', np.nan),
+        TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD,
+    )
+    delta_chi2_score = transit_qc_saturating_score(summary.get('delta_chi2', np.nan), 25.0)
+    model_evidence_score = transit_qc_mean_available_score(delta_bic_score, delta_chi2_score)
+    model_evidence_detail_parts = [
+        f"Delta BIC={format_transit_delta_bic(summary.get('delta_bic', np.nan))}",
+        f"Delta chi2={summary.get('delta_chi2', np.nan):.2f}"
+        if np.isfinite(summary.get('delta_chi2', np.nan))
+        else "Delta chi2=n/a",
+    ]
+
+    raw_components = [
+        {
+            'key': 'model_evidence',
+            'label': 'Model Evidence',
+            'score': model_evidence_score,
+            'detail': ", ".join(model_evidence_detail_parts),
+        },
+        {
+            'key': 'deviation_from_expected_value',
+            'label': 'Deviation From Expected Value',
+            'score': summary.get('deviation_from_expected_value', np.nan),
+            'detail': (
+                f"score={summary.get('deviation_from_expected_value', np.nan):.2f}, "
+                f"Tmid sigma={summary.get('tmid_deviation_sigma', np.nan):.2f}, "
+                f"Rp/R* sigma={summary.get('rprs_deviation_sigma', np.nan):.2f}"
+                if np.isfinite(summary.get('deviation_from_expected_value', np.nan))
+                else "expected-value deviation disabled or unavailable"
+            ),
+        },
+        {
+            'key': 'residual_scatter',
+            'label': 'Residual Scatter Around Full Model Fit',
+            'score': transit_qc_residual_scatter_score(summary.get('residual_scatter', np.nan)),
+            'detail': (
+                f"{summary.get('residual_scatter', np.nan) * 100.0:.4f}%"
+                if np.isfinite(summary.get('residual_scatter', np.nan))
+                else "n/a"
+            ),
+        },
+        {
+            'key': 'rprs_significance',
+            'label': 'Rp/R* Significance',
+            'score': transit_qc_saturating_score(summary.get('rprs_sigma', np.nan), TRANSIT_QC_MIN_RPRS_SIGMA),
+            'detail': (
+                f"{summary.get('rprs_sigma', np.nan):.2f} sigma"
+                if np.isfinite(summary.get('rprs_sigma', np.nan))
+                else "n/a"
+            ),
+        },
+        {
+            'key': 'duration_consistency',
+            'label': 'Duration Consistency',
+            'score': transit_qc_duration_score(summary.get('duration_ratio', np.nan)),
+            'detail': (
+                f"{summary.get('duration_ratio', np.nan):.2f}x expected duration"
+                if np.isfinite(summary.get('duration_ratio', np.nan))
+                else "n/a"
+            ),
+        },
+        {
+            'key': 'eebls_depth_snr',
+            'label': 'EEBLS Depth SNR',
+            'score': transit_qc_saturating_score(summary.get('eebls_depth_snr', np.nan), TRANSIT_QC_MIN_EEBLS_SNR),
+            'detail': (
+                f"{summary.get('eebls_depth_snr', np.nan):.2f}"
+                if np.isfinite(summary.get('eebls_depth_snr', np.nan))
+                else "n/a"
+            ),
+        },
+    ]
+
+    available_components = [
+        component
+        for component in raw_components
+        if np.isfinite(component.get('score', np.nan))
+        and component['key'] in TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS
+    ]
+    if not available_components:
+        return np.nan, []
+
+    available_max_points = sum(TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS[component['key']] for component in available_components)
+    if not np.isfinite(available_max_points) or available_max_points <= 0:
+        return np.nan, []
+
+    scale_factor = 5.0 / available_max_points
+    ktmf_contributions = []
+    total_points = 0.0
+    for component in raw_components:
+        nominal_max_points = TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS.get(component['key'], 0.0)
+        score = component.get('score', np.nan)
+        if np.isfinite(score) and nominal_max_points > 0:
+            max_points = nominal_max_points * scale_factor
+            points = float(np.clip(score, 0.0, 1.0) * max_points)
+            total_points += points
+            ktmf_contributions.append({
+                'label': component['label'],
+                'score': float(np.clip(score, 0.0, 1.0)),
+                'max_points': float(max_points),
+                'points': points,
+                'detail': component.get('detail'),
+                'available': True,
+            })
+        else:
+            ktmf_contributions.append({
+                'label': component['label'],
+                'score': np.nan,
+                'max_points': 0.0,
+                'points': 0.0,
+                'detail': component.get('detail'),
+                'available': False,
+            })
+
+    return float(np.clip(total_points, 0.0, 5.0)), ktmf_contributions
+
+
+def infer_transit_qc_parameter_count(fit, allow_airmass_term):
+    bounds = getattr(fit, 'bounds', None)
+    if isinstance(bounds, dict) and bounds:
+        parameter_count = len(bounds)
+        if 'a0' not in bounds and 'a1' not in bounds:
+            parameter_count += 1
+        return max(int(parameter_count), 1)
+
+    parameters = getattr(fit, 'parameters', {}) or {}
+    errors = getattr(fit, 'errors', {}) or {}
+    available_keys = set(parameters.keys()) | set(errors.keys())
+
+    parameter_count = 1  # profiled flux baseline
+    if 'rprs' in available_keys:
+        parameter_count += 1
+    if 'tmid' in available_keys:
+        parameter_count += 1
+    if 'inc' in available_keys or 'b' in available_keys:
+        parameter_count += 1
+    if allow_airmass_term and 'a2' in available_keys:
+        parameter_count += 1
+    return max(parameter_count, 1)
+
+
+def fit_profiled_flat_null_model(data, dataerr, airmass, initial_a2=0.0, a2_bounds=None, allow_airmass_term=True):
+    data = np.asarray(data, dtype=float)
+    dataerr = None if dataerr is None else np.asarray(dataerr, dtype=float)
+    airmass = None if airmass is None else np.asarray(airmass, dtype=float)
+
+    result = {
+        'available': False,
+        'used_airmass_term': False,
+        'baseline': np.nan,
+        'a2': 0.0,
+        'model': np.full(data.shape, np.nan, dtype=float),
+        'chi2': np.nan,
+        'bic': np.nan,
+        'point_count': 0,
+        'param_count': 1,
+        'note': 'Flat/null model was not evaluated.',
+    }
+
+    if data.ndim != 1 or data.size == 0:
+        result['note'] = 'Flat/null model comparison unavailable: no 1D lightcurve data were provided.'
+        return result
+
+    if dataerr is not None and dataerr.shape != data.shape:
+        dataerr = None
+    if airmass is not None and airmass.shape != data.shape:
+        airmass = None
+
+    use_airmass_term = bool(
+        allow_airmass_term
+        and airmass is not None
+        and airmass.ndim == 1
+        and airmass.shape == data.shape
+        and not should_skip_airmass_fit(airmass)
+    )
+    result['used_airmass_term'] = use_airmass_term
+    result['param_count'] = 1 + int(use_airmass_term)
+
+    if not use_airmass_term:
+        baseline = solve_transit_qc_flux_baseline(np.ones_like(data, dtype=float), data, dataerr)
+        if not np.isfinite(baseline):
+            result['note'] = 'Flat/null model comparison unavailable: could not solve the baseline flux level.'
+            return result
+        model = np.full(data.shape, baseline, dtype=float)
+        chi2, point_count = compute_transit_qc_model_chi2(data, model, dataerr)
+        result.update({
+            'available': np.isfinite(chi2),
+            'baseline': float(baseline),
+            'model': model,
+            'chi2': chi2,
+            'point_count': point_count,
+            'bic': compute_transit_qc_bic(chi2, point_count, result['param_count']),
+            'note': 'Compared against a flat baseline-only null model.',
+        })
+        return result
+
+    lower, upper = TRANSIT_QC_DEFAULT_A2_BOUNDS
+    if a2_bounds is not None:
+        try:
+            lower, upper = np.asarray(a2_bounds, dtype=float).reshape(-1)[:2]
+        except (TypeError, ValueError, IndexError):
+            lower, upper = TRANSIT_QC_DEFAULT_A2_BOUNDS
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        lower, upper = TRANSIT_QC_DEFAULT_A2_BOUNDS
+
+    if not np.isfinite(initial_a2):
+        initial_a2 = 0.0
+    initial_a2 = float(np.clip(initial_a2, lower + np.finfo(float).eps, upper - np.finfo(float).eps))
+    reference = transit_qc_airmass_reference(airmass)
+
+    def build_model(a2_value):
+        systematics = transit_qc_airmass_trend(a2_value, airmass, reference=reference)
+        baseline = solve_transit_qc_flux_baseline(systematics, data, dataerr)
+        if not np.isfinite(baseline):
+            return np.full(data.shape, np.nan, dtype=float), np.nan
+        return baseline * systematics, baseline
+
+    def residual_vector(params):
+        model, baseline = build_model(params[0])
+        if not np.isfinite(baseline):
+            return np.full(max(1, data.size), 1e6, dtype=float)
+
+        mask = np.isfinite(data) & np.isfinite(model)
+        if dataerr is not None:
+            mask &= np.isfinite(dataerr) & (dataerr > 0)
+        if not np.any(mask):
+            return np.full(max(1, data.size), 1e6, dtype=float)
+
+        if dataerr is not None:
+            return (data[mask] - model[mask]) / dataerr[mask]
+        return data[mask] - model[mask]
+
+    best_a2 = float(initial_a2)
+    try:
+        fit_result = least_squares(
+            residual_vector,
+            x0=np.array([initial_a2], dtype=float),
+            bounds=([lower], [upper]),
+        )
+        if fit_result.x.size:
+            best_a2 = float(fit_result.x[0])
+    except Exception:
+        pass
+
+    model, baseline = build_model(best_a2)
+    if not np.isfinite(baseline):
+        result['note'] = 'Flat/null model comparison unavailable: the null-model fit did not converge.'
+        return result
+
+    chi2, point_count = compute_transit_qc_model_chi2(data, model, dataerr)
+    result.update({
+        'available': np.isfinite(chi2),
+        'baseline': float(baseline),
+        'a2': float(best_a2),
+        'model': model,
+        'chi2': chi2,
+        'point_count': point_count,
+        'bic': compute_transit_qc_bic(chi2, point_count, result['param_count']),
+        'note': 'Compared against a flat null model with the same profiled baseline and airmass trend.',
+    })
+    return result
+
+
+def evaluate_transit_detection_qc(fit):
+    expected_context = fit_transit_qc_expected_context(fit)
+    use_deviation_from_expected_transit_in_qc = expected_context.get(
+        'use_deviation_from_expected_transit_in_qc',
+        TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT,
+    )
+    deviation_sigma_threshold = expected_context.get(
+        'deviation_sigma_threshold',
+        TRANSIT_QC_DEVIATION_SIGMA_DEFAULT,
+    )
+    summary = {
+        'computed': False,
+        'status': 'unknown',
+        'preferred_model': 'unknown',
+        'summary': 'Transit QC unavailable: no fit result was provided.',
+        'notes': [],
+        'transit_chi2': np.nan,
+        'flat_chi2': np.nan,
+        'delta_chi2': np.nan,
+        'transit_bic': np.nan,
+        'flat_bic': np.nan,
+        'delta_bic': np.nan,
+        'transit_parameter_count': 0,
+        'flat_parameter_count': 0,
+        'flat_baseline': np.nan,
+        'flat_a2': np.nan,
+        'flat_model_note': None,
+        'rprs_sigma': np.nan,
+        'duration_ratio': np.nan,
+        'eebls_depth_snr': np.nan,
+        'residual_scatter': np.nan,
+        'use_deviation_from_expected_transit_in_qc': bool(use_deviation_from_expected_transit_in_qc),
+        'deviation_sigma_threshold': deviation_sigma_threshold,
+        'expected_tmid': expected_context.get('expected_tmid', np.nan),
+        'expected_tmid_unc': expected_context.get('expected_tmid_unc', np.nan),
+        'expected_rprs': expected_context.get('expected_rprs', np.nan),
+        'expected_rprs_unc': expected_context.get('expected_rprs_unc', np.nan),
+        'tmid_deviation_sigma': np.nan,
+        'rprs_deviation_sigma': np.nan,
+        'tmid_deviation_score': np.nan,
+        'rprs_deviation_score': np.nan,
+        'deviation_from_expected_value': np.nan,
+        'ktmf_metric': np.nan,
+        'ktmf_contributions': [],
+        'point_count': 0,
+    }
+    if fit is None:
+        return summary
+
+    data = np.asarray(getattr(fit, 'data', np.array([])), dtype=float)
+    if data.ndim != 1 or data.size == 0:
+        summary['summary'] = (
+            "Transit QC unavailable: fit results do not expose the 1D lightcurve data needed for "
+            "a transit-vs-flat comparison."
+        )
+        return summary
+
+    dataerr_obj = getattr(fit, 'dataerr', None)
+    dataerr = None if dataerr_obj is None else np.asarray(dataerr_obj, dtype=float)
+    if dataerr is not None and dataerr.shape != data.shape:
+        dataerr = None
+
+    transit_model_obj = getattr(fit, 'model', None)
+    if transit_model_obj is None and hasattr(fit, 'residuals'):
+        residuals = np.asarray(getattr(fit, 'residuals'), dtype=float)
+        if residuals.shape == data.shape:
+            transit_model_obj = data - residuals
+    if transit_model_obj is None:
+        summary['summary'] = (
+            "Transit QC unavailable: fit results do not expose the modeled transit lightcurve needed "
+            "for a transit-vs-flat comparison."
+        )
+        return summary
+
+    transit_model = np.asarray(transit_model_obj, dtype=float)
+    if transit_model.shape != data.shape:
+        summary['summary'] = (
+            "Transit QC unavailable: the fitted transit model shape does not match the lightcurve data."
+        )
+        return summary
+
+    airmass_obj = getattr(fit, 'airmass', None)
+    airmass = None if airmass_obj is None else np.asarray(airmass_obj, dtype=float)
+    if airmass is not None and airmass.shape != data.shape:
+        airmass = None
+
+    allow_airmass_term = bool(
+        airmass is not None
+        and airmass.ndim == 1
+        and not getattr(fit, 'airmass_fit_skipped', False)
+    )
+    bounds = getattr(fit, 'bounds', None)
+    a2_bounds = bounds.get('a2') if isinstance(bounds, dict) else None
+    parameters = getattr(fit, 'parameters', {}) or {}
+    errors = getattr(fit, 'errors', {}) or {}
+    initial_a2 = parameters.get('a2', 0.0)
+
+    flat_model = fit_profiled_flat_null_model(
+        data,
+        dataerr,
+        airmass,
+        initial_a2=initial_a2,
+        a2_bounds=a2_bounds,
+        allow_airmass_term=allow_airmass_term,
+    )
+    transit_chi2, point_count = compute_transit_qc_model_chi2(data, transit_model, dataerr)
+    transit_parameter_count = infer_transit_qc_parameter_count(fit, flat_model.get('used_airmass_term', False))
+    transit_bic = compute_transit_qc_bic(transit_chi2, point_count, transit_parameter_count)
+    flat_bic = flat_model.get('bic', np.nan)
+    delta_chi2 = flat_model.get('chi2', np.nan) - transit_chi2
+    delta_bic = flat_bic - transit_bic
+
+    summary.update({
+        'computed': bool(bool(flat_model.get('available')) and np.isfinite(transit_chi2)),
+        'transit_chi2': transit_chi2,
+        'flat_chi2': flat_model.get('chi2', np.nan),
+        'delta_chi2': delta_chi2,
+        'transit_bic': transit_bic,
+        'flat_bic': flat_bic,
+        'delta_bic': delta_bic,
+        'transit_parameter_count': int(transit_parameter_count),
+        'flat_parameter_count': int(flat_model.get('param_count', 0)),
+        'flat_baseline': flat_model.get('baseline', np.nan),
+        'flat_a2': flat_model.get('a2', np.nan),
+        'flat_model_note': flat_model.get('note'),
+        'residual_scatter': transit_qc_residual_scatter(data, transit_model),
+        'point_count': int(point_count),
+    })
+
+    if not summary['computed']:
+        note = flat_model.get('note') or 'flat/null model comparison failed.'
+        summary['summary'] = f"Transit QC unavailable: {note}"
+        return summary
+
+    if np.isfinite(delta_chi2):
+        if delta_chi2 > 1e-12:
+            summary['preferred_model'] = 'transit'
+        elif delta_chi2 < -1e-12:
+            summary['preferred_model'] = 'flat'
+        else:
+            summary['preferred_model'] = 'ambiguous'
+
+    rprs = parameters.get('rprs', np.nan)
+    rprs_err = errors.get('rprs', np.nan)
+    if np.isfinite(rprs) and np.isfinite(rprs_err) and rprs_err > 0:
+        summary['rprs_sigma'] = float(abs(rprs) / rprs_err)
+
+    duration_expected = getattr(fit, 'duration_expected', np.nan)
+    duration_measured = getattr(fit, 'duration_measured', np.nan)
+    if (
+        np.isfinite(duration_expected)
+        and duration_expected > 0
+        and np.isfinite(duration_measured)
+        and duration_measured >= 0
+    ):
+        summary['duration_ratio'] = float(duration_measured / duration_expected)
+
+    ensure_lightcurve_fit_eebls_diagnostic(fit)
+    summary['eebls_depth_snr'] = extract_lightcurve_fit_eebls_snr(fit)
+    deviation_summary = evaluate_transit_qc_expected_value_deviation(
+        fit,
+        deviation_sigma_threshold,
+        enabled=use_deviation_from_expected_transit_in_qc,
+    )
+    summary.update({
+        'tmid_deviation_sigma': deviation_summary.get('tmid_deviation_sigma', np.nan),
+        'rprs_deviation_sigma': deviation_summary.get('rprs_deviation_sigma', np.nan),
+        'tmid_deviation_score': deviation_summary.get('tmid_deviation_score', np.nan),
+        'rprs_deviation_score': deviation_summary.get('rprs_deviation_score', np.nan),
+        'deviation_from_expected_value': deviation_summary.get('deviation_from_expected_value', np.nan),
+    })
+
+    notes = []
+    failure_reasons = []
+    status = 'pass'
+    comparison_text = (
+        f"Delta BIC={delta_bic:.2f}, Delta chi2={delta_chi2:.2f}"
+        if np.isfinite(delta_bic) and np.isfinite(delta_chi2)
+        else "model comparison unavailable"
+    )
+
+    if not np.isfinite(delta_bic) or not np.isfinite(delta_chi2):
+        status = 'unknown'
+        notes.append("Transit-vs-flat model comparison was not finite.")
+    elif delta_chi2 <= 0:
+        status = 'fail'
+        notes.append("The flat/null model fits the lightcurve at least as well as the transit model.")
+        failure_reasons.append("the flat/null model fits the lightcurve at least as well as the transit model")
+    elif delta_bic < TRANSIT_QC_DELTA_BIC_FAIL_THRESHOLD:
+        status = 'fail'
+        notes.append(
+            "The transit model does not beat the flat/null model strongly enough to claim a detection."
+        )
+        failure_reasons.append(
+            "the transit model does not beat the flat/null model strongly enough to claim a detection"
+        )
+    elif delta_bic < TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD:
+        status = 'marginal'
+        notes.append(
+            "The transit model is preferred over the flat/null model, but the evidence is only moderate."
+        )
+    else:
+        notes.append("The transit model is strongly preferred over the flat/null model.")
+
+    if np.isfinite(summary['rprs_sigma']):
+        if summary['rprs_sigma'] < TRANSIT_QC_MIN_RPRS_SIGMA:
+            status = 'fail'
+            notes.append(
+                f"The fitted transit depth is only {summary['rprs_sigma']:.2f}-sigma."
+            )
+            failure_reasons.append(
+                f"the fitted transit depth is only {summary['rprs_sigma']:.2f}-sigma"
+            )
+        elif summary['rprs_sigma'] < TRANSIT_QC_MARGINAL_RPRS_SIGMA and status == 'pass':
+            status = 'marginal'
+            notes.append(
+                f"The fitted transit depth is only {summary['rprs_sigma']:.2f}-sigma."
+            )
+
+    if np.isfinite(summary['duration_ratio']):
+        if (
+            summary['duration_ratio'] < TRANSIT_QC_DURATION_RATIO_MIN
+            or summary['duration_ratio'] > TRANSIT_QC_DURATION_RATIO_MAX
+        ):
+            if status == 'pass':
+                status = 'marginal'
+            notes.append(
+                f"The measured transit duration is {summary['duration_ratio']:.2f}x the modeled duration."
+            )
+
+    if np.isfinite(summary['eebls_depth_snr']) and summary['eebls_depth_snr'] < TRANSIT_QC_MIN_EEBLS_SNR:
+        if status == 'pass':
+            status = 'marginal'
+        notes.append(
+            f"EEBLS only found a weak box-like event (depth SNR={summary['eebls_depth_snr']:.2f})."
+        )
+
+    if use_deviation_from_expected_transit_in_qc:
+        notes.extend(deviation_summary.get('notes', []))
+        if deviation_summary.get('failed'):
+            status = 'fail'
+            notes.append(
+                "The fit deviates too far from the expected published Tmid and/or Rp/R* values."
+            )
+            failure_reasons.append(
+                "the fit deviates too far from the expected published Tmid and/or Rp/R* values"
+            )
+
+    ktmf_metric, ktmf_contributions = compute_transit_qc_ktmf(summary)
+    summary['ktmf_metric'] = ktmf_metric
+    summary['ktmf_contributions'] = ktmf_contributions
+
+    if status == 'pass':
+        summary_text = f"Transit model strongly preferred over flat/null model ({comparison_text})."
+    elif status == 'marginal':
+        summary_text = f"Transit model preferred over flat/null model, but the detection is marginal ({comparison_text})."
+    elif status == 'fail':
+        if failure_reasons:
+            flat_model_only_failure = all(
+                "flat/null model" in reason or "does not beat the flat/null model" in reason
+                for reason in failure_reasons
+            )
+            if flat_model_only_failure:
+                summary_text = (
+                    f"Transit detection not supported strongly enough against a flat/null model ({comparison_text})."
+                )
+            else:
+                summary_text = (
+                    "Transit model is preferred over the flat/null model, but QC rejected the fit because "
+                    + "; ".join(failure_reasons)
+                    + f" ({comparison_text})."
+                )
+        else:
+            summary_text = f"Transit detection QC rejected this fit ({comparison_text})."
+    else:
+        summary_text = f"Transit QC unavailable ({comparison_text})."
+
+    summary.update({
+        'status': status,
+        'summary': summary_text,
+        'notes': notes,
+    })
+    return summary
+
+
+def annotate_transit_detection_qc(fit, summary=None):
+    if fit is None:
+        return
+
+    summary = evaluate_transit_detection_qc(fit) if summary is None else dict(summary)
+    fit.transit_qc = summary
+    fit.transit_qc_computed = bool(summary.get('computed'))
+    fit.transit_qc_status = summary.get('status')
+    fit.transit_qc_summary = summary.get('summary')
+    fit.transit_qc_preferred_model = summary.get('preferred_model')
+    fit.transit_qc_delta_bic = summary.get('delta_bic')
+    fit.transit_qc_delta_chi2 = summary.get('delta_chi2')
+    fit.transit_qc_rprs_sigma = summary.get('rprs_sigma')
+    fit.transit_qc_duration_ratio = summary.get('duration_ratio')
+    fit.transit_qc_eebls_depth_snr = summary.get('eebls_depth_snr')
+    fit.transit_qc_residual_scatter = summary.get('residual_scatter')
+    fit.transit_qc_deviation_from_expected_value = summary.get('deviation_from_expected_value')
+    fit.transit_qc_deviation_sigma_threshold = summary.get('deviation_sigma_threshold')
+    fit.transit_qc_tmid_deviation_sigma = summary.get('tmid_deviation_sigma')
+    fit.transit_qc_rprs_deviation_sigma = summary.get('rprs_deviation_sigma')
+    fit.transit_qc_expected_rprs_deviation_sigma = summary.get('rprs_deviation_sigma')
+    fit.transit_qc_ktmf_metric = summary.get('ktmf_metric')
+    fit.transit_qc_ktmf_contributions = summary.get('ktmf_contributions')
+
+
+def lightcurve_fit_transit_qc_failure_reason(fit):
+    if fit is None:
+        return None
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if not isinstance(transit_qc, dict):
+        return None
+
+    status = str(transit_qc.get('status', '')).strip().lower()
+    if status != 'fail':
+        return None
+
+    summary = transit_qc.get('summary')
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
+
+    return "Transit detection QC flagged this fit as a poor transit candidate."
+
+
+def make_json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): make_json_safe(subvalue) for key, subvalue in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [make_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return [make_json_safe(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def archive_exception_payload(action, exc):
+    traceback_text = ''.join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    ).strip()
+    message = f"{action}: {type(exc).__name__}: {exc}"
+    try:
+        log_info(f"Warning: {message}", warn=True)
+    except Exception:
+        print(f"Warning: {message}", flush=True)
+    log.debug("%s\n%s", message, traceback_text)
+    return {
+        'action': action,
+        'error_type': type(exc).__name__,
+        'message': str(exc),
+        'traceback': traceback_text,
+    }
+
+
+def failed_comparison_archive_dir(save_dir, comp_index):
+    base_dir = Path(save_dir)
+    candidate_dir = base_dir / f"comp_{comp_index + 1}_failed"
+    if not candidate_dir.exists():
+        return candidate_dir
+
+    suffix = 2
+    while True:
+        fallback_dir = base_dir / f"comp_{comp_index + 1}_failed_{suffix}"
+        if not fallback_dir.exists():
+            return fallback_dir
+        suffix += 1
+
+
+def comparison_candidate_output_dir(save_dir, comp_index):
+    return Path(save_dir) / f"comp{comp_index + 1}"
+
+
+def estimate_transit_duration_samples_from_fit(fit, sample_count=1000, grid_size=1000):
+    if fit is None or not hasattr(fit, 'parameters') or not hasattr(fit, 'errors'):
+        return None, np.array([], dtype=float)
+
+    fit_times = np.asarray(getattr(fit, 'time', []), dtype=float)
+    fit_times = fit_times[np.isfinite(fit_times)]
+    if fit_times.size < 2:
+        return None, np.array([], dtype=float)
+
+    parameters = getattr(fit, 'parameters', {}) or {}
+    errors = getattr(fit, 'errors', {}) or {}
+    transit_times = np.linspace(np.nanmin(fit_times), np.nanmax(fit_times), int(grid_size))
+    if transit_times.size < 2:
+        return None, np.array([], dtype=float)
+
+    baseline_parameters = dict(parameters)
+    baseline_model = transit(transit_times, baseline_parameters)
+    dt = float(np.nanmean(np.diff(transit_times)))
+    if not np.isfinite(dt) or dt <= 0:
+        return baseline_model, np.array([], dtype=float)
+
+    duration_samples = []
+    sample_count = max(1, int(sample_count))
+    for _ in range(sample_count):
+        sampled_parameters = dict(parameters)
+        for key, error_value in errors.items():
+            parameter_value = parameters.get(key)
+            if parameter_value is None:
+                continue
+            try:
+                numeric_error = float(error_value)
+                numeric_value = float(parameter_value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(numeric_error) or numeric_error <= 0 or not np.isfinite(numeric_value):
+                continue
+            sampled_parameters[key] = np.random.normal(numeric_value, numeric_error)
+
+        sampled_model = transit(transit_times, sampled_parameters)
+        in_transit_mask = np.asarray(sampled_model, dtype=float) < 1
+        duration_samples.append(float(np.count_nonzero(in_transit_mask)) * dt)
+
+    return baseline_model, np.asarray(duration_samples, dtype=float)
+
+
+def build_comparison_candidate_adaptive_summary(comparison_calibration, psf_data,
+                                                use_adaptive_apertures=False,
+                                                adaptive_aperture_values=None,
+                                                adaptive_annulus_values=None,
+                                                fallback_sigma=np.nan):
+    if (
+        not use_adaptive_apertures
+        or comparison_calibration is None
+        or comparison_calibration.get('method') == 'psf'
+        or adaptive_aperture_values is None
+        or adaptive_annulus_values is None
+    ):
+        return None
+
+    aperture_index = comparison_calibration.get('a')
+    annulus_index = comparison_calibration.get('an')
+    if aperture_index is None or annulus_index is None:
+        return None
+
+    aperture_grid = np.asarray(adaptive_aperture_values, dtype=float)
+    annulus_grid = np.asarray(adaptive_annulus_values, dtype=float)
+    if aperture_index >= aperture_grid.size or annulus_index >= annulus_grid.size:
+        return None
+
+    return summarize_adaptive_aperture_usage(
+        psf_data['target'],
+        aperture_grid[aperture_index],
+        annulus_grid[annulus_index],
+        fallback_sigma=fallback_sigma,
+    )
+
+
+def match_time_subset_indices(full_times, subset_times, rtol=1e-10, atol=1e-10):
+    full_times = np.asarray(full_times, dtype=float).reshape(-1)
+    subset_times = np.asarray(subset_times, dtype=float).reshape(-1)
+    if subset_times.size == 0:
+        return np.array([], dtype=int)
+    if full_times.size < subset_times.size:
+        return None
+
+    matched_indices = []
+    search_start = 0
+    for subset_time in subset_times:
+        if not np.isfinite(subset_time):
+            return None
+        remaining = full_times[search_start:]
+        matches = np.flatnonzero(np.isclose(remaining, subset_time, rtol=rtol, atol=atol))
+        if matches.size == 0:
+            return None
+        matched_index = search_start + int(matches[0])
+        matched_indices.append(matched_index)
+        search_start = matched_index + 1
+
+    return np.asarray(matched_indices, dtype=int)
+
+
+def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, airmass, ld, p_dict,
+                                                 jd_times=None,
+                                                 disable_vertical_flux_normalization=False,
+                                                 detrend_on_outoftransit_baseline=True,
+                                                 use_impactparameter_rather_than_inclination_to_fit=True,
+                                                 use_eebls_to_initialize_tmid_and_bounds=True,
+                                                 plot_time_range=None,
+                                                 baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+                                                 adaptive_summary=None):
+    result = {
+        'applied': False,
+        'fit': None,
+        'good_times': np.array([], dtype=float),
+        'good_flux': np.array([], dtype=float),
+        'good_unc': np.array([], dtype=float),
+        'good_airmass': np.array([], dtype=float),
+        'good_jd_times': np.array([], dtype=float),
+        'good_target_flux': np.array([], dtype=float),
+        'good_comp_flux': np.array([], dtype=float),
+        'source_indices': np.array([], dtype=int),
+        'data_highres': None,
+        'duration_samples': np.array([], dtype=float),
+        'failure_reason': "full candidate reduction did not run.",
+        'filter_diagnostics': [],
+        'note': None,
+    }
+    prepared = prepare_lightcurve_fit_input_series(
+        times,
+        target_flux,
+        comp_flux,
+        airmass,
+        jd_times=jd_times,
+    )
+    result['filter_diagnostics'] = prepared.get('filter_diagnostics', [])
+    if not prepared.get('applied'):
+        result['failure_reason'] = prepared.get(
+            'failure_reason',
+            "the raw comparison-candidate photometry did not yield a usable light curve.",
+        )
+        return result
+
+    good_times = np.asarray(prepared['time'], dtype=float)
+    good_flux = np.asarray(prepared['flux'], dtype=float)
+    good_unc = np.asarray(prepared['unc'], dtype=float)
+    good_airmass = np.asarray(prepared['airmass'], dtype=float)
+    good_jd_times = np.asarray(prepared['jd_time'], dtype=float)
+    good_target_flux = np.asarray(prepared['target_flux'], dtype=float)
+    good_comp_flux = np.asarray(prepared['comp_flux'], dtype=float)
+    source_indices = np.asarray(prepared['source_indices'], dtype=int)
+
+    adaptive_clip_mask = np.zeros(good_times.shape[0], dtype=bool)
+    if adaptive_summary is not None:
+        aperture_series = np.asarray(adaptive_summary.get('aperture_series', []), dtype=float)
+        annulus_series = np.asarray(adaptive_summary.get('annulus_series', []), dtype=float)
+        if aperture_series.ndim == 1 and annulus_series.ndim == 1:
+            try:
+                selected_apertures = aperture_series[source_indices]
+                selected_annuli = annulus_series[source_indices]
+            except IndexError:
+                selected_apertures = None
+                selected_annuli = None
+            if (
+                selected_apertures is not None
+                and selected_apertures.shape == good_times.shape
+                and selected_annuli.shape == good_times.shape
+            ):
+                adaptive_clip_mask = adaptive_aperture_outlier_mask(
+                    selected_apertures,
+                    selected_annuli,
+                )
+
+    if np.count_nonzero(~adaptive_clip_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+        result['failure_reason'] = (
+            "adaptive-aperture filtering left too few points for a stable comparison-candidate reduction."
+        )
+        return result
+
+    if np.any(adaptive_clip_mask):
+        good_times = good_times[~adaptive_clip_mask]
+        good_flux = good_flux[~adaptive_clip_mask]
+        good_unc = good_unc[~adaptive_clip_mask]
+        good_airmass = good_airmass[~adaptive_clip_mask]
+        good_jd_times = good_jd_times[~adaptive_clip_mask]
+        good_target_flux = good_target_flux[~adaptive_clip_mask]
+        good_comp_flux = good_comp_flux[~adaptive_clip_mask]
+        source_indices = source_indices[~adaptive_clip_mask]
+
+    relative_flux_mask = relative_flux_filter_mask(good_flux)
+    if np.count_nonzero(relative_flux_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+        result['failure_reason'] = (
+            "the raw comparison-candidate light curve failed the relative-flux filter before full reduction."
+        )
+        return result
+
+    good_times = good_times[relative_flux_mask]
+    good_flux = good_flux[relative_flux_mask]
+    good_unc = good_unc[relative_flux_mask]
+    good_airmass = good_airmass[relative_flux_mask]
+    good_jd_times = good_jd_times[relative_flux_mask]
+    good_target_flux = good_target_flux[relative_flux_mask]
+    good_comp_flux = good_comp_flux[relative_flux_mask]
+    source_indices = source_indices[relative_flux_mask]
+
+    prior = {
+        'rprs': p_dict['rprs'],
+        'ars': p_dict['aRs'],
+        'per': p_dict['pPer'],
+        'inc': p_dict['inc'],
+        'u0': ld[0], 'u1': ld[1], 'u2': ld[2], 'u3': ld[3],
+        'ecc': p_dict['ecc'],
+        'omega': p_dict['omega'],
+        'tmid': p_dict['midT'],
+        'a2': 0,
+    }
+
+    expected_duration = estimate_transit_duration_from_prior_geometry(prior)
+    tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
+        good_times,
+        p_dict['midT'],
+        prior['per'],
+        p_dict['midTUnc'],
+        p_dict['pPerUnc'],
+        expected_duration=expected_duration,
+        sigma_multiplier=35.0,
+    )
+    prior['tmid'] = tmid_search_summary['tmid']
+    lower, upper = tmid_search_summary['bounds']
+
+    eebls_search_summary = None
+    if use_eebls_to_initialize_tmid_and_bounds:
+        eebls_search_summary = estimate_tmid_and_bounds_with_eebls(
+            good_times,
+            good_flux,
+            good_unc,
+            prior,
+            [lower, upper],
+        )
+        if eebls_search_summary.get('applied'):
+            prior['tmid'] = eebls_search_summary['tmid']
+            lower, upper = eebls_search_summary['bounds']
+
+    skip_final_airmass_fit = False
+    airmass_skip_note = None
+    final_airmass_span = airmass_span(good_airmass)
+    if should_skip_airmass_fit(good_airmass):
+        skip_final_airmass_fit = True
+        airmass_skip_note = (
+            f"Skipped (airmass span {final_airmass_span:.4f} <= {AIRMASS_FLAT_RANGE_THRESHOLD:.2f}); "
+            "no airmass correction applied."
+        )
+
+    bounds = build_initial_transit_bounds(
+        prior,
+        [lower, upper],
+        ars_unc=p_dict.get('aRsUnc'),
+    )
+    apply_vertical_flux_normalization_bound(
+        prior,
+        bounds,
+        good_flux,
+        disable_vertical_flux_normalization,
+    )
+    if not skip_final_airmass_fit:
+        bounds['a2'] = [-3, 3]
+
+    debug_phase_clip_keep_mask = None
+    prefit = lc_fitter(
+        good_times,
+        good_flux,
+        good_unc,
+        good_airmass,
+        prior,
+        bounds,
+        jd_times=good_jd_times,
+        mode='lm',
+        use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+    )
+    if (
+        prefit is not None
+        and hasattr(prefit, 'residuals')
+        and hasattr(prefit, 'phase')
+        and np.shape(prefit.residuals) == np.shape(good_times)
+        and np.shape(prefit.phase) == np.shape(good_times)
+    ):
+        phase_clip_mask = phase_bin_sigma_clip(prefit.residuals, prefit.phase, sigma=3, bins=10)
+        min_required_points = max(len(bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
+        if np.any(phase_clip_mask) and np.count_nonzero(~phase_clip_mask) >= min_required_points:
+            debug_phase_clip_keep_mask = np.asarray(~phase_clip_mask, dtype=bool).copy()
+            result['filter_diagnostics'].append(build_time_rejection_diagnostic(
+                "Final-fit phase residual clip",
+                good_times,
+                ~phase_clip_mask,
+                note="Dropped phase-binned residual outliers before the comparison-candidate ultranest fit.",
+            ))
+            good_times = good_times[~phase_clip_mask]
+            good_flux = good_flux[~phase_clip_mask]
+            good_unc = good_unc[~phase_clip_mask]
+            good_airmass = good_airmass[~phase_clip_mask]
+            good_jd_times = good_jd_times[~phase_clip_mask]
+            good_target_flux = good_target_flux[~phase_clip_mask]
+            good_comp_flux = good_comp_flux[~phase_clip_mask]
+            source_indices = source_indices[~phase_clip_mask]
+
+    final_fit, good_flux, good_unc = fit_final_lightcurve_with_oot_baseline_detrending(
+        good_times,
+        good_flux,
+        good_unc,
+        good_airmass,
+        prior,
+        bounds,
+        jd_times=good_jd_times,
+        skip_airmass_fit=skip_final_airmass_fit,
+        airmass_skip_note=airmass_skip_note,
+        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+        detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+        use_impactparameter_rather_than_inclination_to_fit=
+        use_impactparameter_rather_than_inclination_to_fit,
+        plot_time_range=plot_time_range,
+        baseline_duration_multiplier=baseline_duration_multiplier,
+        expected_planet_dict=p_dict,
+        expected_tmid_search_summary=tmid_search_summary,
+        eebls_search_summary=eebls_search_summary,
+    )
+    if final_fit is None:
+        result['failure_reason'] = "the full comparison-candidate reduction did not converge."
+        return result
+
+    final_fit_times = np.asarray(getattr(final_fit, 'time', good_times), dtype=float)
+    if (
+        final_fit_times.shape != good_times.shape
+        or not np.allclose(final_fit_times, good_times, rtol=1e-10, atol=1e-10)
+    ):
+        final_time_indices = match_time_subset_indices(good_times, final_fit_times)
+        if final_time_indices is not None:
+            good_times = good_times[final_time_indices]
+            good_airmass = good_airmass[final_time_indices]
+            good_jd_times = good_jd_times[final_time_indices]
+            good_target_flux = good_target_flux[final_time_indices]
+            good_comp_flux = good_comp_flux[final_time_indices]
+            source_indices = source_indices[final_time_indices]
+
+    annotate_lightcurve_filter_diagnostics(final_fit, result['filter_diagnostics'])
+    annotate_selected_photometry_debug(
+        final_fit,
+        prepared['debug_times'],
+        prepared['debug_target_flux'],
+        prepared['debug_comp_flux'],
+        prepared['debug_raw_ratio'],
+        prepared['initial_sigma_keep_mask'],
+        phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
+    )
+
+    data_highres, duration_samples = estimate_transit_duration_samples_from_fit(final_fit)
+    result.update({
+        'applied': True,
+        'fit': final_fit,
+        'good_times': np.asarray(good_times, dtype=float),
+        'good_flux': np.asarray(good_flux, dtype=float),
+        'good_unc': np.asarray(good_unc, dtype=float),
+        'good_airmass': np.asarray(good_airmass, dtype=float),
+        'good_jd_times': np.asarray(good_jd_times, dtype=float),
+        'good_target_flux': np.asarray(good_target_flux, dtype=float),
+        'good_comp_flux': np.asarray(good_comp_flux, dtype=float),
+        'source_indices': np.asarray(source_indices, dtype=int),
+        'data_highres': data_highres,
+        'duration_samples': duration_samples,
+        'failure_reason': None,
+        'note': 'completed the full comparison-candidate reduction directly from the raw target/reference light curve.',
+    })
+    return result
+
+
+def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, final_fit,
+                                                     p_dict, observation_date, comp_index,
+                                                     comp_coords=None, min_aperture=None, min_annulus=None,
+                                                     adaptive_summary=None, method_label=None,
+                                                     selection_summary=None, duration_samples=None,
+                                                     data_highres=None):
+    if save_dir is None or final_fit is None or observation_date is None or comp_index is None:
+        return None
+
+    candidate_dir = comparison_candidate_output_dir(save_dir, comp_index)
+    temp_dir = candidate_dir / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    archive_errors = []
+    debug_series_path = None
+    bestfit_plot_path = None
+    triangle_plot_path = None
+
+    debug_fit = provisional_fit if provisional_fit is not None else final_fit
+    if debug_fit is not None:
+        try:
+            debug_series_path = save_selected_photometry_debug_series(
+                candidate_dir,
+                p_dict['pName'],
+                observation_date,
+                debug_fit,
+            )
+        except Exception as exc:
+            archive_errors.append(archive_exception_payload(
+                "Could not save the selected raw target/reference ratio diagnostics",
+                exc,
+            ))
+
+    plotter = getattr(final_fit, 'plot_bestfit', None)
+    if callable(plotter):
+        try:
+            fig, _ = plotter()
+            bestfit_plot_path = temp_dir / f"BestFit_{p_dict['pName']}_{observation_date}.png"
+            fig.savefig(bestfit_plot_path)
+            plt.close(fig)
+        except Exception as exc:
+            archive_errors.append(archive_exception_payload(
+                "Could not save the final best-fit plot",
+                exc,
+            ))
+
+    triangle_plotter = getattr(final_fit, 'plot_triangle', None)
+    if callable(triangle_plotter):
+        try:
+            fig = triangle_plotter()
+            triangle_plot_path = temp_dir / f"Triangle_{p_dict['pName']}_{observation_date}.png"
+            fig.savefig(triangle_plot_path)
+            plt.close(fig)
+        except Exception as exc:
+            archive_errors.append(archive_exception_payload(
+                "Could not save the triangle plot",
+                exc,
+            ))
+
+    duration_samples = np.asarray([] if duration_samples is None else duration_samples, dtype=float)
+    if duration_samples.size == 0:
+        measured_duration = getattr(final_fit, 'duration_measured', np.nan)
+        if np.isfinite(measured_duration) and measured_duration > 0:
+            duration_samples = np.asarray([measured_duration], dtype=float)
+
+    candidate_info_dict = {
+        'save': str(candidate_dir),
+        'date': observation_date,
+    }
+    try:
+        if data_highres is None:
+            data_highres, _ = estimate_transit_duration_samples_from_fit(final_fit, sample_count=1)
+        if data_highres is not None:
+            plot_final_lightcurve(final_fit, data_highres, p_dict['pName'], candidate_info_dict['save'], observation_date)
+    except Exception as exc:
+        archive_errors.append(archive_exception_payload(
+            "Could not save the final lightcurve plot",
+            exc,
+        ))
+
+    output_files = OutputFiles(final_fit, p_dict, candidate_info_dict, duration_samples)
+    try:
+        phase = get_phase(final_fit.time, p_dict['pPer'], final_fit.parameters['tmid'])
+        output_files.final_lightcurve(phase)
+    except Exception as exc:
+        archive_errors.append(archive_exception_payload(
+            "Could not save FinalLightCurve CSV",
+            exc,
+        ))
+
+    try:
+        output_files.final_planetary_params(
+            phot_opt=True,
+            vsp_params=[],
+            comp_star=int(comp_index + 1),
+            comp_coords=comp_coords,
+            min_aper=0 if min_aperture is None else np.round(min_aperture, 2),
+            min_annul=(None if min_annulus is None else np.round(min_annulus, 2)),
+            adaptive_summary=adaptive_summary,
+        )
+    except Exception as exc:
+        archive_errors.append(archive_exception_payload(
+            "Could not save FinalParams JSON",
+            exc,
+        ))
+
+    summary_path = temp_dir / f"ComparisonCandidateSummary_{p_dict['pName']}_{observation_date}.json"
+    summary_payload = {
+        'planet_name': p_dict['pName'],
+        'observation_date': observation_date,
+        'comparison_star': int(comp_index + 1),
+        'comparison_position': comp_coords,
+        'method_label': method_label,
+        'selection_summary': selection_summary or {},
+        'parameter_summary': summarize_lightcurve_fit_parameters(final_fit),
+        'transit_qc': getattr(final_fit, 'transit_qc', None),
+        'saved_debug_series': None if debug_series_path is None else str(debug_series_path),
+        'saved_bestfit_plot': None if bestfit_plot_path is None else str(bestfit_plot_path),
+        'saved_triangle_plot': None if triangle_plot_path is None else str(triangle_plot_path),
+        'archive_errors': archive_errors,
+    }
+    with summary_path.open('w', encoding='utf-8') as handle:
+        json.dump(make_json_safe(summary_payload), handle, indent=4)
+
+    return candidate_dir
+
+
+def archive_failed_comparison_fit(save_dir, planet_name, observation_date, attempt, method_label=None):
+    if save_dir is None or planet_name is None or observation_date is None or not attempt:
+        return None
+
+    comp_index = attempt.get('comp_index')
+    if comp_index is None:
+        return None
+
+    archive_dir = failed_comparison_archive_dir(save_dir, comp_index)
+    temp_dir = archive_dir / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    fit = attempt.get('fit')
+    archive_errors = []
+    debug_series_path = None
+    bestfit_plot_path = None
+
+    if fit is not None:
+        try:
+            debug_series_path = save_selected_photometry_debug_series(
+                archive_dir,
+                planet_name,
+                observation_date,
+                fit,
+            )
+        except Exception as exc:
+            archive_errors.append(archive_exception_payload(
+                "Could not save the selected raw target/reference ratio diagnostics",
+                exc,
+            ))
+
+        plotter = getattr(fit, 'plot_bestfit', None)
+        if callable(plotter):
+            try:
+                fig, _ = plotter()
+                bestfit_plot_path = temp_dir / f"BestFit_{planet_name}_{observation_date}.png"
+                fig.savefig(bestfit_plot_path)
+                plt.close(fig)
+            except Exception as exc:
+                archive_errors.append(archive_exception_payload(
+                    "Could not save the provisional best-fit plot",
+                    exc,
+                ))
+
+    summary_path = temp_dir / f"FailedFitSummary_{planet_name}_{observation_date}.json"
+    summary_payload = {
+        'planet_name': planet_name,
+        'observation_date': observation_date,
+        'comparison_star': None if comp_index is None else int(comp_index + 1),
+        'comparison_label': attempt.get('label', f"Comp {comp_index + 1}"),
+        'comparison_position': attempt.get('position'),
+        'method_label': method_label,
+        'failure_reason': attempt.get('failure_reason'),
+        'fit_diagnostics': attempt.get('fit_diagnostics') or {},
+        'parameter_summary': attempt.get('parameter_summary'),
+        'fit_point_count': attempt.get('fit_point_count'),
+        'eebls_snr': attempt.get('eebls_snr'),
+        'transit_delta_bic': attempt.get('transit_delta_bic'),
+        'residual_scatter': attempt.get('residual_scatter'),
+        'ktmf_metric': attempt.get('ktmf_metric'),
+        'ktmf_contributions': attempt.get('ktmf_contributions') or [],
+        'transit_qc': getattr(fit, 'transit_qc', None) if fit is not None else None,
+        'saved_debug_series': None if debug_series_path is None else str(debug_series_path),
+        'saved_bestfit_plot': None if bestfit_plot_path is None else str(bestfit_plot_path),
+        'archive_errors': archive_errors,
+    }
+    with summary_path.open('w', encoding='utf-8') as handle:
+        json.dump(make_json_safe(summary_payload), handle, indent=4)
+
+    return archive_dir
 
 
 def save_selected_photometry_debug_series(save_dir, planet_name, observation_date, fit):
@@ -417,27 +2108,36 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
 
 
 def annotate_rprs_posterior_refit(fit, applied, note=None, history=None):
+    annotate_parameter_posterior_refit(fit, 'rprs', applied, note=note, history=history)
+
+
+def annotate_ars_posterior_refit(fit, applied, note=None, history=None):
+    annotate_parameter_posterior_refit(fit, 'ars', applied, note=note, history=history)
+
+
+def annotate_parameter_posterior_refit(fit, parameter_key, applied, note=None, history=None):
     if fit is None:
         return
 
     history = [] if history is None else list(history)
-    fit.rprs_posterior_refit_applied = bool(applied)
-    fit.rprs_posterior_refit_note = note
-    fit.rprs_posterior_refit_count = len(history)
-    fit.rprs_posterior_refit_history = history
+    attr_prefix = f"{parameter_key}_posterior_refit"
+    setattr(fit, f"{attr_prefix}_applied", bool(applied))
+    setattr(fit, f"{attr_prefix}_note", note)
+    setattr(fit, f"{attr_prefix}_count", len(history))
+    setattr(fit, f"{attr_prefix}_history", history)
     if history:
         latest = history[-1]
-        fit.rprs_posterior_refit_edge = latest.get('edge')
-        fit.rprs_posterior_refit_mode = latest.get('mode')
-        fit.rprs_posterior_refit_std = latest.get('std')
-        fit.rprs_posterior_refit_original_bounds = latest.get('original_bounds')
-        fit.rprs_posterior_refit_bounds = latest.get('new_bounds')
+        setattr(fit, f"{attr_prefix}_edge", latest.get('edge'))
+        setattr(fit, f"{attr_prefix}_mode", latest.get('mode'))
+        setattr(fit, f"{attr_prefix}_std", latest.get('std'))
+        setattr(fit, f"{attr_prefix}_original_bounds", latest.get('original_bounds'))
+        setattr(fit, f"{attr_prefix}_bounds", latest.get('new_bounds'))
     else:
-        fit.rprs_posterior_refit_edge = None
-        fit.rprs_posterior_refit_mode = None
-        fit.rprs_posterior_refit_std = None
-        fit.rprs_posterior_refit_original_bounds = None
-        fit.rprs_posterior_refit_bounds = None
+        setattr(fit, f"{attr_prefix}_edge", None)
+        setattr(fit, f"{attr_prefix}_mode", None)
+        setattr(fit, f"{attr_prefix}_std", None)
+        setattr(fit, f"{attr_prefix}_original_bounds", None)
+        setattr(fit, f"{attr_prefix}_bounds", None)
 
 
 def build_initial_rprs_bounds(
@@ -463,6 +2163,50 @@ def build_initial_rprs_bounds(
     return [float(lower_bound), float(upper_bound)]
 
 
+def build_initial_ars_bounds(
+    ars,
+    ars_unc=None,
+    sigma_multiplier=INITIAL_ARS_BOUND_SIGMA_MULTIPLIER,
+    fallback_relative_half_width=INITIAL_ARS_BOUND_FALLBACK_RELATIVE_HALF_WIDTH,
+):
+    try:
+        ars = float(ars)
+    except (TypeError, ValueError):
+        ars = np.nan
+
+    try:
+        ars_unc = float(ars_unc)
+    except (TypeError, ValueError):
+        ars_unc = np.nan
+
+    if not np.isfinite(ars) or ars <= ARS_SEARCH_BOUND_MIN:
+        return [float(ARS_SEARCH_BOUND_MIN), float(ARS_SEARCH_BOUND_FALLBACK_MAX)]
+
+    if np.isfinite(ars_unc) and ars_unc > 0:
+        half_width = float(max(ARS_SEARCH_BOUND_MIN, sigma_multiplier * ars_unc))
+    else:
+        half_width = float(max(ARS_SEARCH_BOUND_MIN, fallback_relative_half_width * ars))
+
+    lower_bound = max(float(ARS_SEARCH_BOUND_MIN), float(ars - half_width))
+    upper_bound = float(ars + half_width)
+    if not np.isfinite(upper_bound) or upper_bound <= lower_bound:
+        upper_bound = float(lower_bound + max(np.finfo(float).eps, ARS_SEARCH_BOUND_MIN))
+
+    return [float(lower_bound), float(upper_bound)]
+
+
+def build_initial_transit_bounds(prior, tmid_bounds, ars_unc=None, inclination_half_width=5.0):
+    lower, upper = [float(value) for value in np.asarray(tmid_bounds, dtype=float).reshape(-1)[:2]]
+    # Keep ars ahead of inc so the internal impact-parameter parameterization
+    # uses the sampled ars value when converting inclination to b.
+    return {
+        'rprs': build_initial_rprs_bounds(prior['rprs']),
+        'tmid': [lower, upper],
+        'ars': build_initial_ars_bounds(prior['ars'], ars_unc=ars_unc),
+        'inc': [prior['inc'] - inclination_half_width, min(90, prior['inc'] + inclination_half_width)],
+    }
+
+
 def clone_lightcurve_bounds(bounds):
     return {
         key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
@@ -470,51 +2214,105 @@ def clone_lightcurve_bounds(bounds):
     }
 
 
-def sanitize_rprs_search_bounds(bounds):
+def sanitize_parameter_search_bounds(bounds, key, minimum_bound, maximum_bound=None, fallback_maximum=None):
     sanitized = clone_lightcurve_bounds(bounds)
-    if 'rprs' not in sanitized:
+    if key not in sanitized:
         return sanitized
 
     try:
         lower_bound, upper_bound = [
-            float(value) for value in np.asarray(sanitized['rprs'], dtype=float).reshape(-1)[:2]
+            float(value) for value in np.asarray(sanitized[key], dtype=float).reshape(-1)[:2]
         ]
     except (TypeError, ValueError, IndexError):
-        sanitized['rprs'] = [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+        sanitized[key] = [
+            float(minimum_bound),
+            float(maximum_bound if maximum_bound is not None else fallback_maximum),
+        ]
         return sanitized
 
     if not np.isfinite(lower_bound) or not np.isfinite(upper_bound):
-        sanitized['rprs'] = [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+        sanitized[key] = [
+            float(minimum_bound),
+            float(maximum_bound if maximum_bound is not None else fallback_maximum),
+        ]
         return sanitized
 
-    lower_bound = float(np.clip(lower_bound, RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX))
-    upper_bound = float(np.clip(upper_bound, RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX))
+    lower_bound = max(float(minimum_bound), float(lower_bound))
+    if maximum_bound is not None:
+        upper_bound = min(float(maximum_bound), float(upper_bound))
     if lower_bound >= upper_bound:
-        sanitized['rprs'] = [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+        sanitized[key] = [
+            float(minimum_bound),
+            float(maximum_bound if maximum_bound is not None else fallback_maximum),
+        ]
     else:
-        sanitized['rprs'] = [lower_bound, upper_bound]
+        sanitized[key] = [lower_bound, float(upper_bound)]
     return sanitized
 
 
-def clamp_rprs_prior_to_bounds(prior, bounds):
+def sanitize_rprs_search_bounds(bounds):
+    return sanitize_parameter_search_bounds(
+        bounds,
+        'rprs',
+        RPRS_SEARCH_BOUND_MIN,
+        maximum_bound=RPRS_SEARCH_BOUND_MAX,
+        fallback_maximum=RPRS_SEARCH_BOUND_MAX,
+    )
+
+
+def sanitize_ars_search_bounds(bounds):
+    return sanitize_parameter_search_bounds(
+        bounds,
+        'ars',
+        ARS_SEARCH_BOUND_MIN,
+        fallback_maximum=ARS_SEARCH_BOUND_FALLBACK_MAX,
+    )
+
+
+def sanitize_retry_search_bounds(bounds):
+    return sanitize_ars_search_bounds(sanitize_rprs_search_bounds(bounds))
+
+
+def clamp_parameter_prior_to_bounds(prior, bounds, key):
     clamped = dict(prior)
-    if 'rprs' not in clamped or 'rprs' not in bounds:
+    if key not in clamped or key not in bounds:
         return clamped
 
     try:
-        rprs_value = float(clamped['rprs'])
+        parameter_value = float(clamped[key])
         lower_bound, upper_bound = [
-            float(value) for value in np.asarray(bounds['rprs'], dtype=float).reshape(-1)[:2]
+            float(value) for value in np.asarray(bounds[key], dtype=float).reshape(-1)[:2]
         ]
     except (TypeError, ValueError, IndexError):
         return clamped
 
-    if np.isfinite(rprs_value) and np.isfinite(lower_bound) and np.isfinite(upper_bound) and lower_bound < upper_bound:
-        clamped['rprs'] = float(np.clip(rprs_value, lower_bound, upper_bound))
+    if (
+        np.isfinite(parameter_value) and np.isfinite(lower_bound) and np.isfinite(upper_bound)
+        and lower_bound < upper_bound
+    ):
+        clamped[key] = float(np.clip(parameter_value, lower_bound, upper_bound))
     return clamped
 
 
-def enforce_minimum_rprs_retry_half_width(mode, bounds, min_half_width=RPRS_RETRY_MIN_HALF_WIDTH):
+def clamp_rprs_prior_to_bounds(prior, bounds):
+    return clamp_parameter_prior_to_bounds(prior, bounds, 'rprs')
+
+
+def clamp_ars_prior_to_bounds(prior, bounds):
+    return clamp_parameter_prior_to_bounds(prior, bounds, 'ars')
+
+
+def clamp_retry_priors_to_bounds(prior, bounds):
+    return clamp_ars_prior_to_bounds(clamp_rprs_prior_to_bounds(prior, bounds), bounds)
+
+
+def enforce_minimum_parameter_retry_half_width(
+    mode,
+    bounds,
+    min_half_width,
+    minimum_bound,
+    maximum_bound=None,
+):
     try:
         lower_bound, upper_bound = [
             float(value) for value in np.asarray(bounds, dtype=float).reshape(-1)[:2]
@@ -530,20 +2328,42 @@ def enforce_minimum_rprs_retry_half_width(mode, bounds, min_half_width=RPRS_RETR
     expanded_lower = min(lower_bound, center - half_width)
     expanded_upper = max(upper_bound, center + half_width)
 
-    if expanded_lower < RPRS_SEARCH_BOUND_MIN:
-        expanded_upper = min(
-            RPRS_SEARCH_BOUND_MAX,
-            expanded_upper + (RPRS_SEARCH_BOUND_MIN - expanded_lower),
-        )
-        expanded_lower = RPRS_SEARCH_BOUND_MIN
-    if expanded_upper > RPRS_SEARCH_BOUND_MAX:
+    if expanded_lower < minimum_bound:
+        if maximum_bound is None:
+            expanded_upper = expanded_upper + (minimum_bound - expanded_lower)
+        else:
+            expanded_upper = min(
+                maximum_bound,
+                expanded_upper + (minimum_bound - expanded_lower),
+            )
+        expanded_lower = minimum_bound
+    if maximum_bound is not None and expanded_upper > maximum_bound:
         expanded_lower = max(
-            RPRS_SEARCH_BOUND_MIN,
-            expanded_lower - (expanded_upper - RPRS_SEARCH_BOUND_MAX),
+            minimum_bound,
+            expanded_lower - (expanded_upper - maximum_bound),
         )
-        expanded_upper = RPRS_SEARCH_BOUND_MAX
+        expanded_upper = maximum_bound
 
     return [float(expanded_lower), float(expanded_upper)]
+
+
+def enforce_minimum_rprs_retry_half_width(mode, bounds, min_half_width=RPRS_RETRY_MIN_HALF_WIDTH):
+    return enforce_minimum_parameter_retry_half_width(
+        mode,
+        bounds,
+        min_half_width,
+        RPRS_SEARCH_BOUND_MIN,
+        maximum_bound=RPRS_SEARCH_BOUND_MAX,
+    )
+
+
+def enforce_minimum_ars_retry_half_width(mode, bounds, min_half_width=ARS_RETRY_MIN_HALF_WIDTH):
+    return enforce_minimum_parameter_retry_half_width(
+        mode,
+        bounds,
+        min_half_width,
+        ARS_SEARCH_BOUND_MIN,
+    )
 
 
 def run_nested_lightcurve_fit_with_rprs_posterior_retry(
@@ -556,57 +2376,117 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     jd_times=None,
     use_impactparameter_rather_than_inclination_to_fit=True,
     max_rprs_retries=RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
+    duration_prior=None,
+    max_ars_retries=ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
 ):
+    retry_configs = [
+        {
+            'key': 'rprs',
+            'label': 'Rp/R*',
+            'sanitize_bounds': sanitize_rprs_search_bounds,
+            'enforce_half_width': enforce_minimum_rprs_retry_half_width,
+            'max_retries': max_rprs_retries,
+            'min_bound': RPRS_SEARCH_BOUND_MIN,
+            'max_bound': RPRS_SEARCH_BOUND_MAX,
+            'annotate': annotate_rprs_posterior_refit,
+        },
+        {
+            'key': 'ars',
+            'label': 'a/Rs',
+            'sanitize_bounds': sanitize_ars_search_bounds,
+            'enforce_half_width': enforce_minimum_ars_retry_half_width,
+            'max_retries': max_ars_retries,
+            'min_bound': ARS_SEARCH_BOUND_MIN,
+            'max_bound': None,
+            'annotate': annotate_ars_posterior_refit,
+        },
+    ]
+
     def build_fit(local_prior, local_bounds):
-        local_bounds = sanitize_rprs_search_bounds(local_bounds)
-        local_prior = clamp_rprs_prior_to_bounds(local_prior, local_bounds)
-        return lc_fitter(
+        local_bounds = sanitize_retry_search_bounds(local_bounds)
+        local_prior = clamp_retry_priors_to_bounds(local_prior, local_bounds)
+        fit_kwargs = {
+            'jd_times': jd_times,
+            'mode': 'ns',
+            'use_impactparameter_rather_than_inclination_to_fit':
+            use_impactparameter_rather_than_inclination_to_fit,
+        }
+        if isinstance(duration_prior, dict) and duration_prior.get('applied'):
+            fit_kwargs['duration_prior'] = duration_prior
+        fit = lc_fitter(
             times,
             flux_values,
             flux_errors,
             airmass,
             local_prior,
             local_bounds,
-            jd_times=jd_times,
-            mode='ns',
-            use_impactparameter_rather_than_inclination_to_fit=
-            use_impactparameter_rather_than_inclination_to_fit,
+            **fit_kwargs,
         )
+        annotate_duration_prior(fit, duration_prior)
+        return fit
 
-    current_bounds = sanitize_rprs_search_bounds(bounds)
-    current_prior = clamp_rprs_prior_to_bounds(prior, current_bounds)
-    retry_history = []
-    retry_note = None
+    current_bounds = sanitize_retry_search_bounds(bounds)
+    current_prior = clamp_retry_priors_to_bounds(prior, current_bounds)
+    retry_histories = {config['key']: [] for config in retry_configs}
+    retry_notes = {config['key']: None for config in retry_configs}
+    latest_diagnostics = {config['key']: None for config in retry_configs}
+    blocked_retry_keys = set()
     fit = build_fit(current_prior, current_bounds)
 
-    diagnostics = None
-    for _ in range(int(max(0, max_rprs_retries))):
+    while True:
         diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
         if not callable(diagnostics_getter):
-            diagnostics = None
+            latest_diagnostics = {config['key']: None for config in retry_configs}
             break
 
-        diagnostics = diagnostics_getter('rprs')
-        new_bounds = diagnostics.get('bounds') if diagnostics else None
-        if not diagnostics or not diagnostics.get('clipped') or new_bounds is None:
+        retry_config = None
+        diagnostics = None
+        for config in retry_configs:
+            key = config['key']
+            if key not in current_bounds:
+                continue
+
+            parameter_diagnostics = diagnostics_getter(key)
+            latest_diagnostics[key] = parameter_diagnostics
+            if key in blocked_retry_keys:
+                continue
+
+            if len(retry_histories[key]) >= int(max(0, config['max_retries'])):
+                continue
+
+            new_bounds = parameter_diagnostics.get('bounds') if parameter_diagnostics else None
+            if parameter_diagnostics and parameter_diagnostics.get('clipped') and new_bounds is not None:
+                retry_config = config
+                diagnostics = parameter_diagnostics
+                break
+
+        if retry_config is None:
             break
 
+        key = retry_config['key']
+        label = retry_config['label']
+        new_bounds = diagnostics.get('bounds')
         try:
             new_lower, new_upper = [float(value) for value in new_bounds]
         except (TypeError, ValueError):
-            retry_note = "Skipped; the automatic Rp/R* retry proposed malformed bounds."
-            break
+            retry_notes[key] = f"Skipped; the automatic {label} retry proposed malformed bounds."
+            blocked_retry_keys.add(key)
+            continue
         if not np.isfinite(new_lower) or not np.isfinite(new_upper) or new_lower >= new_upper:
-            retry_note = "Skipped; the automatic Rp/R* retry proposed invalid bounds."
-            break
+            retry_notes[key] = f"Skipped; the automatic {label} retry proposed invalid bounds."
+            blocked_retry_keys.add(key)
+            continue
 
-        previous_bounds = current_bounds.get('rprs')
-        clamped_bounds = sanitize_rprs_search_bounds({'rprs': [new_lower, new_upper]}).get('rprs', [new_lower, new_upper])
-        clamped_bounds = enforce_minimum_rprs_retry_half_width(
+        previous_bounds = current_bounds.get(key)
+        clamped_bounds = retry_config['sanitize_bounds']({key: [new_lower, new_upper]}).get(
+            key,
+            [new_lower, new_upper],
+        )
+        clamped_bounds = retry_config['enforce_half_width'](
             diagnostics.get('mode', np.nan),
             clamped_bounds,
         )
-        clamped_bounds = sanitize_rprs_search_bounds({'rprs': clamped_bounds}).get('rprs', clamped_bounds)
+        clamped_bounds = retry_config['sanitize_bounds']({key: clamped_bounds}).get(key, clamped_bounds)
         new_lower, new_upper = [float(value) for value in clamped_bounds]
         if previous_bounds is not None:
             previous_lower, previous_upper = [float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]]
@@ -623,20 +2503,23 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 )
 
             if not expands_sampled_range:
+                maximum_bound = retry_config['max_bound']
                 if (
-                    previous_lower <= RPRS_SEARCH_BOUND_MIN + 1e-12 and
-                    previous_upper >= RPRS_SEARCH_BOUND_MAX - 1e-12
+                    maximum_bound is not None and
+                    previous_lower <= retry_config['min_bound'] + 1e-12 and
+                    previous_upper >= maximum_bound - 1e-12
                 ):
-                    retry_note = (
-                        "Skipped; the automatic Rp/R* retry reached the maximum exoplanet "
-                        f"search range [{RPRS_SEARCH_BOUND_MIN:.6f}, {RPRS_SEARCH_BOUND_MAX:.6f}]."
+                    retry_notes[key] = (
+                        f"Skipped; the automatic {label} retry reached the maximum exoplanet "
+                        f"search range [{retry_config['min_bound']:.6f}, {maximum_bound:.6f}]."
                     )
                 else:
-                    retry_note = "Skipped; the automatic Rp/R* retry did not expand the sampled range."
-                break
+                    retry_notes[key] = f"Skipped; the automatic {label} retry did not expand the sampled range."
+                blocked_retry_keys.add(key)
+                continue
 
-        retry_history.append({
-            'attempt': len(retry_history) + 1,
+        retry_histories[key].append({
+            'attempt': len(retry_histories[key]) + 1,
             'edge': diagnostics.get('edge'),
             'mode': float(diagnostics.get('mode', np.nan)),
             'std': float(diagnostics.get('std', np.nan)),
@@ -644,16 +2527,16 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'new_bounds': [new_lower, new_upper],
         })
         log_info(
-            "Rp/R* posterior is truncated against the "
+            f"{label} posterior is truncated against the "
             f"{diagnostics.get('edge', 'active')} search bound; retrying nested fit "
-            f"with Rp/R* centered at {diagnostics.get('mode', np.nan):.6f} "
+            f"with {label} centered at {diagnostics.get('mode', np.nan):.6f} "
             f"and sigma {diagnostics.get('std', np.nan):.6f} "
             f"over [{new_lower:.6f}, {new_upper:.6f}]."
         )
 
         updated_bounds = clone_lightcurve_bounds(current_bounds)
-        updated_bounds['rprs'] = [new_lower, new_upper]
-        updated_bounds = sanitize_rprs_search_bounds(updated_bounds)
+        updated_bounds[key] = [new_lower, new_upper]
+        updated_bounds = sanitize_retry_search_bounds(updated_bounds)
 
         updated_prior = dict(current_prior)
         fit_parameters = getattr(fit, 'parameters', {})
@@ -662,48 +2545,150 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 if key in fit_parameters:
                     updated_prior[key] = fit_parameters[key]
         if np.isfinite(diagnostics.get('mode', np.nan)):
-            updated_prior['rprs'] = float(diagnostics['mode'])
-        updated_prior = clamp_rprs_prior_to_bounds(updated_prior, updated_bounds)
+            updated_prior[retry_config['key']] = float(diagnostics['mode'])
+        updated_prior = clamp_retry_priors_to_bounds(updated_prior, updated_bounds)
 
         current_prior = updated_prior
         current_bounds = updated_bounds
         fit = build_fit(current_prior, current_bounds)
 
-    if retry_history:
-        final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
-        final_diagnostics = final_diagnostics_getter('rprs') if callable(final_diagnostics_getter) else None
-        note = f"Applied {len(retry_history)} automatic Rp/R* posterior range refit(s)."
-        if final_diagnostics and final_diagnostics.get('clipped'):
-            retry_label = "retry" if len(retry_history) == 1 else "retries"
-            note = (
-                f"{note} The posterior still hugs the {final_diagnostics.get('edge')} bound after "
-                f"{len(retry_history)} {retry_label}."
-            )
-            log_info(
-                "Warning: Rp/R* posterior still appears truncated after the automatic retries; "
-                "please inspect the triangle plot carefully.",
-                warn=True,
-            )
-    elif retry_note is not None:
-        note = retry_note
-    elif diagnostics is not None and diagnostics.get('reason'):
-        note = f"Not needed; {diagnostics['reason']}"
-    else:
-        note = "Not evaluated; posterior diagnostics are unavailable for this fit."
+    final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+    for config in retry_configs:
+        key = config['key']
+        label = config['label']
+        history = retry_histories[key]
+        final_diagnostics = None
+        if callable(final_diagnostics_getter) and key in current_bounds:
+            final_diagnostics = final_diagnostics_getter(key)
+        elif latest_diagnostics.get(key) is not None:
+            final_diagnostics = latest_diagnostics[key]
 
-    annotate_rprs_posterior_refit(fit, bool(retry_history), note=note, history=retry_history)
+        if history:
+            note = f"Applied {len(history)} automatic {label} posterior range refit(s)."
+            if final_diagnostics and final_diagnostics.get('clipped'):
+                retry_label = "retry" if len(history) == 1 else "retries"
+                note = (
+                    f"{note} The posterior still hugs the {final_diagnostics.get('edge')} bound after "
+                    f"{len(history)} {retry_label}."
+                )
+                log_info(
+                    f"Warning: {label} posterior still appears truncated after the automatic retries; "
+                    "please inspect the triangle plot carefully.",
+                    warn=True,
+                )
+        elif retry_notes[key] is not None:
+            note = retry_notes[key]
+        elif final_diagnostics is not None and final_diagnostics.get('reason'):
+            note = f"Not needed; {final_diagnostics['reason']}"
+        else:
+            note = "Not evaluated; posterior diagnostics are unavailable for this fit."
+
+        config['annotate'](fit, bool(history), note=note, history=history)
     return fit
 
 
 def log_info(string, warn=False, error=False):
     if error:
-        print(f"\033[31m {string}\033[0m")
+        print(f"\033[31m {string}\033[0m", flush=True)
     elif warn:
-        print(f"\033[34m {string}\033[0m")
+        print(f"\033[34m {string}\033[0m", flush=True)
     else:
-        print(string)
+        print(string, flush=True)
     log.debug(string)
     return True
+
+
+def _find_runtime_handler(handler_name):
+    for handler in log.handlers:
+        if getattr(handler, "_exotic_runtime_handler_name", None) == handler_name:
+            return handler
+    return None
+
+
+def configure_runtime_logging():
+    global _RUNTIME_LOGGING_CONFIGURED
+
+    if _RUNTIME_LOGGING_CONFIGURED:
+        return
+
+    logging.root.setLevel(logging.DEBUG)
+    log.setLevel(logging.DEBUG)
+
+    if _find_runtime_handler(_RUNTIME_FILE_HANDLER_NAME) is None:
+        try:
+            file_handler = TimedRotatingFileHandler(filename="exotic.log", when="midnight", backupCount=2)
+        except Exception as exc:
+            print(f"Warning: Could not initialize exotic.log ({exc}).")
+        else:
+            file_handler._exotic_runtime_handler_name = _RUNTIME_FILE_HANDLER_NAME
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
+                    "%(funcName)s:%(lineno)d - %(message)s",
+                    "%Y-%m-%dT%H:%M:%S",
+                )
+            )
+            log.addHandler(file_handler)
+
+    if _find_runtime_handler(_RUNTIME_CONSOLE_HANDLER_NAME) is None:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler._exotic_runtime_handler_name = _RUNTIME_CONSOLE_HANDLER_NAME
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter("%(message)s"))
+        log.addHandler(console_handler)
+
+    try:
+        faulthandler.enable(file=sys.stdout, all_threads=True)
+    except Exception:
+        pass
+
+    _RUNTIME_LOGGING_CONFIGURED = True
+
+
+def _log_exception_with_fallback(message, exc_type, exc_value, exc_traceback):
+    try:
+        log.error(message, exc_info=(exc_type, exc_value, exc_traceback))
+    except Exception:
+        print(message)
+        traceback.print_exception(exc_type, exc_value, exc_traceback, file=sys.stdout)
+
+
+def _handle_unhandled_exception(exc_type, exc_value, exc_traceback):
+    global _UNHANDLED_EXCEPTION_LOGGED
+
+    if exc_type is not None and issubclass(exc_type, KeyboardInterrupt):
+        return
+
+    if _UNHANDLED_EXCEPTION_LOGGED:
+        return
+
+    _UNHANDLED_EXCEPTION_LOGGED = True
+    _log_exception_with_fallback("Unhandled exception during EXOTIC run", exc_type, exc_value, exc_traceback)
+
+
+def _handle_thread_exception(args):
+    if args.exc_type is not None and issubclass(args.exc_type, KeyboardInterrupt):
+        return
+
+    thread_name = args.thread.name if args.thread is not None else "unknown"
+    _log_exception_with_fallback(
+        f"Unhandled exception in thread '{thread_name}'",
+        args.exc_type,
+        args.exc_value,
+        args.exc_traceback,
+    )
+
+
+def install_exception_hooks():
+    global _EXCEPTION_HOOKS_INSTALLED
+
+    if _EXCEPTION_HOOKS_INSTALLED:
+        return
+
+    sys.excepthook = _handle_unhandled_exception
+    threading.excepthook = _handle_thread_exception
+    _EXCEPTION_HOOKS_INSTALLED = True
 
 
 def should_log_plate_solution_path(wcs_file):
@@ -734,7 +2719,6 @@ def relative_flux_filter_mask(relative_flux, max_relative_flux=RELATIVE_FLUX_MAX
     return (
         np.isfinite(relative_flux)
         & np.greater(relative_flux, 0)
-        & np.less_equal(relative_flux, max_relative_flux)
     )
 
 
@@ -889,6 +2873,72 @@ def should_pick_comparison_by_eebls_snr(config_value):
     log_info(
         "Warning: Invalid 'pick_comparison_by_eebls_snr' value; "
         "keeping EEBLS SNR comparison selection enabled.",
+        warn=True,
+    )
+    return True
+
+
+def should_use_deviation_from_expected_transit_in_qc(config_value):
+    if config_value is None:
+        return TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'use_deviation_from_expected_transit_in_qc' value; "
+        "keeping expected-value deviation QC enabled.",
+        warn=True,
+    )
+    return TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT
+
+
+def parse_deviation_from_expected_transit_in_qc_sigma(config_value):
+    if config_value is None:
+        return TRANSIT_QC_DEVIATION_SIGMA_DEFAULT
+
+    try:
+        sigma_value = float(config_value)
+    except (TypeError, ValueError):
+        log_info(
+            "Warning: Invalid 'deviation_from_expected_transit_in_qc_sigma' value; using the default 5 sigma.",
+            warn=True,
+        )
+        return TRANSIT_QC_DEVIATION_SIGMA_DEFAULT
+
+    if not np.isfinite(sigma_value) or sigma_value <= 0:
+        log_info(
+            "Warning: Non-positive 'deviation_from_expected_transit_in_qc_sigma' value; using the default 5 sigma.",
+            warn=True,
+        )
+        return TRANSIT_QC_DEVIATION_SIGMA_DEFAULT
+    return float(sigma_value)
+
+
+def should_assess_all_comparisons_before_selecting_best(config_value):
+    if config_value is None:
+        return True
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'assess_all_comparisons_before_selecting_best' value; "
+        "defaulting to assess all comparisons.",
         warn=True,
     )
     return True
@@ -1179,6 +3229,158 @@ def estimate_transit_duration_from_prior_geometry(prior):
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
 
 
+def _cacheable_duration_prior_scalar(value):
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if not np.isfinite(numeric_value) else float(numeric_value)
+
+
+def _duration_prior_scalar_from_cache(value):
+    return np.nan if value is None else float(value)
+
+
+@lru_cache(maxsize=128)
+def _cached_single_transit_duration_prior(
+    period,
+    rprs,
+    ars,
+    inc,
+    ecc,
+    omega,
+    period_unc,
+    rprs_unc,
+    ars_unc,
+    inc_unc,
+):
+    prior = {
+        'per': _duration_prior_scalar_from_cache(period),
+        'rprs': _duration_prior_scalar_from_cache(rprs),
+        'ars': _duration_prior_scalar_from_cache(ars),
+        'inc': _duration_prior_scalar_from_cache(inc),
+        'ecc': _duration_prior_scalar_from_cache(ecc),
+        'omega': _duration_prior_scalar_from_cache(omega),
+    }
+    expected_duration = estimate_transit_duration_from_prior_geometry(prior)
+    if not np.isfinite(expected_duration) or expected_duration <= 0:
+        return {
+            'applied': False,
+            'expected_duration': np.nan,
+            'sigma_log_duration': np.nan,
+            'relative_sigma': np.nan,
+            'source': 'unavailable',
+            'sample_count': 0,
+            'note': (
+                "Not applied; could not estimate a physical transit duration from the published single-transit priors."
+            ),
+        }
+
+    period_unc = _duration_prior_scalar_from_cache(period_unc)
+    rprs_unc = _duration_prior_scalar_from_cache(rprs_unc)
+    ars_unc = _duration_prior_scalar_from_cache(ars_unc)
+    inc_unc = _duration_prior_scalar_from_cache(inc_unc)
+
+    fallback_sigma_log = float(np.log1p(DURATION_PRIOR_FALLBACK_RELATIVE_SIGMA))
+    min_sigma_log = float(np.log1p(DURATION_PRIOR_MIN_RELATIVE_SIGMA))
+    sigma_log_duration = fallback_sigma_log
+    sample_count = 0
+    source = "fallback relative width"
+
+    if any(
+        value is not None and value > 0
+        for value in (period_unc, rprs_unc, ars_unc, inc_unc)
+    ):
+        rng = np.random.default_rng(0)
+        sample_draw_count = int(max(DURATION_PRIOR_MONTE_CARLO_SAMPLES, 1))
+        period_draws = np.full(sample_draw_count, prior['per'], dtype=float)
+        rprs_draws = np.full(sample_draw_count, prior['rprs'], dtype=float)
+        ars_draws = np.full(sample_draw_count, prior['ars'], dtype=float)
+        inc_draws = np.full(sample_draw_count, prior['inc'], dtype=float)
+
+        if period_unc is not None and period_unc > 0:
+            period_draws = rng.normal(prior['per'], period_unc, sample_draw_count)
+        if rprs_unc is not None and rprs_unc > 0:
+            rprs_draws = rng.normal(prior['rprs'], rprs_unc, sample_draw_count)
+        if ars_unc is not None and ars_unc > 0:
+            ars_draws = rng.normal(prior['ars'], ars_unc, sample_draw_count)
+        if inc_unc is not None and inc_unc > 0:
+            inc_draws = rng.normal(prior['inc'], inc_unc, sample_draw_count)
+
+        inc_draws = np.clip(inc_draws, 1e-6, 89.999999)
+        durations = np.full(sample_draw_count, np.nan, dtype=float)
+        for index in range(sample_draw_count):
+            durations[index] = estimate_transit_duration_from_prior_geometry({
+                'per': period_draws[index],
+                'rprs': rprs_draws[index],
+                'ars': ars_draws[index],
+                'inc': inc_draws[index],
+                'ecc': prior['ecc'],
+                'omega': prior['omega'],
+            })
+
+        valid_durations = durations[np.isfinite(durations) & (durations > 0)]
+        sample_count = int(valid_durations.size)
+        if valid_durations.size >= DURATION_PRIOR_MIN_VALID_MONTE_CARLO_SAMPLES:
+            log_offsets = np.log(valid_durations / expected_duration)
+            lower_offset, upper_offset = np.nanpercentile(log_offsets, [16, 84])
+            sigma_log_duration = float(max(0.5 * (upper_offset - lower_offset), min_sigma_log))
+            source = "published geometry uncertainties"
+        else:
+            source = "fallback relative width (insufficient valid uncertainty samples)"
+    else:
+        source = "fallback relative width (missing published geometry uncertainties)"
+
+    sigma_log_duration = float(max(sigma_log_duration, min_sigma_log))
+    relative_sigma = float(np.expm1(sigma_log_duration))
+    note = (
+        f"Applied; expected duration={expected_duration:.6f} day(s) with an approximate 1-sigma width of "
+        f"{relative_sigma * 100.0:.1f}% from {source}"
+    )
+    if sample_count > 0:
+        note += f" ({sample_count} propagated sample(s))."
+    else:
+        note += "."
+
+    return {
+        'applied': True,
+        'expected_duration': float(expected_duration),
+        'sigma_log_duration': float(sigma_log_duration),
+        'relative_sigma': relative_sigma,
+        'source': source,
+        'sample_count': sample_count,
+        'note': note,
+    }
+
+
+def build_single_transit_duration_prior(planet_dict):
+    if not isinstance(planet_dict, dict):
+        return {
+            'applied': False,
+            'expected_duration': np.nan,
+            'sigma_log_duration': np.nan,
+            'relative_sigma': np.nan,
+            'source': 'unavailable',
+            'sample_count': 0,
+            'note': "Not applied; missing published single-transit planet metadata.",
+        }
+
+    return dict(
+        _cached_single_transit_duration_prior(
+            _cacheable_duration_prior_scalar(planet_dict.get('pPer', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('rprs', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('aRs', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('inc', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('ecc', 0.0)),
+            _cacheable_duration_prior_scalar(planet_dict.get('omega', 0.0)),
+            _cacheable_duration_prior_scalar(planet_dict.get('pPerUnc', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('rprsUnc', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('aRsUnc', np.nan)),
+            _cacheable_duration_prior_scalar(planet_dict.get('incUnc', np.nan)),
+        )
+    )
+
+
 def estimate_ephemeris_tmid_and_bounds(
     times,
     prior_tmid,
@@ -1192,6 +3394,7 @@ def estimate_ephemeris_tmid_and_bounds(
         'method': 'ephemeris',
         'applied': False,
         'tmid': float(prior_tmid) if np.isfinite(prior_tmid) else np.nan,
+        'uncertainty': np.nan,
         'bounds': [np.nan, np.nan],
         'cycle_index': np.nan,
         'propagated_half_width': np.nan,
@@ -1226,6 +3429,7 @@ def estimate_ephemeris_tmid_and_bounds(
     phases = (valid_times - prior_tmid) / period
     cycle_index = float(np.floor(phases).max())
     tmid = float(prior_tmid + cycle_index * period)
+    propagated_uncertainty = np.sqrt(midt_unc ** 2 + (cycle_index * per_unc) ** 2)
 
     propagated_half_width = np.abs(sigma_multiplier * midt_unc + cycle_index * sigma_multiplier * per_unc)
     max_half_width = 0.25 * period
@@ -1284,6 +3488,7 @@ def estimate_ephemeris_tmid_and_bounds(
     half_width = max(float(tmid - lower), float(upper - tmid))
     summary.update({
         'tmid': tmid,
+        'uncertainty': propagated_uncertainty,
         'bounds': [lower, upper],
         'cycle_index': cycle_index,
         'propagated_half_width': propagated_half_width,
@@ -1421,9 +3626,18 @@ def estimate_tmid_and_bounds_with_eebls(times, flux_values, flux_errors, prior, 
     pre_points = int(np.count_nonzero(np.isfinite(fit_times) & (fit_times < tmid - coverage_margin)))
     post_points = int(np.count_nonzero(np.isfinite(fit_times) & (fit_times > tmid + coverage_margin)))
     if pre_points == 0 or post_points == 0:
+        summary.update({
+            'method': 'eebls',
+            'applied': False,
+            'tmid': tmid,
+            'duration': duration,
+            'depth': depth,
+            'depth_snr': depth_snr,
+        })
         summary['note'] = (
-            "EEBLS transit initializer skipped: the strongest box-like signal is not bracketed by data on both sides "
-            f"({pre_points} pre-point(s), {post_points} post-point(s))."
+            "EEBLS transit initializer found a box-like event, but it is not bracketed by data on both sides "
+            f"({pre_points} pre-point(s), {post_points} post-point(s)); keeping the EEBLS depth SNR only and "
+            "falling back to the non-EEBLS Tmid bounds."
         )
         return summary
 
@@ -1462,6 +3676,7 @@ def annotate_lightcurve_tmid_search(fit, summary):
     fit.initial_tmid_search_method = summary.get('method')
     fit.initial_tmid_search_applied = bool(summary.get('applied'))
     fit.initial_tmid_search_tmid = summary.get('tmid')
+    fit.initial_tmid_search_uncertainty = summary.get('uncertainty')
     fit.initial_tmid_search_bounds = summary.get('bounds')
     fit.initial_tmid_search_duration = summary.get('duration')
     fit.initial_tmid_search_depth = summary.get('depth')
@@ -1501,6 +3716,74 @@ def extract_lightcurve_fit_eebls_snr(fit):
     return np.nan
 
 
+def ensure_lightcurve_fit_eebls_diagnostic(fit):
+    if fit is None:
+        return None
+
+    existing_snr = extract_lightcurve_fit_eebls_snr(fit)
+    if np.isfinite(existing_snr):
+        return {
+            'applied': True,
+            'depth_snr': existing_snr,
+            'note': 'Existing EEBLS diagnostic reused.',
+        }
+
+    times = np.asarray(getattr(fit, 'time', np.array([])), dtype=float)
+    flux_values = np.asarray(getattr(fit, 'data', np.array([])), dtype=float)
+    if times.ndim != 1 or times.size < LIGHTCURVE_MIN_VALID_POINTS or flux_values.shape != times.shape:
+        return None
+
+    dataerr_obj = getattr(fit, 'dataerr', None)
+    flux_errors = None if dataerr_obj is None else np.asarray(dataerr_obj, dtype=float)
+    if flux_errors is None or flux_errors.shape != times.shape:
+        flux_errors = np.full(times.shape, 1.0, dtype=float)
+    else:
+        finite_positive = np.isfinite(flux_errors) & (flux_errors > 0)
+        if not np.any(finite_positive):
+            flux_errors = np.full(times.shape, 1.0, dtype=float)
+        elif not np.all(finite_positive):
+            replacement = float(np.nanmedian(flux_errors[finite_positive]))
+            flux_errors = np.where(finite_positive, flux_errors, replacement)
+
+    fit_prior = getattr(fit, 'prior', {}) or {}
+    parameters = getattr(fit, 'parameters', {}) or {}
+    period = fit_prior.get('per', parameters.get('per', np.nan))
+    tmid = fit_prior.get('tmid', parameters.get('tmid', np.nan))
+    try:
+        period = float(period)
+        tmid = float(tmid)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(period) or period <= 0 or not np.isfinite(tmid):
+        return None
+
+    fallback_bounds = getattr(fit, 'initial_tmid_search_bounds', None)
+    if fallback_bounds is None:
+        fallback_bounds = getattr(fit, 'eebls_diagnostic_bounds', None)
+    if fallback_bounds is None:
+        bounds = getattr(fit, 'bounds', None)
+        fallback_bounds = bounds.get('tmid') if isinstance(bounds, dict) else None
+
+    try:
+        lower, upper = [float(value) for value in np.asarray(fallback_bounds, dtype=float).reshape(-1)[:2]]
+    except (TypeError, ValueError, IndexError):
+        lower = float(tmid - 0.25 * period)
+        upper = float(tmid + 0.25 * period)
+    if not np.isfinite(lower) or not np.isfinite(upper) or upper <= lower:
+        lower = float(tmid - 0.25 * period)
+        upper = float(tmid + 0.25 * period)
+
+    eebls_summary = estimate_tmid_and_bounds_with_eebls(
+        times,
+        flux_values,
+        flux_errors,
+        {'per': period, 'tmid': tmid},
+        [lower, upper],
+    )
+    annotate_lightcurve_eebls_diagnostic(fit, eebls_summary)
+    return eebls_summary
+
+
 def should_use_impactparameter_rather_than_inclination_to_fit(config_value):
     if config_value is None:
         return True
@@ -1534,8 +3817,9 @@ def apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled
     prior['a1'] = baseline_guess
 
     if not disabled:
-        # Raw target/reference flux ratios are often far from unity, so only keep
-        # the legacy near-unity bound for already-normalized light curves.
+        # Some paths deliver an approximately unity-normalized light curve, while
+        # others still carry an arbitrary positive baseline. Keep the legacy
+        # near-unity bound only when the working series is already close to 1.
         if 0.95 <= baseline_guess <= 1.05:
             bounds['a0'] = [0.95, 1.05]
         else:
@@ -1727,7 +4011,7 @@ def extract_baseline_corrected_lightcurve_arrays(fit):
         valid_detrended = np.isfinite(detrended) & (detrended > 0)
         if np.any(valid_detrended):
             flux_values = detrended.copy()
-            flux_source = "provisional detrended light curve"
+            flux_source = "current detrended light curve"
 
     if flux_values is None:
         data = np.asarray(getattr(fit, 'data', []), dtype=float)
@@ -1735,10 +4019,10 @@ def extract_baseline_corrected_lightcurve_arrays(fit):
         if data.shape == times.shape and airmass_model.shape == times.shape:
             with np.errstate(divide='ignore', invalid='ignore'):
                 flux_values = np.divide(data, airmass_model)
-            flux_source = "provisional flux ratio divided by the fitted airmass/baseline model"
+            flux_source = "current flux ratio divided by the fitted airmass/baseline model"
         elif data.shape == times.shape:
             flux_values = data.copy()
-            flux_source = "provisional raw flux ratio"
+            flux_source = "current raw flux ratio"
         else:
             return None, None, None
 
@@ -1771,14 +4055,14 @@ def prepare_final_fit_lightcurve_series(
     if times.ndim != 1 or times.size == 0:
         return {
             'applied': False,
-            'note': 'could not prepare a final-fit light curve because the provisional fit had no time samples.',
+            'note': 'could not prepare a final-fit light curve because the current fit had no time samples.',
         }
 
     flux_values, flux_errors, flux_source = extract_baseline_corrected_lightcurve_arrays(fit)
     if flux_values is None:
         return {
             'applied': False,
-            'note': 'could not derive a baseline-corrected provisional light curve for final-fit preparation.',
+            'note': 'could not derive a baseline-corrected light curve for final-fit preparation from the current fit.',
         }
 
     flux_values = np.asarray(flux_values, dtype=float)
@@ -1858,7 +4142,7 @@ def prepare_final_fit_lightcurve_series(
     else:
         note = (
             f"Prepared the final-fit input light curve from the {flux_source} and normalized it with a "
-            f"sigma-clipped full-series baseline because the provisional fit only bracketed one side of transit "
+            f"sigma-clipped full-series baseline because the current fit only bracketed one side of transit "
             f"({pre_points} pre-ingress and {post_points} post-egress modeled out-of-transit point(s))."
         )
 
@@ -2122,7 +4406,7 @@ def build_nested_tmid_refinement_from_initial_fit(times, flux_values, flux_error
         return base_plan
 
     refined_prior = dict(prior)
-    for key in ('rprs', 'tmid', 'inc', 'a2'):
+    for key in ('rprs', 'ars', 'tmid', 'inc', 'a2'):
         if key in refined_prior and key in fit.parameters:
             refined_prior[key] = fit.parameters[key]
 
@@ -2283,7 +4567,7 @@ def build_final_fit_prefit_refinement_plan(
 
     refined_prior = dict(prior)
     if isinstance(fit_parameters, dict):
-        for key in ('rprs', 'tmid', 'inc', 'a2'):
+        for key in ('rprs', 'ars', 'tmid', 'inc', 'a2'):
             if key in refined_prior and key in fit_parameters:
                 refined_prior[key] = fit_parameters[key]
 
@@ -2333,7 +4617,14 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     use_impactparameter_rather_than_inclination_to_fit=True,
     plot_time_range=None,
     baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+    expected_planet_dict=None,
+    expected_tmid_search_summary=None,
+    eebls_search_summary=None,
+    duration_prior=None,
 ):
+    if duration_prior is None and expected_planet_dict is not None:
+        duration_prior = build_single_transit_duration_prior(expected_planet_dict)
+
     fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         times,
         flux_values,
@@ -2343,9 +4634,16 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         bounds,
         jd_times=jd_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        duration_prior=duration_prior,
     )
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
+    annotate_transit_qc_fit_context(
+        fit,
+        planet_dict=expected_planet_dict,
+        tmid_search_summary=expected_tmid_search_summary,
+        eebls_search_summary=eebls_search_summary,
+    )
 
     prefit_plan = build_final_fit_prefit_refinement_plan(
         times,
@@ -2384,9 +4682,16 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             working_bounds,
             jd_times=working_jd_times,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+            duration_prior=duration_prior,
         )
         fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
+        annotate_transit_qc_fit_context(
+            fit,
+            planet_dict=expected_planet_dict,
+            tmid_search_summary=expected_tmid_search_summary,
+            eebls_search_summary=eebls_search_summary,
+        )
 
     annotate_final_fit_prefit_refinement(
         fit,
@@ -2408,6 +4713,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             False,
             note="Disabled; using the direct nested-sampling fit.",
         )
+        annotate_transit_detection_qc(fit)
         return fit, working_flux, working_unc
 
     detrend_result = detrend_flux_on_out_of_transit_baseline(
@@ -2427,13 +4733,14 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             pre_points=detrend_result.get('pre_points', 0),
             post_points=detrend_result.get('post_points', 0),
         )
+        annotate_transit_detection_qc(fit)
         return fit, working_flux, working_unc
 
     log_info("Applying optional out-of-transit linear baseline detrending and refitting final light curve.")
     log_info(detrend_result['note'])
 
     refit_prior = dict(working_prior)
-    for key in ('rprs', 'tmid', 'inc', 'a2'):
+    for key in ('rprs', 'ars', 'tmid', 'inc', 'a2'):
         if key in refit_prior and key in fit.parameters:
             refit_prior[key] = fit.parameters[key]
 
@@ -2454,9 +4761,16 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         refit_bounds,
         jd_times=working_jd_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        duration_prior=duration_prior,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
+    annotate_transit_qc_fit_context(
+        refit,
+        planet_dict=expected_planet_dict,
+        tmid_search_summary=expected_tmid_search_summary,
+        eebls_search_summary=eebls_search_summary,
+    )
     annotate_final_fit_prefit_refinement(
         refit,
         prefit_plan.get('applied', False),
@@ -2479,6 +4793,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         pre_points=detrend_result['pre_points'],
         post_points=detrend_result['post_points'],
     )
+    annotate_transit_detection_qc(refit)
     return refit, detrend_result['flux'], detrend_result['unc']
 
 
@@ -5627,6 +7942,39 @@ def sigma_clipped_nanmedian(data, sigma=3.0, max_iters=3):
     return bn.nanmedian(clipped), bn.nanstd(clipped)
 
 
+def normalize_flux_series_to_approximate_unity(
+    flux_values,
+    flux_errors=None,
+    sigma=3.0,
+    max_iters=3,
+    min_points=LIGHTCURVE_MIN_VALID_POINTS,
+):
+    flux_values = np.asarray(flux_values, dtype=float)
+    normalized_flux = np.array(flux_values, dtype=float, copy=True)
+    normalized_unc = None if flux_errors is None else np.array(flux_errors, dtype=float, copy=True)
+
+    valid_flux = np.isfinite(flux_values) & (flux_values > 0)
+    if np.count_nonzero(valid_flux) < max(1, int(min_points)):
+        return normalized_flux, normalized_unc, np.nan
+
+    baseline_level, _ = sigma_clipped_nanmedian(
+        flux_values[valid_flux],
+        sigma=sigma,
+        max_iters=max_iters,
+    )
+    if not np.isfinite(baseline_level) or baseline_level <= 0:
+        baseline_level = bn.nanmedian(flux_values[valid_flux])
+    if not np.isfinite(baseline_level) or baseline_level <= 0:
+        return normalized_flux, normalized_unc, np.nan
+
+    normalized_flux[valid_flux] = flux_values[valid_flux] / baseline_level
+    if normalized_unc is not None and normalized_unc.shape == flux_values.shape:
+        finite_unc = np.isfinite(normalized_unc)
+        normalized_unc[finite_unc] = normalized_unc[finite_unc] / baseline_level
+
+    return normalized_flux, normalized_unc, float(baseline_level)
+
+
 def weighted_nanpercentile(values, weights, percentile):
     values = np.asarray(values, dtype=float).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
@@ -5942,10 +8290,22 @@ def process_flat_frames(flat_files, master_bias=None):
     return master_flat / medi
 
 def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
+    global _BJD_FALLBACK_WARNING_LOGGED
+
     try:
         goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
                                     longi=info_dict['long'], alt=info_dict['elev'])[0]
-    except:
+    except Exception as exc:
+        if not _BJD_FALLBACK_WARNING_LOGGED:
+            _BJD_FALLBACK_WARNING_LOGGED = True
+            try:
+                log.warning(
+                    "barycorrpy JDUTC_to_BJDTDB conversion failed; falling back to astropy light-travel-time "
+                    "conversion for this run.",
+                    exc_info=True,
+                )
+            except Exception:
+                traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stdout)
         targetloc = SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg), frame='icrs')
         obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
         timesToConvert = Time(non_bjd, format='jd', scale='utc', location=obsloc)
@@ -6445,94 +8805,31 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    plot_time_range=None,
                    use_eebls_to_initialize_tmid_and_bounds=True,
                    compute_eebls_diagnostics=False):
-    # remove outliers
     plot_time_range = np.asarray(times if plot_time_range is None else plot_time_range, dtype=float)
-    si = np.argsort(times)
-    times_sorted = times[si]
-    tflux_sorted = tFlux[si]
-    cflux_sorted = cFlux[si]
-    with np.errstate(divide='ignore', invalid='ignore'):
-        flux_ratio_sorted = np.divide(tflux_sorted, cflux_sorted)
-
-    filter_diagnostics = []
-    has_reference_flux = not np.allclose(cflux_sorted, 1.0)
-    if has_reference_flux:
-        flux_ratio_mask = valid_flux_ratio_mask(flux_ratio_sorted)
-        filter_diagnostics.append(build_time_rejection_diagnostic(
-            "Target/reference ratio filter",
-            times_sorted,
-            flux_ratio_mask,
-            note="Dropped non-finite or non-positive target/reference ratios before fitting.",
-        ))
-        times_sorted = times_sorted[flux_ratio_mask]
-        tflux_sorted = tflux_sorted[flux_ratio_mask]
-        cflux_sorted = cflux_sorted[flux_ratio_mask]
-        flux_ratio_sorted = flux_ratio_sorted[flux_ratio_mask]
-        jd_times_sorted = jd_times[si][flux_ratio_mask]
-        airmass_sorted = airmass[si][flux_ratio_mask]
-    else:
-        jd_times_sorted = jd_times[si]
-        airmass_sorted = airmass[si]
-
-    if len(times_sorted) <= 1:
+    prepared = prepare_lightcurve_fit_input_series(
+        times,
+        tFlux,
+        cFlux,
+        airmass,
+        jd_times=jd_times,
+    )
+    if not prepared.get('applied'):
         return None, None, None
 
-    debug_times = np.asarray(times_sorted, dtype=float).copy()
-    debug_target_flux = np.asarray(tflux_sorted, dtype=float).copy()
-    debug_comp_flux = np.asarray(cflux_sorted, dtype=float).copy()
-    debug_raw_ratio = np.asarray(flux_ratio_sorted, dtype=float).copy()
-
-    dt = np.mean(np.diff(times_sorted))
-    ndt = int(25. / 24. / 60. / dt) * 2 + 1
-    if ndt > len(times_sorted):
-        ndt = int(len(times_sorted)/4) * 2 + 1
-    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt), times=times_sorted)
-    valid_mask = ~filtered_data
-    debug_initial_sigma_keep_mask = np.asarray(valid_mask, dtype=bool).copy()
-    filter_diagnostics.append(build_time_rejection_diagnostic(
-        "Initial sigma clip",
-        times_sorted,
-        valid_mask,
-        note="Dropped 3-sigma target/reference-ratio outliers before the first lightcurve fit.",
-    ))
-
-    arrayFinalFlux = flux_ratio_sorted[valid_mask]
-    f1 = tflux_sorted[valid_mask]
-    sigf1 = f1 ** 0.5
-    f2 = cflux_sorted[valid_mask]
-    sigf2 = f2 ** 0.5
-    if np.sum(cFlux) == len(cFlux):
-        arrayNormUnc = sigf1
-    else:
-        arrayNormUnc = np.sqrt((sigf1 / f2) ** 2 + (sigf2 * f1 / f2 ** 2) ** 2)
-    arrayTimes = times_sorted[valid_mask]
-    arrayJDTimes = jd_times_sorted[valid_mask]
-    arrayAirmass = airmass_sorted[valid_mask]
-
-    # remove nans
-    nanmask = np.isnan(arrayFinalFlux) | np.isnan(arrayNormUnc) | np.isnan(arrayTimes) | np.isnan(
-        arrayAirmass) | np.less_equal(arrayFinalFlux, 0) | np.less_equal(arrayNormUnc, 0)
-    nanmask = nanmask | np.isinf(arrayFinalFlux) | np.isinf(arrayNormUnc) | np.isinf(arrayTimes) | np.isinf(
-        arrayAirmass)
-    filter_diagnostics.append(build_time_rejection_diagnostic(
-        "Finite/positive photometry filter",
-        arrayTimes,
-        ~nanmask,
-        note="Dropped non-finite or non-positive flux, uncertainty, time, or airmass values.",
-    ))
-
-    if np.sum(~nanmask) <= 1:
-        return None, None, None
-    else:
-        arrayFinalFlux = arrayFinalFlux[~nanmask]
-        arrayNormUnc = arrayNormUnc[~nanmask]
-        arrayTimes = arrayTimes[~nanmask]
-        arrayJDTimes = arrayJDTimes[~nanmask]
-        arrayAirmass = arrayAirmass[~nanmask]
-        f1 = f1[~nanmask]
-        f2 = f2[~nanmask]
-
-    skip_airmass_fit = should_skip_airmass_fit(arrayAirmass)
+    filter_diagnostics = prepared['filter_diagnostics']
+    debug_times = prepared['debug_times']
+    debug_target_flux = prepared['debug_target_flux']
+    debug_comp_flux = prepared['debug_comp_flux']
+    debug_raw_ratio = prepared['debug_raw_ratio']
+    debug_initial_sigma_keep_mask = prepared['initial_sigma_keep_mask']
+    arrayFinalFlux = prepared['flux']
+    f1 = prepared['target_flux']
+    f2 = prepared['comp_flux']
+    arrayNormUnc = prepared['unc']
+    arrayTimes = prepared['time']
+    arrayJDTimes = prepared['jd_time']
+    arrayAirmass = prepared['airmass']
+    skip_airmass_fit = prepared['skip_airmass_fit']
 
 
     # -----LM LIGHTCURVE FIT--------------------------------------
@@ -6584,11 +8881,11 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             prior['tmid'] = tmid_search_summary['tmid']
             lower, upper = tmid_search_summary['bounds']
 
-    mybounds = {
-        'rprs': build_initial_rprs_bounds(prior['rprs']),
-        'tmid': [lower, upper],
-        'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
-    }
+    mybounds = build_initial_transit_bounds(
+        prior,
+        [lower, upper],
+        ars_unc=pDict.get('aRsUnc'),
+    )
     apply_vertical_flux_normalization_bound(
         prior,
         mybounds,
@@ -6664,6 +8961,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
 
     debug_phase_clip_keep_mask = np.ones(np.count_nonzero(debug_initial_sigma_keep_mask), dtype=bool)
     if final_fit_mode == 'ns' and myfit is not None:
+        duration_prior = build_single_transit_duration_prior(pDict)
         nested_refinement = build_nested_tmid_refinement_from_initial_fit(
             arrayTimes,
             arrayFinalFlux,
@@ -6681,6 +8979,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             nested_refinement['bounds'],
             jd_times=arrayJDTimes,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+            duration_prior=duration_prior,
         )
         myfit = apply_plot_time_range(myfit, plot_time_range)
         annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
@@ -6708,6 +9007,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             debug_initial_sigma_keep_mask,
             phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
         )
+        annotate_transit_qc_expected_values(myfit, pDict)
+        annotate_transit_detection_qc(myfit)
 
     return myfit, f1, f2
 
@@ -6753,7 +9054,6 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relativ
     if has_reference_flux:
         finite_ratio_mask = np.isfinite(flux_ratio_sorted)
         nonpositive_ratio_mask = finite_ratio_mask & np.less_equal(flux_ratio_sorted, 0)
-        high_ratio_mask = finite_ratio_mask & np.greater(flux_ratio_sorted, RELATIVE_FLUX_MAX)
         finite_ratio_values = flux_ratio_sorted[finite_ratio_mask]
         ratio_range_text = "finite ratio range=n/a"
         if finite_ratio_values.size:
@@ -6763,7 +9063,6 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relativ
             )
         nonfinite_ratio_count = int(np.count_nonzero(~finite_ratio_mask))
         nonpositive_ratio_count = int(np.count_nonzero(nonpositive_ratio_mask))
-        high_ratio_count = int(np.count_nonzero(high_ratio_mask))
         rejected_ratio_count = nonfinite_ratio_count + nonpositive_ratio_count
         relative_flux_mask = valid_flux_ratio_mask(flux_ratio_sorted)
         rejection_detail = (
@@ -6771,14 +9070,6 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relativ
             f"{ratio_range_text})."
         )
         rejection_context = "invalid target/reference ratio screening"
-        if enforce_relative_flux_max:
-            relative_flux_mask &= ~high_ratio_mask
-            rejected_ratio_count += high_ratio_count
-            rejection_detail = (
-                f"(non-finite={nonfinite_ratio_count}, non-positive={nonpositive_ratio_count}, "
-                f">{RELATIVE_FLUX_MAX:g}x={high_ratio_count}, {ratio_range_text})."
-            )
-            rejection_context = "target/reference ratio screening"
         diagnostics['relative_flux_point_count'] = int(np.count_nonzero(relative_flux_mask))
         times_sorted = times_sorted[relative_flux_mask]
         tflux_sorted = tflux_sorted[relative_flux_mask]
@@ -6868,16 +9159,175 @@ def ensure_lightcurve_fit_failure_reason(diagnostics, fit_result, failed_stage, 
     return diagnostics
 
 
+def prepare_lightcurve_fit_input_series(
+    times,
+    target_flux,
+    comp_flux,
+    airmass,
+    jd_times=None,
+):
+    times = np.asarray(times, dtype=float)
+    target_flux = np.asarray(target_flux, dtype=float)
+    comp_flux = np.asarray(comp_flux, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    jd_times_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+
+    prepared = {
+        'applied': False,
+        'failure_reason': None,
+        'filter_diagnostics': [],
+        'debug_times': np.array([], dtype=float),
+        'debug_target_flux': np.array([], dtype=float),
+        'debug_comp_flux': np.array([], dtype=float),
+        'debug_raw_ratio': np.array([], dtype=float),
+        'initial_sigma_keep_mask': np.array([], dtype=bool),
+        'time': np.array([], dtype=float),
+        'flux': np.array([], dtype=float),
+        'unc': np.array([], dtype=float),
+        'jd_time': None,
+        'airmass': np.array([], dtype=float),
+        'target_flux': np.array([], dtype=float),
+        'comp_flux': np.array([], dtype=float),
+        'source_indices': np.array([], dtype=int),
+        'skip_airmass_fit': False,
+        'approximate_baseline_level': np.nan,
+    }
+
+    if not (
+        times.ndim == target_flux.ndim == comp_flux.ndim == airmass.ndim == 1
+        and times.shape == target_flux.shape == comp_flux.shape == airmass.shape
+    ):
+        prepared['failure_reason'] = (
+            "lightcurve inputs must be 1D arrays with matching lengths before fitting."
+        )
+        return prepared
+
+    if jd_times_array is not None and jd_times_array.shape != times.shape:
+        jd_times_array = None
+
+    plot_indices = np.argsort(times)
+    times_sorted = times[plot_indices]
+    target_flux_sorted = target_flux[plot_indices]
+    comp_flux_sorted = comp_flux[plot_indices]
+    source_indices = np.asarray(plot_indices, dtype=int)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        flux_ratio_sorted = np.divide(target_flux_sorted, comp_flux_sorted)
+
+    filter_diagnostics = []
+    has_reference_flux = not np.allclose(comp_flux_sorted, 1.0)
+    if has_reference_flux:
+        flux_ratio_mask = valid_flux_ratio_mask(flux_ratio_sorted)
+        filter_diagnostics.append(build_time_rejection_diagnostic(
+            "Target/reference ratio filter",
+            times_sorted,
+            flux_ratio_mask,
+            note="Dropped non-finite or non-positive target/reference ratios before fitting.",
+        ))
+        times_sorted = times_sorted[flux_ratio_mask]
+        target_flux_sorted = target_flux_sorted[flux_ratio_mask]
+        comp_flux_sorted = comp_flux_sorted[flux_ratio_mask]
+        flux_ratio_sorted = flux_ratio_sorted[flux_ratio_mask]
+        source_indices = source_indices[flux_ratio_mask]
+        if jd_times_array is None:
+            jd_times_sorted = times_sorted.copy()
+        else:
+            jd_times_sorted = jd_times_array[plot_indices][flux_ratio_mask]
+        airmass_sorted = airmass[plot_indices][flux_ratio_mask]
+    else:
+        jd_times_sorted = times_sorted.copy() if jd_times_array is None else jd_times_array[plot_indices]
+        airmass_sorted = airmass[plot_indices]
+
+    if len(times_sorted) <= 1:
+        prepared['failure_reason'] = "too few valid points remained after the target/reference ratio filter."
+        prepared['filter_diagnostics'] = filter_diagnostics
+        return prepared
+
+    debug_times = np.asarray(times_sorted, dtype=float).copy()
+    debug_target_flux = np.asarray(target_flux_sorted, dtype=float).copy()
+    debug_comp_flux = np.asarray(comp_flux_sorted, dtype=float).copy()
+    debug_raw_ratio = np.asarray(flux_ratio_sorted, dtype=float).copy()
+
+    dt = np.mean(np.diff(times_sorted))
+    ndt = int(25. / 24. / 60. / dt) * 2 + 1
+    if ndt > len(times_sorted):
+        ndt = int(len(times_sorted)/4) * 2 + 1
+    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt), times=times_sorted)
+    valid_mask = ~filtered_data
+    initial_sigma_keep_mask = np.asarray(valid_mask, dtype=bool).copy()
+    filter_diagnostics.append(build_time_rejection_diagnostic(
+        "Initial sigma clip",
+        times_sorted,
+        valid_mask,
+        note="Dropped 3-sigma target/reference-ratio outliers before the first lightcurve fit.",
+    ))
+
+    flux = flux_ratio_sorted[valid_mask]
+    filtered_target_flux = target_flux_sorted[valid_mask]
+    filtered_comp_flux = comp_flux_sorted[valid_mask]
+    if np.sum(comp_flux) == len(comp_flux):
+        unc = filtered_target_flux ** 0.5
+    else:
+        sigf1 = filtered_target_flux ** 0.5
+        sigf2 = filtered_comp_flux ** 0.5
+        unc = np.sqrt((sigf1 / filtered_comp_flux) ** 2 + (sigf2 * filtered_target_flux / filtered_comp_flux ** 2) ** 2)
+    fit_times = times_sorted[valid_mask]
+    fit_jd_times = jd_times_sorted[valid_mask]
+    fit_airmass = airmass_sorted[valid_mask]
+    source_indices = source_indices[valid_mask]
+
+    nanmask = np.isnan(flux) | np.isnan(unc) | np.isnan(fit_times) | np.isnan(fit_airmass) | np.less_equal(flux, 0) | np.less_equal(unc, 0)
+    nanmask = nanmask | np.isinf(flux) | np.isinf(unc) | np.isinf(fit_times) | np.isinf(fit_airmass)
+    filter_diagnostics.append(build_time_rejection_diagnostic(
+        "Finite/positive photometry filter",
+        fit_times,
+        ~nanmask,
+        note="Dropped non-finite or non-positive flux, uncertainty, time, or airmass values.",
+    ))
+
+    if np.sum(~nanmask) <= 1:
+        prepared['failure_reason'] = "too few valid points remained after removing non-finite or non-positive photometry."
+        prepared.update({
+            'filter_diagnostics': filter_diagnostics,
+            'debug_times': debug_times,
+            'debug_target_flux': debug_target_flux,
+            'debug_comp_flux': debug_comp_flux,
+            'debug_raw_ratio': debug_raw_ratio,
+            'initial_sigma_keep_mask': initial_sigma_keep_mask,
+        })
+        return prepared
+
+    normalized_flux, normalized_unc, approximate_baseline_level = normalize_flux_series_to_approximate_unity(
+        flux[~nanmask],
+        unc[~nanmask],
+    )
+
+    prepared.update({
+        'applied': True,
+        'filter_diagnostics': filter_diagnostics,
+        'debug_times': debug_times,
+        'debug_target_flux': debug_target_flux,
+        'debug_comp_flux': debug_comp_flux,
+        'debug_raw_ratio': debug_raw_ratio,
+        'initial_sigma_keep_mask': initial_sigma_keep_mask,
+        'time': fit_times[~nanmask],
+        'flux': normalized_flux,
+        'unc': normalized_unc,
+        'jd_time': fit_jd_times[~nanmask],
+        'airmass': fit_airmass[~nanmask],
+        'target_flux': filtered_target_flux[~nanmask],
+        'comp_flux': filtered_comp_flux[~nanmask],
+        'source_indices': source_indices[~nanmask],
+        'skip_airmass_fit': should_skip_airmass_fit(fit_airmass[~nanmask]),
+        'approximate_baseline_level': approximate_baseline_level,
+    })
+    return prepared
+
+
 def cheap_lightcurve_prescore(tFlux, cFlux, airmass, enforce_relative_flux_max=True):
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio = np.divide(tFlux, cFlux)
 
     finite_mask = valid_flux_ratio_mask(flux_ratio) & np.isfinite(airmass)
-    if not np.allclose(cFlux, 1.0):
-        if enforce_relative_flux_max:
-            finite_mask &= relative_flux_filter_mask(flux_ratio)
-        else:
-            finite_mask &= valid_flux_ratio_mask(flux_ratio)
     if np.count_nonzero(finite_mask) < 5:
         return np.inf
 
@@ -6927,6 +9377,7 @@ def evaluate_lightcurve_candidate(task):
         jd_times,
         allow_mid_transit_range_warning=False,
         disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+        final_fit_mode='ns',
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         plot_time_range=plot_time_range,
         use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
@@ -6938,14 +9389,25 @@ def evaluate_lightcurve_candidate(task):
         failed_stage='lightcurve_fit',
         failure_reason="the lightcurve fitter did not converge to a usable solution.",
     )
+    transit_qc_failure_reason = lightcurve_fit_transit_qc_failure_reason(myfit)
+    if transit_qc_failure_reason is not None:
+        fit_diagnostics = dict(fit_diagnostics)
+        fit_diagnostics.update({
+            'failed_stage': 'transit_qc',
+            'failure_reason': transit_qc_failure_reason,
+        })
 
-    res_std = np.inf
-    if myfit is not None:
-        res_std = myfit.residuals.std() / np.median(myfit.data)
     return {
         'myfit': myfit,
-        'res_std': res_std,
+        'accepted': myfit is not None and transit_qc_failure_reason is None,
         'eebls_snr': extract_lightcurve_fit_eebls_snr(myfit),
+        'transit_delta_bic': extract_lightcurve_fit_transit_delta_bic(myfit),
+        'residual_scatter': extract_lightcurve_fit_residual_scatter(myfit),
+        'ktmf_metric': extract_lightcurve_fit_ktmf_metric(myfit),
+        'ktmf_contributions': extract_lightcurve_fit_ktmf_contributions(myfit),
+        'transit_qc_status': getattr(myfit, 'transit_qc_status', None),
+        'transit_qc_summary': getattr(myfit, 'transit_qc_summary', None),
+        'rejected_by_transit_qc': transit_qc_failure_reason is not None,
         'fit_diagnostics': fit_diagnostics,
         'failure_reason': fit_diagnostics.get('failure_reason'),
         'fit_point_count': 0 if tflux_fit is None else int(len(tflux_fit)),
@@ -7071,15 +9533,6 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
     return candidate_jobs
 
 
-def shortlist_target_fit_candidates(candidate_jobs, minimum_count=50, fraction=0.35):
-    finite_candidates = [candidate for candidate in candidate_jobs if np.isfinite(candidate.get('prescore', np.inf))]
-    if finite_candidates:
-        finite_candidates.sort(key=lambda candidate: candidate['prescore'])
-        shortlist_count = max(int(minimum_count), int(fraction * len(finite_candidates)))
-        return finite_candidates[:min(len(finite_candidates), shortlist_count)]
-    return list(candidate_jobs)
-
-
 def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, psf_data, aper_data,
                               plot_time_range=None,
                               disable_vertical_flux_normalization=False,
@@ -7146,16 +9599,20 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         use_psf_photometry=use_psf_photometry,
         use_aperture_photometry=use_aperture_photometry,
     )
-    shortlist = shortlist_target_fit_candidates(candidate_jobs)
-    if not shortlist:
+    evaluated_candidates = list(candidate_jobs)
+    for candidate_order, candidate in enumerate(evaluated_candidates):
+        candidate.setdefault('candidate_order', candidate_order)
+    if not evaluated_candidates:
         return {
             'candidate_jobs': candidate_jobs,
-            'shortlist': shortlist,
+            'evaluated_candidates': evaluated_candidates,
+            'shortlist': evaluated_candidates,
             'candidate_summaries': [],
             'best_candidate': None,
             'best_fit_lc': None,
-            'min_std': np.inf,
-            'selection_metric': 'residual_scatter',
+            'selected_ktmf_metric': np.nan,
+            'selected_transit_delta_bic': np.nan,
+            'selection_metric': 'ktmf',
             'selected_eebls_snr': np.nan,
             'flux_tar': None,
             'flux_ref': None,
@@ -7177,7 +9634,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
             compute_eebls_diagnostics=True,
         )
-        for candidate in shortlist
+        for candidate in evaluated_candidates
     ]
 
     if multiprocess_lightcurve_fits is not None and multiprocess_lightcurve_fits > 0:
@@ -7189,53 +9646,101 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
 
     candidate_summaries = []
     successful_candidates = []
-    for candidate, result in zip(shortlist, fit_results):
+    for candidate, result in zip(evaluated_candidates, fit_results):
         fit_meta, tflux_fit, cflux_fit = result
         summary = summarize_target_fit_candidate(candidate, fit_meta, comp_stars)
         candidate_summaries.append(summary)
 
-        if fit_meta is None or fit_meta.get('myfit') is None:
+        if fit_meta is None or fit_meta.get('myfit') is None or not fit_meta.get('accepted', True):
             continue
         successful_candidates.append((summary, candidate, fit_meta, tflux_fit, cflux_fit))
 
     best_candidate = None
     best_fit_lc = None
-    best_res_std = np.inf
+    best_ktmf_metric = np.nan
+    best_transit_delta_bic = np.nan
     best_tflux = None
     best_cflux = None
-    selection_metric = 'residual_scatter'
+    selection_metric = 'ktmf'
     selected_eebls_snr = np.nan
     if successful_candidates:
-        if pick_comparison_by_eebls_snr and any(
-            np.isfinite(summary.get('eebls_snr', np.nan))
-            for summary, _, _, _, _ in successful_candidates
-        ):
+        has_ktmf = any(np.isfinite(item[0].get('ktmf_metric', np.nan)) for item in successful_candidates)
+        has_eebls = any(np.isfinite(item[0].get('eebls_snr', np.nan)) for item in successful_candidates)
+        has_delta_bic = any(np.isfinite(item[0].get('transit_delta_bic', np.nan)) for item in successful_candidates)
+
+        if has_ktmf:
+            selection_metric = 'ktmf'
+            if pick_comparison_by_eebls_snr:
+                selected_entry = min(
+                    successful_candidates,
+                    key=lambda item: (
+                        0 if np.isfinite(item[0].get('ktmf_metric', np.nan)) else 1,
+                        -item[0].get('ktmf_metric', np.nan) if np.isfinite(item[0].get('ktmf_metric', np.nan)) else np.inf,
+                        0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
+                        -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
+                        0 if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else 1,
+                        -item[0].get('transit_delta_bic', np.nan) if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else np.inf,
+                        item[0].get('candidate_order', np.inf),
+                    ),
+                )
+            else:
+                selected_entry = min(
+                    successful_candidates,
+                    key=lambda item: (
+                        0 if np.isfinite(item[0].get('ktmf_metric', np.nan)) else 1,
+                        -item[0].get('ktmf_metric', np.nan) if np.isfinite(item[0].get('ktmf_metric', np.nan)) else np.inf,
+                        0 if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else 1,
+                        -item[0].get('transit_delta_bic', np.nan) if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else np.inf,
+                        0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
+                        -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
+                        item[0].get('candidate_order', np.inf),
+                    ),
+                )
+        elif pick_comparison_by_eebls_snr and has_eebls:
             selection_metric = 'eebls_snr'
             selected_entry = min(
                 successful_candidates,
                 key=lambda item: (
                     0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
                     -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
-                    item[0].get('res_std', np.inf),
-                    item[0].get('prescore', np.inf),
-                    item[0].get('comp_index', np.inf),
+                    0 if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else 1,
+                    -item[0].get('transit_delta_bic', np.nan) if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else np.inf,
+                    item[0].get('candidate_order', np.inf),
                 ),
             )
-        else:
+        elif has_delta_bic:
+            selection_metric = 'transit_delta_bic'
             selected_entry = min(
                 successful_candidates,
                 key=lambda item: (
-                    item[0].get('res_std', np.inf),
+                    0 if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else 1,
+                    -item[0].get('transit_delta_bic', np.nan) if np.isfinite(item[0].get('transit_delta_bic', np.nan)) else np.inf,
                     0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
                     -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
-                    item[0].get('prescore', np.inf),
-                    item[0].get('comp_index', np.inf),
+                    item[0].get('candidate_order', np.inf),
                 ),
+            )
+        elif has_eebls:
+            selection_metric = 'eebls_snr'
+            selected_entry = min(
+                successful_candidates,
+                key=lambda item: (
+                    0 if np.isfinite(item[0].get('eebls_snr', np.nan)) else 1,
+                    -item[0].get('eebls_snr', np.nan) if np.isfinite(item[0].get('eebls_snr', np.nan)) else np.inf,
+                    item[0].get('candidate_order', np.inf),
+                ),
+            )
+        else:
+            selection_metric = 'comparison_field_rank'
+            selected_entry = min(
+                successful_candidates,
+                key=lambda item: item[0].get('candidate_order', np.inf),
             )
 
         selected_summary, best_candidate, fit_meta, best_tflux, best_cflux = selected_entry
         best_fit_lc = fit_meta['myfit']
-        best_res_std = selected_summary.get('res_std', np.inf)
+        best_ktmf_metric = selected_summary.get('ktmf_metric', np.nan)
+        best_transit_delta_bic = selected_summary.get('transit_delta_bic', np.nan)
         selected_eebls_snr = selected_summary.get('eebls_snr', np.nan)
         best_identity = target_fit_candidate_identity(best_candidate)
         for summary in candidate_summaries:
@@ -7243,11 +9748,13 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
 
     return {
         'candidate_jobs': candidate_jobs,
-        'shortlist': shortlist,
+        'evaluated_candidates': evaluated_candidates,
+        'shortlist': evaluated_candidates,
         'candidate_summaries': candidate_summaries,
         'best_candidate': best_candidate,
         'best_fit_lc': best_fit_lc,
-        'min_std': best_res_std,
+        'selected_ktmf_metric': best_ktmf_metric,
+        'selected_transit_delta_bic': best_transit_delta_bic,
         'selection_metric': selection_metric,
         'selected_eebls_snr': selected_eebls_snr,
         'flux_tar': best_tflux,
@@ -7346,10 +9853,366 @@ def format_eebls_snr(value):
     return "n/a" if not np.isfinite(numeric_value) else f"{numeric_value:.2f}"
 
 
+def extract_lightcurve_fit_transit_delta_bic(fit):
+    if fit is None:
+        return np.nan
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        value = transit_qc.get('delta_bic', np.nan)
+        if np.isfinite(value):
+            return float(value)
+
+    value = getattr(fit, 'transit_qc_delta_bic', np.nan)
+    return np.nan if not np.isfinite(value) else float(value)
+
+
+def extract_lightcurve_fit_residual_scatter(fit):
+    if fit is None:
+        return np.nan
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        value = transit_qc.get('residual_scatter', np.nan)
+        if np.isfinite(value):
+            return float(value)
+
+    value = getattr(fit, 'transit_qc_residual_scatter', np.nan)
+    if np.isfinite(value):
+        return float(value)
+
+    value = getattr(fit, 'res_stdev', np.nan)
+    if np.isfinite(value):
+        return float(value)
+
+    residuals = np.asarray(getattr(fit, 'residuals', np.array([])), dtype=float)
+    data = np.asarray(getattr(fit, 'data', np.array([])), dtype=float)
+    if residuals.shape != data.shape or residuals.size == 0:
+        return np.nan
+
+    median_flux = np.nanmedian(data)
+    if not np.isfinite(median_flux) or median_flux == 0:
+        return np.nan
+    return float(np.std(residuals) / median_flux)
+
+
+def extract_lightcurve_fit_ktmf_metric(fit):
+    if fit is None:
+        return np.nan
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        value = transit_qc.get('ktmf_metric', np.nan)
+        if np.isfinite(value):
+            return float(value)
+
+    value = getattr(fit, 'transit_qc_ktmf_metric', np.nan)
+    return np.nan if not np.isfinite(value) else float(value)
+
+
+def extract_lightcurve_fit_ktmf_contributions(fit):
+    if fit is None:
+        return []
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        contributions = transit_qc.get('ktmf_contributions')
+        if isinstance(contributions, list):
+            return contributions
+
+    contributions = getattr(fit, 'transit_qc_ktmf_contributions', None)
+    return contributions if isinstance(contributions, list) else []
+
+
+def format_transit_delta_bic(value):
+    if value is None:
+        return "n/a"
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+
+    return "n/a" if not np.isfinite(numeric_value) else f"{numeric_value:.2f}"
+
+
+def format_residual_scatter(value):
+    if value is None:
+        return "n/a"
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+
+    return "n/a" if not np.isfinite(numeric_value) else f"{numeric_value * 100.0:.4f}%"
+
+
+def format_ktmf_metric(value):
+    if value is None:
+        return "n/a"
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+
+    return "n/a" if not np.isfinite(numeric_value) else f"{numeric_value:.2f}/5.00"
+
+
+def format_ktmf_contribution(contribution):
+    if not isinstance(contribution, dict):
+        return "KTMF contribution: unavailable"
+
+    label = contribution.get('label', 'Unknown component')
+    detail = contribution.get('detail') or 'n/a'
+    available = bool(contribution.get('available'))
+    points = float(contribution.get('points', 0.0) or 0.0)
+    max_points = float(contribution.get('max_points', 0.0) or 0.0)
+    score = contribution.get('score', np.nan)
+
+    if available and np.isfinite(score):
+        return (
+            f"KTMF contribution: {label} +{points:.2f}/{max_points:.2f} "
+            f"(score={score:.2f}; {detail})"
+        )
+
+    return f"KTMF contribution: {label} +0.00/0.00 (unavailable; {detail})"
+
+
+def summarize_lightcurve_fit_assessment(fit):
+    if fit is None:
+        return None
+
+    fit_method = getattr(fit, 'ns_type', None) or getattr(fit, 'fit_method', None) or 'lm'
+    try:
+        rprs_retry_count = int(getattr(fit, 'rprs_posterior_refit_count', 0) or 0)
+    except (TypeError, ValueError):
+        rprs_retry_count = 0
+
+    return {
+        'fit_method': fit_method,
+        'duration_prior_applied': bool(getattr(fit, 'duration_prior_applied', False)),
+        'duration_prior_note': getattr(fit, 'duration_prior_note', None),
+        'rprs_posterior_refit_applied': bool(getattr(fit, 'rprs_posterior_refit_applied', False)),
+        'rprs_posterior_refit_count': rprs_retry_count,
+        'rprs_posterior_refit_note': getattr(fit, 'rprs_posterior_refit_note', None),
+        'prefit_refinement_applied': bool(getattr(fit, 'prefit_refinement_applied', False)),
+        'prefit_refinement_note': getattr(fit, 'prefit_refinement_note', None),
+        'oot_baseline_detrending_applied': bool(getattr(fit, 'oot_baseline_detrending_applied', False)),
+        'oot_baseline_detrending_note': getattr(fit, 'oot_baseline_detrending_note', None),
+        'airmass_fit_skipped': bool(getattr(fit, 'airmass_fit_skipped', False)),
+        'airmass_correction_note': getattr(fit, 'airmass_correction_note', None),
+        'nested_tmid_refinement_applied': bool(getattr(fit, 'nested_tmid_refinement_applied', False)),
+        'nested_tmid_refinement_note': getattr(fit, 'nested_tmid_refinement_note', None),
+    }
+
+
+def best_available_attempt_fit(attempt):
+    if not isinstance(attempt, dict):
+        return None
+    return (
+        attempt.get('full_reduction_fit')
+        or attempt.get('fit')
+        or attempt.get('provisional_fit')
+    )
+
+
+def log_lightcurve_fit_assessment_lines(fit, indent="    "):
+    assessment = summarize_lightcurve_fit_assessment(fit)
+    if not assessment:
+        return
+
+    rprs_retry_status = "not applied"
+    if assessment['rprs_posterior_refit_applied']:
+        retry_count = assessment['rprs_posterior_refit_count']
+        rprs_retry_status = (
+            f"applied ({retry_count} refit(s))"
+            if retry_count > 0 else
+            "applied"
+        )
+    prefit_status = "applied" if assessment['prefit_refinement_applied'] else "not applied"
+    oot_status = "applied" if assessment['oot_baseline_detrending_applied'] else "not applied"
+    duration_prior_status = "applied" if assessment['duration_prior_applied'] else "not applied"
+
+    log_info(
+        f"{indent}fit assessment: fit_method={assessment['fit_method']}, "
+        f"duration_prior={duration_prior_status}, "
+        f"Rp/R* posterior retry={rprs_retry_status}, "
+        f"prefit_refinement={prefit_status}, "
+        f"oot_baseline_detrending={oot_status}"
+    )
+    if assessment.get('duration_prior_note'):
+        log_info(f"{indent}Duration prior note: {assessment['duration_prior_note']}")
+    if assessment.get('rprs_posterior_refit_note'):
+        log_info(f"{indent}Rp/R* posterior retry note: {assessment['rprs_posterior_refit_note']}")
+    if assessment.get('prefit_refinement_note'):
+        log_info(f"{indent}Prefit refinement note: {assessment['prefit_refinement_note']}")
+    if assessment.get('oot_baseline_detrending_note'):
+        log_info(f"{indent}OOT baseline detrending note: {assessment['oot_baseline_detrending_note']}")
+    if assessment.get('airmass_correction_note'):
+        log_info(f"{indent}Airmass correction note: {assessment['airmass_correction_note']}")
+    if assessment.get('nested_tmid_refinement_note'):
+        log_info(f"{indent}Nested Tmid refinement note: {assessment['nested_tmid_refinement_note']}")
+
+
+def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, method_label, fit_diagnostics):
+    if comp_summary is None:
+        return
+
+    label = comp_summary.get('label', f"Comp {comp_summary.get('comp_index', 0) + 1}")
+    position_text = format_comp_star_position(comp_summary.get('position'))
+    coverage_text = format_comp_star_coverage_text({
+        'coverage_count': comp_summary.get('coverage_count', 0),
+        'coverage_total_frame_count': comp_summary.get('coverage_total_frame_count', 0),
+        'coverage_reference_count': comp_summary.get('coverage_reference_count', np.nan),
+        'coverage_min_required_count': comp_summary.get('coverage_min_required_count', 0),
+    })
+    suitability_score = comp_summary.get('aggregate_score', np.nan)
+    suitability_text = "n/a" if not np.isfinite(suitability_score) else f"{suitability_score * 100.0:.4f}%"
+    usable_point_count = 0 if fit_diagnostics is None else fit_diagnostics.get('usable_point_count', 0)
+
+    log_info(
+        f"\nStarting comparison-star target-fit evaluation for {label} ({position_text}) "
+        f"[rank {rank + 1}/{ranked_count}] with {method_label}."
+    )
+    log_info(
+        f"  Candidate inputs: suitability={suitability_text}, coverage={coverage_text}, "
+        f"usable_after_filters={usable_point_count}."
+    )
+    log_info("  Preparing comparison-candidate light curve for the full reduction.")
+
+
+def log_comparison_candidate_evaluation_result(attempt):
+    if not attempt:
+        return
+
+    fit = best_available_attempt_fit(attempt)
+    fit_method = "n/a"
+    assessment = summarize_lightcurve_fit_assessment(fit)
+    if assessment:
+        fit_method = assessment.get('fit_method', 'n/a')
+
+    qc_status = attempt.get('transit_qc_status')
+    qc_text = "n/a" if not qc_status else str(qc_status).upper()
+    if attempt.get('fit') is None:
+        status_text = "FAILED"
+    elif attempt.get('rejected_by_transit_qc', False):
+        status_text = f"REJECTED ({qc_text})"
+    elif attempt.get('full_reduction_applied', False):
+        status_text = f"COMPLETE ({qc_text})"
+    else:
+        status_text = "PROVISIONAL ONLY"
+
+    reason_text = (
+        attempt.get('transit_qc_summary')
+        or attempt.get('failure_reason')
+        or attempt.get('selection_reason')
+        or "completed comparison-star target-fit evaluation."
+    )
+    log_info(
+        f"Completed comparison-star target-fit evaluation for {attempt.get('label', 'comparison candidate')}: "
+        f"status={status_text}, fit_method={fit_method}, fit_points={attempt.get('fit_point_count', 0)}, "
+        f"transit_qc={qc_text}, transit_delta_bic={format_transit_delta_bic(attempt.get('transit_delta_bic', np.nan))}, "
+        f"residual_scatter={format_residual_scatter(attempt.get('residual_scatter', np.nan))}, "
+        f"ktmf={format_ktmf_metric(attempt.get('ktmf_metric', np.nan))}, reason={reason_text}"
+    )
+    parameter_summary = attempt.get('parameter_summary')
+    if parameter_summary:
+        log_info(f"  parameters: {parameter_summary}")
+    log_lightcurve_fit_assessment_lines(fit, indent="  ")
+    if attempt.get('final_output_dir'):
+        log_info(f"  outputs: {attempt['final_output_dir']}")
+    for contribution in attempt.get('ktmf_contributions', []):
+        log_info(f"  {format_ktmf_contribution(contribution)}")
+
+
 def comparison_selection_metric_label(selection_metric):
+    if selection_metric == 'comparison_field_rank':
+        return "Comparison-Field Rank"
+    if selection_metric == 'ktmf':
+        return "KTMF"
     if selection_metric == 'eebls_snr':
         return "EEBLS SNR"
-    return "target-fit residual scatter"
+    return "transit-vs-flat Delta BIC"
+
+
+def select_preferred_comparison_attempt(attempts, pick_comparison_by_eebls_snr=True):
+    selected_result = None
+    selection_metric = 'ktmf'
+    if not attempts:
+        return selected_result, selection_metric
+
+    has_ktmf = any(np.isfinite(attempt.get('ktmf_metric', np.nan)) for attempt in attempts)
+    has_eebls = any(np.isfinite(attempt.get('eebls_snr', np.nan)) for attempt in attempts)
+    has_delta_bic = any(np.isfinite(attempt.get('transit_delta_bic', np.nan)) for attempt in attempts)
+
+    if has_ktmf:
+        selection_metric = 'ktmf'
+        if pick_comparison_by_eebls_snr:
+            selected_result = min(
+                attempts,
+                key=lambda attempt: (
+                    0 if np.isfinite(attempt.get('ktmf_metric', np.nan)) else 1,
+                    -attempt.get('ktmf_metric', np.nan) if np.isfinite(attempt.get('ktmf_metric', np.nan)) else np.inf,
+                    0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                    -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                    0 if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else 1,
+                    -attempt.get('transit_delta_bic', np.nan) if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else np.inf,
+                    attempt.get('rank', np.inf),
+                ),
+            )
+        else:
+            selected_result = min(
+                attempts,
+                key=lambda attempt: (
+                    0 if np.isfinite(attempt.get('ktmf_metric', np.nan)) else 1,
+                    -attempt.get('ktmf_metric', np.nan) if np.isfinite(attempt.get('ktmf_metric', np.nan)) else np.inf,
+                    0 if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else 1,
+                    -attempt.get('transit_delta_bic', np.nan) if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else np.inf,
+                    0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                    -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                    attempt.get('rank', np.inf),
+                ),
+            )
+    elif pick_comparison_by_eebls_snr and has_eebls:
+        selection_metric = 'eebls_snr'
+        selected_result = min(
+            attempts,
+            key=lambda attempt: (
+                0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                0 if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else 1,
+                -attempt.get('transit_delta_bic', np.nan) if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else np.inf,
+                attempt.get('rank', np.inf),
+            ),
+        )
+    elif has_delta_bic:
+        selection_metric = 'transit_delta_bic'
+        selected_result = min(
+            attempts,
+            key=lambda attempt: (
+                0 if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else 1,
+                -attempt.get('transit_delta_bic', np.nan) if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else np.inf,
+                0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                attempt.get('rank', np.inf),
+            ),
+        )
+    elif has_eebls:
+        selection_metric = 'eebls_snr'
+        selected_result = min(
+            attempts,
+            key=lambda attempt: (
+                0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
+                -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
+                attempt.get('rank', np.inf),
+            ),
+        )
+    else:
+        selected_result = min(attempts, key=lambda attempt: attempt.get('rank', np.inf))
+
+    return selected_result, selection_metric
 
 
 def target_fit_candidate_identity(candidate):
@@ -7372,7 +10235,6 @@ def summarize_target_fit_candidate(candidate, fit_meta, comp_stars):
         'method_label': comparison_method_label(candidate),
         'prescore': candidate.get('prescore', np.inf),
         'fit': fit_result,
-        'res_std': fit_meta.get('res_std', np.inf),
         'coverage_count': candidate.get('coverage_count', 0),
         'coverage_total_frame_count': candidate.get('coverage_total_frame_count', 0),
         'coverage_reference_count': candidate.get('coverage_reference_count', np.nan),
@@ -7380,6 +10242,10 @@ def summarize_target_fit_candidate(candidate, fit_meta, comp_stars):
         'coverage_rejected': candidate.get('coverage_rejected', False),
         'fit_point_count': fit_meta.get('fit_point_count', 0),
         'eebls_snr': fit_meta.get('eebls_snr', np.nan),
+        'transit_delta_bic': fit_meta.get('transit_delta_bic', np.nan),
+        'residual_scatter': fit_meta.get('residual_scatter', np.nan),
+        'ktmf_metric': fit_meta.get('ktmf_metric', np.nan),
+        'ktmf_contributions': fit_meta.get('ktmf_contributions') or [],
         'fit_diagnostics': fit_meta.get('fit_diagnostics') or {},
         'failure_reason': fit_meta.get('failure_reason'),
         'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
@@ -7387,6 +10253,10 @@ def summarize_target_fit_candidate(candidate, fit_meta, comp_stars):
         'a': candidate.get('a'),
         'an': candidate.get('an'),
         'method': candidate.get('method'),
+        'candidate_order': candidate.get('candidate_order'),
+        'transit_qc_status': fit_meta.get('transit_qc_status'),
+        'transit_qc_summary': fit_meta.get('transit_qc_summary'),
+        'rejected_by_transit_qc': fit_meta.get('rejected_by_transit_qc', False),
     }
 
 
@@ -7405,23 +10275,29 @@ def log_comparison_calibration_fit_attempt_summaries(attempts, method_label):
         coverage_text = format_comp_star_coverage_text(attempt)
         suitability_score = attempt.get('aggregate_score', np.inf)
         suitability_text = "n/a" if not np.isfinite(suitability_score) else f"{suitability_score * 100.0:.4f}%"
-        residual_text = "n/a"
-        if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
-            residual_text = f"{attempt['res_std'] * 100.0:.4f}%"
         eebls_text = format_eebls_snr(attempt.get('eebls_snr', np.nan))
+        transit_delta_bic_text = format_transit_delta_bic(attempt.get('transit_delta_bic', np.nan))
+        residual_text = format_residual_scatter(attempt.get('residual_scatter', np.nan))
+        ktmf_text = format_ktmf_metric(attempt.get('ktmf_metric', np.nan))
         reason_text = attempt.get('selection_reason') or attempt.get(
             'failure_reason',
-            "selected: lowest target-fit residual scatter among the evaluated comparison stars",
+            "selected: strongest KTMF among the evaluated comparison stars",
         )
+        if attempt.get('failed_run_dir'):
+            reason_text += f"; archived={attempt['failed_run_dir']}"
         log_info(
             f"  {attempt['label']}{selected_label} ({position_text}): "
             f"suitability={suitability_text}, coverage={coverage_text}, "
             f"usable_after_filters={usable_point_count}, fit_points={attempt.get('fit_point_count', 0)}, "
-            f"eebls_snr={eebls_text}, residual_scatter={residual_text}, reason={reason_text}"
+            f"eebls_snr={eebls_text}, transit_delta_bic={transit_delta_bic_text}, "
+            f"residual_scatter={residual_text}, ktmf={ktmf_text}, reason={reason_text}"
         )
         parameter_summary = attempt.get('parameter_summary')
         if parameter_summary:
             log_info(f"    parameters: {parameter_summary}")
+        log_lightcurve_fit_assessment_lines(best_available_attempt_fit(attempt), indent="    ")
+        for contribution in attempt.get('ktmf_contributions', []):
+            log_info(f"    {format_ktmf_contribution(contribution)}")
 
 
 def log_target_fit_candidate_summaries(candidate_summaries, max_entries=10):
@@ -7439,23 +10315,26 @@ def log_target_fit_candidate_summaries(candidate_summaries, max_entries=10):
         coverage_text = format_comp_star_coverage_text(summary)
         prescore = summary.get('prescore', np.inf)
         prescore_text = "n/a" if not np.isfinite(prescore) else f"{prescore * 100.0:.4f}%"
-        residual_text = "n/a"
-        if summary.get('fit') is not None and np.isfinite(summary.get('res_std', np.inf)):
-            residual_text = f"{summary['res_std'] * 100.0:.4f}%"
         eebls_text = format_eebls_snr(summary.get('eebls_snr', np.nan))
+        transit_delta_bic_text = format_transit_delta_bic(summary.get('transit_delta_bic', np.nan))
+        residual_text = format_residual_scatter(summary.get('residual_scatter', np.nan))
+        ktmf_text = format_ktmf_metric(summary.get('ktmf_metric', np.nan))
         reason_text = summary.get(
             'failure_reason',
-            "selected: lowest target-fit residual scatter in the evaluated shortlist",
+            "selected: strongest KTMF in the evaluated candidate set",
         )
         log_info(
             f"  {summary['label']}{selected_label} ({position_text}) with {summary['method_label']}: "
             f"prescore={prescore_text}, coverage={coverage_text}, "
             f"usable_after_filters={usable_point_count}, fit_points={summary.get('fit_point_count', 0)}, "
-            f"eebls_snr={eebls_text}, residual_scatter={residual_text}, reason={reason_text}"
+            f"eebls_snr={eebls_text}, transit_delta_bic={transit_delta_bic_text}, "
+            f"residual_scatter={residual_text}, ktmf={ktmf_text}, reason={reason_text}"
         )
         parameter_summary = summary.get('parameter_summary')
         if parameter_summary:
             log_info(f"    parameters: {parameter_summary}")
+        for contribution in summary.get('ktmf_contributions', []):
+            log_info(f"    {format_ktmf_contribution(contribution)}")
 
     if len(candidate_summaries) > len(displayed_summaries):
         log_info(
@@ -7503,12 +10382,14 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
         return summary['failure_reason']
 
     selection_basis = photometry_info.get('selection_basis', 'target_fit')
-    selection_metric = photometry_info.get('selection_metric', 'residual_scatter')
+    selection_metric = photometry_info.get('selection_metric', 'ktmf')
     selected_comp_num = photometry_info.get('comp_star_num')
-    selected_res_std = photometry_info.get('min_std', np.inf)
-    candidate_res_std = summary.get('res_std', np.inf)
     selected_eebls_snr = photometry_info.get('comparison_eebls_snr', np.nan)
+    selected_transit_delta_bic = photometry_info.get('comparison_transit_delta_bic', np.nan)
+    selected_ktmf_metric = photometry_info.get('comparison_ktmf_metric', np.nan)
     candidate_eebls_snr = summary.get('eebls_snr', np.nan)
+    candidate_transit_delta_bic = summary.get('transit_delta_bic', np.nan)
+    candidate_ktmf_metric = summary.get('ktmf_metric', np.nan)
 
     if summary.get('selected'):
         if selection_basis == 'comparison_field':
@@ -7518,9 +10399,18 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
                 "selected: comparison-field calibration fell back to this star "
                 "after better-ranked candidates failed target fitting"
             )
+        if selection_basis == 'comparison_field_qc_fallback':
+            return (
+                "selected: best available comparison-star fit after all completed candidates were rejected "
+                "by transit QC"
+            )
+        if selection_metric == 'ktmf' and np.isfinite(candidate_ktmf_metric):
+            return "selected: highest KTMF in the chosen search"
         if selection_metric == 'eebls_snr' and np.isfinite(candidate_eebls_snr):
             return "selected: highest EEBLS SNR in the chosen search"
-        return "selected: lowest target-fit residual scatter in the chosen search"
+        if np.isfinite(candidate_transit_delta_bic):
+            return "selected: strongest transit-vs-flat Delta BIC in the chosen search"
+        return "selected: strongest transit evidence in the chosen search"
 
     if selection_basis == 'comparison_field':
         if selected_comp_num is None:
@@ -7532,6 +10422,13 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
         return (
             "not selected: comparison-field fallback chose "
             f"Comp {selected_comp_num} after better-ranked candidate(s) failed target fitting"
+        )
+    if selection_basis == 'comparison_field_qc_fallback':
+        if selected_comp_num is None:
+            return "not selected: comparison-field QC fallback chose a different candidate"
+        return (
+            "not selected: comparison-field QC fallback chose "
+            f"Comp {selected_comp_num} as the best available rejected fit"
         )
 
     if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
@@ -7548,16 +10445,28 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
                 "EEBLS box signal than the selected fit; the earlier search did not choose it"
             )
 
-    if np.isfinite(candidate_res_std) and np.isfinite(selected_res_std):
-        if candidate_res_std > selected_res_std + 1e-12:
+    if np.isfinite(candidate_ktmf_metric) and np.isfinite(selected_ktmf_metric):
+        if candidate_ktmf_metric < selected_ktmf_metric - 1e-12:
             return (
-                "not selected: residual scatter was "
-                f"{candidate_res_std * 100.0:.4f}% vs {selected_res_std * 100.0:.4f}% for the selected fit"
+                "not selected: KTMF was "
+                f"{candidate_ktmf_metric:.2f} vs {selected_ktmf_metric:.2f} for the selected fit"
             )
-        if candidate_res_std < selected_res_std - 1e-12:
+        if candidate_ktmf_metric > selected_ktmf_metric + 1e-12:
             return (
-                "not selected: this post-selection diagnostic fit looks better than the selected fit; "
+                "not selected: this post-selection diagnostic fit has a higher KTMF than the selected fit; "
                 "the earlier target-fit search did not choose it"
+            )
+
+    if np.isfinite(candidate_transit_delta_bic) and np.isfinite(selected_transit_delta_bic):
+        if candidate_transit_delta_bic < selected_transit_delta_bic - 1e-12:
+            return (
+                "not selected: transit-vs-flat Delta BIC was "
+                f"{candidate_transit_delta_bic:.2f} vs {selected_transit_delta_bic:.2f} for the selected fit"
+            )
+        if candidate_transit_delta_bic > selected_transit_delta_bic + 1e-12:
+            return (
+                "not selected: this post-selection diagnostic fit has stronger transit evidence "
+                "than the selected fit; the earlier target-fit search did not choose it"
             )
 
     if selected_comp_num is None:
@@ -7622,7 +10531,7 @@ def log_comparison_candidate_fit_summaries(candidate_fit_summaries, photometry_i
     log_info(f"Selection basis: {selection_basis}")
     log_info(
         "Selection metric: "
-        f"{comparison_selection_metric_label(photometry_info.get('selection_metric', 'residual_scatter'))}"
+        f"{comparison_selection_metric_label(photometry_info.get('selection_metric', 'ktmf'))}"
     )
 
     for summary in candidate_fit_summaries:
@@ -7631,20 +10540,23 @@ def log_comparison_candidate_fit_summaries(candidate_fit_summaries, photometry_i
         diagnostics = summary.get('fit_diagnostics') or {}
         usable_point_count = diagnostics.get('usable_point_count', 0)
         coverage_text = format_comp_star_coverage_text(summary)
-        residual_text = "n/a"
-        if summary.get('fit') is not None and np.isfinite(summary.get('res_std', np.inf)):
-            residual_text = f"{summary['res_std'] * 100.0:.4f}%"
         eebls_text = format_eebls_snr(summary.get('eebls_snr', np.nan))
+        transit_delta_bic_text = format_transit_delta_bic(summary.get('transit_delta_bic', np.nan))
+        residual_text = format_residual_scatter(summary.get('residual_scatter', np.nan))
+        ktmf_text = format_ktmf_metric(summary.get('ktmf_metric', np.nan))
         reason_text = comparison_candidate_fit_selection_reason(summary, photometry_info)
         log_info(
             f"  {summary['label']}{selected_label} ({position_text}): "
             f"coverage={coverage_text}, "
             f"usable_after_filters={usable_point_count}, fit_points={summary['fit_point_count']}, "
-            f"eebls_snr={eebls_text}, residual_scatter={residual_text}, reason={reason_text}"
+            f"eebls_snr={eebls_text}, transit_delta_bic={transit_delta_bic_text}, "
+            f"residual_scatter={residual_text}, ktmf={ktmf_text}, reason={reason_text}"
         )
         parameter_summary = summary.get('parameter_summary')
         if parameter_summary:
             log_info(f"    parameters: {parameter_summary}")
+        for contribution in summary.get('ktmf_contributions', []):
+            log_info(f"    {format_ktmf_contribution(contribution)}")
 
 
 def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p_dict, comp_stars,
@@ -7751,11 +10663,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 failure_reason="the nested lightcurve fitter did not converge to a usable solution.",
             )
 
-        res_std = np.inf
         fit_point_count = 0 if target_fit_flux is None else int(len(target_fit_flux))
-        if fit_result is not None and hasattr(fit_result, 'residuals') and hasattr(fit_result, 'data'):
-            with np.errstate(divide='ignore', invalid='ignore'):
-                res_std = float(np.std(fit_result.residuals / np.median(fit_result.data)))
         parameter_summary = summarize_lightcurve_fit_parameters(fit_result)
 
         candidate_fit_summaries.append({
@@ -7764,8 +10672,11 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
             'position': position,
             'selected': selected_comp_star_num == comp_index + 1,
             'fit': fit_result,
-            'res_std': res_std,
             'eebls_snr': extract_lightcurve_fit_eebls_snr(fit_result),
+            'transit_delta_bic': extract_lightcurve_fit_transit_delta_bic(fit_result),
+            'residual_scatter': extract_lightcurve_fit_residual_scatter(fit_result),
+            'ktmf_metric': extract_lightcurve_fit_ktmf_metric(fit_result),
+            'ktmf_contributions': extract_lightcurve_fit_ktmf_contributions(fit_result),
             'coverage_count': coverage_count,
             'coverage_total_frame_count': coverage_total_frame_count,
             'coverage_reference_count': coverage_reference_count,
@@ -7803,7 +10714,6 @@ def normalized_ratio_series(numerator_flux, denominator_flux):
         ratio = np.divide(numerator_flux, denominator_flux)
     ratio[~np.isfinite(ratio)] = np.nan
     ratio[ratio <= 0] = np.nan
-    ratio[ratio > RELATIVE_FLUX_MAX] = np.nan
     return ratio
 
 
@@ -7944,6 +10854,94 @@ def apply_comparison_star_suitability_outlier_rejection(
     }
 
 
+def comparison_star_image_outlier_summary(
+    normalized_flux_map,
+    active_keys,
+    sigma=COMPARISON_IMAGE_OUTLIER_SIGMA,
+    min_active_stars=COMPARISON_IMAGE_OUTLIER_MIN_ACTIVE_STARS,
+    min_valid_pairs=COMPARISON_IMAGE_OUTLIER_MIN_VALID_PAIRS,
+):
+    active_keys = [key for key in active_keys if key in normalized_flux_map]
+    series_length = 0
+    for key in active_keys:
+        flux_values = np.asarray(normalized_flux_map.get(key), dtype=float)
+        if flux_values.ndim == 1:
+            series_length = flux_values.shape[0]
+            break
+
+    keep_mask = np.ones(series_length, dtype=bool)
+    summary = {
+        'frame_keep_mask': keep_mask,
+        'rejected_frame_indices': [],
+        'rejected_frame_count': 0,
+        'valid_pair_counts': np.zeros(series_length, dtype=int),
+        'outlier_pair_counts': np.zeros(series_length, dtype=int),
+        'available_pair_count': 0,
+        'required_valid_pair_count': 0,
+        'sigma': float(sigma),
+    }
+
+    if series_length == 0 or len(active_keys) < max(2, int(min_active_stars)):
+        return summary
+
+    pairwise_valid_flags = []
+    pairwise_outlier_flags = []
+    for index, key in enumerate(active_keys):
+        numerator_flux = np.asarray(normalized_flux_map[key], dtype=float)
+        if numerator_flux.ndim != 1 or numerator_flux.shape[0] != series_length:
+            continue
+
+        for other_key in active_keys[index + 1:]:
+            denominator_flux = np.asarray(normalized_flux_map[other_key], dtype=float)
+            if denominator_flux.ndim != 1 or denominator_flux.shape[0] != series_length:
+                continue
+
+            ratio = normalized_ratio_series(numerator_flux, denominator_flux)
+            valid_mask = np.isfinite(ratio)
+            if np.count_nonzero(valid_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+                continue
+
+            center, scatter = sigma_clipped_nanmedian(ratio[valid_mask], sigma=4.0, max_iters=3)
+            if not np.isfinite(center):
+                center = float(bn.nanmedian(ratio[valid_mask]))
+            robust_pair_scatter = robust_scatter(ratio[valid_mask] - center)
+            if np.isfinite(robust_pair_scatter) and robust_pair_scatter > 0:
+                scatter = robust_pair_scatter
+            if not np.isfinite(scatter) or scatter <= 0:
+                scatter = robust_scatter(ratio[valid_mask] - center)
+            if not np.isfinite(scatter) or scatter <= 0:
+                scatter = COMPARISON_IMAGE_OUTLIER_MIN_SCATTER
+
+            outlier_mask = valid_mask & np.greater(np.abs(ratio - center), float(sigma) * scatter)
+            pairwise_valid_flags.append(valid_mask)
+            pairwise_outlier_flags.append(outlier_mask)
+
+    available_pair_count = len(pairwise_valid_flags)
+    required_valid_pair_count = max(int(min_valid_pairs), len(active_keys) - 1)
+    summary['available_pair_count'] = available_pair_count
+    summary['required_valid_pair_count'] = required_valid_pair_count
+    if available_pair_count < required_valid_pair_count:
+        return summary
+
+    valid_pair_counts = np.sum(np.vstack(pairwise_valid_flags), axis=0).astype(int)
+    outlier_pair_counts = np.sum(np.vstack(pairwise_outlier_flags), axis=0).astype(int)
+    rejected_mask = (
+        (valid_pair_counts >= required_valid_pair_count)
+        & (outlier_pair_counts == valid_pair_counts)
+        & (valid_pair_counts > 0)
+    )
+    keep_mask = ~rejected_mask
+
+    summary.update({
+        'frame_keep_mask': keep_mask,
+        'rejected_frame_indices': np.flatnonzero(rejected_mask).astype(int).tolist(),
+        'rejected_frame_count': int(np.count_nonzero(rejected_mask)),
+        'valid_pair_counts': valid_pair_counts,
+        'outlier_pair_counts': outlier_pair_counts,
+    })
+    return summary
+
+
 def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_rejection=False,
                                       validity_mask_func=valid_comparison_frame_mask):
     if not comp_flux_map:
@@ -7957,6 +10955,13 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
             'suitability_high_threshold': np.nan,
             'suitability_reference_score': np.nan,
             'suitability_scatter': np.nan,
+            'field_image_keep_mask': np.ones(0, dtype=bool),
+            'image_outlier_rejected_count': 0,
+            'image_outlier_sigma': COMPARISON_IMAGE_OUTLIER_SIGMA,
+            'image_outlier_required_valid_pairs': 0,
+            'image_outlier_available_pairs': 0,
+            'image_outlier_valid_pair_counts': np.zeros(0, dtype=int),
+            'image_outlier_outlier_pair_counts': np.zeros(0, dtype=int),
         }
 
     comp_keys = list(comp_flux_map.keys())
@@ -7974,17 +10979,32 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         if not coverage_summary[key]['coverage_rejected']
     ]
 
-    def build_stability_iteration(active_keys):
+    def build_stability_iteration(active_keys, frame_keep_mask=None):
         active_key_set = set(active_keys)
+        if comp_keys:
+            reference_shape = normalized_flux_map[comp_keys[0]].shape
+        else:
+            reference_shape = ()
+        if frame_keep_mask is None:
+            working_flux_map = normalized_flux_map
+        else:
+            frame_keep_mask = np.asarray(frame_keep_mask, dtype=bool)
+            if frame_keep_mask.shape != reference_shape:
+                working_flux_map = normalized_flux_map
+            else:
+                working_flux_map = {
+                    key: np.where(frame_keep_mask, normalized_flux_map[key], np.nan)
+                    for key in comp_keys
+                }
         active_flux_map = {
-            eligible_key: normalized_flux_map[eligible_key]
+            eligible_key: working_flux_map[eligible_key]
             for eligible_key in active_keys
         }
         pairwise_matrix = np.full((len(comp_keys), len(comp_keys)), np.nan, dtype=float)
         comp_summaries = []
 
         for i, key in enumerate(comp_keys):
-            normalized_flux = normalized_flux_map[key]
+            normalized_flux = working_flux_map[key]
             self_score = cheap_lightcurve_prescore(normalized_flux, np.ones(normalized_flux.shape[0]), airmass)
             pairwise_scores = []
             pairwise_series = {}
@@ -7992,7 +11012,7 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
             for j, other_key in enumerate(comp_keys):
                 if i == j or other_key not in active_key_set:
                     continue
-                other_flux = normalized_flux_map[other_key]
+                other_flux = working_flux_map[other_key]
                 score = cheap_lightcurve_prescore(normalized_flux, other_flux, airmass)
                 pairwise_matrix[i, j] = score
                 pairwise_series[f"vs {j + 1}"] = normalized_ratio_series(normalized_flux, other_flux)
@@ -8075,7 +11095,15 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         rejected_outlier_keys.update(newly_rejected_keys)
         active_keys = [key for key in active_keys if key not in rejected_outlier_keys]
 
-    pairwise_matrix, comp_summaries = build_stability_iteration(active_keys)
+    image_outlier_summary = comparison_star_image_outlier_summary(
+        normalized_flux_map,
+        active_keys,
+    )
+    field_image_keep_mask = image_outlier_summary['frame_keep_mask']
+    pairwise_matrix, comp_summaries = build_stability_iteration(
+        active_keys,
+        frame_keep_mask=field_image_keep_mask,
+    )
     final_active_scores = np.asarray(
         [
             summary['aggregate_score']
@@ -8136,6 +11164,13 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         'suitability_high_threshold': final_high_threshold,
         'suitability_reference_score': final_reference_score,
         'suitability_scatter': final_scatter,
+        'field_image_keep_mask': field_image_keep_mask,
+        'image_outlier_rejected_count': image_outlier_summary['rejected_frame_count'],
+        'image_outlier_sigma': image_outlier_summary['sigma'],
+        'image_outlier_required_valid_pairs': image_outlier_summary['required_valid_pair_count'],
+        'image_outlier_available_pairs': image_outlier_summary['available_pair_count'],
+        'image_outlier_valid_pair_counts': image_outlier_summary['valid_pair_counts'],
+        'image_outlier_outlier_pair_counts': image_outlier_summary['outlier_pair_counts'],
     }
 
 
@@ -8457,9 +11492,20 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  psf_data, aper_data, target_psf_flux,
                                                  plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
+                                                 detrend_on_outoftransit_baseline=True,
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
                                                  use_eebls_to_initialize_tmid_and_bounds=True,
-                                                 pick_comparison_by_eebls_snr=True):
+                                                 pick_comparison_by_eebls_snr=True,
+                                                 assess_all_comparisons_before_selecting_best=True,
+                                                 final_fit_baseline_duration_multiplier=
+                                                 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+                                                 use_adaptive_apertures=False,
+                                                 adaptive_aperture_values=None,
+                                                 adaptive_annulus_values=None,
+                                                 fallback_sigma=np.nan,
+                                                 save_dir=None,
+                                                 planet_name=None,
+                                                 observation_date=None):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
     if not ranked_summaries:
         return {
@@ -8469,12 +11515,42 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         }
 
     method = comparison_calibration['method']
+    method_label = comparison_calibration.get('method_label', method)
     aperture_index = comparison_calibration.get('a')
     annulus_index = comparison_calibration.get('an')
     if method == 'psf':
         target_flux = target_psf_flux
     else:
         target_flux = aper_data['target'][:, aperture_index, annulus_index]
+
+    adaptive_summary = build_comparison_candidate_adaptive_summary(
+        comparison_calibration,
+        psf_data,
+        use_adaptive_apertures=use_adaptive_apertures,
+        adaptive_aperture_values=adaptive_aperture_values,
+        adaptive_annulus_values=adaptive_annulus_values,
+        fallback_sigma=fallback_sigma,
+    )
+    field_image_keep_mask = np.asarray(
+        comparison_calibration.get('field_image_keep_mask', np.ones(times.shape[0], dtype=bool)),
+        dtype=bool,
+    )
+    if field_image_keep_mask.shape != times.shape:
+        field_image_keep_mask = np.ones(times.shape[0], dtype=bool)
+    field_image_clip_diagnostic = None
+    if np.any(~field_image_keep_mask):
+        required_pairs = comparison_calibration.get('image_outlier_required_valid_pairs', 0)
+        sigma_threshold = comparison_calibration.get('image_outlier_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
+        field_image_clip_diagnostic = build_time_rejection_diagnostic(
+            "Comparison-field image clip",
+            times,
+            field_image_keep_mask,
+            note=(
+                "Dropped frames flagged after comparison-star suitability clipping because every "
+                f"valid pairwise comparison was more than {sigma_threshold:.2f} sigma from its flat-line median "
+                f"(min valid pair count={required_pairs})."
+            ),
+        )
 
     attempts = []
     for rank, comp_summary in enumerate(ranked_summaries):
@@ -8489,9 +11565,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         else:
             comp_flux = aper_data[ckey][:, aperture_index, annulus_index]
 
-        fit_mask = np.ones(times.shape[0], dtype=bool)
+        fit_mask = field_image_keep_mask.copy()
         if method == 'psf':
-            fit_mask = robust_target_reference_flux_mask(target_flux, comp_flux)
+            fit_mask &= robust_target_reference_flux_mask(target_flux, comp_flux)
 
         fit_diagnostics = diagnose_lightcurve_fit_inputs(
             times[fit_mask],
@@ -8500,32 +11576,66 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             airmass[fit_mask],
             enforce_relative_flux_max=False,
         )
-        fit_result, tflux_fit, cflux_fit = fit_lightcurve(
+        log_comparison_candidate_evaluation_start(
+            comp_summary,
+            rank,
+            len(ranked_summaries),
+            method_label,
+            fit_diagnostics,
+        )
+        log_info(
+            "  Full reduction starting. Optional out-of-transit baseline detrending is "
+            f"{'enabled' if detrend_on_outoftransit_baseline else 'disabled'}."
+        )
+        final_reduction = finalize_comparison_candidate_full_reduction(
             times[fit_mask],
             target_flux[fit_mask],
             comp_flux[fit_mask],
             airmass[fit_mask],
             ld,
             p_dict,
-            jd_times[fit_mask],
+            jd_times=jd_times[fit_mask],
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+            detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
             use_impactparameter_rather_than_inclination_to_fit=
             use_impactparameter_rather_than_inclination_to_fit,
-            plot_time_range=plot_time_range,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
-            compute_eebls_diagnostics=True,
+            plot_time_range=plot_time_range,
+            baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
+            adaptive_summary=adaptive_summary,
         )
+        fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
+        tflux_fit = final_reduction.get('good_target_flux')
+        cflux_fit = final_reduction.get('good_comp_flux')
         fit_diagnostics = ensure_lightcurve_fit_failure_reason(
             fit_diagnostics,
             fit_result,
-            failed_stage='lightcurve_fit',
-            failure_reason="the lightcurve fitter did not converge to a usable solution.",
+            failed_stage='full_candidate_reduction',
+            failure_reason=final_reduction.get(
+                'failure_reason',
+                "the raw comparison-candidate photometry did not converge to a usable fully reduced solution.",
+            ),
         )
-
-        res_std = np.inf
-        if fit_result is not None and hasattr(fit_result, 'residuals') and hasattr(fit_result, 'data'):
-            with np.errstate(divide='ignore', invalid='ignore'):
-                res_std = float(np.std(fit_result.residuals) / np.median(fit_result.data))
+        if fit_result is None:
+            log_info(
+                f"  {comp_summary.get('label', f'Comp {comp_index + 1}')}: "
+                "the raw comparison-candidate light curve did not converge to a usable fully reduced fit."
+            )
+        selection_fit = fit_result
+        transit_qc_failure_reason = lightcurve_fit_transit_qc_failure_reason(selection_fit)
+        if transit_qc_failure_reason is not None:
+            fit_diagnostics = dict(fit_diagnostics)
+            fit_diagnostics.update({
+                'failed_stage': 'transit_qc',
+                'failure_reason': transit_qc_failure_reason,
+            })
+        if field_image_clip_diagnostic is not None:
+            attached_fit_ids = set()
+            for fit_candidate in (fit_result, final_reduction.get('fit'), selection_fit):
+                if fit_candidate is None or id(fit_candidate) in attached_fit_ids:
+                    continue
+                attached_fit_ids.add(id(fit_candidate))
+                prepend_lightcurve_filter_diagnostic(fit_candidate, field_image_clip_diagnostic)
 
         attempt = {
             'rank': rank,
@@ -8539,71 +11649,166 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'coverage_reference_count': comp_summary.get('coverage_reference_count', np.nan),
             'coverage_min_required_count': comp_summary.get('coverage_min_required_count', 0),
             'coverage_rejected': comp_summary.get('coverage_rejected', False),
-            'fit': fit_result,
+            'fit': selection_fit,
+            'provisional_fit': None,
+            'full_reduction_fit': final_reduction.get('fit'),
+            'good_times': final_reduction.get('good_times'),
+            'good_flux': final_reduction.get('good_flux'),
+            'good_unc': final_reduction.get('good_unc'),
+            'good_airmass': final_reduction.get('good_airmass'),
+            'good_jd_times': final_reduction.get('good_jd_times'),
             'tflux_fit': tflux_fit,
             'cflux_fit': cflux_fit,
+            'source_indices': final_reduction.get('source_indices'),
+            'duration_samples': final_reduction.get('duration_samples'),
+            'data_highres': final_reduction.get('data_highres'),
             'fit_diagnostics': fit_diagnostics,
-            'res_std': res_std,
-            'eebls_snr': extract_lightcurve_fit_eebls_snr(fit_result),
-            'fit_point_count': 0 if tflux_fit is None else int(len(tflux_fit)),
+            'eebls_snr': extract_lightcurve_fit_eebls_snr(selection_fit),
+            'transit_delta_bic': extract_lightcurve_fit_transit_delta_bic(selection_fit),
+            'residual_scatter': extract_lightcurve_fit_residual_scatter(selection_fit),
+            'ktmf_metric': extract_lightcurve_fit_ktmf_metric(selection_fit),
+            'ktmf_contributions': extract_lightcurve_fit_ktmf_contributions(selection_fit),
+            'fit_point_count': 0 if tflux_fit is None else int(len(np.asarray(tflux_fit, dtype=float))),
             'failure_reason': fit_diagnostics.get('failure_reason'),
-            'parameter_summary': summarize_lightcurve_fit_parameters(fit_result),
+            'parameter_summary': summarize_lightcurve_fit_parameters(selection_fit),
+            'transit_qc_status': getattr(selection_fit, 'transit_qc_status', None),
+            'transit_qc_summary': getattr(selection_fit, 'transit_qc_summary', None),
+            'rejected_by_transit_qc': final_reduction.get('applied', False) and transit_qc_failure_reason is not None,
             'selected': False,
             'selection_reason': None,
+            'failed_run_dir': None,
+            'final_output_dir': None,
+            'full_reduction_applied': final_reduction.get('applied', False),
+            'full_reduction_note': final_reduction.get('note'),
         }
+        if final_reduction.get('applied') and selection_fit is not None and save_dir is not None:
+            final_output_dir = save_comparison_candidate_full_reduction_outputs(
+                save_dir,
+                None,
+                selection_fit,
+                p_dict,
+                observation_date,
+                comp_index,
+                comp_coords=comp_summary.get('position'),
+                min_aperture=(0 if comparison_calibration['method'] == 'psf' else comparison_calibration.get('aper')),
+                min_annulus=comparison_calibration.get('annulus'),
+                adaptive_summary=adaptive_summary,
+                method_label=comparison_calibration.get('method_label'),
+                selection_summary={
+                    'ktmf_metric': extract_lightcurve_fit_ktmf_metric(selection_fit),
+                    'transit_delta_bic': extract_lightcurve_fit_transit_delta_bic(selection_fit),
+                    'eebls_snr': extract_lightcurve_fit_eebls_snr(selection_fit),
+                    'transit_qc_status': getattr(selection_fit, 'transit_qc_status', None),
+                    'transit_qc_summary': getattr(selection_fit, 'transit_qc_summary', None),
+                },
+                duration_samples=final_reduction.get('duration_samples'),
+                data_highres=final_reduction.get('data_highres'),
+            )
+            if final_output_dir is not None:
+                attempt['final_output_dir'] = str(final_output_dir)
+        if transit_qc_failure_reason is not None:
+            attempt['selection_reason'] = (
+                "rejected: transit detection QC flagged this comparison as a poor transit candidate"
+            )
+            archive_dir = archive_failed_comparison_fit(
+                save_dir,
+                planet_name,
+                observation_date,
+                attempt,
+                method_label=comparison_calibration.get('method_label'),
+            )
+            if archive_dir is not None:
+                attempt['failed_run_dir'] = str(archive_dir)
+        log_comparison_candidate_evaluation_result(attempt)
         attempts.append(attempt)
 
     selected_result = None
-    successful_attempts = [
+    completed_attempts = [
         attempt
         for attempt in attempts
-        if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf))
+        if (
+            attempt.get('fit') is not None
+            and attempt.get('full_reduction_applied', False)
+        )
     ]
-    selection_metric = 'residual_scatter'
+    successful_attempts = [
+        attempt
+        for attempt in completed_attempts
+        if not attempt.get('rejected_by_transit_qc', False)
+    ]
+    selection_metric = 'ktmf'
+    fallback_to_qc_rejected = False
     if successful_attempts:
-        if pick_comparison_by_eebls_snr and any(
-            np.isfinite(attempt.get('eebls_snr', np.nan))
-            for attempt in successful_attempts
-        ):
-            selection_metric = 'eebls_snr'
-            selected_result = min(
-                successful_attempts,
-                key=lambda attempt: (
-                    0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
-                    -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
-                    attempt.get('res_std', np.inf),
-                    attempt.get('rank', np.inf),
-                ),
-            )
-        else:
-            selected_result = min(
-                successful_attempts,
-                key=lambda attempt: (
-                    attempt.get('res_std', np.inf),
-                    0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
-                    -attempt.get('eebls_snr', np.nan) if np.isfinite(attempt.get('eebls_snr', np.nan)) else np.inf,
-                    attempt.get('rank', np.inf),
-                ),
-            )
+        selected_result, selection_metric = select_preferred_comparison_attempt(
+            successful_attempts,
+            pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
+        )
+    else:
+        qc_rejected_attempts = [
+            attempt for attempt in completed_attempts
+            if attempt.get('rejected_by_transit_qc', False)
+        ]
+        selected_result, selection_metric = select_preferred_comparison_attempt(
+            qc_rejected_attempts,
+            pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
+        )
+        fallback_to_qc_rejected = selected_result is not None
+
+    if selected_result is not None:
         selected_result['selected'] = True
-        selected_residual = selected_result.get('res_std', np.inf)
+        selected_result['selected_despite_transit_qc'] = fallback_to_qc_rejected
+        selected_ktmf_metric = selected_result.get('ktmf_metric', np.nan)
+        selected_transit_delta_bic = selected_result.get('transit_delta_bic', np.nan)
         selected_eebls_snr = selected_result.get('eebls_snr', np.nan)
 
         for attempt in attempts:
             if attempt is selected_result:
-                if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
+                if fallback_to_qc_rejected:
+                    attempt['selection_reason'] = (
+                        "selected as best available fallback: all completed comparison-star "
+                        "target fits were rejected by transit QC"
+                    )
+                    if selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
+                        attempt['selection_reason'] += (
+                            f"; this fit had the highest KTMF ({format_ktmf_metric(selected_ktmf_metric)})"
+                        )
+                    elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
+                        attempt['selection_reason'] += (
+                            f"; this fit had the highest EEBLS SNR ({selected_eebls_snr:.2f})"
+                        )
+                    elif np.isfinite(selected_transit_delta_bic):
+                        attempt['selection_reason'] += (
+                            "; this fit had the strongest transit-vs-flat Delta BIC "
+                            f"({format_transit_delta_bic(selected_transit_delta_bic)})"
+                        )
+                elif selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
+                    attempt['selection_reason'] = (
+                        "selected: highest KTMF among the evaluated "
+                        "comparison-star calibration candidates"
+                    )
+                elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
                     attempt['selection_reason'] = (
                         "selected: highest EEBLS SNR among the evaluated "
                         "comparison-star calibration candidates"
                     )
                 else:
                     attempt['selection_reason'] = (
-                        "selected: lowest target-fit residual scatter among the evaluated "
+                        "selected: strongest transit-vs-flat Delta BIC among the evaluated "
                         "comparison-star calibration candidates"
                     )
                 continue
-            if attempt.get('fit') is not None and np.isfinite(attempt.get('res_std', np.inf)):
-                if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
+            if (
+                attempt.get('fit') is not None
+                and attempt.get('full_reduction_applied', False)
+                and (not attempt.get('rejected_by_transit_qc', False) or fallback_to_qc_rejected)
+            ):
+                if selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
+                    attempt['selection_reason'] = (
+                        "not selected: KTMF "
+                        f"{format_ktmf_metric(attempt.get('ktmf_metric', np.nan))} was lower than the selected "
+                        f"{format_ktmf_metric(selected_ktmf_metric)}"
+                    )
+                elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
                     if np.isfinite(attempt.get('eebls_snr', np.nan)):
                         attempt['selection_reason'] = (
                             "not selected: EEBLS SNR "
@@ -8616,9 +11821,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         )
                 else:
                     attempt['selection_reason'] = (
-                        "not selected: target-fit residual scatter "
-                        f"{attempt['res_std'] * 100.0:.4f}% was higher than the selected "
-                        f"{selected_residual * 100.0:.4f}%"
+                        "not selected: transit-vs-flat Delta BIC "
+                        f"{format_transit_delta_bic(attempt.get('transit_delta_bic', np.nan))} was lower than the selected "
+                        f"{format_transit_delta_bic(selected_transit_delta_bic)}"
                     )
 
     return {
@@ -8925,7 +12130,8 @@ def main():
             inputfiles = corruption_check(exotic_infoDict['images'])
             # time sort images
             times, jd_times = [], []
-            for file in inputfiles:
+            log_info(f"Reading FITS timestamps and converting to BJD_TDB for {len(inputfiles)} frame(s).")
+            for file_index, file in enumerate(inputfiles):
                 extension = 0
                 plateStatus.setCurrentFilename(file)
                 header = fits.getheader(filename=file, ext=extension)
@@ -8936,6 +12142,9 @@ def main():
                 times.append(obsTime)
                 plateStatus.setObsTime(obsTime)
                 jd_times.append(img_time_jd(header))
+                completed = file_index + 1
+                if completed == len(inputfiles) or completed % 25 == 0:
+                    log_info(f"Timestamp conversion progress: {completed}/{len(inputfiles)}")
 
             extension = 0
             plateStatus.setCurrentFilename(inputfiles[0])
@@ -9168,6 +12377,15 @@ def main():
             fit_every_comparison_candidate = should_fit_lightcurve_to_every_comparison_candidate(
                 exotic_infoDict.get('fit_lightcurve_to_every_comparison_candidate', 'n')
             )
+            use_deviation_from_expected_transit_in_qc = should_use_deviation_from_expected_transit_in_qc(
+                exotic_infoDict.get('use_deviation_from_expected_transit_in_qc', True)
+            )
+            deviation_from_expected_transit_in_qc_sigma = parse_deviation_from_expected_transit_in_qc_sigma(
+                exotic_infoDict.get('deviation_from_expected_transit_in_qc_sigma', 5.0)
+            )
+            assess_all_comparisons_before_selecting_best = should_assess_all_comparisons_before_selecting_best(
+                exotic_infoDict.get('assess_all_comparisons_before_selecting_best', 'y')
+            )
             use_psf_photometry = should_use_psf_photometry(
                 exotic_infoDict.get('use_psf_photometry', 'y')
             )
@@ -9188,6 +12406,23 @@ def main():
                 log_info("EEBLS transit initializer disabled per optional_info setting.")
             if not pick_comparison_by_eebls_snr:
                 log_info("Comparison-star selection by EEBLS SNR disabled per optional_info setting.")
+            if not use_deviation_from_expected_transit_in_qc:
+                log_info("Expected-value transit QC deviation checks disabled per optional_info setting.")
+            if target_driven_comp_selection:
+                log_info(
+                    "Warning: target-driven comparison selection is no longer used; "
+                    "EXOTIC will run comparison-star calibration followed by full candidate reductions.",
+                    warn=True,
+                )
+            if not assess_all_comparisons_before_selecting_best:
+                log_info(
+                    "Warning: 'assess_all_comparisons_before_selecting_best' is now ignored; "
+                    "all ranked comparison-star candidates will be fully reduced before selection.",
+                    warn=True,
+                )
+
+            pDict['use_deviation_from_expected_transit_in_qc'] = use_deviation_from_expected_transit_in_qc
+            pDict['deviation_from_expected_transit_in_qc_sigma'] = deviation_from_expected_transit_in_qc_sigma
 
             for i, coord in enumerate(exotic_infoDict['comp_stars']):
                 ckey = f"comp{i + 1}"
@@ -9625,7 +12860,6 @@ def main():
                 'best_fit_lc': None,
                 'comp_star_num': None,
                 'comp_star_coords': None,
-                'min_std': 100000,
                 'min_aperture': None,
                 'min_annulus': None,
                 'aperture_index': None,
@@ -9633,27 +12867,25 @@ def main():
                 'adaptive_summary': None,
                 'calibration_field_score': np.inf,
                 'selection_basis': 'target_fit',
-                'selection_metric': 'residual_scatter',
+                'selection_metric': 'ktmf',
+                'comparison_ktmf_metric': np.nan,
                 'comparison_eebls_snr': np.nan,
+                'comparison_transit_delta_bic': np.nan,
             }
 
             comparison_calibration = None
-            target_driven_search = None
-            if target_driven_comp_selection:
-                log_info("\nUsing target-driven comparison-star selection per optional_info setting.")
-            else:
-                comparison_calibration = select_comparison_calibrated_photometry(
-                    psf_data,
-                    aper_data,
-                    apers,
-                    annuli,
-                    airmass,
-                    exotic_infoDict['comp_stars'],
-                    sigma_display,
-                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
-                    use_psf_photometry=use_psf_photometry,
-                    use_aperture_photometry=use_aperture_photometry,
-                )
+            comparison_calibration = select_comparison_calibrated_photometry(
+                psf_data,
+                aper_data,
+                apers,
+                annuli,
+                airmass,
+                exotic_infoDict['comp_stars'],
+                sigma_display,
+                skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                use_psf_photometry=use_psf_photometry,
+                use_aperture_photometry=use_aperture_photometry,
+            )
 
             if comparison_calibration is not None:
                 log_info("\nCalibrating comparison stars before target fitting. Please wait.")
@@ -9673,6 +12905,15 @@ def main():
                             f"{comparison_calibration['suitability_outlier_rejected_count']} high-suitability "
                             "outlier(s) before target-fit evaluation."
                         )
+                if comparison_calibration.get('image_outlier_rejected_count', 0) > 0:
+                    required_pairs = comparison_calibration.get('image_outlier_required_valid_pairs', 0)
+                    sigma_threshold = comparison_calibration.get('image_outlier_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
+                    log_info(
+                        "Comparison-star field image clipping rejected "
+                        f"{comparison_calibration['image_outlier_rejected_count']} frame(s) after suitability clipping "
+                        f"because every valid pairwise comparison was more than {sigma_threshold:.2f} sigma from "
+                        f"its flat-line median (min valid pair count={required_pairs})."
+                    )
                 for summary in comparison_calibration['comp_summaries']:
                     aggregate_text = "n/a" if not np.isfinite(summary['aggregate_score']) else f"{summary['aggregate_score'] * 100.0:.4f}%"
                     ensemble_text = "n/a" if not np.isfinite(summary['ensemble_score']) else f"{summary['ensemble_score'] * 100.0:.4f}%"
@@ -9747,10 +12988,20 @@ def main():
                     tFlux,
                     plot_time_range=full_plot_time_range,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                    detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                     pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
+                    assess_all_comparisons_before_selecting_best=assess_all_comparisons_before_selecting_best,
+                    final_fit_baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
+                    use_adaptive_apertures=use_adaptive_apertures,
+                    adaptive_aperture_values=aperture_values,
+                    adaptive_annulus_values=annulus_values,
+                    fallback_sigma=sigma_display,
+                    save_dir=exotic_infoDict['save'],
+                    planet_name=pDict['pName'],
+                    observation_date=exotic_infoDict['date'],
                 )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -9782,13 +13033,39 @@ def main():
                     myfit = selected_attempt['fit']
                     tFlux1 = selected_attempt['tflux_fit']
                     cFlux1 = selected_attempt['cflux_fit']
-                    res_std = selected_attempt['res_std']
-                    selection_basis = (
-                        'comparison_field'
-                        if selected_comp_index == comparison_calibration['best_comp_index']
-                        else 'comparison_field_retry'
+                    selected_source_indices = np.asarray(
+                        selected_attempt.get('source_indices', np.arange(len(tFlux1), dtype=int)),
+                        dtype=int,
                     )
-                    if selection_basis == 'comparison_field_retry':
+                    if selected_attempt.get('selected_despite_transit_qc', False):
+                        selection_basis = 'comparison_field_qc_fallback'
+                    elif selected_comp_index == comparison_calibration['best_comp_index']:
+                        selection_basis = 'comparison_field'
+                    else:
+                        selection_basis = 'comparison_field_retry'
+                    if selection_basis == 'comparison_field_qc_fallback':
+                        fallback_selection_metric = comparison_fit_search.get('selection_metric', 'ktmf')
+                        if fallback_selection_metric == 'ktmf':
+                            fallback_metric_value = format_ktmf_metric(
+                                selected_attempt.get('ktmf_metric', np.nan)
+                            )
+                        elif fallback_selection_metric == 'eebls_snr':
+                            fallback_metric_value = format_eebls_snr(
+                                selected_attempt.get('eebls_snr', np.nan)
+                            )
+                        else:
+                            fallback_metric_value = format_transit_delta_bic(
+                                selected_attempt.get('transit_delta_bic', np.nan)
+                            )
+                        log_info(
+                            "Warning: all completed comparison-star target fits were rejected by transit QC; "
+                            "continuing with the best available fit "
+                            f"(Comp {selected_comp_index + 1}, "
+                            f"{comparison_selection_metric_label(fallback_selection_metric)}="
+                            f"{fallback_metric_value}) so final outputs are still produced.",
+                            warn=True,
+                        )
+                    elif selection_basis == 'comparison_field_retry':
                         retry_count = selected_attempt['rank']
                         log_info(
                             "Comparison-star calibration target-fit selection chose "
@@ -9801,21 +13078,35 @@ def main():
                     photometry_info.update(best_fit_lc=myfit,
                                            comp_star_num=selected_comp_index + 1,
                                            comp_star_coords=selected_comp_coords,
-                                           min_std=res_std,
                                            min_aperture=selected_min_aperture,
                                            min_annulus=selected_min_annulus,
                                            aperture_index=selected_a,
                                            annulus_index=selected_an,
+                                           reuse_selected_full_reduction_fit=bool(
+                                               selected_attempt.get('full_reduction_applied', False)
+                                               and selected_attempt.get('fit') is not None
+                                           ),
+                                           selected_source_indices=selected_source_indices,
+                                           selected_fit_good_times=selected_attempt.get('good_times'),
+                                           selected_fit_good_flux=selected_attempt.get('good_flux'),
+                                           selected_fit_good_unc=selected_attempt.get('good_unc'),
+                                           selected_fit_good_airmass=selected_attempt.get('good_airmass'),
+                                           selected_fit_duration_samples=selected_attempt.get('duration_samples'),
+                                           selected_fit_data_highres=selected_attempt.get('data_highres'),
                                            calibration_field_score=comparison_calibration['field_score'],
                                            selection_basis=selection_basis,
-                                           selection_metric=comparison_fit_search.get('selection_metric', 'residual_scatter'),
-                                           comparison_eebls_snr=selected_attempt.get('eebls_snr', np.nan))
+                                           selection_metric=comparison_fit_search.get('selection_metric', 'ktmf'),
+                                           comparison_ktmf_metric=selected_attempt.get('ktmf_metric', np.nan),
+                                           comparison_eebls_snr=selected_attempt.get('eebls_snr', np.nan),
+                                           comparison_transit_delta_bic=selected_attempt.get('transit_delta_bic', np.nan))
 
                     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
                                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
 
-                    centroid_positions.update(x_targ=psf_data["target"][:, 0], y_targ=psf_data["target"][:, 1],
-                                              x_ref=psf_data[selected_ckey][:, 0], y_ref=psf_data[selected_ckey][:, 1])
+                    centroid_positions.update(x_targ=psf_data["target"][selected_source_indices, 0],
+                                              y_targ=psf_data["target"][selected_source_indices, 1],
+                                              x_ref=psf_data[selected_ckey][selected_source_indices, 0],
+                                              y_ref=psf_data[selected_ckey][selected_source_indices, 1])
 
                     if selected_comp_index in vsp_num:
                         ref_flux[selected_comp_index] = {
@@ -9867,155 +13158,24 @@ def main():
                         failed_comp_index = failed_attempt['comp_index']
                         failure_reason = failed_attempt['fit_diagnostics'].get(
                             'failure_reason',
-                            "the lightcurve fitter did not converge to a usable solution.",
+                            "the full comparison-star candidate reduction did not converge to a usable solution.",
                         )
                         attempted_count = len(fit_attempts)
                         ranked_count = len(comparison_fit_search['ranked_summaries'])
                         log_info(
-                            "Warning: Comparison-star calibration exhausted "
+                            "Error: Comparison-star calibration exhausted "
                             f"{attempted_count}/{ranked_count} ranked comparison star(s) for "
-                            f"{comparison_calibration['method_label']} without a usable target fit "
-                            f"(last attempt: Comp {failed_comp_index + 1}; reason: {failure_reason}). "
-                            "Falling back to target-driven photometry selection.",
-                            warn=True,
+                            f"{comparison_calibration['method_label']} without a usable fully reduced target fit "
+                            f"(last attempt: Comp {failed_comp_index + 1}; reason: {failure_reason}).",
+                            error=True,
                         )
                     else:
                         log_info(
-                            "Warning: Comparison-star calibration did not produce any coverage-qualified "
-                            "comparison stars to test against the target fit. Falling back to target-driven "
-                            "photometry selection.",
-                            warn=True,
+                            "Error: Comparison-star calibration did not produce any coverage-qualified "
+                            "comparison stars to fully reduce against the target fit.",
+                            error=True,
                         )
-
-            if photometry_info['best_fit_lc'] is None and (use_psf_photometry or use_aperture_photometry):
-                if use_psf_photometry and use_aperture_photometry:
-                    log_info("\nComputing the best PSF/aperture photometry candidate from the target lightcurve. Please wait.")
-                elif use_aperture_photometry:
-                    log_info("\nComputing best comparison star, aperture, and sky annulus from the target lightcurve. Please wait.")
-                else:
-                    log_info("\nComputing best PSF comparison star from the target lightcurve. Please wait.")
-
-                target_driven_search = run_target_driven_photometry_search(
-                    times,
-                    jd_times,
-                    airmass,
-                    ld,
-                    pDict,
-                    exotic_infoDict['comp_stars'],
-                    psf_data,
-                    aper_data,
-                    apers,
-                    annuli,
-                    sigma_display,
-                    require_comp_star=require_comp_star,
-                    plot_time_range=full_plot_time_range,
-                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
-                    use_psf_photometry=use_psf_photometry,
-                    use_aperture_photometry=use_aperture_photometry,
-                    multiprocess_lightcurve_fits=args.multiprocess_lightcurve_fits,
-                    use_impactparameter_rather_than_inclination_to_fit=
-                    use_impactparameter_rather_than_inclination_to_fit,
-                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
-                    pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
-                )
-
-                best_candidate = target_driven_search['best_candidate']
-                if best_candidate is not None:
-                    photometry_info.update(
-                        best_fit_lc=target_driven_search['best_fit_lc'],
-                        comp_star_num=(None if best_candidate['comp_index'] is None else best_candidate['comp_index'] + 1),
-                        comp_star_coords=(
-                            None if best_candidate['comp_index'] is None
-                            else exotic_infoDict['comp_stars'][best_candidate['comp_index']]
-                        ),
-                        min_std=target_driven_search['min_std'],
-                        min_aperture=(
-                            0 if best_candidate['method'] == 'psf'
-                            else (-best_candidate['aper'] if best_candidate['comp_index'] is None else best_candidate['aper'])
-                        ),
-                        min_annulus=best_candidate['annulus'],
-                        aperture_index=best_candidate['a'],
-                        annulus_index=best_candidate['an'],
-                        selection_basis='target_fit',
-                        selection_metric=target_driven_search.get('selection_metric', 'residual_scatter'),
-                        comparison_eebls_snr=target_driven_search.get('selected_eebls_snr', np.nan),
-                    )
-
-                    flux_values.update(
-                        flux_tar=target_driven_search['flux_tar'],
-                        flux_ref=target_driven_search['flux_ref'],
-                        flux_unc_tar=target_driven_search['flux_tar'] ** 0.5,
-                        flux_unc_ref=target_driven_search['flux_ref'] ** 0.5,
-                    )
-
-                    x_ref_data = psf_data['target'][:, 0]
-                    y_ref_data = psf_data['target'][:, 1]
-                    if best_candidate['ckey'] is not None:
-                        x_ref_data = psf_data[best_candidate['ckey']][:, 0]
-                        y_ref_data = psf_data[best_candidate['ckey']][:, 1]
-
-                    centroid_positions.update(
-                        x_targ=psf_data["target"][:, 0],
-                        y_targ=psf_data["target"][:, 1],
-                        x_ref=x_ref_data,
-                        y_ref=y_ref_data,
-                    )
-                else:
-                    candidate_summaries = target_driven_search.get('candidate_summaries', [])
-                    if candidate_summaries:
-                        log_info(
-                            "Warning: Target-driven photometry search evaluated "
-                            f"{len(candidate_summaries)} shortlisted candidate(s) but none yielded "
-                            "a usable lightcurve fit.",
-                            warn=True,
-                        )
-                        log_target_fit_candidate_summaries(candidate_summaries)
-                    elif require_comp_star:
-                        log_info(
-                            "Warning: Target-driven comparison-star search did not produce any "
-                            "coverage-qualified comparison-star candidates to evaluate.",
-                            warn=True,
-                        )
-
-                if best_candidate is not None and vsp_num:
-                    if best_candidate['method'] == 'psf':
-                        for j in vsp_num:
-                            ckey = f"comp{j + 1}"
-                            cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
-                            vsp_fit, _, _ = fit_lightcurve(
-                                times, tFlux, cFlux, airmass, ld, pDict, jd_times,
-                                disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                                use_impactparameter_rather_than_inclination_to_fit=
-                                use_impactparameter_rather_than_inclination_to_fit,
-                                plot_time_range=full_plot_time_range,
-                                use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
-                            )
-                            ref_flux[j] = {
-                                'myfit': vsp_fit,
-                                'pos': exotic_infoDict['comp_stars'][j]
-                            }
-                    else:
-                        best_a = best_candidate['a']
-                        best_an = best_candidate['an']
-                        best_target_flux = aper_data['target'][:, best_a, best_an]
-                        for j in vsp_num:
-                            ckey = f"comp{j + 1}"
-                            aper_mask = np.isfinite(aper_data[ckey][:, best_a, best_an])
-                            cFlux = aper_data[ckey][aper_mask][:, best_a, best_an]
-                            vsp_fit, _, _ = fit_lightcurve(
-                                times[aper_mask], best_target_flux[aper_mask], cFlux,
-                                airmass[aper_mask], ld, pDict, jd_times[aper_mask],
-                                disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                                use_impactparameter_rather_than_inclination_to_fit=
-                                use_impactparameter_rather_than_inclination_to_fit,
-                                plot_time_range=full_plot_time_range,
-                                use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
-                            )
-                            ref_flux[j] = {
-                                'myfit': vsp_fit,
-                                'pos': exotic_infoDict['comp_stars'][j]
-                            }
+                    return
 
             update_photometry_adaptive_summary(
                 photometry_info,
@@ -10027,18 +13187,12 @@ def main():
             )
 
             if require_comp_star and photometry_info['comp_star_num'] is None:
-                if target_driven_search is not None and target_driven_search.get('candidate_summaries'):
-                    log_info(
-                        "Error: require_comp_star is enabled, but every evaluated comparison-star candidate "
-                        "was rejected. See the target-fit candidate diagnostics above for the per-candidate "
-                        "failure reasons.",
-                        error=True,
-                    )
-                else:
-                    log_info(
-                        "Error: require_comp_star is enabled, but no valid comparison star could be selected.",
-                        error=True,
-                    )
+                log_info(
+                    "Error: require_comp_star is enabled, but every evaluated comparison-star candidate "
+                    "was rejected or failed to complete a usable full reduction. See the comparison-star "
+                    "calibration fit diagnostics above for the per-candidate failure reasons.",
+                    error=True,
+                )
                 return
 
             log_info("\n\n*********************************************")
@@ -10050,20 +13204,25 @@ def main():
             ):
                 log_info(
                     "Comparison Selection Metric: "
-                    f"{comparison_selection_metric_label(photometry_info.get('selection_metric', 'residual_scatter'))}"
+                    f"{comparison_selection_metric_label(photometry_info.get('selection_metric', 'ktmf'))}"
                 )
+            if np.isfinite(photometry_info.get('comparison_ktmf_metric', np.nan)):
+                log_info(f"Selected Comparison KTMF: {photometry_info['comparison_ktmf_metric']:.2f} / 5.00")
             if np.isfinite(photometry_info.get('comparison_eebls_snr', np.nan)):
                 log_info(f"Selected Comparison EEBLS SNR: {photometry_info['comparison_eebls_snr']:.2f}")
+            if np.isfinite(photometry_info.get('comparison_transit_delta_bic', np.nan)):
+                log_info(
+                    "Selected Comparison Transit Delta BIC: "
+                    f"{photometry_info['comparison_transit_delta_bic']:.2f}"
+                )
             selected_method_label = selected_photometry_method_label(photometry_info)
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] == 0:  # psf
                 log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
-                log_info(f"Target-Fit Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
                 log_info("Optimal Method: PSF photometry")
             elif photometry_info['min_aperture'] < 0:  # no comp star
                 log_info("Best Comparison Star: None")
-                log_info(f"Target-Fit Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {abs(display_aperture):.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -10076,7 +13235,6 @@ def main():
                     log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             else:
                 log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
-                log_info(f"Target-Fit Residual Scatter: {round(photometry_info['min_std'] * 100, 4)}%")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {display_aperture:.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -10160,21 +13318,42 @@ def main():
                             header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                             fmt="%.6f")
 
+            reuse_selected_full_reduction_fit = bool(
+                photometry_info.get('reuse_selected_full_reduction_fit', False)
+                and best_fit_lc is not None
+            )
+            psf_selection_indices = np.asarray(
+                photometry_info.get('selected_source_indices', np.arange(len(best_fit_lc.time))),
+                dtype=int,
+            )
+            if psf_selection_indices.shape[0] != len(best_fit_lc.time):
+                psf_selection_indices = np.arange(len(best_fit_lc.time), dtype=int)
+
             # sigma clip
-            si = np.argsort(best_fit_lc.time)
-            dt = np.mean(np.diff(np.sort(best_fit_lc.time)))
-            ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
-            time_clip_mask = sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt, times=best_fit_lc.time[si])
-            phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
-            if hasattr(best_fit_lc, 'residuals') and hasattr(best_fit_lc, 'phase'):
-                phase_clip_mask = phase_bin_sigma_clip(best_fit_lc.residuals[si], best_fit_lc.phase[si], sigma=3, bins=10)
-            adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
-            if use_adaptive_apertures and adaptive_summary is not None:
-                sorted_apertures = np.asarray(adaptive_summary['aperture_series'], dtype=float)[si]
-                sorted_annuli = np.asarray(adaptive_summary['annulus_series'], dtype=float)[si]
-                retained_mask = adaptive_aperture_outlier_mask(sorted_apertures[~time_clip_mask & ~phase_clip_mask],
-                                                               sorted_annuli[~time_clip_mask & ~phase_clip_mask])
-                adaptive_clip_mask[~time_clip_mask & ~phase_clip_mask] = retained_mask
+            if reuse_selected_full_reduction_fit:
+                log_info(
+                    "Reusing the selected comparison-star full-reduction ultranest fit; "
+                    "skipping duplicate selected-only final-fit clipping."
+                )
+                si = np.arange(len(best_fit_lc.time), dtype=int)
+                time_clip_mask = np.zeros(len(best_fit_lc.time), dtype=bool)
+                phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
+                adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
+            else:
+                si = np.argsort(best_fit_lc.time)
+                dt = np.mean(np.diff(np.sort(best_fit_lc.time)))
+                ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
+                time_clip_mask = sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt, times=best_fit_lc.time[si])
+                phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
+                if hasattr(best_fit_lc, 'residuals') and hasattr(best_fit_lc, 'phase'):
+                    phase_clip_mask = phase_bin_sigma_clip(best_fit_lc.residuals[si], best_fit_lc.phase[si], sigma=3, bins=10)
+                adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
+                if use_adaptive_apertures and adaptive_summary is not None:
+                    sorted_apertures = np.asarray(adaptive_summary['aperture_series'], dtype=float)[si]
+                    sorted_annuli = np.asarray(adaptive_summary['annulus_series'], dtype=float)[si]
+                    retained_mask = adaptive_aperture_outlier_mask(sorted_apertures[~time_clip_mask & ~phase_clip_mask],
+                                                                   sorted_annuli[~time_clip_mask & ~phase_clip_mask])
+                    adaptive_clip_mask[~time_clip_mask & ~phase_clip_mask] = retained_mask
             gi = ~(time_clip_mask | phase_clip_mask | adaptive_clip_mask)  # good indexs
             prefinal_filter_diagnostics = [
                 build_time_rejection_diagnostic(
@@ -10212,19 +13391,31 @@ def main():
             goodTimes = best_fit_lc.time
             goodAirmasses = best_fit_lc.airmass
 
-            final_fit_series = prepare_final_fit_lightcurve_series(best_fit_lc)
-            if not final_fit_series.get('applied'):
-                log_info(
-                    f"Warning: {final_fit_series.get('note', 'could not prepare the final-fit light curve from the provisional fit.')} "
-                    "Falling back to the provisional detrended light curve arrays.",
-                    warn=True,
-                )
-                goodFluxes = np.asarray(best_fit_lc.detrended, dtype=float)
-                goodNormUnc = np.asarray(best_fit_lc.detrendederr, dtype=float)
+            if reuse_selected_full_reduction_fit:
+                selected_good_flux = photometry_info.get('selected_fit_good_flux')
+                selected_good_unc = photometry_info.get('selected_fit_good_unc')
+                if selected_good_flux is not None and np.shape(selected_good_flux) == np.shape(goodTimes):
+                    goodFluxes = np.asarray(selected_good_flux, dtype=float)
+                else:
+                    goodFluxes = np.asarray(best_fit_lc.detrended, dtype=float)
+                if selected_good_unc is not None and np.shape(selected_good_unc) == np.shape(goodTimes):
+                    goodNormUnc = np.asarray(selected_good_unc, dtype=float)
+                else:
+                    goodNormUnc = np.asarray(best_fit_lc.detrendederr, dtype=float)
             else:
-                log_info(final_fit_series['note'])
-                goodFluxes = np.asarray(final_fit_series['flux'], dtype=float)
-                goodNormUnc = np.asarray(final_fit_series['unc'], dtype=float)
+                final_fit_series = prepare_final_fit_lightcurve_series(best_fit_lc)
+                if not final_fit_series.get('applied'):
+                    log_info(
+                        f"Warning: {final_fit_series.get('note', 'could not prepare the final-fit light curve from the selected fit.')} "
+                        "Falling back to the current detrended light curve arrays.",
+                        warn=True,
+                    )
+                    goodFluxes = np.asarray(best_fit_lc.detrended, dtype=float)
+                    goodNormUnc = np.asarray(best_fit_lc.detrendederr, dtype=float)
+                else:
+                    log_info(final_fit_series['note'])
+                    goodFluxes = np.asarray(final_fit_series['flux'], dtype=float)
+                    goodNormUnc = np.asarray(final_fit_series['unc'], dtype=float)
 
             centroid_positions.update(x_targ=centroid_positions['x_targ'][si][gi],
                                       y_targ=centroid_positions['y_targ'][si][gi],
@@ -10238,13 +13429,16 @@ def main():
 
             relative_flux_mask = relative_flux_filter_mask(goodFluxes)
             prefinal_filter_diagnostics.append(build_time_rejection_diagnostic(
-                "Final relative-flux cap",
+                "Final relative-flux validity filter",
                 goodTimes,
                 relative_flux_mask,
-                note=f"Dropped points with normalized flux outside (0, {RELATIVE_FLUX_MAX:g}] before the final fit.",
+                note="Dropped non-finite or non-positive normalized flux values before the final fit.",
             ))
             if np.count_nonzero(relative_flux_mask) == 0:
-                log_info("Error: No valid photometry data found after removing relative flux values above 2.", error=True)
+                log_info(
+                    "Error: No valid photometry data found after removing non-finite or non-positive relative flux values.",
+                    error=True,
+                )
                 return
 
             log_lightcurve_filter_diagnostics(
@@ -10268,12 +13462,16 @@ def main():
                                flux_unc_tar=flux_values['flux_unc_tar'][relative_flux_mask],
                                flux_unc_ref=flux_values['flux_unc_ref'][relative_flux_mask])
 
+            psf_selection_indices = psf_selection_indices[si][gi][relative_flux_mask]
+            obs_stats_sort_index = psf_selection_indices
+            obs_stats_keep_mask = np.ones(psf_selection_indices.shape[0], dtype=bool)
+
             update_photometry_adaptive_summary(
                 photometry_info,
                 use_adaptive_apertures,
                 aperture_values,
                 annulus_values,
-                psf_data['target'][si][gi][relative_flux_mask],
+                psf_data['target'][psf_selection_indices],
                 fallback_sigma=sigma,
             )
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
@@ -10396,13 +13594,20 @@ def main():
 
             relative_flux_mask = relative_flux_filter_mask(goodFluxes)
             if np.count_nonzero(relative_flux_mask) == 0:
-                log_info("Error: No valid photometry data found after removing relative flux values above 2.", error=True)
+                log_info(
+                    "Error: No valid photometry data found after removing non-finite or non-positive relative flux values.",
+                    error=True,
+                )
                 return
 
             goodTimes = goodTimes[relative_flux_mask]
             goodFluxes = goodFluxes[relative_flux_mask]
             goodNormUnc = goodNormUnc[relative_flux_mask]
             goodAirmasses = goodAirmasses[relative_flux_mask]
+            goodFluxes, goodNormUnc, _ = normalize_flux_series_to_approximate_unity(
+                goodFluxes,
+                goodNormUnc,
+            )
             finite_plot_times = goodTimes[np.isfinite(goodTimes)]
             full_plot_time_range = None
             if finite_plot_times.size:
@@ -10419,6 +13624,12 @@ def main():
         log_info("****************************************")
         log_info("Fitting a Light Curve Model to Your Data")
         log_info("****************************************\n")
+
+        reuse_selected_final_model = bool(
+            fitsortext == 1
+            and photometry_info.get('reuse_selected_full_reduction_fit', False)
+            and photometry_info.get('best_fit_lc') is not None
+        )
 
         ##########################
         # NESTED SAMPLING FITTING
@@ -10438,7 +13649,7 @@ def main():
 
         phase = (goodTimes - prior['tmid']) / prior['per']
         expected_duration = estimate_transit_duration_from_prior_geometry(prior)
-        tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
+        ephemeris_tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
             goodTimes,
             pDict['midT'],
             prior['per'],
@@ -10447,8 +13658,8 @@ def main():
             expected_duration=expected_duration,
             sigma_multiplier=35.0,
         )
-        prior['tmid'] = tmid_search_summary['tmid']
-        lower, upper = tmid_search_summary['bounds']
+        prior['tmid'] = ephemeris_tmid_search_summary['tmid']
+        lower, upper = ephemeris_tmid_search_summary['bounds']
 
         if np.floor(phase).max() - np.floor(phase).min() == 0:
             log_info("Error: Estimated mid-transit not in observation range (check priors or observation time)", error=True)
@@ -10456,20 +13667,21 @@ def main():
             log_info(f"  end:{np.max(goodTimes)}", error=True)
             log_info(f"prior:{prior['tmid']}", error=True)
 
-        if tmid_search_summary.get('duration_capped'):
-            log_info(tmid_search_summary['note'])
+        if ephemeris_tmid_search_summary.get('duration_capped'):
+            log_info(ephemeris_tmid_search_summary['note'])
+        eebls_tmid_search_summary = None
         if use_eebls_tmid_initializer:
-            tmid_search_summary = estimate_tmid_and_bounds_with_eebls(
+            eebls_tmid_search_summary = estimate_tmid_and_bounds_with_eebls(
                 goodTimes,
                 goodFluxes,
                 goodNormUnc,
                 prior,
                 [lower, upper],
             )
-            log_info(tmid_search_summary['note'])
-            if tmid_search_summary.get('applied'):
-                prior['tmid'] = tmid_search_summary['tmid']
-                lower, upper = tmid_search_summary['bounds']
+            log_info(eebls_tmid_search_summary['note'])
+            if eebls_tmid_search_summary.get('applied'):
+                prior['tmid'] = eebls_tmid_search_summary['tmid']
+                lower, upper = eebls_tmid_search_summary['bounds']
 
         final_airmass_span = airmass_span(goodAirmasses)
         airmass_skip_note = None
@@ -10490,11 +13702,11 @@ def main():
                 "skipping airmass fitting and applying no airmass correction."
             )
 
-        mybounds = {
-            'rprs': build_initial_rprs_bounds(prior['rprs']),
-            'tmid': [lower, upper],
-            'inc': [prior['inc'] - 5, min(90, prior['inc'] + 5)],
-        }
+        mybounds = build_initial_transit_bounds(
+            prior,
+            [lower, upper],
+            ars_unc=pDict.get('aRsUnc'),
+        )
         apply_vertical_flux_normalization_bound(
             prior,
             mybounds,
@@ -10508,23 +13720,45 @@ def main():
             log_info("Error: No valid photometry data found.", error=True)
             return
 
-        # final light curve fit
-        myfit, goodFluxes, goodNormUnc = fit_final_lightcurve_with_oot_baseline_detrending(
-            goodTimes,
-            goodFluxes,
-            goodNormUnc,
-            goodAirmasses,
-            prior,
-            mybounds,
-            skip_airmass_fit=skip_final_airmass_fit,
-            airmass_skip_note=airmass_skip_note,
-            disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-            detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
-            use_impactparameter_rather_than_inclination_to_fit=
-            use_impactparameter_rather_than_inclination_to_fit,
-            plot_time_range=full_plot_time_range,
-            baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
-        )
+        if reuse_selected_final_model:
+            myfit = photometry_info['best_fit_lc']
+            goodTimes = np.asarray(getattr(myfit, 'time', goodTimes), dtype=float)
+            goodAirmasses = np.asarray(getattr(myfit, 'airmass', goodAirmasses), dtype=float)
+            reused_flux = photometry_info.get('selected_fit_good_flux')
+            reused_unc = photometry_info.get('selected_fit_good_unc')
+            if reused_flux is not None and np.shape(reused_flux) == np.shape(goodTimes):
+                goodFluxes = np.asarray(reused_flux, dtype=float)
+            else:
+                goodFluxes = np.asarray(getattr(myfit, 'detrended', goodFluxes), dtype=float)
+            if reused_unc is not None and np.shape(reused_unc) == np.shape(goodTimes):
+                goodNormUnc = np.asarray(reused_unc, dtype=float)
+            else:
+                goodNormUnc = np.asarray(getattr(myfit, 'detrendederr', goodNormUnc), dtype=float)
+            log_info(
+                "Using the selected comparison-star full-reduction ultranest fit for final outputs; "
+                "no additional final nested-sampling fit is being run."
+            )
+        else:
+            # final light curve fit
+            myfit, goodFluxes, goodNormUnc = fit_final_lightcurve_with_oot_baseline_detrending(
+                goodTimes,
+                goodFluxes,
+                goodNormUnc,
+                goodAirmasses,
+                prior,
+                mybounds,
+                skip_airmass_fit=skip_final_airmass_fit,
+                airmass_skip_note=airmass_skip_note,
+                disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+                use_impactparameter_rather_than_inclination_to_fit=
+                use_impactparameter_rather_than_inclination_to_fit,
+                plot_time_range=full_plot_time_range,
+                baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
+                expected_planet_dict=pDict,
+                expected_tmid_search_summary=ephemeris_tmid_search_summary,
+                eebls_search_summary=eebls_tmid_search_summary,
+            )
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 
@@ -10552,9 +13786,10 @@ def main():
                 photometry_info,
                 len(exotic_infoDict['comp_stars']),
             )
-            plot_obs_stats(myfit, exotic_infoDict['comp_stars'], psf_data, si, gi, pDict['pName'],
+            plot_obs_stats(myfit, exotic_infoDict['comp_stars'], psf_data, obs_stats_sort_index,
+                           obs_stats_keep_mask, pDict['pName'],
                            exotic_infoDict['save'], exotic_infoDict['date'],
-                           relative_flux_mask=relative_flux_mask,
+                           relative_flux_mask=None,
                            background_series=observing_background_series)
 
         #######################################################################
@@ -10567,12 +13802,45 @@ def main():
         log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         log_info(f"           Transit depth [(Rp/R*)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
         log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
+        ars_text = format_parameter_with_error(myfit.parameters.get('ars'), myfit.errors.get('ars'))
+        if ars_text is not None:
+            log_info(f" Ratio of Distance to Stellar Radius [a/Rs]: {ars_text}")
+        impact_parameter, impact_error = fit_impact_parameter_value_error(myfit)
+        impact_text = format_parameter_with_error(impact_parameter, impact_error)
+        if impact_text is not None:
+            log_info(f"                 Impact Parameter [b]: {impact_text}")
         if getattr(myfit, 'airmass_fit_skipped', False):
             log_info(f"                 Airmass correction: {myfit.airmass_correction_note}")
         else:
             log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
             log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
-        log_info(f"                    Residual scatter: {round_to_2(100. * np.std(myfit.residuals / np.median(myfit.data)))} %")
+        transit_qc = getattr(myfit, 'transit_qc', None)
+        if transit_qc:
+            residual_scatter = transit_qc.get('residual_scatter', np.nan)
+            if np.isfinite(residual_scatter):
+                log_info(f"Residual scatter around full model fit: {residual_scatter * 100.0:.4f}%")
+            qc_status = str(transit_qc.get('status', 'unknown')).upper()
+            qc_summary = transit_qc.get('summary')
+            if qc_summary:
+                log_info(f"                Transit detection QC: {qc_status} - {qc_summary}")
+            else:
+                log_info(f"                Transit detection QC: {qc_status}")
+            if np.isfinite(transit_qc.get('deviation_from_expected_value', np.nan)):
+                log_info(
+                    f"      Deviation From Expected Value: {transit_qc['deviation_from_expected_value']:.2f} / 1.00"
+                )
+            if np.isfinite(transit_qc.get('tmid_deviation_sigma', np.nan)):
+                log_info(
+                    f"          Expected-value Tmid sigma: {transit_qc['tmid_deviation_sigma']:.2f}"
+                )
+            if np.isfinite(transit_qc.get('rprs_deviation_sigma', np.nan)):
+                log_info(
+                    f"         Expected-value Rp/R* sigma: {transit_qc['rprs_deviation_sigma']:.2f}"
+                )
+            if np.isfinite(transit_qc.get('ktmf_metric', np.nan)):
+                log_info(f"                             KTMF: {transit_qc['ktmf_metric']:.2f} / 5.00")
+            for contribution in transit_qc.get('ktmf_contributions', []):
+                log_info(f"      {format_ktmf_contribution(contribution)}")
         if fitsortext == 1:
             if np.isfinite(photometry_info.get('calibration_field_score', np.inf)):
                 log_info(f"        Comparison-Star Field Score: {round_to_2(100. * photometry_info['calibration_field_score'])} %")
@@ -10658,18 +13926,21 @@ def main():
         log.debug("Stopped ...")
 
 
+def cli():
+    global _UNHANDLED_EXCEPTION_LOGGED
+
+    _UNHANDLED_EXCEPTION_LOGGED = False
+    configure_runtime_logging()
+    install_exception_hooks()
+
+    try:
+        return main()
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        _handle_unhandled_exception(type(exc), exc, exc.__traceback__)
+        raise
+
+
 if __name__ == "__main__":
-    # configure logger for standalone execution
-    logging.root.setLevel(logging.DEBUG)
-    fileFormatter = logging.Formatter("%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
-                                      "%(funcName)s:%(lineno)d - %(message)s", f"%Y-%m-%dT%H:%M:%S")
-    fileHandler = TimedRotatingFileHandler(filename="exotic.log", when="midnight", backupCount=2)
-    fileHandler.setLevel(logging.DEBUG)
-    fileHandler.setFormatter(fileFormatter)
-    consoleFormatter = logging.Formatter("%(message)s")
-    consoleHandler = logging.StreamHandler(sys.stdout)
-    consoleHandler.setFormatter(consoleFormatter)
-    consoleHandler.setLevel(logging.INFO)
-    log.addHandler(fileHandler)
-    log.addHandler(consoleHandler)
-    main()
+    raise SystemExit(cli())

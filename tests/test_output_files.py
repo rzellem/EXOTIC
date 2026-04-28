@@ -1,4 +1,9 @@
-from exotic.output_files import OutputFiles, save_comp_star_calibration_summary
+import json
+
+import numpy as np
+import pytest
+
+from exotic.output_files import OutputFiles, fit_impact_parameter_value_error, save_comp_star_calibration_summary
 
 
 class DummyFit:
@@ -6,13 +11,17 @@ class DummyFit:
         self.parameters = {
             "tmid": 2450000.123456,
             "rprs": 0.1234,
+            "ars": 12.0,
             "inc": 88.5,
+            "ecc": 0.0,
+            "omega": 90.0,
             "a1": 1.0,
             "a2": 0.0,
         }
         self.errors = {
             "tmid": 0.0001,
             "rprs": 0.001,
+            "ars": 0.4,
             "inc": 0.2,
             "a1": 0.1,
             "a2": 0.1,
@@ -206,6 +215,33 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
     assert "Airmass coefficient 1 (a1)" not in output_text
 
 
+def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclination(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_data = json.loads(output_file.read_text(encoding="utf-8"))
+    final_params = output_data["FINAL PLANETARY PARAMETERS"]
+    keys = list(final_params)
+    inclination_index = keys.index("Orbital Inclination (inc)")
+
+    assert keys[inclination_index + 1] == "Ratio of Distance to Stellar Radius (a/Rs)"
+    assert keys[inclination_index + 2] == "Impact Parameter (b)"
+    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.0 +/- 0.4"
+
+    expected_b, expected_b_error = fit_impact_parameter_value_error(fit)
+    assert expected_b == pytest.approx(12.0 * np.cos(np.deg2rad(88.5)))
+    assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
+
+
 def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
     fit = DummyFit()
     (tmp_path / "temp").mkdir()
@@ -244,6 +280,65 @@ def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
     assert "7.98 +/- 0.41 px" in output_text
     assert "Aperture Range" in output_text
     assert "7.12 to 8.76 px" in output_text
+
+
+def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
+    fit = DummyFit()
+    fit.transit_qc = {
+        "status": "pass",
+        "summary": "Transit model strongly preferred over flat/null model (Delta BIC=18.40, Delta chi2=27.10).",
+        "delta_bic": 18.4,
+        "delta_chi2": 27.1,
+        "rprs_sigma": 6.2,
+        "duration_ratio": 1.05,
+        "eebls_depth_snr": 5.8,
+        "residual_scatter": 0.0032,
+        "deviation_from_expected_value": 0.91,
+        "tmid_deviation_sigma": 1.1,
+        "rprs_deviation_sigma": 0.8,
+        "deviation_sigma_threshold": 5.0,
+        "ktmf_metric": 4.63,
+        "ktmf_contributions": [
+            {
+                "label": "Delta BIC",
+                "available": True,
+                "points": 1.25,
+                "max_points": 1.40,
+                "score": 0.89,
+                "detail": "Delta BIC=18.40",
+            },
+            {
+                "label": "Deviation From Expected Value",
+                "available": True,
+                "points": 0.91,
+                "max_points": 1.00,
+                "score": 0.91,
+                "detail": "score=0.91, Tmid sigma=1.10, Rp/R* sigma=0.80",
+            },
+        ],
+        "notes": ["The transit model is strongly preferred over the flat/null model."],
+    }
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_text = output_file.read_text(encoding="utf-8")
+
+    assert "Transit detection QC" in output_text
+    assert "Transit vs flat model" in output_text
+    assert "PASS" in output_text
+    assert "Delta BIC=18.40" in output_text
+    assert "Residual scatter around full model fit" in output_text
+    assert "Deviation From Expected Value" in output_text
+    assert "KTMF" in output_text
+    assert "KTMF contribution 1" in output_text
 
 
 def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_path):

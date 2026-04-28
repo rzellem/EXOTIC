@@ -1,0 +1,35 @@
+{
+    "planet_name": "HAT-P-32 b",
+    "observation_date": "2026-04-28",
+    "comparison_star": 1,
+    "comparison_label": "Comp 1",
+    "comparison_position": [
+        100.0,
+        200.0
+    ],
+    "method_label": "Aperture photometry (aper=5.00px, annulus=12.00px)",
+    "failure_reason": "Transit detection not supported strongly enough against a flat/null model (Delta BIC=2.50, Delta chi2=1.10).",
+    "fit_diagnostics": {
+        "input_point_count": 6,
+        "has_reference_flux": true,
+        "relative_flux_point_count": 6,
+        "sigma_clip_point_count": 4,
+        "usable_point_count": 4,
+        "failed_stage": "transit_qc",
+        "failure_reason": "Transit detection not supported strongly enough against a flat/null model (Delta BIC=2.50, Delta chi2=1.10)."
+    },
+    "parameter_summary": null,
+    "fit_point_count": 6,
+    "eebls_snr": NaN,
+    "transit_delta_bic": NaN,
+    "residual_scatter": 0.0,
+    "ktmf_metric": NaN,
+    "ktmf_contributions": [],
+    "transit_qc": {
+        "status": "fail",
+        "summary": "Transit detection not supported strongly enough against a flat/null model (Delta BIC=2.50, Delta chi2=1.10)."
+    },
+    "saved_debug_series": null,
+    "saved_bestfit_plot": null,
+    "archive_errors": []
+}

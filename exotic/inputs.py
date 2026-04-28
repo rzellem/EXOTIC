@@ -212,6 +212,9 @@ class Inputs:
             'final_fit_baseline_duration_multiplier': 1.0,
             'use_eebls_to_initialize_tmid_and_bounds': 'y',
             'pick_comparison_by_eebls_snr': 'y',
+            'use_deviation_from_expected_transit_in_qc': True,
+            'deviation_from_expected_transit_in_qc_sigma': 5.0,
+            'assess_all_comparisons_before_selecting_best': 'y',
             'detect_bad_pixels_before_photometry': 'y',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
@@ -449,6 +452,18 @@ class Inputs:
                 'pick_comparison_by_eebls_snr',
                 'Pick Comparison by EEBLS SNR? (y/n)',
                 'Pick comparison by EEBLS SNR? (y/n)',
+            ),
+            'use_deviation_from_expected_transit_in_qc': (
+                'use_deviation_from_expected_transit_in_qc',
+                'Use Deviation From Expected Transit In QC? (y/n)',
+            ),
+            'deviation_from_expected_transit_in_qc_sigma': (
+                'deviation_from_expected_transit_in_qc_sigma',
+                'Deviation From Expected Transit In QC Sigma',
+            ),
+            'assess_all_comparisons_before_selecting_best': (
+                'assess_all_comparisons_before_selecting_best',
+                'Assess All Comparisons Before Selecting Best? (y/n)',
             ),
             'use_impactparameter_rather_than_inclination_to_fit': (
                 'use_impactparameter_rather_than_inclination_to_fit',

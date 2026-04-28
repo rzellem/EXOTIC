@@ -1,6 +1,8 @@
+import importlib
 import importlib.util
 import sys
 import types
+from pathlib import Path
 import numpy as np
 import pytest
 
@@ -8,7 +10,7 @@ import pytest
 def _module_available(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
-    except (ModuleNotFoundError, ValueError):
+    except Exception:
         return False
 
 
@@ -20,6 +22,7 @@ def _set_stub_if_missing(name: str, module: types.ModuleType) -> None:
 fake_barycorrpy = types.ModuleType("barycorrpy")
 fake_utc_tdb = types.ModuleType("barycorrpy.utc_tdb")
 fake_utc_tdb.JDUTC_to_BJDTDB = lambda *args, **kwargs: None
+fake_barycorrpy.utc_tdb = fake_utc_tdb
 fake_astroalign = types.ModuleType("astroalign")
 fake_astroalign.PIXEL_TOL = 1
 fake_astroquery = types.ModuleType("astroquery")
@@ -79,18 +82,27 @@ _set_stub_if_missing("pyvo", fake_pyvo)
 _set_stub_if_missing("ultranest", fake_ultranest)
 _set_stub_if_missing("barycorrpy", fake_barycorrpy)
 _set_stub_if_missing("barycorrpy.utc_tdb", fake_utc_tdb)
+try:
+    importlib.import_module("barycorrpy.utc_tdb")
+except Exception:
+    sys.modules["barycorrpy"] = fake_barycorrpy
+    sys.modules["barycorrpy.utc_tdb"] = fake_utc_tdb
 sys.modules.setdefault("exotic.api.elca", fake_elca)
 sys.modules.setdefault("exotic.api.ld", fake_ld)
 
 from exotic.exotic import (
     adaptive_aperture_outlier_mask,
+    annotate_transit_qc_expected_values,
     auto_tune_aperture_sigma_grid,
+    build_initial_ars_bounds,
+    build_single_transit_duration_prior,
     build_target_fit_candidate_jobs,
     build_time_rejection_diagnostic,
     check_coordinates,
     cheap_lightcurve_prescore,
     centroid_offset_matches_reference,
     choose_centroid_seed_position,
+    compute_transit_qc_ktmf,
     apply_comparison_star_suitability_outlier_rejection,
     comparison_calibration_selection_reason,
     comparison_candidate_fit_selection_reason,
@@ -100,6 +112,9 @@ from exotic.exotic import (
     diagnose_lightcurve_fit_inputs,
     detrend_flux_on_out_of_transit_baseline,
     ensure_lightcurve_fit_failure_reason,
+    evaluate_lightcurve_candidate,
+    evaluate_transit_detection_qc,
+    finalize_comparison_candidate_full_reduction,
     fit_lightcurve,
     fit_final_lightcurve_with_oot_baseline_detrending,
     fit_lightcurve_to_every_comparison_candidate,
@@ -114,8 +129,11 @@ from exotic.exotic import (
     log_comparison_calibration_fit_attempt_summaries,
     log_comparison_candidate_fit_summaries,
     log_target_fit_candidate_summaries,
+    normalize_flux_series_to_approximate_unity,
     phase_bin_sigma_clip,
+    parse_deviation_from_expected_transit_in_qc_sigma,
     prepare_final_fit_lightcurve_series,
+    prepare_lightcurve_fit_input_series,
     representative_psf_sigma,
     ranked_comparison_calibration_summaries,
     resolve_sky_annulus_geometry,
@@ -136,7 +154,9 @@ from exotic.exotic import (
     should_pick_comparison_by_eebls_snr,
     should_use_psf_photometry,
     should_skip_low_comparison_coverage_rejection,
+    should_assess_all_comparisons_before_selecting_best,
     should_use_fast_target_centroid,
+    should_use_deviation_from_expected_transit_in_qc,
     update_coordinates_with_proper_motion,
 )
 
@@ -245,6 +265,92 @@ def test_save_selected_photometry_debug_series_writes_stage_masks(tmp_path):
     assert rows.shape == (3, 6)
     assert rows[:, 4].astype(int).tolist() == [1, 0, 1]
     assert rows[:, 5].astype(int).tolist() == [1, 0, 0]
+
+
+def test_finalize_comparison_candidate_phase_clips_before_nested_fit(monkeypatch):
+    captured = {}
+
+    def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, jd_times=None, mode=None, **kwargs):
+        assert mode == "lm"
+        return types.SimpleNamespace(
+            residuals=np.linspace(-0.01, 0.01, len(times)),
+            phase=np.linspace(-0.5, 0.5, len(times)),
+        )
+
+    def fake_phase_clip(residuals, phase, sigma=3, bins=10):
+        mask = np.zeros(len(residuals), dtype=bool)
+        mask[3] = True
+        return mask
+
+    def fake_final_fit(
+        times,
+        flux,
+        unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        **kwargs,
+    ):
+        captured["times"] = np.asarray(times, dtype=float).copy()
+        captured["jd_times"] = np.asarray(jd_times, dtype=float).copy()
+        fit = types.SimpleNamespace(
+            time=np.asarray(times, dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            data=np.asarray(flux, dtype=float),
+            dataerr=np.asarray(unc, dtype=float),
+            detrended=np.asarray(flux, dtype=float),
+            detrendederr=np.asarray(unc, dtype=float),
+            airmass_model=np.ones(len(times), dtype=float),
+            transit=np.ones(len(times), dtype=float),
+            phase=np.linspace(-0.5, 0.5, len(times)),
+            residuals=np.zeros(len(times), dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a1": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a1": 0.01, "a2": 0.01},
+        )
+        return fit, np.asarray(flux, dtype=float), np.asarray(unc, dtype=float)
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.phase_bin_sigma_clip", fake_phase_clip)
+    monkeypatch.setattr("exotic.exotic.fit_final_lightcurve_with_oot_baseline_detrending", fake_final_fit)
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
+    )
+
+    times = np.linspace(0.0, 0.09, 10)
+    result = finalize_comparison_candidate_full_reduction(
+        times,
+        np.full(10, 100.0, dtype=float),
+        np.full(10, 100.0, dtype=float),
+        np.linspace(1.0, 1.2, 10),
+        [0.1, 0.1, 0.1, 0.1],
+        {
+            "midT": 0.045,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "pPerUnc": 0.001,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "aRsUnc": 0.1,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        jd_times=2460000.0 + times,
+    )
+
+    assert result["applied"] is True
+    assert captured["times"].tolist() == pytest.approx(np.delete(times, 3).tolist())
+    assert result["source_indices"].tolist() == [0, 1, 2, 4, 5, 6, 7, 8, 9]
+    assert any(
+        diagnostic["stage"] == "Final-fit phase residual clip"
+        and diagnostic["dropped_point_count"] == 1
+        for diagnostic in result["fit"].frame_filter_diagnostics
+    )
+    assert result["fit"].selected_photometry_debug[
+        "phase_clip_keep_mask_on_sigma_filtered"
+    ].tolist() == [True, True, True, False, True, True, True, True, True, True]
 
 
 def test_detrend_flux_on_out_of_transit_baseline_falls_back_to_prior_ephemeris():
@@ -546,6 +652,27 @@ def test_should_pick_comparison_by_eebls_snr_parses_values():
     assert should_pick_comparison_by_eebls_snr(True) is True
 
 
+def test_should_use_deviation_from_expected_transit_in_qc_parses_values():
+    assert should_use_deviation_from_expected_transit_in_qc(None) is True
+    assert should_use_deviation_from_expected_transit_in_qc("y") is True
+    assert should_use_deviation_from_expected_transit_in_qc("n") is False
+    assert should_use_deviation_from_expected_transit_in_qc(True) is True
+
+
+def test_parse_deviation_from_expected_transit_in_qc_sigma_parses_values():
+    assert parse_deviation_from_expected_transit_in_qc_sigma(None) == pytest.approx(5.0)
+    assert parse_deviation_from_expected_transit_in_qc_sigma("7.5") == pytest.approx(7.5)
+    assert parse_deviation_from_expected_transit_in_qc_sigma(3) == pytest.approx(3.0)
+    assert parse_deviation_from_expected_transit_in_qc_sigma(-1) == pytest.approx(5.0)
+
+
+def test_should_assess_all_comparisons_before_selecting_best_parses_values():
+    assert should_assess_all_comparisons_before_selecting_best(None) is True
+    assert should_assess_all_comparisons_before_selecting_best("y") is True
+    assert should_assess_all_comparisons_before_selecting_best("n") is False
+    assert should_assess_all_comparisons_before_selecting_best(True) is True
+
+
 def test_build_time_rejection_diagnostic_groups_contiguous_ranges():
     times = np.array([1.0, 1.1, 1.2, 1.5, 1.6, 2.0], dtype=float)
     keep_mask = np.array([True, False, False, True, False, True], dtype=bool)
@@ -595,6 +722,39 @@ def test_estimate_tmid_and_bounds_with_eebls_identifies_box_like_transit():
     assert summary["bounds"][0] < summary["tmid"] < summary["bounds"][1]
     assert summary["depth"] > 0
     assert summary["depth_snr"] > 0
+
+
+def test_estimate_tmid_and_bounds_with_eebls_keeps_depth_snr_for_one_sided_event():
+    times = np.linspace(0.0, 0.11, 160)
+    tmid = 0.101
+    duration = 0.028
+    flux = np.ones(times.shape[0], dtype=float)
+    in_transit = np.abs(times - tmid) <= duration / 2.0
+    flux[in_transit] -= 0.018
+    flux_errors = np.full(times.shape[0], 0.002, dtype=float)
+    prior = {
+        "tmid": 0.08,
+        "per": 1.0,
+        "rprs": np.sqrt(0.018),
+        "ars": 12.0,
+        "inc": 88.5,
+        "ecc": 0.0,
+        "omega": 0.0,
+    }
+
+    summary = estimate_tmid_and_bounds_with_eebls(
+        times,
+        flux,
+        flux_errors,
+        prior,
+        [0.04, 0.12],
+    )
+
+    assert summary["method"] == "eebls"
+    assert summary["applied"] is False
+    assert summary["depth"] > 0
+    assert summary["depth_snr"] > 0
+    assert "keeping the EEBLS depth SNR only" in summary["note"]
 
 
 def test_estimate_ephemeris_tmid_and_bounds_caps_bracketed_runs_to_duration_scale():
@@ -953,8 +1113,20 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
             "position": [300, 400],
             "selected": True,
             "fit": object(),
-            "res_std": 0.01,
             "eebls_snr": 6.5,
+            "transit_delta_bic": 18.4,
+            "residual_scatter": 0.0042,
+            "ktmf_metric": 4.35,
+            "ktmf_contributions": [
+                {
+                    "label": "Delta BIC",
+                    "available": True,
+                    "points": 1.25,
+                    "max_points": 1.40,
+                    "score": 0.89,
+                    "detail": "Delta BIC=18.40",
+                }
+            ],
             "coverage_count": 3,
             "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
@@ -970,18 +1142,20 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
         candidate_fit_summaries,
         {
             "selection_basis": "comparison_field",
-            "selection_metric": "eebls_snr",
+            "selection_metric": "ktmf",
             "comp_star_num": 2,
-            "min_std": 0.01,
+            "comparison_ktmf_metric": 4.35,
             "comparison_eebls_snr": 6.5,
+            "comparison_transit_delta_bic": 18.4,
         },
     )
 
     assert any("Selection basis: comparison-field" in message for message in logged)
-    assert any("Selection metric: EEBLS SNR" in message for message in logged)
+    assert any("Selection metric: KTMF" in message for message in logged)
     assert any("coverage=1 valid frame(s) out of 3 total; min_required=2; peer_median=3.0" in message for message in logged)
     assert any("Comp 1" in message and "reason=comparison candidate rejected after iterative low-coverage clipping" in message for message in logged)
-    assert any("Comp 2 [selected]" in message and "eebls_snr=6.50" in message and "comparison-field calibration ranked this star best" in message for message in logged)
+    assert any("Comp 2 [selected]" in message and "ktmf=4.35/5.00" in message and "comparison-field calibration ranked this star best" in message for message in logged)
+    assert any("KTMF contribution: Delta BIC +1.25/1.40" in message for message in logged)
     assert any("parameters: fit_method=ultranest" in message for message in logged)
 
 
@@ -1004,7 +1178,7 @@ def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monke
             "eebls_snr": np.nan,
             "fit_point_count": 0,
             "fit_diagnostics": {"usable_point_count": 0},
-            "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during target/reference ratio screening (non-finite=0, >2x=3, finite ratio range=3.0000 to 3.0000).",
+            "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during invalid target/reference ratio screening (non-finite=0, non-positive=3, finite ratio range=-1.0000 to -1.0000).",
             "parameter_summary": None,
         },
         {
@@ -1017,8 +1191,20 @@ def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monke
             "coverage_reference_count": 3.0,
             "coverage_min_required_count": 2,
             "fit": object(),
-            "res_std": 0.01,
             "eebls_snr": 5.2,
+            "transit_delta_bic": 18.4,
+            "residual_scatter": 0.0035,
+            "ktmf_metric": 4.60,
+            "ktmf_contributions": [
+                {
+                    "label": "Residual Scatter Around Full Model Fit",
+                    "available": True,
+                    "points": 0.63,
+                    "max_points": 0.80,
+                    "score": 0.79,
+                    "detail": "0.3500%",
+                }
+            ],
             "fit_point_count": 3,
             "fit_diagnostics": {"usable_point_count": 3},
             "failure_reason": None,
@@ -1031,7 +1217,8 @@ def test_log_comparison_calibration_fit_attempt_summaries_includes_reasons(monke
     assert any("Comparison-star calibration target-fit diagnostics:" in message for message in logged)
     assert any("Photometry method: Aperture photometry (aper=7.05px, annulus=22.73px)" in message for message in logged)
     assert any("Comp 1" in message and "reason=relative-flux filtering left 0 usable point(s)" in message for message in logged)
-    assert any("Comp 2 [selected]" in message and "eebls_snr=5.20" in message and "fit_points=3" in message for message in logged)
+    assert any("Comp 2 [selected]" in message and "ktmf=4.60/5.00" in message and "fit_points=3" in message for message in logged)
+    assert any("KTMF contribution: Residual Scatter Around Full Model Fit +0.63/0.80" in message for message in logged)
     assert any("parameters: fit_method=ultranest" in message for message in logged)
 
 
@@ -1047,15 +1234,26 @@ def test_log_target_fit_candidate_summaries_includes_methods_and_reasons(monkeyp
             "method_label": "Aperture photometry (aper=7.05px, annulus=22.73px)",
             "prescore": 0.005,
             "fit": None,
-            "res_std": np.inf,
+            "residual_scatter": np.inf,
             "eebls_snr": np.nan,
+            "ktmf_metric": 0.0,
+            "ktmf_contributions": [
+                {
+                    "label": "Deviation From Expected Value",
+                    "available": False,
+                    "points": 0.0,
+                    "max_points": 0.0,
+                    "score": np.nan,
+                    "detail": "expected-value deviation disabled or unavailable",
+                }
+            ],
             "coverage_count": 3,
             "coverage_total_frame_count": 3,
             "coverage_reference_count": 3.0,
             "coverage_min_required_count": 2,
             "fit_point_count": 0,
             "fit_diagnostics": {"usable_point_count": 0},
-            "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during target/reference ratio screening (non-finite=0, >2x=3, finite ratio range=3.0000 to 3.0000).",
+            "failure_reason": "relative-flux filtering left 0 usable point(s); rejected 3/3 frame(s) during invalid target/reference ratio screening (non-finite=0, non-positive=3, finite ratio range=-1.0000 to -1.0000).",
             "parameter_summary": None,
         },
     ]
@@ -1069,6 +1267,44 @@ def test_log_target_fit_candidate_summaries_includes_methods_and_reasons(monkeyp
         and "reason=relative-flux filtering left 0 usable point(s)" in message
         for message in logged
     )
+    assert any("KTMF contribution: Deviation From Expected Value +0.00/0.00 (unavailable;" in message for message in logged)
+
+
+def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
+    summary = {
+        "delta_bic": 10.0,
+        "delta_chi2": 50.0,
+        "deviation_from_expected_value": 0.6,
+        "tmid_deviation_sigma": 1.0,
+        "rprs_deviation_sigma": 2.0,
+        "residual_scatter": 0.005,
+        "rprs_sigma": 6.0,
+        "duration_ratio": 1.0,
+        "eebls_depth_snr": 8.0,
+    }
+
+    ktmf_metric, contributions = compute_transit_qc_ktmf(summary)
+    contributions_by_label = {contribution["label"]: contribution for contribution in contributions}
+
+    assert "Model Evidence" in contributions_by_label
+    assert "Delta BIC" not in contributions_by_label
+    assert "Delta chi2" not in contributions_by_label
+    assert contributions_by_label["Model Evidence"]["max_points"] == pytest.approx(0.8)
+    assert contributions_by_label["Deviation From Expected Value"]["max_points"] == pytest.approx(1.5)
+    assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7)
+    assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75)
+    assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(0.75)
+
+    model_evidence_score = ((1.0 - np.exp(-1.0)) + (1.0 - np.exp(-2.0))) / 2.0
+    expected_ktmf = (
+        0.8 * model_evidence_score
+        + 1.5 * 0.6
+        + 0.7 * 0.5
+        + 0.5 * (1.0 - np.exp(-2.0))
+        + 0.75 * 1.0
+        + 0.75 * (1.0 - np.exp(-2.0))
+    )
+    assert ktmf_metric == pytest.approx(expected_ktmf)
 
 
 def test_comparison_candidate_fit_selection_reason_describes_comparison_field_retry():
@@ -1076,12 +1312,12 @@ def test_comparison_candidate_fit_selection_reason_describes_comparison_field_re
         {
             "selected": True,
             "failure_reason": None,
-            "res_std": 0.01,
+            "transit_delta_bic": 18.4,
         },
         {
             "selection_basis": "comparison_field_retry",
             "comp_star_num": 2,
-            "min_std": 0.01,
+            "comparison_transit_delta_bic": 18.4,
         },
     )
 
@@ -1256,14 +1492,49 @@ def test_comparison_star_stability_summary_rejects_low_coverage_candidates():
     assert np.isinf(summary["comp_summaries"][2]["aggregate_score"])
 
 
-def test_cheap_lightcurve_prescore_ignores_large_ratios_when_requested():
+def test_comparison_star_stability_summary_rejects_shared_bad_frame():
+    airmass = np.linspace(1.0, 1.5, 6)
+    summary = comparison_star_stability_summary(
+        {
+            "comp1": np.array([100.0, 100.8, 99.6, 100.4, 100.1, 140.0]),
+            "comp2": np.array([80.0, 79.5, 80.6, 80.2, 79.8, 40.0]),
+            "comp3": np.array([120.0, 121.0, 119.2, 120.5, 119.7, 100.0]),
+        },
+        airmass,
+    )
+
+    np.testing.assert_array_equal(
+        summary["field_image_keep_mask"],
+        np.array([True, True, True, True, True, False], dtype=bool),
+    )
+    assert summary["image_outlier_rejected_count"] == 1
+    assert summary["image_outlier_required_valid_pairs"] == 2
+    assert summary["image_outlier_available_pairs"] == 3
+    assert summary["image_outlier_valid_pair_counts"][-1] == 2
+    assert summary["image_outlier_outlier_pair_counts"][-1] == 2
+
+
+def test_cheap_lightcurve_prescore_treats_large_ratio_flag_as_noop():
     tflux = np.array([2.0, 2.0, 2.0, 6.0, 2.0, 2.0])
     cflux = np.full(tflux.shape[0], 2.0)
     airmass = np.linspace(1.0, 1.5, tflux.shape[0])
 
-    score = cheap_lightcurve_prescore(tflux, cflux, airmass, enforce_relative_flux_max=True)
+    score_with_flag = cheap_lightcurve_prescore(tflux, cflux, airmass, enforce_relative_flux_max=True)
+    score_without_flag = cheap_lightcurve_prescore(tflux, cflux, airmass, enforce_relative_flux_max=False)
 
-    assert np.isclose(score, 0.0)
+    assert np.isfinite(score_with_flag)
+    assert np.isclose(score_with_flag, score_without_flag)
+
+
+def test_normalize_flux_series_to_approximate_unity_scales_by_robust_baseline():
+    flux = np.array([3.0, 3.3, 2.7, 3.0, 30.0], dtype=float)
+    unc = np.full(flux.shape[0], 0.3, dtype=float)
+
+    normalized_flux, normalized_unc, baseline = normalize_flux_series_to_approximate_unity(flux, unc)
+
+    assert baseline == pytest.approx(3.0)
+    assert np.nanmedian(normalized_flux[:4]) == pytest.approx(1.0)
+    assert np.nanmedian(normalized_unc[:4]) == pytest.approx(0.1)
 
 
 def test_cheap_lightcurve_prescore_allows_large_raw_target_reference_ratios():
@@ -2007,6 +2278,7 @@ def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
 
 def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
     captured_modes = []
+    captured_duration_priors = []
 
     def fake_lc_fitter(
         times,
@@ -2018,8 +2290,10 @@ def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
         jd_times=None,
         mode=None,
         use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
     ):
         captured_modes.append(mode)
+        captured_duration_priors.append(duration_prior)
         return types.SimpleNamespace()
 
     monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
@@ -2059,6 +2333,11 @@ def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
 
     assert myfit is not None
     assert captured_modes == ["lm", "ns"]
+    assert captured_duration_priors[0] is None
+    assert captured_duration_priors[1] is not None
+    assert captured_duration_priors[1]["applied"] is True
+    assert captured_duration_priors[1]["expected_duration"] > 0
+    assert captured_duration_priors[1]["expected_duration"] > 0
 
 
 def test_fit_lightcurve_attaches_frame_filter_diagnostics(monkeypatch):
@@ -2135,11 +2414,356 @@ def test_fit_lightcurve_attaches_frame_filter_diagnostics(monkeypatch):
     assert diagnostics[2]["dropped_point_count"] == 0
 
 
-def test_fit_ranked_comparison_calibration_candidates_selects_lowest_residual_success(monkeypatch):
+def test_evaluate_transit_detection_qc_prefers_transit_model():
+    transit_model = np.ones(21, dtype=float)
+    transit_model[8:13] = 0.99
+    data = transit_model + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, -0.0001, 0.0002, -0.0002, 0.0001,
+            0.0000, -0.0001, 0.0002, -0.0001, 0.0001, 0.0000, -0.0001,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["computed"] is True
+    assert summary["preferred_model"] == "transit"
+    assert summary["status"] == "pass"
+    assert summary["delta_bic"] > 10.0
+    assert summary["delta_chi2"] > 0.0
+
+
+def test_evaluate_transit_detection_qc_fails_when_flat_model_is_better():
+    transit_model = np.ones(21, dtype=float)
+    transit_model[8:13] = 0.99
+    data = np.ones(21, dtype=float) + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, -0.0001, 0.0002, -0.0002, 0.0001,
+            0.0000, -0.0001, 0.0002, -0.0001, 0.0001, 0.0000, -0.0001,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["computed"] is True
+    assert summary["status"] == "fail"
+    assert summary["preferred_model"] == "flat"
+    assert summary["delta_chi2"] < 0.0
+
+
+def test_evaluate_transit_detection_qc_rejects_large_expected_value_deviation():
+    transit_model = np.ones(21, dtype=float)
+    transit_model[8:13] = 0.99
+    data = transit_model + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, -0.0001, 0.0002, -0.0002, 0.0001,
+            0.0000, -0.0001, 0.0002, -0.0001, 0.0001, 0.0000, -0.0001,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.18, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+        transit_qc_expected_tmid=0.5,
+        transit_qc_expected_tmid_unc=0.001,
+        transit_qc_expected_rprs=0.10,
+        transit_qc_expected_rprs_unc=0.01,
+        transit_qc_use_deviation_from_expected_transit_in_qc=True,
+        transit_qc_deviation_sigma_threshold=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["computed"] is True
+    assert summary["status"] == "fail"
+    assert summary["rprs_deviation_sigma"] == pytest.approx(8.0)
+    assert summary["deviation_from_expected_value"] == pytest.approx(0.0)
+    assert summary["ktmf_metric"] <= 5.0
+
+
+def test_annotate_transit_qc_expected_values_prefers_propagated_epoch_tmid():
+    fit = types.SimpleNamespace(
+        initial_tmid_search_tmid=2460658.8654321,
+        initial_tmid_search_uncertainty=0.0025,
+    )
+
+    annotate_transit_qc_expected_values(
+        fit,
+        {
+            "midT": 2455867.402743,
+            "midTUnc": 4.9e-05,
+            "rprs": 0.1488,
+            "rprsUnc": 0.00055,
+        },
+    )
+
+    assert fit.transit_qc_expected_tmid == pytest.approx(2460658.8654321)
+    assert fit.transit_qc_expected_tmid_unc == pytest.approx(0.0025)
+    assert fit.transit_qc_expected_rprs == pytest.approx(0.1488)
+    assert fit.transit_qc_expected_rprs_unc == pytest.approx(0.00055)
+
+
+def test_annotate_transit_qc_expected_values_coerces_scalar_like_inputs():
+    fit = types.SimpleNamespace(
+        initial_tmid_search_tmid=np.array(["2460658.8654321"]),
+        initial_tmid_search_uncertainty="0.0025",
+    )
+
+    annotate_transit_qc_expected_values(
+        fit,
+        {
+            "midT": "2455867.402743",
+            "midTUnc": ["4.9e-05"],
+            "rprs": "0.1488",
+            "rprsUnc": np.array(["0.00055"]),
+            "use_deviation_from_expected_transit_in_qc": "n",
+            "deviation_from_expected_transit_in_qc_sigma": "7.5",
+        },
+    )
+
+    assert fit.transit_qc_expected_tmid == pytest.approx(2460658.8654321)
+    assert fit.transit_qc_expected_tmid_unc == pytest.approx(0.0025)
+    assert fit.transit_qc_expected_rprs == pytest.approx(0.1488)
+    assert fit.transit_qc_expected_rprs_unc == pytest.approx(0.00055)
+    assert fit.transit_qc_use_deviation_from_expected_transit_in_qc is False
+    assert fit.transit_qc_deviation_sigma_threshold == pytest.approx(7.5)
+
+
+def test_evaluate_transit_detection_qc_failure_summary_reflects_expected_value_rejection():
+    times = np.linspace(0.0, 1.0, 21)
+    transit_model = np.ones(times.shape[0], dtype=float)
+    transit_model[9:12] -= 0.02
+    data = transit_model + np.array(
+        [
+            0.0001, -0.0001, 0.0002, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, 0.0000, -0.0001, 0.0002, -0.0002,
+            0.0001, 0.0000, -0.0001, 0.0001, -0.0001, 0.0000, 0.0001,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        time=times,
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.18, "tmid": 0.5, "inc": 89.0, "a2": 0.0, "per": 2.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        prior={"per": 2.0, "tmid": 0.5},
+        duration_expected=5.0,
+        duration_measured=5.0,
+        transit_qc_expected_tmid=0.5,
+        transit_qc_expected_tmid_unc=0.001,
+        transit_qc_expected_rprs=0.10,
+        transit_qc_expected_rprs_unc=0.01,
+        transit_qc_use_deviation_from_expected_transit_in_qc=True,
+        transit_qc_deviation_sigma_threshold=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["status"] == "fail"
+    assert "QC rejected the fit because" in summary["summary"]
+    assert "expected published Tmid and/or Rp/R*" in summary["summary"]
+    assert "not supported strongly enough against a flat/null model" not in summary["summary"]
+
+
+def test_evaluate_transit_detection_qc_computes_missing_eebls_depth_snr(monkeypatch):
+    def fake_eebls(times, flux_values, flux_errors, prior, fallback_bounds):
+        return {
+            "method": "eebls",
+            "applied": True,
+            "tmid": 0.5,
+            "bounds": [0.45, 0.55],
+            "duration": 0.1,
+            "depth": 0.01,
+            "depth_snr": 7.25,
+            "note": "test eebls diagnostic",
+        }
+
+    monkeypatch.setattr("exotic.exotic.estimate_tmid_and_bounds_with_eebls", fake_eebls)
+
+    times = np.linspace(0.0, 1.0, 21)
+    transit_model = np.ones(times.shape[0], dtype=float)
+    transit_model[9:12] -= 0.02
+    data = transit_model.copy()
+    fit = types.SimpleNamespace(
+        time=times,
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.5, "inc": 89.0, "a2": 0.0, "per": 2.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        prior={"per": 2.0, "tmid": 0.5},
+        duration_expected=5.0,
+        duration_measured=5.0,
+        transit_qc_expected_tmid=0.5,
+        transit_qc_expected_tmid_unc=0.01,
+        transit_qc_expected_rprs=0.10,
+        transit_qc_expected_rprs_unc=0.05,
+        transit_qc_use_deviation_from_expected_transit_in_qc=False,
+        transit_qc_deviation_sigma_threshold=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["eebls_depth_snr"] == pytest.approx(7.25)
+    assert fit.eebls_diagnostic_depth_snr == pytest.approx(7.25)
+
+
+def test_fit_final_lightcurve_with_oot_baseline_detrending_preserves_expected_tmid_context(monkeypatch):
+    run_count = {"value": 0, "duration_priors": []}
+
+    def fake_run_nested(times, flux_values, flux_errors, airmass, prior, bounds, **kwargs):
+        run_count["value"] += 1
+        run_count["duration_priors"].append(kwargs.get("duration_prior"))
+        local_times = np.asarray(times, dtype=float)
+        model = np.ones(local_times.shape[0], dtype=float)
+        model[1:-1] -= 0.01
+        return types.SimpleNamespace(
+            time=local_times,
+            data=model.copy(),
+            dataerr=np.full(local_times.shape[0], 0.001, dtype=float),
+            model=model.copy(),
+            residuals=np.zeros(local_times.shape[0], dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            prior=dict(prior),
+            parameters={"rprs": 0.1, "tmid": prior["tmid"], "inc": 89.0, "a2": 0.0, "per": prior["per"]},
+            errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+            bounds=dict(bounds),
+            duration_expected=0.1,
+            duration_measured=0.1,
+        )
+
+    monkeypatch.setattr(
+        "exotic.exotic.run_nested_lightcurve_fit_with_rprs_posterior_retry",
+        fake_run_nested,
+    )
+    monkeypatch.setattr("exotic.exotic.apply_plot_time_range", lambda fit, plot_time_range: fit)
+    monkeypatch.setattr("exotic.exotic.apply_vertical_flux_normalization_bound", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "exotic.exotic.build_final_fit_prefit_refinement_plan",
+        lambda times, flux_values, flux_errors, airmass, prior, bounds, fit, **kwargs: {
+            "applied": True,
+            "note": "test prefit refinement",
+            "times": np.asarray(times, dtype=float),
+            "flux": np.asarray(flux_values, dtype=float),
+            "unc": np.asarray(flux_errors, dtype=float),
+            "airmass": np.asarray(airmass, dtype=float),
+            "jd_times": None,
+            "prior": dict(prior),
+            "bounds": dict(bounds),
+            "duration": 0.1,
+            "original_point_count": len(times),
+            "refined_point_count": len(times),
+            "trimmed_pre_points": 0,
+            "trimmed_post_points": 0,
+            "original_tmid_bounds": bounds["tmid"],
+            "refined_tmid_bounds": bounds["tmid"],
+        },
+    )
+
+    times = np.linspace(2460000.45, 2460000.55, 8)
+    fit, _, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        np.ones(times.shape[0], dtype=float),
+        np.full(times.shape[0], 0.001, dtype=float),
+        np.linspace(1.0, 1.1, times.shape[0]),
+        {"rprs": 0.1, "tmid": 2460000.5, "inc": 89.0, "a2": 0.0, "per": 2.0},
+        {"rprs": [0.0, 1.0], "tmid": [2460000.45, 2460000.55], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]},
+        detrend_on_outoftransit_baseline=False,
+        expected_planet_dict={
+            "midT": 2455000.0,
+            "midTUnc": 0.0001,
+            "pPer": 2.0,
+            "pPerUnc": 0.001,
+            "rprs": 0.1,
+            "rprsUnc": 0.01,
+            "aRs": 15.0,
+            "aRsUnc": 0.1,
+            "inc": 89.0,
+            "incUnc": 0.1,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        expected_tmid_search_summary={
+            "method": "ephemeris",
+            "applied": True,
+            "tmid": 2460000.5,
+            "uncertainty": 0.002,
+            "bounds": [2460000.45, 2460000.55],
+            "duration": 0.1,
+            "depth": np.nan,
+            "depth_snr": np.nan,
+            "note": "test propagated tmid",
+        },
+        eebls_search_summary={
+            "method": "eebls",
+            "applied": True,
+            "tmid": 2460000.5,
+            "bounds": [2460000.47, 2460000.53],
+            "duration": 0.1,
+            "depth": 0.01,
+            "depth_snr": 6.5,
+            "note": "test eebls",
+        },
+    )
+
+    assert run_count["value"] == 2
+    assert all(prior is not None and prior.get("applied") for prior in run_count["duration_priors"])
+    assert fit.initial_tmid_search_tmid == pytest.approx(2460000.5)
+    assert fit.transit_qc_expected_tmid == pytest.approx(2460000.5)
+    assert fit.transit_qc_expected_tmid_unc == pytest.approx(0.002)
+    assert fit.eebls_diagnostic_depth_snr == pytest.approx(6.5)
+
+
+def test_fit_ranked_comparison_calibration_candidates_selects_highest_ktmf_success(monkeypatch):
     def fake_diagnostics(*args, **kwargs):
         return {"usable_point_count": 6}
 
-    def fake_fit_lightcurve(
+    def fake_finalize(
         times,
         tflux,
         cflux,
@@ -2150,11 +2774,9 @@ def test_fit_ranked_comparison_calibration_candidates_selects_lowest_residual_su
         **kwargs,
     ):
         comp_marker = int(np.nanmedian(cflux))
-        residual_scale_map = {
-            50: 0.05,
-            40: 0.02,
-            30: 0.03,
-        }
+        residual_scale_map = {50: 0.05, 40: 0.02, 30: 0.03}
+        delta_bic_map = {50: 8.0, 40: 18.0, 30: 12.0}
+        ktmf_map = {50: 2.40, 40: 4.70, 30: 3.90}
         residual_scale = residual_scale_map[comp_marker]
         residuals = residual_scale * np.array([-1.0, 1.0, -1.0, 1.0, -1.0, 1.0], dtype=float)
         fit = types.SimpleNamespace(
@@ -2162,11 +2784,22 @@ def test_fit_ranked_comparison_calibration_candidates_selects_lowest_residual_su
             data=np.ones_like(residuals),
             parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
             errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc_delta_bic=delta_bic_map[comp_marker],
+            transit_qc_ktmf_metric=ktmf_map[comp_marker],
         )
-        return fit, np.asarray(tflux, dtype=float), np.asarray(cflux, dtype=float)
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
 
     monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
-    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
 
     times = np.linspace(0.0, 0.05, 6)
     jd_times = 2460000.0 + times
@@ -2184,39 +2817,9 @@ def test_fit_ranked_comparison_calibration_candidates_selects_lowest_residual_su
         "a": 0,
         "an": 0,
         "comp_summaries": [
-            {
-                "label": "Comp 1",
-                "position": (10.0, 10.0),
-                "aggregate_score": 0.01,
-                "coverage_count": 6,
-                "coverage_total_frame_count": 6,
-                "coverage_reference_count": 6.0,
-                "coverage_min_required_count": 5,
-                "coverage_rejected": False,
-                "comp_index": 0,
-            },
-            {
-                "label": "Comp 2",
-                "position": (20.0, 20.0),
-                "aggregate_score": 0.02,
-                "coverage_count": 6,
-                "coverage_total_frame_count": 6,
-                "coverage_reference_count": 6.0,
-                "coverage_min_required_count": 5,
-                "coverage_rejected": False,
-                "comp_index": 1,
-            },
-            {
-                "label": "Comp 3",
-                "position": (30.0, 30.0),
-                "aggregate_score": 0.03,
-                "coverage_count": 6,
-                "coverage_total_frame_count": 6,
-                "coverage_reference_count": 6.0,
-                "coverage_min_required_count": 5,
-                "coverage_rejected": False,
-                "comp_index": 2,
-            },
+            {"label": "Comp 1", "position": (10.0, 10.0), "aggregate_score": 0.01, "coverage_count": 6, "coverage_total_frame_count": 6, "coverage_reference_count": 6.0, "coverage_min_required_count": 5, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "position": (20.0, 20.0), "aggregate_score": 0.02, "coverage_count": 6, "coverage_total_frame_count": 6, "coverage_reference_count": 6.0, "coverage_min_required_count": 5, "coverage_rejected": False, "comp_index": 1},
+            {"label": "Comp 3", "position": (30.0, 30.0), "aggregate_score": 0.03, "coverage_count": 6, "coverage_total_frame_count": 6, "coverage_reference_count": 6.0, "coverage_min_required_count": 5, "coverage_rejected": False, "comp_index": 2},
         ],
     }
 
@@ -2233,11 +2836,13 @@ def test_fit_ranked_comparison_calibration_candidates_selects_lowest_residual_su
     )
 
     assert len(result["attempts"]) == 3
+    assert result["selection_metric"] == "ktmf"
     assert result["selected_result"]["comp_index"] == 1
     assert result["selected_result"]["rank"] == 1
     assert result["selected_result"]["selected"] is True
-    assert "lowest target-fit residual scatter" in result["selected_result"]["selection_reason"]
-    assert result["attempts"][0]["selection_reason"].startswith("not selected: target-fit residual scatter")
+    assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.70)
+    assert "highest KTMF" in result["selected_result"]["selection_reason"]
+    assert result["attempts"][0]["selection_reason"].startswith("not selected: KTMF")
 
 
 def test_ranked_comparison_calibration_summaries_skip_suitability_outliers():
@@ -2255,11 +2860,196 @@ def test_ranked_comparison_calibration_summaries_skip_suitability_outliers():
     assert [summary["comp_index"] for summary in ranked] == [2, 3]
 
 
+def test_fit_ranked_comparison_calibration_candidates_applies_field_image_clip(monkeypatch):
+    observed_lengths = []
+
+    def fake_diagnostics(times, *args, **kwargs):
+        observed_lengths.append(len(times))
+        return {"usable_point_count": len(times)}
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        observed_lengths.append(len(times))
+        fit = types.SimpleNamespace(
+            residuals=np.full(len(times), 0.01, dtype=float),
+            data=np.ones(len(times), dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc={"status": "pass", "summary": "ok", "ktmf_metric": 4.2},
+            transit_qc_status="pass",
+            transit_qc_summary="ok",
+            transit_qc_ktmf_metric=4.2,
+            transit_qc_delta_bic=16.0,
+            frame_filter_diagnostics=[{"stage": "Comparison-field image clip", "dropped_point_count": 2}],
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    comparison_calibration = {
+        "method": "aperture",
+        "method_label": "Aperture photometry (aper=5.00px, annulus=12.00px)",
+        "a": 0,
+        "an": 0,
+        "aper": 5.0,
+        "annulus": 12.0,
+        "field_image_keep_mask": np.array([True, False, True, True, False, True], dtype=bool),
+        "image_outlier_sigma": 4.25,
+        "image_outlier_required_valid_pairs": 2,
+        "comp_summaries": [
+            {"label": "Comp 1", "position": (10.0, 10.0), "aggregate_score": 0.01, "coverage_count": 6, "coverage_total_frame_count": 6, "coverage_reference_count": 6.0, "coverage_min_required_count": 5, "coverage_rejected": False, "comp_index": 0},
+        ],
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+    )
+
+    assert observed_lengths == [4, 4]
+    diagnostic = result["attempts"][0]["fit"].frame_filter_diagnostics[0]
+    assert diagnostic["stage"] == "Comparison-field image clip"
+    assert diagnostic["dropped_point_count"] == 2
+    assert result["attempts"][0]["fit_point_count"] == 4
+
+
+def test_fit_ranked_comparison_calibration_candidates_evaluates_all_candidates_even_when_flag_disabled(
+    monkeypatch, tmp_path
+):
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    call_markers = []
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        comp_marker = int(np.nanmedian(cflux))
+        call_markers.append(comp_marker)
+        fit = types.SimpleNamespace(
+            residuals=np.full(6, 0.01, dtype=float),
+            data=np.ones(6, dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc_ktmf_metric={50: 3.2, 40: 4.4}[comp_marker],
+            transit_qc_delta_bic=12.0 + comp_marker / 100.0,
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    saved_dirs = []
+
+    def fake_save(save_dir, provisional_fit, final_fit, p_dict, observation_date, comp_index, **kwargs):
+        candidate_dir = Path(save_dir) / f"comp{comp_index + 1}"
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        saved_dirs.append(candidate_dir)
+        return candidate_dir
+
+    monkeypatch.setattr(
+        "exotic.exotic.save_comparison_candidate_full_reduction_outputs",
+        fake_save,
+    )
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+        "comp2": np.full((6, 1, 1), 40.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {"label": "Comp 1", "aggregate_score": 0.01, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "aggregate_score": 0.02, "coverage_rejected": False, "comp_index": 1},
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+        assess_all_comparisons_before_selecting_best=False,
+        save_dir=tmp_path,
+        planet_name="HAT-P-32 b",
+        observation_date="2026-04-28",
+    )
+
+    assert call_markers == [50, 40]
+    assert len(result["attempts"]) == 2
+    assert result["selection_metric"] == "ktmf"
+    assert result["selected_result"]["comp_index"] == 1
+    assert [attempt["final_output_dir"] for attempt in result["attempts"]] == [
+        str(tmp_path / "comp1"),
+        str(tmp_path / "comp2"),
+    ]
+    assert saved_dirs == [tmp_path / "comp1", tmp_path / "comp2"]
+
+
 def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_snr(monkeypatch):
     def fake_diagnostics(*args, **kwargs):
         return {"usable_point_count": 6}
 
-    def fake_fit_lightcurve(
+    def fake_finalize(
         times,
         tflux,
         cflux,
@@ -2284,11 +3074,21 @@ def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_s
             parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
             errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
             eebls_diagnostic_depth_snr=eebls_snr,
+            transit_qc_delta_bic=(10.0 if comp_marker == 50 else 12.0),
         )
-        return fit, np.asarray(tflux, dtype=float), np.asarray(cflux, dtype=float)
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
 
     monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
-    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
 
     times = np.linspace(0.0, 0.05, 6)
     jd_times = 2460000.0 + times
@@ -2305,28 +3105,8 @@ def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_s
         "a": 0,
         "an": 0,
         "comp_summaries": [
-            {
-                "label": "Comp 1",
-                "position": (10.0, 10.0),
-                "aggregate_score": 0.01,
-                "coverage_count": 6,
-                "coverage_total_frame_count": 6,
-                "coverage_reference_count": 6.0,
-                "coverage_min_required_count": 5,
-                "coverage_rejected": False,
-                "comp_index": 0,
-            },
-            {
-                "label": "Comp 2",
-                "position": (20.0, 20.0),
-                "aggregate_score": 0.02,
-                "coverage_count": 6,
-                "coverage_total_frame_count": 6,
-                "coverage_reference_count": 6.0,
-                "coverage_min_required_count": 5,
-                "coverage_rejected": False,
-                "comp_index": 1,
-            },
+            {"label": "Comp 1", "position": (10.0, 10.0), "aggregate_score": 0.01, "coverage_count": 6, "coverage_total_frame_count": 6, "coverage_reference_count": 6.0, "coverage_min_required_count": 5, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "position": (20.0, 20.0), "aggregate_score": 0.02, "coverage_count": 6, "coverage_total_frame_count": 6, "coverage_reference_count": 6.0, "coverage_min_required_count": 5, "coverage_rejected": False, "comp_index": 1},
         ],
     }
 
@@ -2350,6 +3130,159 @@ def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_s
     assert result["attempts"][0]["selection_reason"].startswith("not selected: EEBLS SNR")
 
 
+def test_fit_ranked_comparison_calibration_candidates_logs_per_comp_run_reporting(monkeypatch):
+    logged = []
+
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    final_fit = types.SimpleNamespace(
+        residuals=np.full(6, 0.01, dtype=float),
+        data=np.ones(6, dtype=float),
+        parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+        errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+        ns_type="ultranest",
+        transit_qc={
+            "status": "pass",
+            "summary": "Transit model strongly preferred over flat/null model.",
+            "delta_bic": 18.4,
+            "residual_scatter": 0.0035,
+            "ktmf_metric": 4.6,
+            "ktmf_contributions": [],
+        },
+        transit_qc_status="pass",
+        transit_qc_summary="Transit model strongly preferred over flat/null model.",
+        transit_qc_delta_bic=18.4,
+        transit_qc_residual_scatter=0.0035,
+        transit_qc_ktmf_metric=4.6,
+        transit_qc_ktmf_contributions=[],
+        rprs_posterior_refit_applied=True,
+        rprs_posterior_refit_count=1,
+        rprs_posterior_refit_note="Applied 1 automatic Rp/R* posterior range refit(s).",
+        prefit_refinement_applied=True,
+        prefit_refinement_note="Applied a focused final-fit prefit refinement window.",
+        oot_baseline_detrending_applied=False,
+        oot_baseline_detrending_note="Skipped; need out-of-transit coverage on both sides of transit to fit a linear baseline.",
+    )
+
+    def fake_finalize(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
+        return {
+            "applied": True,
+            "fit": final_fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "completed the full comparison-candidate reduction.",
+        }
+
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, warn=False, error=False: logged.append(message))
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "method_label": "Aperture photometry (aper=5.00px, annulus=12.00px)",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {
+                "label": "Comp 1",
+                "position": (10.0, 10.0),
+                "aggregate_score": 0.01,
+                "coverage_count": 6,
+                "coverage_total_frame_count": 6,
+                "coverage_reference_count": 6.0,
+                "coverage_min_required_count": 5,
+                "coverage_rejected": False,
+                "comp_index": 0,
+            },
+        ],
+    }
+
+    fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+    )
+
+    assert any("Starting comparison-star target-fit evaluation for Comp 1" in message for message in logged)
+    assert any("Preparing comparison-candidate light curve for the full reduction." in message for message in logged)
+    assert any("Full reduction starting. Optional out-of-transit baseline detrending is enabled." in message for message in logged)
+    assert any("Completed comparison-star target-fit evaluation for Comp 1" in message and "transit_qc=PASS" in message for message in logged)
+    assert any("Rp/R* posterior retry note: Applied 1 automatic Rp/R* posterior range refit(s)." in message for message in logged)
+    assert any("OOT baseline detrending note: Skipped; need out-of-transit coverage on both sides of transit to fit a linear baseline." in message for message in logged)
+
+
+def test_evaluate_lightcurve_candidate_requests_nested_fit(monkeypatch):
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    def fake_fit_lightcurve(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        assert kwargs.get("final_fit_mode") == "ns"
+        fit = types.SimpleNamespace(
+            residuals=np.full(6, 0.01, dtype=float),
+            data=np.ones(6, dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            ns_type="ultranest",
+            transit_qc={"status": "pass", "delta_bic": 12.0, "ktmf_metric": 3.8, "ktmf_contributions": []},
+            transit_qc_status="pass",
+            transit_qc_summary="ok",
+            transit_qc_delta_bic=12.0,
+            transit_qc_ktmf_metric=3.8,
+        )
+        return fit, np.asarray(tflux, dtype=float), np.asarray(cflux, dtype=float)
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+
+    result, tflux_fit, cflux_fit = evaluate_lightcurve_candidate(
+        (
+            np.linspace(0.0, 0.05, 6),
+            np.full(6, 20.0),
+            np.full(6, 10.0),
+            np.linspace(1.0, 1.2, 6),
+            [0.1, 0.1, 0.1, 0.1],
+            {"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+            2460000.0 + np.linspace(0.0, 0.05, 6),
+            None,
+            False,
+            True,
+            True,
+            True,
+        )
+    )
+
+    assert result["accepted"] is True
+    assert result["ktmf_metric"] == pytest.approx(3.8)
+    assert tflux_fit.shape == (6,)
+    assert cflux_fit.shape == (6,)
+
+
 def test_fit_lightcurve_refines_nested_tmid_bounds_from_two_sided_lm_fit(monkeypatch):
     captured_calls = []
 
@@ -2363,6 +3296,7 @@ def test_fit_lightcurve_refines_nested_tmid_bounds_from_two_sided_lm_fit(monkeyp
         jd_times=None,
         mode=None,
         use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
     ):
         captured_calls.append({
             "mode": mode,
@@ -2438,6 +3372,7 @@ def test_fit_lightcurve_skips_nested_tmid_refinement_for_one_sided_lm_fit(monkey
         jd_times=None,
         mode=None,
         use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
     ):
         captured_calls.append({
             "mode": mode,
@@ -2504,9 +3439,11 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
     evaluated = []
 
     class DummyFit:
-        def __init__(self, residual_level):
+        def __init__(self, residual_level, delta_bic, ktmf_metric):
             self.residuals = np.full(6, residual_level)
             self.data = np.ones(6)
+            self.transit_qc_delta_bic = delta_bic
+            self.transit_qc_ktmf_metric = ktmf_metric
 
     def fake_evaluate(task):
         _, tflux, cflux, *_ = task
@@ -2514,9 +3451,19 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
         cflux = np.asarray(cflux)
         tflux = np.asarray(tflux)
         if np.allclose(cflux, 20.0):
-            return {"myfit": DummyFit(0.02), "res_std": 0.02}, tflux, cflux
+            return {
+                "myfit": DummyFit(0.02, 9.0, 2.80),
+                "res_std": 0.02,
+                "transit_delta_bic": 9.0,
+                "ktmf_metric": 2.80,
+            }, tflux, cflux
         if np.allclose(cflux, 40.0):
-            return {"myfit": DummyFit(0.01), "res_std": 0.01}, tflux, cflux
+            return {
+                "myfit": DummyFit(0.01, 18.0, 4.85),
+                "res_std": 0.01,
+                "transit_delta_bic": 18.0,
+                "ktmf_metric": 4.85,
+            }, tflux, cflux
         raise AssertionError("Unexpected candidate flux passed to evaluator.")
 
     monkeypatch.setattr("exotic.exotic.evaluate_lightcurve_candidate", fake_evaluate)
@@ -2578,26 +3525,29 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
 
     assert len(evaluated) == 2
     assert {tuple(np.unique(values)) for values in evaluated} == {(20.0,), (40.0,)}
+    assert result["selection_metric"] == "ktmf"
     assert result["best_candidate"]["method"] == "aperture"
     assert result["best_candidate"]["comp_index"] == 0
-    assert result["min_std"] == pytest.approx(0.01)
+    assert result["selected_ktmf_metric"] == pytest.approx(4.85)
+    assert result["selected_transit_delta_bic"] == pytest.approx(18.0)
 
 
 def test_run_target_driven_photometry_search_can_prefer_highest_eebls_snr(monkeypatch):
     class DummyFit:
-        def __init__(self, residual_level, eebls_snr):
+        def __init__(self, residual_level, eebls_snr, delta_bic):
             self.residuals = np.full(6, residual_level)
             self.data = np.ones(6)
             self.eebls_diagnostic_depth_snr = eebls_snr
+            self.transit_qc_delta_bic = delta_bic
 
     def fake_evaluate(task):
         _, tflux, cflux, *_ = task
         cflux = np.asarray(cflux, dtype=float)
         tflux = np.asarray(tflux, dtype=float)
         if np.allclose(cflux, 20.0):
-            return {"myfit": DummyFit(0.01, 4.0), "res_std": 0.01, "eebls_snr": 4.0}, tflux, cflux
+            return {"myfit": DummyFit(0.01, 4.0, 20.0), "res_std": 0.01, "eebls_snr": 4.0, "transit_delta_bic": 20.0}, tflux, cflux
         if np.allclose(cflux, 40.0):
-            return {"myfit": DummyFit(0.02, 9.0), "res_std": 0.02, "eebls_snr": 9.0}, tflux, cflux
+            return {"myfit": DummyFit(0.02, 9.0, 12.0), "res_std": 0.02, "eebls_snr": 9.0, "transit_delta_bic": 12.0}, tflux, cflux
         raise AssertionError("Unexpected candidate flux passed to evaluator.")
 
     monkeypatch.setattr("exotic.exotic.evaluate_lightcurve_candidate", fake_evaluate)
@@ -2661,7 +3611,7 @@ def test_run_target_driven_photometry_search_can_prefer_highest_eebls_snr(monkey
     assert result["selection_metric"] == "eebls_snr"
     assert result["best_candidate"]["method"] == "aperture"
     assert result["selected_eebls_snr"] == pytest.approx(9.0)
-    assert result["min_std"] == pytest.approx(0.02)
+    assert result["selected_transit_delta_bic"] == pytest.approx(12.0)
 
 
 def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidate(monkeypatch):
@@ -2670,13 +3620,27 @@ def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidat
             self.residuals = np.full(6, 0.01)
             self.data = np.ones(6)
 
-    def fake_fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times, **kwargs):
+    def fake_finalize(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
         cflux = np.asarray(cflux, dtype=float)
         if np.allclose(cflux, 0.0):
-            return None, None, None
-        return DummyFit(), np.asarray(tflux, dtype=float), cflux
+            return {
+                "applied": False,
+                "fit": None,
+                "failure_reason": "the raw comparison-candidate photometry did not yield a usable light curve.",
+                "note": "test full reduction",
+            }
+        return {
+            "applied": True,
+            "fit": DummyFit(),
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": cflux,
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
 
-    monkeypatch.setattr("exotic.exotic.fit_lightcurve", fake_fit_lightcurve)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
 
     times = np.linspace(0.0, 0.05, 6)
     jd_times = 2460000.0 + times
@@ -2689,18 +3653,8 @@ def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidat
         "annulus": 12.0,
         "best_comp_index": 0,
         "comp_summaries": [
-            {
-                "comp_index": 0,
-                "key": "comp1",
-                "aggregate_score": 0.01,
-                "coverage_rejected": False,
-            },
-            {
-                "comp_index": 1,
-                "key": "comp2",
-                "aggregate_score": 0.02,
-                "coverage_rejected": False,
-            },
+            {"comp_index": 0, "key": "comp1", "aggregate_score": 0.01, "coverage_rejected": False},
+            {"comp_index": 1, "key": "comp2", "aggregate_score": 0.02, "coverage_rejected": False},
         ],
     }
     aper_data = {
@@ -2723,12 +3677,285 @@ def test_fit_ranked_comparison_calibration_candidates_retries_next_best_candidat
 
     assert [attempt["comp_index"] for attempt in result["attempts"]] == [0, 1]
     assert result["selected_result"]["comp_index"] == 1
-    assert "relative-flux filtering left 0 usable point(s)" in result["attempts"][0]["fit_diagnostics"]["failure_reason"]
-    assert "non-finite=6" in result["attempts"][0]["fit_diagnostics"]["failure_reason"]
+    assert result["attempts"][0]["fit"] is None
+    assert result["attempts"][0]["fit_diagnostics"]["failure_reason"] is not None
     assert result["attempts"][1]["fit"] is not None
 
 
-def test_diagnose_lightcurve_fit_inputs_reports_relative_flux_breakdown():
+def test_fit_ranked_comparison_calibration_candidates_archives_qc_failed_run_and_tries_next(monkeypatch, tmp_path):
+    class DummyFit:
+        def __init__(self, qc_status):
+            self.residuals = np.full(6, 0.01)
+            self.data = np.ones(6)
+            self.transit_qc_status = qc_status
+            self.transit_qc_summary = (
+                "Transit detection not supported strongly enough against a flat/null model (Delta BIC=2.50, Delta chi2=1.10)."
+                if qc_status == "fail"
+                else "Transit model strongly preferred over flat/null model (Delta BIC=18.40, Delta chi2=27.10)."
+            )
+            self.transit_qc = {"status": qc_status, "summary": self.transit_qc_summary}
+
+    def fake_finalize(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
+        cflux = np.asarray(cflux, dtype=float)
+        fit = DummyFit("fail" if np.allclose(cflux, 8.0) else "pass")
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": cflux,
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    def fake_save(save_dir, provisional_fit, final_fit, p_dict, observation_date, comp_index, **kwargs):
+        candidate_dir = Path(save_dir) / f"comp{comp_index + 1}"
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        return candidate_dir
+
+    monkeypatch.setattr(
+        "exotic.exotic.save_comparison_candidate_full_reduction_outputs",
+        fake_save,
+    )
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    comparison_calibration = {
+        "method": "aperture",
+        "method_label": "Aperture photometry (aper=5.00px, annulus=12.00px)",
+        "a": 0,
+        "an": 0,
+        "aper": 5.0,
+        "annulus": 12.0,
+        "best_comp_index": 0,
+        "comp_summaries": [
+            {"comp_index": 0, "key": "comp1", "label": "Comp 1", "position": [100.0, 200.0], "aggregate_score": 0.01, "coverage_rejected": False},
+            {"comp_index": 1, "key": "comp2", "label": "Comp 2", "position": [300.0, 400.0], "aggregate_score": 0.02, "coverage_rejected": False},
+        ],
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 10.0),
+        "comp1": np.full((6, 1, 1), 8.0),
+        "comp2": np.full((6, 1, 1), 5.0),
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.ones(6),
+        save_dir=tmp_path,
+        planet_name="HAT-P-32 b",
+        observation_date="2026-04-28",
+    )
+
+    assert result["selected_result"]["comp_index"] == 1
+    assert result["attempts"][0]["rejected_by_transit_qc"] is True
+    assert result["attempts"][0]["fit_diagnostics"]["failed_stage"] == "transit_qc"
+    failed_run_dir = result["attempts"][0]["failed_run_dir"]
+    assert failed_run_dir is not None
+    assert (tmp_path / "comp_1_failed" / "temp" / "FailedFitSummary_HAT-P-32 b_2026-04-28.json").exists()
+    assert Path(failed_run_dir).exists()
+
+
+def test_fit_ranked_comparison_calibration_candidates_falls_back_to_best_qc_rejected_fit(
+    monkeypatch,
+):
+    class DummyFit:
+        def __init__(self, ktmf, delta_bic):
+            self.residuals = np.full(6, 0.01)
+            self.data = np.ones(6)
+            self.transit_qc_status = "fail"
+            self.transit_qc_summary = (
+                "Transit model is preferred over the flat/null model, but QC rejected the fit because "
+                "the fit deviates too far from the expected published Tmid and/or Rp/R* values "
+                f"(Delta BIC={delta_bic:.2f}, Delta chi2=27.10)."
+            )
+            self.transit_qc = {
+                "status": "fail",
+                "summary": self.transit_qc_summary,
+                "ktmf_metric": ktmf,
+                "delta_bic": delta_bic,
+            }
+            self.transit_qc_ktmf_metric = ktmf
+            self.transit_qc_delta_bic = delta_bic
+
+    def fake_finalize(times, tflux, cflux, airmass, ld, p_dict, jd_times=None, **kwargs):
+        cflux = np.asarray(cflux, dtype=float)
+        comp_marker = int(np.nanmedian(cflux))
+        fit = DummyFit(
+            ktmf={8: 3.10, 5: 4.80}[comp_marker],
+            delta_bic={8: 18.0, 5: 30.0}[comp_marker],
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": cflux,
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    comparison_calibration = {
+        "method": "aperture",
+        "method_label": "Aperture photometry (aper=5.00px, annulus=12.00px)",
+        "a": 0,
+        "an": 0,
+        "aper": 5.0,
+        "annulus": 12.0,
+        "best_comp_index": 0,
+        "comp_summaries": [
+            {"comp_index": 0, "key": "comp1", "label": "Comp 1", "aggregate_score": 0.01, "coverage_rejected": False},
+            {"comp_index": 1, "key": "comp2", "label": "Comp 2", "aggregate_score": 0.02, "coverage_rejected": False},
+        ],
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 10.0),
+        "comp1": np.full((6, 1, 1), 8.0),
+        "comp2": np.full((6, 1, 1), 5.0),
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.ones(6),
+    )
+
+    assert [attempt["rejected_by_transit_qc"] for attempt in result["attempts"]] == [True, True]
+    assert result["selection_metric"] == "ktmf"
+    assert result["selected_result"]["comp_index"] == 1
+    assert result["selected_result"]["selected_despite_transit_qc"] is True
+    assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.80)
+    assert "best available fallback" in result["selected_result"]["selection_reason"]
+
+
+def test_run_target_driven_photometry_search_skips_qc_failed_candidate(monkeypatch):
+    class DummyFit:
+        def __init__(self, residual_level, delta_bic=np.nan):
+            self.residuals = np.full(6, residual_level)
+            self.data = np.ones(6)
+            self.transit_qc_delta_bic = delta_bic
+
+    def fake_evaluate(task):
+        _, tflux, cflux, *_ = task
+        cflux = np.asarray(cflux, dtype=float)
+        tflux = np.asarray(tflux, dtype=float)
+        if np.allclose(cflux, 20.0):
+            return {
+                "myfit": DummyFit(0.005, 3.0),
+                "accepted": False,
+                "res_std": 0.005,
+                "eebls_snr": 7.0,
+                "transit_delta_bic": 3.0,
+                "transit_qc_status": "fail",
+                "transit_qc_summary": "Transit detection not supported strongly enough against a flat/null model.",
+                "rejected_by_transit_qc": True,
+                "fit_diagnostics": {"failed_stage": "transit_qc", "usable_point_count": 6},
+                "failure_reason": "Transit detection not supported strongly enough against a flat/null model.",
+                "fit_point_count": 6,
+            }, tflux, cflux
+        if np.allclose(cflux, 40.0):
+            return {
+                "myfit": DummyFit(0.02, 14.0),
+                "accepted": True,
+                "res_std": 0.02,
+                "eebls_snr": 4.0,
+                "transit_delta_bic": 14.0,
+                "transit_qc_status": "pass",
+                "transit_qc_summary": "Transit model strongly preferred over flat/null model.",
+                "rejected_by_transit_qc": False,
+                "fit_diagnostics": {"usable_point_count": 6},
+                "failure_reason": None,
+                "fit_point_count": 6,
+            }, tflux, cflux
+        raise AssertionError("Unexpected candidate flux passed to evaluator.")
+
+    monkeypatch.setattr("exotic.exotic.evaluate_lightcurve_candidate", fake_evaluate)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.5, 6)
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+    psf_target_amp = 20.0 / (2.0 * np.pi)
+    psf_comp_amp = 20.0 / (2.0 * np.pi)
+    psf_data = {
+        "target": np.column_stack([
+            np.zeros(6),
+            np.zeros(6),
+            np.full(6, psf_target_amp),
+            np.ones(6),
+            np.ones(6),
+        ]),
+        "comp1": np.column_stack([
+            np.ones(6),
+            np.ones(6),
+            np.full(6, psf_comp_amp),
+            np.ones(6),
+            np.ones(6),
+        ]),
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 40.0),
+        "comp1": np.full((6, 1, 1), 40.0),
+    }
+
+    result = run_target_driven_photometry_search(
+        times,
+        jd_times,
+        airmass,
+        ld,
+        p_dict,
+        comp_stars=[[100.0, 200.0]],
+        psf_data=psf_data,
+        aper_data=aper_data,
+        apers=np.array([5.0]),
+        annuli=np.array([12.0]),
+        sigma=1.0,
+        require_comp_star=True,
+        use_psf_photometry=True,
+        use_aperture_photometry=True,
+    )
+
+    assert len(result["candidate_summaries"]) == 2
+    assert result["candidate_summaries"][0]["rejected_by_transit_qc"] is True
+    assert result["best_candidate"]["method"] == "aperture"
+    assert result["selected_transit_delta_bic"] == pytest.approx(14.0)
+
+
+def test_diagnose_lightcurve_fit_inputs_allows_large_ratios():
     diagnostics = diagnose_lightcurve_fit_inputs(
         np.linspace(0.0, 0.05, 6),
         np.full(6, 30.0),
@@ -2736,11 +3963,24 @@ def test_diagnose_lightcurve_fit_inputs_reports_relative_flux_breakdown():
         np.linspace(1.0, 1.5, 6),
     )
 
-    assert diagnostics["failed_stage"] == "relative_flux_filter"
-    assert "relative-flux filtering left 0 usable point(s)" in diagnostics["failure_reason"]
-    assert "non-finite=0" in diagnostics["failure_reason"]
-    assert ">2x=6" in diagnostics["failure_reason"]
-    assert "finite ratio range=3.0000 to 3.0000" in diagnostics["failure_reason"]
+    assert diagnostics["failure_reason"] is None
+    assert diagnostics["relative_flux_point_count"] == 6
+    assert diagnostics["usable_point_count"] >= 5
+
+
+def test_prepare_lightcurve_fit_input_series_normalizes_ratio_around_unity():
+    times = np.linspace(0.0, 0.05, 6)
+    prepared = prepare_lightcurve_fit_input_series(
+        times,
+        np.full(6, 30.0),
+        np.full(6, 10.0),
+        np.linspace(1.0, 1.5, 6),
+    )
+
+    assert prepared["applied"] is True
+    assert np.nanmedian(prepared["debug_raw_ratio"]) == pytest.approx(3.0)
+    assert prepared["approximate_baseline_level"] == pytest.approx(3.0)
+    assert np.nanmedian(prepared["flux"]) == pytest.approx(1.0)
 
 
 def test_run_target_driven_photometry_search_returns_failed_candidate_summaries(monkeypatch):
@@ -2937,6 +4177,33 @@ def test_fit_lightcurve_can_disable_impact_parameter_parameterization(monkeypatc
     assert captured["flags"] == [False]
 
 
+def test_build_initial_ars_bounds_prefers_published_uncertainty_when_available():
+    assert build_initial_ars_bounds(15.0, 0.1) == pytest.approx([14.5, 15.5])
+    assert build_initial_ars_bounds(15.0, None) == pytest.approx([11.25, 18.75])
+
+
+def test_build_single_transit_duration_prior_uses_published_geometry_uncertainties():
+    duration_prior = build_single_transit_duration_prior({
+        "pPer": 1.0,
+        "pPerUnc": 0.001,
+        "rprs": 0.1,
+        "rprsUnc": 0.01,
+        "aRs": 15.0,
+        "aRsUnc": 0.1,
+        "inc": 89.0,
+        "incUnc": 0.1,
+        "ecc": 0.0,
+        "omega": 0.0,
+    })
+
+    assert duration_prior["applied"] is True
+    assert duration_prior["expected_duration"] > 0
+    assert duration_prior["sigma_log_duration"] > 0
+    assert duration_prior["relative_sigma"] >= 0.049
+    assert duration_prior["source"] == "published geometry uncertainties"
+    assert "published geometry uncertainties" in duration_prior["note"]
+
+
 def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatch):
     captured = {}
 
@@ -2970,6 +4237,7 @@ def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatc
     p_dict = {
         "rprs": 0.1,
         "aRs": 15.0,
+        "aRsUnc": 0.1,
         "pPer": 1.0,
         "inc": 89.0,
         "ecc": 0.0,
@@ -2982,6 +4250,8 @@ def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatc
     myfit, _, _ = fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times)
 
     assert myfit is not None
+    assert list(captured["bounds"])[:4] == ["rprs", "tmid", "ars", "inc"]
+    assert captured["bounds"]["ars"] == pytest.approx([14.5, 15.5])
     assert "a2" not in captured["bounds"]
     assert myfit.airmass_fit_skipped is True
 
@@ -3108,3 +4378,23 @@ def test_main_prereduced_respects_disable_vertical_flux_normalization_option(mon
     disabled = _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_flux_normalization=True)
 
     assert disabled is True
+
+
+def test_cli_logs_unhandled_exception_once(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    logged = []
+
+    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda: None)
+    monkeypatch.setattr(exotic_module, "install_exception_hooks", lambda: None)
+    monkeypatch.setattr(exotic_module, "main", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    def fake_log_exception(message, exc_type, exc_value, exc_traceback):
+        logged.append((message, exc_type, str(exc_value), exc_traceback is not None))
+
+    monkeypatch.setattr(exotic_module, "_log_exception_with_fallback", fake_log_exception)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        exotic_module.cli()
+
+    assert logged == [("Unhandled exception during EXOTIC run", RuntimeError, "boom", True)]

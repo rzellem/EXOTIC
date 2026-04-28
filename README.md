@@ -194,6 +194,23 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ![Chart showing how Nested Sampling iterations reveal light curve optimization results.](examples/single_transit/triangle.png)
 
+## Third-Party GUI Launchers
+
+### TransitLab
+[TransitLab](https://github.com/ArtTrail/TransitLab) is a cross-platform desktop GUI launcher and workflow assistant for EXOTIC, available for Windows, macOS (Apple Silicon), and Linux. It guides observers through every step of a reduction run — loading FITS frames, image analysis, target parameter lookup via the NASA Exoplanet Archive, running EXOTIC, and submitting results to AAVSO — all from a single tabbed interface.
+
+**Features include:**
+- Automatic plate solving (astrometry.net or ASTAP)
+- NASA Exoplanet Archive integration for automatic target parameter lookup
+- AAVSO comparison star selection
+- Transit geometry visualizer with real-time animated light curve preview
+- Session history browser
+- Automation mode for unattended reductions
+- Built-in Python & EXOTIC setup wizard (install, upgrade, uninstall without the command line)
+- AAVSO submission directly from the app
+
+[Download the latest release](https://github.com/ArtTrail/TransitLab/releases/latest) | [Source code](https://github.com/ArtTrail/TransitLab)
+
 ## Contributing to EXOTIC
 
 EXOTIC is an open source project that welcomes contributions. Please fork the repository and submit a pull request to the `develop` branch and join our slack channel to get ahold of our team. We are always looking for new contributors to help us improve the software and documentation.

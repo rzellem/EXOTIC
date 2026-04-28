@@ -213,6 +213,9 @@ class OutputFiles:
             qc_eebls_depth_snr = transit_qc.get('eebls_depth_snr', np.nan)
             qc_deviation_metric = transit_qc.get('deviation_from_expected_value', np.nan)
             qc_tmid_deviation_sigma = transit_qc.get('tmid_deviation_sigma', np.nan)
+            qc_tmid_deviation_minutes = transit_qc.get('tmid_deviation_minutes', np.nan)
+            qc_tmid_threshold_minutes = transit_qc.get('tmid_deviation_threshold_minutes', np.nan)
+            qc_expected_tmid_unc_minutes = transit_qc.get('expected_tmid_unc_minutes', np.nan)
             qc_rprs_deviation_sigma = transit_qc.get('rprs_deviation_sigma', np.nan)
             qc_sigma_threshold = transit_qc.get('deviation_sigma_threshold', np.nan)
             qc_ktmf = transit_qc.get('ktmf_metric', np.nan)
@@ -238,6 +241,12 @@ class OutputFiles:
                 params_num["Expected-value QC threshold"] = f"{qc_sigma_threshold:.2f} sigma"
             if np.isfinite(qc_tmid_deviation_sigma):
                 params_num["Expected-value Tmid deviation"] = f"{qc_tmid_deviation_sigma:.2f} sigma"
+            if np.isfinite(qc_tmid_deviation_minutes):
+                params_num["Expected-value Tmid offset"] = f"{qc_tmid_deviation_minutes:.2f} minutes"
+            if np.isfinite(qc_expected_tmid_unc_minutes):
+                params_num["Expected-value Tmid uncertainty"] = f"{qc_expected_tmid_unc_minutes:.2f} minutes"
+            if np.isfinite(qc_tmid_threshold_minutes):
+                params_num["Expected-value Tmid QC window"] = f"{qc_tmid_threshold_minutes:.2f} minutes"
             if np.isfinite(qc_rprs_deviation_sigma):
                 params_num["Expected-value Rp/R* deviation"] = f"{qc_rprs_deviation_sigma:.2f} sigma"
             if np.isfinite(qc_ktmf):

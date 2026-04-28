@@ -295,6 +295,9 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
         "residual_scatter": 0.0032,
         "deviation_from_expected_value": 0.91,
         "tmid_deviation_sigma": 1.1,
+        "tmid_deviation_minutes": 3.2,
+        "tmid_deviation_threshold_minutes": 14.4,
+        "expected_tmid_unc_minutes": 2.88,
         "rprs_deviation_sigma": 0.8,
         "deviation_sigma_threshold": 5.0,
         "ktmf_metric": 4.63,
@@ -337,6 +340,9 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
     assert "Delta BIC=18.40" in output_text
     assert "Residual scatter around full model fit" in output_text
     assert "Deviation From Expected Value" in output_text
+    assert "Expected-value Tmid offset" in output_text
+    assert "3.20 minutes" in output_text
+    assert "Expected-value Tmid QC window" in output_text
     assert "KTMF" in output_text
     assert "KTMF contribution 1" in output_text
 

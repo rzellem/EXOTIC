@@ -2496,7 +2496,7 @@ def test_evaluate_transit_detection_qc_rejects_large_expected_value_deviation():
         model=transit_model,
         airmass=np.ones(data.shape[0], dtype=float),
         airmass_fit_skipped=True,
-        parameters={"rprs": 0.18, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        parameters={"rprs": 0.18, "tmid": 0.506, "inc": 89.0, "a2": 0.0},
         errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
         bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
         duration_expected=5.0,
@@ -2513,6 +2513,9 @@ def test_evaluate_transit_detection_qc_rejects_large_expected_value_deviation():
 
     assert summary["computed"] is True
     assert summary["status"] == "fail"
+    assert summary["tmid_deviation_sigma"] == pytest.approx(6.0)
+    assert summary["tmid_deviation_minutes"] == pytest.approx(8.64)
+    assert summary["tmid_deviation_threshold_minutes"] == pytest.approx(7.2)
     assert summary["rprs_deviation_sigma"] == pytest.approx(8.0)
     assert summary["deviation_from_expected_value"] == pytest.approx(0.0)
     assert summary["ktmf_metric"] <= 5.0
@@ -2585,7 +2588,7 @@ def test_evaluate_transit_detection_qc_failure_summary_reflects_expected_value_r
         model=transit_model,
         airmass=np.ones(data.shape[0], dtype=float),
         airmass_fit_skipped=True,
-        parameters={"rprs": 0.18, "tmid": 0.5, "inc": 89.0, "a2": 0.0, "per": 2.0},
+        parameters={"rprs": 0.10, "tmid": 0.528, "inc": 89.0, "a2": 0.0, "per": 2.0},
         errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
         bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
         prior={"per": 2.0, "tmid": 0.5},
@@ -2602,8 +2605,10 @@ def test_evaluate_transit_detection_qc_failure_summary_reflects_expected_value_r
     summary = evaluate_transit_detection_qc(fit)
 
     assert summary["status"] == "fail"
+    assert summary["tmid_deviation_minutes"] == pytest.approx(40.32)
     assert "QC rejected the fit because" in summary["summary"]
-    assert "expected published Tmid and/or Rp/R*" in summary["summary"]
+    assert "Tmid of the fit is 40.32 minutes away from the ephemeris Tmid" in summary["summary"]
+    assert "7.20 minutes" in summary["summary"]
     assert "not supported strongly enough against a flat/null model" not in summary["summary"]
 
 

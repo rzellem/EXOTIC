@@ -141,6 +141,7 @@ from exotic.exotic import (
     resolve_frame_aperture_radii,
     robust_flux_floor_mask,
     robust_target_reference_flux_mask,
+    save_final_triangle_plot,
     save_selected_photometry_debug_series,
     should_keep_header_wcs_alignment,
     sigma_clip,
@@ -159,6 +160,58 @@ from exotic.exotic import (
     should_use_deviation_from_expected_transit_in_qc,
     update_coordinates_with_proper_motion,
 )
+
+
+def test_save_final_triangle_plot_copies_selected_candidate_artifact(tmp_path):
+    class DummyFit:
+        def plot_triangle(self):
+            raise AssertionError("final plot should be copied from the selected candidate")
+
+    planet_name = "TOI-1728 b"
+    observation_date = "2024-12-14"
+    source_dir = tmp_path / "comp6"
+    final_dir = tmp_path / "final"
+    source_temp = source_dir / "temp"
+    source_temp.mkdir(parents=True)
+    source_plot = source_temp / f"Triangle_{planet_name}_{observation_date}.png"
+    source_plot.write_bytes(b"selected-comp-6")
+
+    output_path = save_final_triangle_plot(
+        DummyFit(),
+        final_dir,
+        planet_name,
+        observation_date,
+        source_dir=source_dir,
+    )
+
+    assert output_path == final_dir / "temp" / source_plot.name
+    assert output_path.read_bytes() == b"selected-comp-6"
+
+
+def test_save_final_triangle_plot_regenerates_when_selected_artifact_missing(tmp_path):
+    class DummyFigure:
+        def savefig(self, path):
+            Path(path).write_bytes(b"regenerated")
+
+    class DummyFit:
+        def __init__(self):
+            self.called = False
+
+        def plot_triangle(self):
+            self.called = True
+            return DummyFigure()
+
+    fit = DummyFit()
+    output_path = save_final_triangle_plot(
+        fit,
+        tmp_path / "final",
+        "TOI-1728 b",
+        "2024-12-14",
+        source_dir=tmp_path / "missing-comp",
+    )
+
+    assert fit.called is True
+    assert output_path.read_bytes() == b"regenerated"
 
 
 def test_update_coordinates_handles_non_numeric_proper_motion_values():
@@ -1804,6 +1857,98 @@ def test_fit_final_lightcurve_retries_nested_fit_when_rprs_posterior_is_clipped(
     assert fit.rprs_posterior_refit_count == 1
     assert fit.rprs_posterior_refit_edge == "upper"
     assert fit.rprs_posterior_refit_bounds == pytest.approx([0.108, 0.208])
+
+
+def test_fit_final_lightcurve_carries_retry_bounds_into_oot_baseline_refit(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    times = np.array([-2.0, -1.0, -0.25, 0.0, 0.25, 1.0, 2.0])
+    flux = (1.0 + 0.02 * times) * np.array([1.0, 1.0, 1.0, 0.99, 1.0, 1.0, 1.0])
+    fluxerr = np.full_like(times, 0.01)
+    airmass = np.ones_like(times)
+    prior = {"rprs": 0.1, "tmid": 0.0, "inc": 89.0, "a2": 0.0}
+    bounds = {"rprs": [0.0, 0.125], "tmid": [-0.1, 0.1], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]}
+    transit_model = np.array([1.0, 1.0, 1.0, 0.99, 1.0, 1.0, 1.0])
+    diagnostics = [
+        {
+            "clipped": True,
+            "edge": "upper",
+            "mode": 0.158,
+            "std": 0.006,
+            "bounds": [0.128, 0.188],
+            "reason": "posterior peaks against the upper search bound.",
+        },
+        {
+            "clipped": False,
+            "edge": None,
+            "mode": 0.159,
+            "std": 0.005,
+            "bounds": [0.108, 0.208],
+            "reason": "posterior support is comfortably inside the sampled bounds.",
+        },
+        {
+            "clipped": False,
+            "edge": None,
+            "mode": 0.160,
+            "std": 0.005,
+            "bounds": [0.108, 0.208],
+            "reason": "posterior support is comfortably inside the sampled bounds.",
+        },
+    ]
+    captured = {"calls": []}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        call_index = len(captured["calls"])
+        call_diagnostics = diagnostics[min(call_index, len(diagnostics) - 1)]
+        captured["calls"].append({
+            "flux": np.array(call_flux, dtype=float),
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+        })
+        fit = types.SimpleNamespace(
+            transit=transit_model,
+            parameters={"tmid": 0.0, "rprs": call_diagnostics["mode"], "inc": 89.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a2": 0.01},
+            data=np.array(call_flux, dtype=float),
+            residuals=np.zeros_like(call_flux, dtype=float),
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = (
+            lambda key: dict(call_diagnostics) if key == "rprs" else None
+        )
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit, _, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        detrend_on_outoftransit_baseline=True,
+    )
+
+    assert len(captured["calls"]) == 3
+    assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.0, 0.125])
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.108, 0.208])
+    assert captured["calls"][2]["bounds"]["rprs"] == pytest.approx([0.108, 0.208])
+    assert np.allclose(captured["calls"][2]["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
+    assert fit.oot_baseline_detrending_applied is True
 
 
 def test_fit_final_lightcurve_prefit_refinement_trims_baseline_and_recenters_tmid(monkeypatch):

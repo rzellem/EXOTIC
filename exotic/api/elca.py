@@ -1147,6 +1147,26 @@ class lc_fitter(object):
             'mask_errors': mask_errors,
         }
 
+    def _triangle_contour_levels(self, chi2, mask1, mask2, mask3):
+        raw_levels = np.array([
+            np.percentile(chi2[mask1], 95),
+            np.percentile(chi2[mask2], 95),
+            np.percentile(chi2[mask3], 95),
+        ], dtype=float)
+        finite_levels = np.sort(raw_levels[np.isfinite(raw_levels)])
+        if finite_levels.size == 0:
+            return []
+
+        unique_levels = []
+        min_spacing = max(
+            np.finfo(float).eps,
+            np.nanmax(np.abs(finite_levels)) * 1e-12,
+        )
+        for level in finite_levels:
+            if not unique_levels or level > unique_levels[-1] + min_spacing:
+                unique_levels.append(float(level))
+        return unique_levels
+
     def _overlay_triangle_plot_geometry_histograms(self, fig, payload, title_kwargs=None, label_kwargs=None):
         if not hasattr(fig, 'axes'):
             return
@@ -1706,8 +1726,7 @@ class lc_fitter(object):
                      bins=int(np.sqrt(payload['display_points'].shape[0])),
                      range=payload['ranges'],
                      plot_contours=True,
-                     levels=[np.percentile(chi2[mask1], 95), np.percentile(chi2[mask2], 95),
-                             np.percentile(chi2[mask3], 95)],
+                     levels=self._triangle_contour_levels(chi2, mask1, mask2, mask3),
                      plot_density=False,
                      titles=payload['titles'],
                      data_kwargs={

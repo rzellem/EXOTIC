@@ -927,6 +927,18 @@ def test_plot_triangle_uses_mirrored_distance_from_fitted_impact_parameter_axis(
     assert captured["label_kwargs"]["labelpad"] == 10
 
 
+def test_triangle_contour_levels_drop_duplicate_chi2_percentiles(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    chi2 = np.full(12, 42.0)
+    mask = np.ones(chi2.size, dtype=bool)
+
+    levels = fit._triangle_contour_levels(chi2, mask, mask, mask)
+
+    assert levels == [pytest.approx(42.0)]
+
+
 def test_triangle_payload_tracks_left_and_right_geometry_branches_for_inclination(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)

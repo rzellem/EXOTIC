@@ -63,6 +63,7 @@ from functools import lru_cache
 import json
 import hashlib
 import os
+import shutil
 import sys
 import threading
 import traceback
@@ -1542,6 +1543,39 @@ def comparison_candidate_output_dir(save_dir, comp_index):
     return Path(save_dir) / f"comp{comp_index + 1}"
 
 
+def triangle_plot_output_path(save_dir, planet_name, observation_date):
+    return Path(save_dir) / "temp" / f"Triangle_{planet_name}_{observation_date}.png"
+
+
+def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, source_dir=None):
+    output_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if source_dir is not None:
+        source_path = triangle_plot_output_path(source_dir, planet_name, observation_date)
+        try:
+            same_path = source_path.resolve() == output_path.resolve()
+        except OSError:
+            same_path = False
+
+        if source_path.exists():
+            if same_path:
+                return output_path
+            try:
+                shutil.copy2(source_path, output_path)
+                return output_path
+            except OSError:
+                pass
+
+    fig = fit.plot_triangle()
+    fig.savefig(output_path)
+    try:
+        plt.close(fig)
+    except TypeError:
+        pass
+    return output_path
+
+
 def estimate_transit_duration_samples_from_fit(fit, sample_count=1000, grid_size=1000):
     if fit is None or not hasattr(fit, 'parameters') or not hasattr(fit, 'errors'):
         return None, np.array([], dtype=float)
@@ -2279,6 +2313,40 @@ def clone_lightcurve_bounds(bounds):
     }
 
 
+def annotate_posterior_refit_final_bounds(fit, bounds):
+    if fit is None:
+        return
+    fit.posterior_refit_final_bounds = clone_lightcurve_bounds(bounds)
+
+
+def get_posterior_refit_final_bounds(fit, fallback_bounds):
+    effective_bounds = clone_lightcurve_bounds(fallback_bounds)
+    fit_bounds = getattr(fit, 'posterior_refit_final_bounds', None)
+    if not isinstance(fit_bounds, dict):
+        fit_bounds = {}
+        for key in ('rprs', 'ars'):
+            refit_bounds = getattr(fit, f'{key}_posterior_refit_bounds', None)
+            if refit_bounds is not None:
+                fit_bounds[key] = refit_bounds
+
+    for key, value in fit_bounds.items():
+        if not isinstance(value, (list, tuple, np.ndarray)):
+            continue
+        try:
+            lower_bound, upper_bound = [
+                float(bound) for bound in np.asarray(value, dtype=float).reshape(-1)[:2]
+            ]
+        except (TypeError, ValueError, IndexError):
+            continue
+        if (
+            np.isfinite(lower_bound)
+            and np.isfinite(upper_bound)
+            and lower_bound < upper_bound
+        ):
+            effective_bounds[key] = [lower_bound, upper_bound]
+    return effective_bounds
+
+
 def sanitize_parameter_search_bounds(bounds, key, minimum_bound, maximum_bound=None, fallback_maximum=None):
     sanitized = clone_lightcurve_bounds(bounds)
     if key not in sanitized:
@@ -2618,6 +2686,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         fit = build_fit(current_prior, current_bounds)
 
     final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+    annotate_posterior_refit_final_bounds(fit, current_bounds)
     for config in retry_configs:
         key = config['key']
         label = config['label']
@@ -4710,13 +4779,14 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         eebls_search_summary=eebls_search_summary,
     )
 
+    effective_bounds = get_posterior_refit_final_bounds(fit, bounds)
     prefit_plan = build_final_fit_prefit_refinement_plan(
         times,
         flux_values,
         flux_errors,
         airmass,
         prior,
-        bounds,
+        effective_bounds,
         fit,
         jd_times=jd_times,
         baseline_duration_multiplier=baseline_duration_multiplier,
@@ -4757,6 +4827,8 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             tmid_search_summary=expected_tmid_search_summary,
             eebls_search_summary=eebls_search_summary,
         )
+
+    working_bounds = get_posterior_refit_final_bounds(fit, working_bounds)
 
     annotate_final_fit_prefit_refinement(
         fit,
@@ -13158,6 +13230,7 @@ def main():
                                            selected_fit_good_airmass=selected_attempt.get('good_airmass'),
                                            selected_fit_duration_samples=selected_attempt.get('duration_samples'),
                                            selected_fit_data_highres=selected_attempt.get('data_highres'),
+                                           selected_fit_final_output_dir=selected_attempt.get('final_output_dir'),
                                            calibration_field_score=comparison_calibration['field_score'],
                                            selection_basis=selection_basis,
                                            selection_metric=comparison_fit_search.get('selection_metric', 'ktmf'),
@@ -13944,9 +14017,18 @@ def main():
         # SAVE DATA
         ##########
 
-        fig = myfit.plot_triangle()
-        fig.savefig(Path(exotic_infoDict['save']) / "temp" /
-                    f"Triangle_{pDict['pName']}_{exotic_infoDict['date']}.png")
+        selected_triangle_source_dir = (
+            photometry_info.get('selected_fit_final_output_dir')
+            if reuse_selected_final_model
+            else None
+        )
+        save_final_triangle_plot(
+            myfit,
+            exotic_infoDict['save'],
+            pDict['pName'],
+            exotic_infoDict['date'],
+            source_dir=selected_triangle_source_dir,
+        )
 
         if vsp_params:
             AIDoutput_files = AIDOutputFiles(myfit, pDict, exotic_infoDict, auid, chart_id, vsp_params)

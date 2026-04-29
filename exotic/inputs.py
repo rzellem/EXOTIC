@@ -215,6 +215,7 @@ class Inputs:
             'use_deviation_from_expected_transit_in_qc': True,
             'deviation_from_expected_transit_in_qc_sigma': 5.0,
             'assess_all_comparisons_before_selecting_best': 'y',
+            'exit_at_first_qc_pass_solution': 'y',
             'detect_bad_pixels_before_photometry': 'y',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
@@ -222,6 +223,7 @@ class Inputs:
             'pointing_rejection_sigma': 4.0,
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
+            'ultranest_min_num_live_points': 200,
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -465,6 +467,13 @@ class Inputs:
                 'assess_all_comparisons_before_selecting_best',
                 'Assess All Comparisons Before Selecting Best? (y/n)',
             ),
+            'exit_at_first_qc_pass_solution': (
+                'exit_at_first_qc_pass_solution',
+                'exit at first QC PASS solution',
+                'Exit at first QC PASS solution',
+                'Exit at first QC PASS solution? (y/n)',
+                'Exit At First QC PASS Solution? (y/n)',
+            ),
             'use_impactparameter_rather_than_inclination_to_fit': (
                 'use_impactparameter_rather_than_inclination_to_fit',
                 'Use impact parameter rather than inclination to fit? (y/n)',
@@ -490,6 +499,13 @@ class Inputs:
             'fit_lightcurve_to_every_comparison_candidate': (
                 'fit_lightcurve_to_every_comparison_candidate',
                 'Fit Lightcurve to Every Comparison Candidate? (y/n)',
+            ),
+            'ultranest_min_num_live_points': (
+                'Minimum Number of Live Points for UltraNest',
+                'minimum number of live points for ultranest',
+                'ultranest_min_num_live_points',
+                'ultranest_min_live_points',
+                'min_num_live_points',
             ),
             'bad_wcs_threshold_percent': (
                 'bad_wcs_threshold_percent',

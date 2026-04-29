@@ -1,8 +1,23 @@
 import io
 import logging
 
+import numpy as np
+
+import exotic.api.ultranest_utils as ultranest_utils
 from exotic.api.ultranest_utils import run_reactive_sampler
 from exotic.api.ultranest_utils import supports_ultranest_live_status
+
+
+_MPI_ENV_KEYS = (
+    "OMPI_COMM_WORLD_SIZE",
+    "PMI_SIZE",
+    "PMIX_SIZE",
+    "MV2_COMM_WORLD_SIZE",
+    "OMPI_COMM_WORLD_RANK",
+    "PMI_RANK",
+    "PMIX_RANK",
+    "MV2_COMM_WORLD_RANK",
+)
 
 
 class _FakeStream(io.StringIO):
@@ -17,6 +32,13 @@ class _FakeStream(io.StringIO):
 def _reset_ultranest_env(monkeypatch):
     monkeypatch.delenv("EXOTIC_ULTRANEST_PLAIN_PROGRESS", raising=False)
     monkeypatch.delenv("EXOTIC_ULTRANEST_RICH_PROGRESS", raising=False)
+    monkeypatch.delenv("EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS", raising=False)
+    monkeypatch.delenv("EXOTIC_ULTRANEST_MIN_LIVE_POINTS", raising=False)
+    monkeypatch.delenv("EXOTIC_ULTRANEST_WORKERS", raising=False)
+    monkeypatch.delenv("EXOTIC_ULTRANEST_WORKER_BACKEND", raising=False)
+    monkeypatch.delenv("NEXTASTRO_EXOTIC_ULTRANEST_WORKERS", raising=False)
+    for env_key in _MPI_ENV_KEYS:
+        monkeypatch.delenv(env_key, raising=False)
     monkeypatch.delenv("CI", raising=False)
 
 
@@ -82,6 +104,137 @@ def test_run_reactive_sampler_silent_mode(monkeypatch):
         sampler,
         run_kwargs={"max_ncalls": 1000},
         verbose=False,
+        stream=stream,
+    )
+
+    assert result == {"status": "ok"}
+    assert sampler.kwargs["show_status"] is False
+    assert sampler.kwargs["viz_callback"] is False
+    assert stream.getvalue() == ""
+
+
+def test_run_reactive_sampler_applies_fast_defaults(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        def __init__(self):
+            self.kwargs = None
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "ok"}
+
+    sampler = FakeSampler()
+    run_reactive_sampler(
+        sampler,
+        run_kwargs={"max_ncalls": 1000},
+        verbose=False,
+    )
+
+    assert sampler.kwargs["min_num_live_points"] == 200
+    assert sampler.kwargs["min_ess"] == 200
+    assert sampler.kwargs["dlogz"] == 1.0
+    assert sampler.kwargs["dKL"] == 1.0
+    assert sampler.kwargs["frac_remain"] == 0.05
+    assert sampler.kwargs["max_num_improvement_loops"] == 1
+    assert sampler.kwargs["max_ncalls"] == 1000
+
+
+def test_run_reactive_sampler_uses_env_live_point_override(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS", "320")
+
+    class FakeSampler:
+        def __init__(self):
+            self.kwargs = None
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "ok"}
+
+    sampler = FakeSampler()
+    run_reactive_sampler(sampler, verbose=False)
+
+    assert sampler.kwargs["min_num_live_points"] == 320
+
+
+def test_run_reactive_sampler_parallelizes_vectorized_loglike_batches(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "3")
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKER_BACKEND", "thread")
+
+    class FakeSampler:
+        def __init__(self):
+            self.kwargs = None
+            self.chunk_sizes = []
+
+            def loglike(points):
+                self.chunk_sizes.append(len(points))
+                return points[:, 0]
+
+            self.loglike = loglike
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            values = self.loglike(np.arange(12, dtype=float).reshape(6, 2))
+            return {"values": values}
+
+    sampler = FakeSampler()
+    result = run_reactive_sampler(sampler, verbose=False)
+
+    assert result["values"].tolist() == [0, 2, 4, 6, 8, 10]
+    assert sorted(sampler.chunk_sizes) == [2, 2, 2]
+
+
+def test_run_reactive_sampler_preserves_explicit_live_point_override(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS", "320")
+
+    class FakeSampler:
+        def __init__(self):
+            self.kwargs = None
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "ok"}
+
+    sampler = FakeSampler()
+    run_reactive_sampler(
+        sampler,
+        run_kwargs={"min_num_live_points": 450},
+        verbose=False,
+    )
+
+    assert sampler.kwargs["min_num_live_points"] == 450
+
+
+def test_run_reactive_sampler_silences_mpi_worker_rank(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setattr(
+        ultranest_utils,
+        "get_mpi_status",
+        lambda: {
+            "available": True,
+            "size": 4,
+            "rank": 2,
+            "source": "mpi4py",
+            "error": None,
+        },
+    )
+    stream = _FakeStream(tty=True)
+
+    class FakeSampler:
+        def __init__(self):
+            self.kwargs = None
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "ok"}
+
+    sampler = FakeSampler()
+    result = run_reactive_sampler(
+        sampler,
+        verbose=True,
         stream=stream,
     )
 

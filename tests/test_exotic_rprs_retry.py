@@ -95,13 +95,14 @@ from exotic.exotic import (  # noqa: E402
 )
 
 
-def test_build_initial_rprs_bounds_uses_wider_asymmetric_search_box():
+def test_build_initial_rprs_bounds_allows_zero_depth_search_box():
     bounds = build_initial_rprs_bounds(0.1)
 
     assert bounds == pytest.approx([
-        INITIAL_RPRS_BOUND_LOWER_SCALE * 0.1,
+        RPRS_SEARCH_BOUND_MIN,
         INITIAL_RPRS_BOUND_UPPER_SCALE * 0.1,
     ])
+    assert INITIAL_RPRS_BOUND_LOWER_SCALE == pytest.approx(0.0)
 
 
 def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):
@@ -341,6 +342,76 @@ def test_rprs_posterior_retry_can_continue_above_the_old_maximum_exoplanet_range
     assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.175, 0.375])
     assert fit.rprs_posterior_refit_applied is True
     assert fit.rprs_posterior_refit_count == 1
+
+
+def test_rprs_posterior_retry_expands_lower_edge_down_to_zero(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+    diagnostics_sequence = [
+        {"clipped": True, "edge": "lower", "mode": 0.030, "std": 0.006, "bounds": [0.000, 0.100]},
+        {"clipped": False, "edge": None, "mode": 0.031, "std": 0.005, "bounds": [0.000, 0.120]},
+    ]
+
+    def make_fit(diagnostics):
+        fit = types.SimpleNamespace(
+            parameters={
+                "rprs": diagnostics["mode"],
+                "tmid": 0.0,
+                "inc": 89.0,
+                "a2": 0.0,
+            }
+        )
+
+        def get_parameter_posterior_recenter_diagnostics(key):
+            assert key == "rprs"
+            return dict(diagnostics)
+
+        fit.get_parameter_posterior_recenter_diagnostics = get_parameter_posterior_recenter_diagnostics
+        return fit
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        call_index = len(captured["calls"])
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "duration_prior": duration_prior,
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+        })
+        return make_fit(diagnostics_sequence[call_index])
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0},
+        {"rprs": [0.025, 0.300], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]},
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.025, 0.300])
+    assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.030)
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.000, 0.120])
+    assert fit.rprs_posterior_refit_applied is True
+    assert fit.rprs_posterior_refit_count == 1
+    assert fit.rprs_posterior_refit_edge == "lower"
+    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.000, 0.120])
 
 
 def test_ars_posterior_retry_expands_bounds_when_upper_edge_is_truncated(monkeypatch):

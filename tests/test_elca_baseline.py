@@ -581,6 +581,72 @@ def test_nested_fit_tracks_free_ars_with_internal_impact_parameter(monkeypatch, 
     assert fit.sample_bounds["b"] == pytest.approx([min(bounds_values), max(bounds_values)])
 
 
+def test_nested_fit_replaces_degenerate_ultranest_errors_from_loglike_neighborhood(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 101)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = elca.transit(time, prior)
+
+    class DummySampler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    sample_points = np.array(
+        [
+            [0.095, -0.0010],
+            [0.097, -0.0008],
+            [0.099, -0.0003],
+            [0.100, 0.0000],
+            [0.101, 0.0002],
+            [0.103, 0.0005],
+            [0.105, 0.0008],
+            [0.106, 0.0010],
+            [0.120, 0.0030],
+            [0.080, -0.0030],
+        ],
+        dtype=float,
+    )
+    logl = np.array([-0.4, -0.3, -0.1, 0.0, -0.1, -0.2, -0.3, -0.4, -2.0, -3.0])
+
+    monkeypatch.setattr(elca, "ReactiveNestedSampler", DummySampler)
+    monkeypatch.setattr(
+        elca,
+        "run_reactive_sampler",
+        lambda *args, **kwargs: {
+            "maximum_likelihood": {"point": np.array([0.100, 0.0])},
+            "posterior": {
+                "stdev": np.array([1e-15, 1e-15]),
+                "errlo": np.array([0.100, 0.0]),
+                "errup": np.array([0.100, 0.0]),
+            },
+            "weighted_samples": {
+                "points": sample_points,
+                "logl": logl,
+            },
+            "samples": np.repeat(np.array([[0.100, 0.0]]), 10, axis=0),
+        },
+    )
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.0, 0.2], "tmid": [-0.01, 0.01]},
+        mode="ns",
+        verbose=False,
+    )
+
+    assert fit.errors["rprs"] > 1e-3
+    assert fit.errors["tmid"] > 1e-4
+    assert set(fit.ultranest_error_fallbacks) == {"rprs", "tmid"}
+    assert fit.ultranest_error_fallbacks["rprs"]["sample_count"] == 8
+
+
 def test_nested_fit_duration_prior_penalizes_wrong_transit_length(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -937,6 +1003,44 @@ def test_triangle_contour_levels_drop_duplicate_chi2_percentiles(monkeypatch, tm
     levels = fit._triangle_contour_levels(chi2, mask, mask, mask)
 
     assert levels == [pytest.approx(42.0)]
+
+
+def test_triangle_payload_expands_degenerate_error_ranges_to_sample_cloud(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.2],
+        "tmid": [-0.01, 0.01],
+    }
+    fit.sample_bounds = dict(fit.bounds)
+    fit.sampled_keys = ["rprs", "tmid"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.100, "tmid": 0.0}
+    fit.errors = {"rprs": 1e-15, "tmid": 1e-15}
+    fit.sample_parameters = dict(fit.parameters)
+    fit.sample_errors = dict(fit.errors)
+    points = np.column_stack(
+        [
+            np.linspace(0.050, 0.150, 50),
+            np.linspace(-0.004, 0.004, 50),
+        ]
+    )
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+        },
+        "samples": np.repeat(np.array([[0.100, 0.0]]), points.shape[0], axis=0),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    assert payload["ranges"][0][0] <= 0.052
+    assert payload["ranges"][0][1] >= 0.148
+    assert payload["ranges"][1][0] <= -0.0038
+    assert payload["ranges"][1][1] >= 0.0038
 
 
 def test_triangle_payload_tracks_left_and_right_geometry_branches_for_inclination(monkeypatch, tmp_path):

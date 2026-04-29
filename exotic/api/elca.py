@@ -629,6 +629,91 @@ class lc_fitter(object):
         upper = float(np.nanpercentile(samples, 84))
         return center, std, [lower - center, upper - center]
 
+    def _get_ultranest_weighted_sample_arrays(self):
+        try:
+            weighted_samples = self.results['weighted_samples']
+            points = np.asarray(weighted_samples['points'], dtype=float)
+            logl = np.asarray(weighted_samples['logl'], dtype=float)
+        except Exception:
+            return None, None
+
+        if points.ndim != 2 or points.shape[0] == 0:
+            return None, None
+        if logl.shape[0] != points.shape[0]:
+            return None, None
+        return points, logl
+
+    def _loglike_neighborhood_uncertainty(self, parameter_index, center, minimum_count=8):
+        points, logl = self._get_ultranest_weighted_sample_arrays()
+        if points is None or parameter_index >= points.shape[1]:
+            return None
+
+        values = np.asarray(points[:, parameter_index], dtype=float)
+        finite = np.isfinite(values) & np.isfinite(logl)
+        if np.count_nonzero(finite) < 2:
+            return None
+
+        finite_values = values[finite]
+        finite_logl = logl[finite]
+        max_logl = float(np.nanmax(finite_logl))
+        if not np.isfinite(max_logl):
+            return None
+
+        selected_values = None
+        selected_delta = np.inf
+        for delta_chi2 in (1.0, 4.0, 9.0, 16.0, 25.0, np.inf):
+            if np.isfinite(delta_chi2):
+                mask = 2.0 * (max_logl - finite_logl) <= delta_chi2
+            else:
+                mask = np.ones(finite_logl.shape, dtype=bool)
+            if np.count_nonzero(mask) >= minimum_count or delta_chi2 == np.inf:
+                selected_values = finite_values[mask]
+                selected_delta = delta_chi2
+                break
+
+        if selected_values is None or selected_values.size < 2:
+            return None
+
+        lower, upper = np.nanpercentile(selected_values, [15.8655, 84.1345])
+        std = float(np.nanstd(selected_values))
+        half_width = float(0.5 * (upper - lower))
+        candidates = [value for value in (std, half_width) if np.isfinite(value) and value > 0]
+        if not candidates:
+            return None
+
+        error = float(max(candidates))
+        return {
+            'error': error,
+            'quantiles': [float(lower), float(upper)],
+            'sample_count': int(selected_values.size),
+            'delta_chi2': float(selected_delta),
+        }
+
+    def _ultranest_error_needs_sample_fallback(self, parameter_index, center, reported_error):
+        points, _ = self._get_ultranest_weighted_sample_arrays()
+        if points is None or parameter_index >= points.shape[1]:
+            return False
+
+        values = np.asarray(points[:, parameter_index], dtype=float)
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size < 2:
+            return False
+
+        sample_scale = float(np.nanstd(finite_values))
+        if not np.isfinite(sample_scale) or sample_scale <= 0:
+            return False
+
+        try:
+            reported_error = float(reported_error)
+        except (TypeError, ValueError):
+            return True
+
+        if not np.isfinite(reported_error) or reported_error <= 0:
+            return True
+
+        absolute_floor = max(abs(float(center)) * 1e-12, np.finfo(float).eps)
+        return reported_error <= absolute_floor or reported_error < sample_scale * 1e-6
+
     def _get_plot_range(self, key):
         sample_parameters = getattr(self, 'sample_parameters', {})
         sample_errors = getattr(self, 'sample_errors', {})
@@ -652,6 +737,37 @@ class lc_fitter(object):
             return [center - pad, center + pad]
 
         return [lower, upper]
+
+    def _expand_plot_range_for_sample_cloud(self, key, plot_range, sample_values, center):
+        sample_values = np.asarray(sample_values, dtype=float)
+        finite_values = sample_values[np.isfinite(sample_values)]
+        if finite_values.size < 2:
+            return plot_range
+
+        lower, upper = [float(value) for value in plot_range]
+        in_range = (finite_values >= lower) & (finite_values <= upper)
+        minimum_in_range = min(finite_values.size, max(8, int(0.05 * finite_values.size)))
+        if np.count_nonzero(in_range) >= minimum_in_range:
+            return plot_range
+
+        q_lower, q_upper = np.nanpercentile(finite_values, [0.5, 99.5])
+        new_lower = min(float(q_lower), float(center))
+        new_upper = max(float(q_upper), float(center))
+        padding = 0.05 * (new_upper - new_lower)
+        if not np.isfinite(padding) or padding <= 0:
+            padding = max(abs(float(center)) * 1e-6, 1e-6)
+        new_lower -= padding
+        new_upper += padding
+
+        sample_bounds = getattr(self, 'sample_bounds', self.bounds)
+        if key in sample_bounds:
+            bound_lower, bound_upper = sample_bounds[key]
+            new_lower = max(new_lower, float(bound_lower))
+            new_upper = min(new_upper, float(bound_upper))
+
+        if not np.isfinite(new_lower) or not np.isfinite(new_upper) or new_lower >= new_upper:
+            return plot_range
+        return [float(new_lower), float(new_upper)]
 
     def _get_triangle_plot_samples(self):
         if self.ns_type == 'ultranest':
@@ -1112,12 +1228,19 @@ class lc_fitter(object):
         mask_centers = []
         mask_errors = []
 
-        for key in sampled_keys:
+        for i, key in enumerate(sampled_keys):
             center = sample_parameters.get(key, self.parameters.get(key, 0.0))
             error = sample_errors.get(key, self.errors.get(key, 0.0))
             label = flabels.get(key, key)
             title = f"{center:.5f} +- {error:.5f}"
             plot_range = self._get_plot_range(key)
+            if sample_points.ndim == 2 and i < sample_points.shape[1]:
+                plot_range = self._expand_plot_range_for_sample_cloud(
+                    key,
+                    plot_range,
+                    sample_points[:, i],
+                    center,
+                )
 
             if display_spec is not None and key == display_spec['key']:
                 label = display_spec['label']
@@ -1451,7 +1574,7 @@ class lc_fitter(object):
 
         try:
             self.ns_type = 'ultranest'
-            test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform)
+            test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)
 
             self.results = run_reactive_sampler(
                 test,
@@ -1461,13 +1584,25 @@ class lc_fitter(object):
 
             ml_point = self.results['maximum_likelihood']['point']
             self.sample_bounds = self._get_sample_bounds(bound_keys, physical_from_sample_point(ml_point))
+            self.ultranest_error_fallbacks = {}
 
             for i, key in enumerate(sampled_keys):
                 self.sample_parameters[key] = ml_point[i]
-                self.sample_errors[key] = self.results['posterior']['stdev'][i]
-                self.sample_quantiles[key] = [
+                reported_error = self.results['posterior']['stdev'][i]
+                reported_quantiles = [
                     self.results['posterior']['errlo'][i],
                     self.results['posterior']['errup'][i]]
+                if self._ultranest_error_needs_sample_fallback(i, ml_point[i], reported_error):
+                    fallback = self._loglike_neighborhood_uncertainty(i, ml_point[i])
+                else:
+                    fallback = None
+                if fallback is not None:
+                    self.sample_errors[key] = fallback['error']
+                    self.sample_quantiles[key] = fallback['quantiles']
+                    self.ultranest_error_fallbacks[key] = fallback
+                else:
+                    self.sample_errors[key] = reported_error
+                    self.sample_quantiles[key] = reported_quantiles
 
             physical_ml = physical_from_sample_point(ml_point)
             self.parameters.update(physical_ml)

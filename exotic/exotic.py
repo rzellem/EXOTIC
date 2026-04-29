@@ -126,6 +126,10 @@ try:  # plate solution
 except ImportError:  # package import
     from api.plate_solution import NextAstroPlateSolution, PlateSolution
 try:
+    from .api.ultranest_utils import get_mpi_status
+except ImportError:
+    from api.ultranest_utils import get_mpi_status
+try:
     from .api.http_compression import build_compressed_json_request
 except ImportError:
     from api.http_compression import build_compressed_json_request
@@ -191,6 +195,9 @@ _UNHANDLED_EXCEPTION_LOGGED = False
 _BJD_FALLBACK_WARNING_LOGGED = False
 _RUNTIME_FILE_HANDLER_NAME = "exotic-runtime-file"
 _RUNTIME_CONSOLE_HANDLER_NAME = "exotic-runtime-console"
+_RUNTIME_TRACEBACK_WATCHDOG_SECONDS_ENV = "EXOTIC_RUNTIME_TRACEBACK_WATCHDOG_SECONDS"
+_RUNTIME_TRACEBACK_WATCHDOG_DEFAULT_SECONDS = 1800.0
+_RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = False
 _mid_transit_warning_reported = False
 RELATIVE_FLUX_MAX = 2.0  # Legacy threshold retained for compatibility; no longer used as a hard rejection cap.
 AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
@@ -208,11 +215,13 @@ COMPARISON_IMAGE_OUTLIER_MIN_VALID_PAIRS = 2
 COMPARISON_IMAGE_OUTLIER_MIN_SCATTER = 1e-4
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
+ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
+ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
 RPRS_SEARCH_BOUND_MAX = 1.0
 RPRS_RETRY_MIN_HALF_WIDTH = 0.05
-INITIAL_RPRS_BOUND_LOWER_SCALE = 0.25
+INITIAL_RPRS_BOUND_LOWER_SCALE = 0.0
 INITIAL_RPRS_BOUND_UPPER_SCALE = 3.0
 ARS_SEARCH_BOUND_MIN = 1e-6
 ARS_SEARCH_BOUND_FALLBACK_MAX = 100.0
@@ -1493,6 +1502,17 @@ def lightcurve_fit_transit_qc_failure_reason(fit):
     return "Transit detection QC flagged this fit as a poor transit candidate."
 
 
+def lightcurve_fit_transit_qc_passed(fit):
+    if fit is None:
+        return False
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        return str(transit_qc.get('status', '')).strip().lower() == 'pass'
+
+    return str(getattr(fit, 'transit_qc_status', '')).strip().lower() == 'pass'
+
+
 def make_json_safe(value):
     if isinstance(value, dict):
         return {str(key): make_json_safe(subvalue) for key, subvalue in value.items()}
@@ -1547,25 +1567,17 @@ def triangle_plot_output_path(save_dir, planet_name, observation_date):
     return Path(save_dir) / "temp" / f"Triangle_{planet_name}_{observation_date}.png"
 
 
+def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observation_date, comp_index):
+    return (
+        Path(save_dir)
+        / "temp"
+        / f"Comp{int(comp_index) + 1}_Triangle_{planet_name}_{observation_date}.png"
+    )
+
+
 def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, source_dir=None):
     output_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if source_dir is not None:
-        source_path = triangle_plot_output_path(source_dir, planet_name, observation_date)
-        try:
-            same_path = source_path.resolve() == output_path.resolve()
-        except OSError:
-            same_path = False
-
-        if source_path.exists():
-            if same_path:
-                return output_path
-            try:
-                shutil.copy2(source_path, output_path)
-                return output_path
-            except OSError:
-                pass
 
     fig = fit.plot_triangle()
     fig.savefig(output_path)
@@ -1999,7 +2011,12 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
     if callable(triangle_plotter):
         try:
             fig = triangle_plotter()
-            triangle_plot_path = temp_dir / f"Triangle_{p_dict['pName']}_{observation_date}.png"
+            triangle_plot_path = comparison_candidate_triangle_plot_output_path(
+                candidate_dir,
+                p_dict['pName'],
+                observation_date,
+                comp_index,
+            )
             fig.savefig(triangle_plot_path)
             plt.close(fig)
         except Exception as exc:
@@ -2729,6 +2746,7 @@ def log_info(string, warn=False, error=False):
     else:
         print(string, flush=True)
     log.debug(string)
+    _reset_runtime_traceback_watchdog()
     return True
 
 
@@ -2739,11 +2757,54 @@ def _find_runtime_handler(handler_name):
     return None
 
 
+def _runtime_traceback_watchdog_seconds():
+    try:
+        return float(os.environ.get(
+            _RUNTIME_TRACEBACK_WATCHDOG_SECONDS_ENV,
+            _RUNTIME_TRACEBACK_WATCHDOG_DEFAULT_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        return _RUNTIME_TRACEBACK_WATCHDOG_DEFAULT_SECONDS
+
+
+def _reset_runtime_traceback_watchdog():
+    global _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE
+
+    if not _RUNTIME_LOGGING_CONFIGURED:
+        return
+
+    timeout = _runtime_traceback_watchdog_seconds()
+    if timeout <= 0:
+        cancel_runtime_traceback_watchdog()
+        return
+
+    try:
+        faulthandler.cancel_dump_traceback_later()
+    except Exception:
+        pass
+
+    try:
+        faulthandler.dump_traceback_later(timeout, repeat=False, file=sys.stdout)
+        _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = True
+    except Exception:
+        _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = False
+
+
+def cancel_runtime_traceback_watchdog():
+    global _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE
+
+    if not _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE:
+        return
+
+    try:
+        faulthandler.cancel_dump_traceback_later()
+    except Exception:
+        pass
+    _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = False
+
+
 def configure_runtime_logging():
     global _RUNTIME_LOGGING_CONFIGURED
-
-    if _RUNTIME_LOGGING_CONFIGURED:
-        return
 
     logging.root.setLevel(logging.DEBUG)
     log.setLevel(logging.DEBUG)
@@ -2765,12 +2826,18 @@ def configure_runtime_logging():
             )
             log.addHandler(file_handler)
 
-    if _find_runtime_handler(_RUNTIME_CONSOLE_HANDLER_NAME) is None:
+    console_handler = _find_runtime_handler(_RUNTIME_CONSOLE_HANDLER_NAME)
+    if console_handler is None:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler._exotic_runtime_handler_name = _RUNTIME_CONSOLE_HANDLER_NAME
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter("%(message)s"))
         log.addHandler(console_handler)
+    else:
+        try:
+            console_handler.setStream(sys.stdout)
+        except Exception:
+            console_handler.stream = sys.stdout
 
     try:
         faulthandler.enable(file=sys.stdout, all_threads=True)
@@ -2778,14 +2845,45 @@ def configure_runtime_logging():
         pass
 
     _RUNTIME_LOGGING_CONFIGURED = True
+    _reset_runtime_traceback_watchdog()
+
+
+def _logger_has_current_stdout_handler(logger):
+    current_stdout = sys.stdout
+    active_logger = logger
+    while active_logger:
+        for handler in active_logger.handlers:
+            if getattr(handler, "stream", None) is current_stdout:
+                return True
+        if not getattr(active_logger, "propagate", False):
+            break
+        active_logger = active_logger.parent
+    return False
+
+
+def _write_exception_traceback_to_stdout(message, exc_type, exc_value, exc_traceback):
+    traceback_text = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    try:
+        print(f"\n{message}", file=sys.stdout, flush=True)
+        print(traceback_text, file=sys.stdout, end="", flush=True)
+    except Exception:
+        try:
+            print(f"\n{message}", file=sys.__stdout__, flush=True)
+            print(traceback_text, file=sys.__stdout__, end="", flush=True)
+        except Exception:
+            pass
 
 
 def _log_exception_with_fallback(message, exc_type, exc_value, exc_traceback):
+    wrote_to_logger = False
     try:
         log.error(message, exc_info=(exc_type, exc_value, exc_traceback))
+        wrote_to_logger = True
     except Exception:
-        print(message)
-        traceback.print_exception(exc_type, exc_value, exc_traceback, file=sys.stdout)
+        pass
+
+    if not wrote_to_logger or not _logger_has_current_stdout_handler(log):
+        _write_exception_traceback_to_stdout(message, exc_type, exc_value, exc_traceback)
 
 
 def _handle_unhandled_exception(exc_type, exc_value, exc_traceback):
@@ -3076,6 +3174,95 @@ def should_assess_all_comparisons_before_selecting_best(config_value):
         warn=True,
     )
     return True
+
+
+def should_exit_at_first_qc_pass_solution(config_value):
+    if config_value is None:
+        return True
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'exit_at_first_qc_pass_solution' value; "
+        "defaulting to exit at the first QC PASS solution.",
+        warn=True,
+    )
+    return True
+
+
+def parse_ultranest_min_num_live_points(config_value):
+    if config_value is None:
+        return ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT
+
+    if isinstance(config_value, str) and config_value.strip() == "":
+        return ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT
+
+    try:
+        live_points = int(float(str(config_value).strip()))
+    except (TypeError, ValueError):
+        log_info(
+            "Warning: Invalid 'minimum number of live points for ultranest' value; "
+            f"defaulting to {ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT}.",
+            warn=True,
+        )
+        return ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT
+
+    if live_points <= 0:
+        log_info(
+            "Warning: 'minimum number of live points for ultranest' must be positive; "
+            f"defaulting to {ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT}.",
+            warn=True,
+        )
+        return ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT
+
+    return live_points
+
+
+def configure_ultranest_min_num_live_points(config_value):
+    live_points = parse_ultranest_min_num_live_points(config_value)
+    os.environ[ULTRANEST_MIN_NUM_LIVE_POINTS_ENV] = str(live_points)
+    return live_points
+
+
+def log_ultranest_mpi_status():
+    status = get_mpi_status()
+    size = int(status.get("size") or 1)
+    rank = int(status.get("rank") or 0)
+    if size <= 1 or rank != 0:
+        return status
+
+    if status.get("available"):
+        log_info(f"UltraNest MPI mode detected: {size} process(es).")
+    else:
+        log_info(
+            "Warning: MPI launch detected, but mpi4py is unavailable; "
+            "UltraNest cannot coordinate MPI workers until mpi4py is installed.",
+            warn=True,
+        )
+    return status
+
+
+def validate_ultranest_mpi_runtime():
+    status = get_mpi_status()
+    size = int(status.get("size") or 1)
+    if size <= 1:
+        return status
+
+    message = (
+        "EXOTIC was launched under MPI, which duplicates the full reduction on every rank. "
+        "Start EXOTIC once and set EXOTIC_ULTRANEST_WORKERS to control UltraNest CPU parallelism."
+    )
+    if int(status.get("rank") or 0) == 0:
+        log_info(f"Error: {message}", error=True)
+    raise RuntimeError(message)
 
 
 def should_use_psf_photometry(config_value):
@@ -10142,6 +10329,7 @@ def summarize_lightcurve_fit_assessment(fit):
         'airmass_correction_note': getattr(fit, 'airmass_correction_note', None),
         'nested_tmid_refinement_applied': bool(getattr(fit, 'nested_tmid_refinement_applied', False)),
         'nested_tmid_refinement_note': getattr(fit, 'nested_tmid_refinement_note', None),
+        'ultranest_error_fallbacks': getattr(fit, 'ultranest_error_fallbacks', {}) or {},
     }
 
 
@@ -10191,6 +10379,12 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         log_info(f"{indent}Airmass correction note: {assessment['airmass_correction_note']}")
     if assessment.get('nested_tmid_refinement_note'):
         log_info(f"{indent}Nested Tmid refinement note: {assessment['nested_tmid_refinement_note']}")
+    if assessment.get('ultranest_error_fallbacks'):
+        fallback_keys = ", ".join(sorted(assessment['ultranest_error_fallbacks']))
+        log_info(
+            f"{indent}UltraNest uncertainty fallback note: replaced degenerate posterior "
+            f"summary error(s) for {fallback_keys} using the sampled log-likelihood neighborhood."
+        )
 
 
 def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, method_label, fit_diagnostics):
@@ -10265,6 +10459,8 @@ def log_comparison_candidate_evaluation_result(attempt):
 
 
 def comparison_selection_metric_label(selection_metric):
+    if selection_metric == 'first_qc_pass':
+        return "First QC PASS"
     if selection_metric == 'comparison_field_rank':
         return "Comparison-Field Rank"
     if selection_metric == 'ktmf':
@@ -10541,6 +10737,8 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
                 "selected: best available comparison-star fit after all completed candidates were rejected "
                 "by transit QC"
             )
+        if selection_metric == 'first_qc_pass':
+            return "selected: first completed comparison-star candidate with PASS transit QC"
         if selection_metric == 'ktmf' and np.isfinite(candidate_ktmf_metric):
             return "selected: highest KTMF in the chosen search"
         if selection_metric == 'eebls_snr' and np.isfinite(candidate_eebls_snr):
@@ -10566,6 +10764,13 @@ def comparison_candidate_fit_selection_reason(summary, photometry_info):
         return (
             "not selected: comparison-field QC fallback chose "
             f"Comp {selected_comp_num} as the best available rejected fit"
+        )
+    if selection_metric == 'first_qc_pass':
+        if selected_comp_num is None:
+            return "not selected: search stopped after another candidate reached PASS transit QC"
+        return (
+            "not selected: search stopped after "
+            f"Comp {selected_comp_num} reached PASS transit QC"
         )
 
     if selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
@@ -11634,6 +11839,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  use_eebls_to_initialize_tmid_and_bounds=True,
                                                  pick_comparison_by_eebls_snr=True,
                                                  assess_all_comparisons_before_selecting_best=True,
+                                                 exit_at_first_qc_pass_solution=True,
                                                  final_fit_baseline_duration_multiplier=
                                                  FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
                                                  use_adaptive_apertures=False,
@@ -11690,6 +11896,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         )
 
     attempts = []
+    stopped_after_first_qc_pass = False
     for rank, comp_summary in enumerate(ranked_summaries):
         comp_index = comp_summary['comp_index']
         ckey = comp_summary.get('key', f"comp{comp_index + 1}")
@@ -11813,6 +12020,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'rejected_by_transit_qc': final_reduction.get('applied', False) and transit_qc_failure_reason is not None,
             'selected': False,
             'selection_reason': None,
+            'search_stopped_after_qc_pass': False,
             'failed_run_dir': None,
             'final_output_dir': None,
             'full_reduction_applied': final_reduction.get('applied', False),
@@ -11858,6 +12066,19 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 attempt['failed_run_dir'] = str(archive_dir)
         log_comparison_candidate_evaluation_result(attempt)
         attempts.append(attempt)
+        if (
+            exit_at_first_qc_pass_solution
+            and attempt.get('fit') is not None
+            and attempt.get('full_reduction_applied', False)
+            and lightcurve_fit_transit_qc_passed(selection_fit)
+        ):
+            attempt['search_stopped_after_qc_pass'] = True
+            stopped_after_first_qc_pass = True
+            log_info(
+                "Stopping comparison-star candidate search after the first transit-QC PASS fit "
+                f"({attempt['label']})."
+            )
+            break
 
     selected_result = None
     completed_attempts = [
@@ -11873,9 +12094,19 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         for attempt in completed_attempts
         if not attempt.get('rejected_by_transit_qc', False)
     ]
+    first_qc_pass_attempt = next(
+        (
+            attempt for attempt in attempts
+            if attempt.get('search_stopped_after_qc_pass', False)
+        ),
+        None,
+    )
     selection_metric = 'ktmf'
     fallback_to_qc_rejected = False
-    if successful_attempts:
+    if first_qc_pass_attempt is not None:
+        selected_result = first_qc_pass_attempt
+        selection_metric = 'first_qc_pass'
+    elif successful_attempts:
         selected_result, selection_metric = select_preferred_comparison_attempt(
             successful_attempts,
             pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
@@ -11918,6 +12149,10 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                             "; this fit had the strongest transit-vs-flat Delta BIC "
                             f"({format_transit_delta_bic(selected_transit_delta_bic)})"
                         )
+                elif attempt.get('search_stopped_after_qc_pass', False):
+                    attempt['selection_reason'] = (
+                        "selected: first completed comparison-star candidate with PASS transit QC"
+                    )
                 elif selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
                     attempt['selection_reason'] = (
                         "selected: highest KTMF among the evaluated "
@@ -11945,6 +12180,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         f"{format_ktmf_metric(attempt.get('ktmf_metric', np.nan))} was lower than the selected "
                         f"{format_ktmf_metric(selected_ktmf_metric)}"
                     )
+                elif selection_metric == 'first_qc_pass':
+                    attempt['selection_reason'] = (
+                        "not selected: search stopped after the first comparison-star candidate "
+                        "with PASS transit QC"
+                    )
                 elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
                     if np.isfinite(attempt.get('eebls_snr', np.nan)):
                         attempt['selection_reason'] = (
@@ -11968,6 +12208,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         'attempts': attempts,
         'selected_result': selected_result,
         'selection_metric': selection_metric,
+        'stopped_after_first_qc_pass': stopped_after_first_qc_pass,
     }
 
 
@@ -12027,13 +12268,14 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def _main_impl():
     # command line args
     args = parse_args()
     if args.multiprocess_transformations is not None and args.multiprocess_transformations < 1:
         raise ValueError("--multiprocess-transformations requires an integer greater than 0.")
     if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits < 1:
         raise ValueError("--multiprocess-lightcurve-fits requires an integer greater than 0.")
+    validate_ultranest_mpi_runtime()
 
     log.debug("*************************")
     log.debug("EXOTIC reduction log file")
@@ -12184,6 +12426,14 @@ def main():
                 exotic_infoDict.get('use_impactparameter_rather_than_inclination_to_fit', 'y')
             )
         )
+        ultranest_min_num_live_points = configure_ultranest_min_num_live_points(
+            exotic_infoDict.get(
+                'ultranest_min_num_live_points',
+                ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT,
+            )
+        )
+        log_info(f"UltraNest minimum live points: {ultranest_min_num_live_points}.")
+        log_ultranest_mpi_status()
 
         # Make a temp directory of helpful files
         Path(Path(exotic_infoDict['save']) / "temp").mkdir(exist_ok=True)
@@ -12303,7 +12553,9 @@ def main():
                     exotic_infoDict['long'] = -110.951376
                     exotic_infoDict['pixel_bin'] = "2x2"
 
+            log_info("Calculating limb-darkening coefficients.")
             ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
+            log_info("Limb-darkening coefficients ready.")
 
             # check for EPW_MD5 checksum
             if 'EPW_MD5' in header:
@@ -12523,6 +12775,9 @@ def main():
             assess_all_comparisons_before_selecting_best = should_assess_all_comparisons_before_selecting_best(
                 exotic_infoDict.get('assess_all_comparisons_before_selecting_best', 'y')
             )
+            exit_at_first_qc_pass_solution = should_exit_at_first_qc_pass_solution(
+                exotic_infoDict.get('exit_at_first_qc_pass_solution', 'y')
+            )
             use_psf_photometry = should_use_psf_photometry(
                 exotic_infoDict.get('use_psf_photometry', 'y')
             )
@@ -12554,8 +12809,13 @@ def main():
             if not assess_all_comparisons_before_selecting_best:
                 log_info(
                     "Warning: 'assess_all_comparisons_before_selecting_best' is now ignored; "
-                    "all ranked comparison-star candidates will be fully reduced before selection.",
+                    "comparison-star target-fit search is controlled by 'exit_at_first_qc_pass_solution'.",
                     warn=True,
+                )
+            if not exit_at_first_qc_pass_solution:
+                log_info(
+                    "Comparison-star candidate search will evaluate all ranked candidates before selection "
+                    "because 'exit_at_first_qc_pass_solution' is disabled."
                 )
 
             pDict['use_deviation_from_expected_transit_in_qc'] = use_deviation_from_expected_transit_in_qc
@@ -13131,6 +13391,7 @@ def main():
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                     pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
                     assess_all_comparisons_before_selecting_best=assess_all_comparisons_before_selecting_best,
+                    exit_at_first_qc_pass_solution=exit_at_first_qc_pass_solution,
                     final_fit_baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
                     use_adaptive_apertures=use_adaptive_apertures,
                     adaptive_aperture_values=aperture_values,
@@ -13174,13 +13435,21 @@ def main():
                         selected_attempt.get('source_indices', np.arange(len(tFlux1), dtype=int)),
                         dtype=int,
                     )
-                    if selected_attempt.get('selected_despite_transit_qc', False):
+                    if selected_attempt.get('search_stopped_after_qc_pass', False):
+                        selection_basis = 'first_qc_pass'
+                    elif selected_attempt.get('selected_despite_transit_qc', False):
                         selection_basis = 'comparison_field_qc_fallback'
                     elif selected_comp_index == comparison_calibration['best_comp_index']:
                         selection_basis = 'comparison_field'
                     else:
                         selection_basis = 'comparison_field_retry'
-                    if selection_basis == 'comparison_field_qc_fallback':
+                    if selection_basis == 'first_qc_pass':
+                        log_info(
+                            "Comparison-star calibration target-fit selection chose "
+                            f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
+                            "because it was the first candidate to pass transit QC."
+                        )
+                    elif selection_basis == 'comparison_field_qc_fallback':
                         fallback_selection_metric = comparison_fit_search.get('selection_metric', 'ktmf')
                         if fallback_selection_metric == 'ktmf':
                             fallback_metric_value = format_ktmf_metric(
@@ -14080,6 +14349,24 @@ def main():
         log_info("************************")
 
         log.debug("Stopped ...")
+
+
+def main():
+    global _UNHANDLED_EXCEPTION_LOGGED
+
+    _UNHANDLED_EXCEPTION_LOGGED = False
+    configure_runtime_logging()
+    install_exception_hooks()
+
+    try:
+        return _main_impl()
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        _handle_unhandled_exception(type(exc), exc, exc.__traceback__)
+        raise
+    finally:
+        cancel_runtime_traceback_watchdog()
 
 
 def cli():

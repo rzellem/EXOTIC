@@ -105,6 +105,7 @@ from exotic.exotic import (
     compute_transit_qc_ktmf,
     apply_comparison_star_suitability_outlier_rejection,
     comparison_calibration_selection_reason,
+    comparison_candidate_triangle_plot_output_path,
     comparison_candidate_fit_selection_reason,
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
@@ -152,6 +153,7 @@ from exotic.exotic import (
     should_fit_lightcurve_to_every_comparison_candidate,
     should_detect_bad_pixels_before_photometry,
     should_use_aperture_photometry,
+    should_exit_at_first_qc_pass_solution,
     should_pick_comparison_by_eebls_snr,
     should_use_psf_photometry,
     should_skip_low_comparison_coverage_rejection,
@@ -162,10 +164,18 @@ from exotic.exotic import (
 )
 
 
-def test_save_final_triangle_plot_copies_selected_candidate_artifact(tmp_path):
+def test_save_final_triangle_plot_regenerates_even_when_selected_candidate_artifact_exists(tmp_path):
+    class DummyFigure:
+        def savefig(self, path):
+            Path(path).write_bytes(b"regenerated-final")
+
     class DummyFit:
+        def __init__(self):
+            self.called = False
+
         def plot_triangle(self):
-            raise AssertionError("final plot should be copied from the selected candidate")
+            self.called = True
+            return DummyFigure()
 
     planet_name = "TOI-1728 b"
     observation_date = "2024-12-14"
@@ -174,10 +184,11 @@ def test_save_final_triangle_plot_copies_selected_candidate_artifact(tmp_path):
     source_temp = source_dir / "temp"
     source_temp.mkdir(parents=True)
     source_plot = source_temp / f"Triangle_{planet_name}_{observation_date}.png"
-    source_plot.write_bytes(b"selected-comp-6")
+    source_plot.write_bytes(b"stale-selected-comp-6")
 
+    fit = DummyFit()
     output_path = save_final_triangle_plot(
-        DummyFit(),
+        fit,
         final_dir,
         planet_name,
         observation_date,
@@ -185,7 +196,20 @@ def test_save_final_triangle_plot_copies_selected_candidate_artifact(tmp_path):
     )
 
     assert output_path == final_dir / "temp" / source_plot.name
-    assert output_path.read_bytes() == b"selected-comp-6"
+    assert output_path.read_bytes() == b"regenerated-final"
+    assert fit.called is True
+
+
+def test_comparison_candidate_triangle_plot_uses_candidate_specific_name(tmp_path):
+    output_path = comparison_candidate_triangle_plot_output_path(
+        tmp_path / "comp7",
+        "WASP-80 b",
+        "2025-06-22",
+        6,
+    )
+
+    assert output_path.name == "Comp7_Triangle_WASP-80 b_2025-06-22.png"
+    assert output_path.parent == tmp_path / "comp7" / "temp"
 
 
 def test_save_final_triangle_plot_regenerates_when_selected_artifact_missing(tmp_path):
@@ -724,6 +748,26 @@ def test_should_assess_all_comparisons_before_selecting_best_parses_values():
     assert should_assess_all_comparisons_before_selecting_best("y") is True
     assert should_assess_all_comparisons_before_selecting_best("n") is False
     assert should_assess_all_comparisons_before_selecting_best(True) is True
+
+
+def test_should_exit_at_first_qc_pass_solution_parses_values():
+    assert should_exit_at_first_qc_pass_solution(None) is True
+    assert should_exit_at_first_qc_pass_solution("y") is True
+    assert should_exit_at_first_qc_pass_solution("n") is False
+    assert should_exit_at_first_qc_pass_solution(True) is True
+
+
+def test_validate_ultranest_mpi_runtime_rejects_whole_program_mpi(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(
+        exotic_module,
+        "get_mpi_status",
+        lambda: {"available": True, "size": 72, "rank": 0, "source": "mpi4py", "error": None},
+    )
+
+    with pytest.raises(RuntimeError, match="duplicates the full reduction"):
+        exotic_module.validate_ultranest_mpi_runtime()
 
 
 def test_build_time_rejection_diagnostic_groups_contiguous_ranges():
@@ -2995,6 +3039,188 @@ def test_fit_ranked_comparison_calibration_candidates_selects_highest_ktmf_succe
     assert result["attempts"][0]["selection_reason"].startswith("not selected: KTMF")
 
 
+def test_fit_ranked_comparison_calibration_candidates_stops_at_first_qc_pass_by_default(monkeypatch):
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    call_markers = []
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        comp_marker = int(np.nanmedian(cflux))
+        call_markers.append(comp_marker)
+        status_map = {50: "marginal", 40: "pass", 30: "pass"}
+        ktmf_map = {50: 4.90, 40: 3.20, 30: 5.00}
+        status = status_map[comp_marker]
+        ktmf_metric = ktmf_map[comp_marker]
+        fit = types.SimpleNamespace(
+            residuals=np.full(6, 0.01, dtype=float),
+            data=np.ones(6, dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc={
+                "status": status,
+                "summary": "ok",
+                "delta_bic": 12.0 + comp_marker / 100.0,
+                "ktmf_metric": ktmf_metric,
+                "ktmf_contributions": [],
+            },
+            transit_qc_status=status,
+            transit_qc_ktmf_metric=ktmf_metric,
+            transit_qc_delta_bic=12.0 + comp_marker / 100.0,
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+        "comp2": np.full((6, 1, 1), 40.0, dtype=float),
+        "comp3": np.full((6, 1, 1), 30.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {"label": "Comp 1", "aggregate_score": 0.01, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "aggregate_score": 0.02, "coverage_rejected": False, "comp_index": 1},
+            {"label": "Comp 3", "aggregate_score": 0.03, "coverage_rejected": False, "comp_index": 2},
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+    )
+
+    assert call_markers == [50, 40]
+    assert len(result["attempts"]) == 2
+    assert result["stopped_after_first_qc_pass"] is True
+    assert result["selection_metric"] == "first_qc_pass"
+    assert result["selected_result"]["comp_index"] == 1
+    assert result["selected_result"]["search_stopped_after_qc_pass"] is True
+    assert "first completed comparison-star candidate" in result["selected_result"]["selection_reason"]
+
+
+def test_fit_ranked_comparison_calibration_candidates_can_evaluate_all_qc_passes_when_exit_disabled(monkeypatch):
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    call_markers = []
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        comp_marker = int(np.nanmedian(cflux))
+        call_markers.append(comp_marker)
+        ktmf_metric = {50: 3.10, 40: 4.00, 30: 4.80}[comp_marker]
+        fit = types.SimpleNamespace(
+            residuals=np.full(6, 0.01, dtype=float),
+            data=np.ones(6, dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc={
+                "status": "pass",
+                "summary": "ok",
+                "delta_bic": 12.0 + comp_marker / 100.0,
+                "ktmf_metric": ktmf_metric,
+                "ktmf_contributions": [],
+            },
+            transit_qc_status="pass",
+            transit_qc_ktmf_metric=ktmf_metric,
+            transit_qc_delta_bic=12.0 + comp_marker / 100.0,
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+        "comp2": np.full((6, 1, 1), 40.0, dtype=float),
+        "comp3": np.full((6, 1, 1), 30.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {"label": "Comp 1", "aggregate_score": 0.01, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "aggregate_score": 0.02, "coverage_rejected": False, "comp_index": 1},
+            {"label": "Comp 3", "aggregate_score": 0.03, "coverage_rejected": False, "comp_index": 2},
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+        exit_at_first_qc_pass_solution=False,
+    )
+
+    assert call_markers == [50, 40, 30]
+    assert result["stopped_after_first_qc_pass"] is False
+    assert result["selection_metric"] == "ktmf"
+    assert result["selected_result"]["comp_index"] == 2
+    assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.80)
+
+
 def test_ranked_comparison_calibration_summaries_skip_suitability_outliers():
     ranked = ranked_comparison_calibration_summaries(
         {
@@ -4548,3 +4774,89 @@ def test_cli_logs_unhandled_exception_once(monkeypatch):
         exotic_module.cli()
 
     assert logged == [("Unhandled exception during EXOTIC run", RuntimeError, "boom", True)]
+
+
+def test_package_init_exports_lazy_main_and_cli(monkeypatch):
+    import exotic
+
+    monkeypatch.setattr(exotic, "_load_runtime_callable", lambda name: lambda: name)
+
+    assert exotic.main() == "main"
+    assert exotic.cli() == "cli"
+
+
+def test_package_init_loads_nested_runtime_for_archive_layout(monkeypatch):
+    import exotic
+
+    def fake_import_module(module_name):
+        if module_name == "exotic.exotic.exotic":
+            return types.SimpleNamespace(main=lambda: "nested-main")
+        raise AssertionError(f"unexpected import: {module_name}")
+
+    monkeypatch.setitem(exotic.__dict__, "__name__", "exotic.exotic")
+    monkeypatch.setattr(exotic, "import_module", fake_import_module)
+
+    assert exotic._load_runtime_callable("main")() == "nested-main"
+
+
+def test_configure_runtime_logging_rebinds_console_handler_to_current_stdout(monkeypatch):
+    import io
+    import exotic.exotic as exotic_module
+
+    original_handlers = list(exotic_module.log.handlers)
+    original_configured = exotic_module._RUNTIME_LOGGING_CONFIGURED
+
+    try:
+        exotic_module.log.handlers = []
+        exotic_module._RUNTIME_LOGGING_CONFIGURED = False
+
+        first_stdout = io.StringIO()
+        monkeypatch.setattr(exotic_module.sys, "stdout", first_stdout)
+        exotic_module.configure_runtime_logging()
+        handler = exotic_module._find_runtime_handler(exotic_module._RUNTIME_CONSOLE_HANDLER_NAME)
+        assert handler.stream is first_stdout
+
+        second_stdout = io.StringIO()
+        monkeypatch.setattr(exotic_module.sys, "stdout", second_stdout)
+        exotic_module.configure_runtime_logging()
+        assert handler.stream is second_stdout
+    finally:
+        exotic_module.log.handlers = original_handlers
+        exotic_module._RUNTIME_LOGGING_CONFIGURED = original_configured
+
+
+def test_log_exception_with_fallback_writes_traceback_to_current_stdout(monkeypatch, capsys):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "_logger_has_current_stdout_handler", lambda logger: False)
+
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as exc:
+        exotic_module._log_exception_with_fallback(
+            "Unhandled exception during EXOTIC run",
+            type(exc),
+            exc,
+            exc.__traceback__,
+        )
+
+    output = capsys.readouterr().out
+    assert "Unhandled exception during EXOTIC run" in output
+    assert "Traceback" in output
+    assert "RuntimeError: boom" in output
+
+
+def test_main_logs_direct_call_exceptions_to_current_stdout(monkeypatch, capsys):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda: None)
+    monkeypatch.setattr(exotic_module, "install_exception_hooks", lambda: None)
+    monkeypatch.setattr(exotic_module, "_logger_has_current_stdout_handler", lambda logger: False)
+    monkeypatch.setattr(exotic_module, "_main_impl", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        exotic_module.main()
+
+    output = capsys.readouterr().out
+    assert "Unhandled exception during EXOTIC run" in output
+    assert "RuntimeError: boom" in output

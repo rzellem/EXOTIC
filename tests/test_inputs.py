@@ -143,6 +143,36 @@ def test_comp_params_defaults_fit_lightcurve_to_every_comparison_candidate_to_no
     assert inputs.info_dict["fit_lightcurve_to_every_comparison_candidate"] == "n"
 
 
+def test_comp_params_defaults_ultranest_live_points_to_200(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["ultranest_min_num_live_points"] == 200
+
+
+def test_comp_params_defaults_exit_at_first_qc_pass_solution_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["exit_at_first_qc_pass_solution"] == "y"
+
+
 def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_path):
     init_data = {
         "user_info": {},
@@ -396,6 +426,36 @@ def test_comp_params_reads_fit_lightcurve_to_every_comparison_candidate_from_opt
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["fit_lightcurve_to_every_comparison_candidate"] == "y"
+
+
+def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"minimum number of live points for ultranest": 275},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["ultranest_min_num_live_points"] == 275
+
+
+def test_comp_params_reads_exit_at_first_qc_pass_solution_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"exit at first QC PASS solution": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["exit_at_first_qc_pass_solution"] == "n"
 
 
 def test_comp_params_reads_disable_vertical_flux_normalization_from_optional_info(tmp_path):

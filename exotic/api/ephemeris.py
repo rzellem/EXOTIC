@@ -109,17 +109,23 @@ class ephemeris_fitter(object):
 
         def loglike(pars):
             # chi-squared
-            model = pars[0] * self.epochs + pars[1]
-            return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
+            data = np.asarray(self.data, dtype=float)
+            dataerr = np.asarray(self.dataerr, dtype=float)
+            pars_array = np.asarray(pars, dtype=float)
+            if pars_array.ndim == 2:
+                model = pars_array[:, 0, None] * self.epochs[None, :] + pars_array[:, 1, None]
+                return -0.5 * np.sum(((data[None, :] - model) / dataerr[None, :]) ** 2, axis=1)
+            model = pars_array[0] * self.epochs + pars_array[1]
+            return -0.5 * np.sum(((data - model) / dataerr) ** 2)
 
         def prior_transform(upars):
             # transform unit cube to prior volume
             return (boundarray[:, 0] + bounddiff * upars)
 
-        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform, vectorized=True)
         self.results = run_reactive_sampler(
             sampler,
-            run_kwargs={"max_ncalls": int(4e5), "min_num_live_points": 420},
+            run_kwargs={"max_ncalls": int(4e5)},
             verbose=self.verbose,
         )
         # alloc data for best fit + error
@@ -698,17 +704,27 @@ class decay_fitter(object):
         def loglike(pars):
             # chi-squared
             # tmid = T0 + N*P + 0.5*dPdN*N**2 (eq 3 from paper)
-            model = pars[0] * self.epochs + pars[1] + 0.5 * pars[2] * self.epochs ** 2
-            return -0.5 * np.sum(((self.data - model) / self.dataerr) ** 2)
+            data = np.asarray(self.data, dtype=float)
+            dataerr = np.asarray(self.dataerr, dtype=float)
+            pars_array = np.asarray(pars, dtype=float)
+            if pars_array.ndim == 2:
+                model = (
+                    pars_array[:, 0, None] * self.epochs[None, :]
+                    + pars_array[:, 1, None]
+                    + 0.5 * pars_array[:, 2, None] * self.epochs[None, :] ** 2
+                )
+                return -0.5 * np.sum(((data[None, :] - model) / dataerr[None, :]) ** 2, axis=1)
+            model = pars_array[0] * self.epochs + pars_array[1] + 0.5 * pars_array[2] * self.epochs ** 2
+            return -0.5 * np.sum(((data - model) / dataerr) ** 2)
 
         def prior_transform(upars):
             # transform unit cube to prior volume
             return (boundarray[:, 0] + bounddiff * upars)
 
-        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform, vectorized=True)
         self.results = run_reactive_sampler(
             sampler,
-            run_kwargs={"max_ncalls": int(4e5), "min_num_live_points": 420},
+            run_kwargs={"max_ncalls": int(4e5)},
             verbose=self.verbose,
         )
         # alloc data for best fit + error

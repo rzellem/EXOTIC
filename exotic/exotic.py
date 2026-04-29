@@ -12367,6 +12367,16 @@ def _main_impl():
         generalDark, generalBias, generalFlat = np.empty(shape=(0, 0)), np.empty(shape=(0, 0)), np.empty(shape=(0, 0))
         demosaic_fmt = None
         demosaic_out = None
+        precheck_inputfile_count = None
+        post_wcs_inputfile_count = None
+        post_pointing_inputfile_count = None
+        dropped_wcs_files = []
+        dropped_pointing_files = []
+        ignore_header_wcs = False
+        bad_wcs_threshold_fraction = np.nan
+        pointing_rejection_sigma = np.nan
+        detect_bad_pixels_before_photometry = None
+        bad_pixel_reference = None
 
         if isinstance(args.reduce, str):
             fitsortext = 1
@@ -12565,6 +12575,7 @@ def _main_impl():
             times = np.array(times)[si]
             jd_times = np.array(jd_times)[si]
             inputfiles = np.array(inputfiles)[si]
+            precheck_inputfile_count = int(len(inputfiles))
             finite_plot_times = times[np.isfinite(times)]
             full_plot_time_range = None
             if finite_plot_times.size:
@@ -12588,6 +12599,7 @@ def _main_impl():
                 times = times[wcs_keep_mask]
                 jd_times = jd_times[wcs_keep_mask]
                 plateStatus.initializeFilenames(list(inputfiles))
+            post_wcs_inputfile_count = int(len(inputfiles))
             pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
             pointing_reference_file = inputfiles[0] if len(inputfiles) else None
             inputfiles, pointing_keep_mask, dropped_pointing_files = filter_pointing_outlier_frames(
@@ -12618,6 +12630,7 @@ def _main_impl():
                 if finite_plot_times.size:
                     full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
                 plateStatus.initializeFilenames(list(inputfiles))
+            post_pointing_inputfile_count = int(len(inputfiles))
 
             bad_pixel_reference = None
             if detect_bad_pixels_before_photometry:
@@ -14324,7 +14337,66 @@ def _main_impl():
         try:
             if bestCompStar:
                 exotic_infoDict['phot_comp_star'] = save_comp_ra_dec(wcs_file, ra_wcs, dec_wcs, comp_coords)
-            output_files.aavso(exotic_infoDict['phot_comp_star'], goodAirmasses, ld0, ld1, ld2, ld3, epw_md5)
+            aavso_photometry_info = photometry_info if fitsortext == 1 else None
+            aavso_frame_filtering_info = None
+            aavso_astrometry_info = None
+            aavso_bad_pixel_info = None
+            if fitsortext == 1:
+                aavso_frame_filtering_info = {
+                    'initial_frame_count': precheck_inputfile_count,
+                    'after_missing_wcs_filter_frame_count': post_wcs_inputfile_count,
+                    'final_prephotometry_frame_count': post_pointing_inputfile_count,
+                    'ignore_header_wcs': ignore_header_wcs,
+                    'bad_wcs_threshold_percent': (
+                        100.0 * bad_wcs_threshold_fraction
+                        if np.isfinite(bad_wcs_threshold_fraction)
+                        else np.nan
+                    ),
+                    'pointing_rejection_sigma': pointing_rejection_sigma,
+                    'dropped_missing_wcs_files': dropped_wcs_files,
+                    'dropped_pointing_files': dropped_pointing_files,
+                }
+                aavso_astrometry_info = {
+                    'wcs_file': str(wcs_file) if wcs_file else None,
+                    'coordinate_source': 'wcs' if wcs_file else 'input_pixels',
+                    'ignore_header_wcs': ignore_header_wcs,
+                    'plate_solution_option': exotic_infoDict.get('plate_opt'),
+                    'target_input_pixel': exotic_infoDict.get('tar_coords'),
+                    'comparison_input_pixels': exotic_infoDict.get('comp_stars'),
+                    'target_ra_dec_deg': ra_dec_tar,
+                    'comparison_ra_dec_deg': ra_dec_wcs,
+                    'catalog_ra_dec_deg': [pDict.get('ra'), pDict.get('dec')],
+                    'gaia_distance_pc': pDict.get('dist'),
+                    'proper_motion_ra_mas_yr': pDict.get('pm_ra'),
+                    'proper_motion_dec_mas_yr': pDict.get('pm_dec'),
+                }
+                aavso_bad_pixel_info = {
+                    'enabled': bool(detect_bad_pixels_before_photometry),
+                    'detected': bad_pixel_reference is not None,
+                }
+                if bad_pixel_reference is not None:
+                    bad_pixel_mask = np.asarray(bad_pixel_reference.get('mask'), dtype=bool)
+                    aavso_bad_pixel_info.update({
+                        'bad_pixel_count': int(np.count_nonzero(bad_pixel_mask)),
+                        'frame_count': bad_pixel_reference.get('frame_count'),
+                        'required_count': bad_pixel_reference.get('required_count'),
+                        'minimum_fraction': bad_pixel_reference.get('minimum_fraction'),
+                        'counts_path': bad_pixel_reference.get('counts_path'),
+                        'mask_path': bad_pixel_reference.get('mask_path'),
+                    })
+            output_files.aavso(
+                exotic_infoDict['phot_comp_star'],
+                goodAirmasses,
+                ld0,
+                ld1,
+                ld2,
+                ld3,
+                epw_md5,
+                photometry_info=aavso_photometry_info,
+                astrometry_info=aavso_astrometry_info,
+                frame_filtering_info=aavso_frame_filtering_info,
+                bad_pixel_info=aavso_bad_pixel_info,
+            )
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
         try:

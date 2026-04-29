@@ -33,6 +33,14 @@ class DummyFit:
         self.airmass_model = [1.0]
 
 
+def aavso_json_header(output_text, header_name):
+    prefix = f"#{header_name}="
+    for line in output_text.splitlines():
+        if line.startswith(prefix):
+            return json.loads(line[len(prefix):])
+    raise AssertionError(f"Missing {header_name} header")
+
+
 def test_aavso_output_includes_observatory_location_headers(tmp_path):
     fit = DummyFit()
     p_dict = {
@@ -403,3 +411,185 @@ def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_p
     assert "Am1=0 +/- 0" in output_text
     assert "Am2=0 +/- 0" in output_text
     assert output_text.strip().endswith("1.0")
+
+
+def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
+    fit = DummyFit()
+    fit.transit_qc = {
+        "computed": True,
+        "status": "pass",
+        "summary": "Transit model strongly preferred over flat/null model.",
+        "delta_bic": 18.4,
+        "delta_chi2": 27.1,
+        "residual_scatter": 0.0032,
+        "rprs_sigma": 6.2,
+        "duration_ratio": 1.05,
+        "eebls_depth_snr": 5.8,
+        "deviation_from_expected_value": 0.91,
+        "tmid_deviation_minutes": 3.2,
+        "tmid_deviation_sigma": 1.1,
+        "rprs_deviation_sigma": 0.8,
+        "ktmf_metric": 4.63,
+        "ktmf_contributions": [
+            {
+                "label": "Model Evidence",
+                "available": True,
+                "points": 0.74,
+                "max_points": 0.80,
+                "score": 0.93,
+                "detail": "Delta BIC=18.40",
+            }
+        ],
+    }
+    fit.frame_filter_diagnostics = [
+        {
+            "stage": "Final-fit phase residual clip",
+            "input_point_count": 4,
+            "kept_point_count": 3,
+            "dropped_point_count": 1,
+            "dropped_ranges": [{"start": 2450000.2, "end": 2450000.2, "count": 1}],
+        }
+    ]
+    p_dict = {
+        "pName": "HAT-P-32 b",
+        "sName": "HAT-P-32",
+        "pPer": 2.1500082,
+        "pPerUnc": 1.3e-07,
+        "rprs": 0.1488623525,
+        "rprsUnc": 0.0005539487,
+        "aRs": 5.344,
+        "aRsUnc": 0.03949,
+        "inc": 88.98,
+        "incUnc": 0.7602,
+        "ecc": 0.159,
+        "dist": 245.7,
+        "pm_ra": 14.25,
+        "pm_dec": -9.5,
+    }
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "aavso_num": "RTZ",
+        "second_obs": "",
+        "obs_name": "",
+        "camera": "CCD",
+        "pixel_bin": "1x1",
+        "exposure": 60.0,
+        "lat": "+32.41638889",
+        "long": "-110.73444444",
+        "elev": 2616,
+        "notes": "na",
+        "filter": "CV",
+        "filter_desc": "Clear with V zero-point",
+        "wl_min": None,
+        "wl_max": None,
+    }
+    photometry_info = {
+        "comp_star_num": 2,
+        "comp_star_coords": [300.5, 400.5],
+        "min_aperture": 7.5,
+        "min_annulus": 22.5,
+        "aperture_index": 1,
+        "annulus_index": 2,
+        "calibration_field_score": 0.0042,
+        "selection_basis": "comparison_field",
+        "selection_metric": "ktmf",
+        "comparison_ktmf_metric": 4.6,
+        "comparison_eebls_snr": 5.2,
+        "comparison_transit_delta_bic": 18.4,
+        "reuse_selected_full_reduction_fit": True,
+        "selected_source_indices": np.array([0, 2, 3]),
+        "selected_fit_good_times": np.array([2450000.0, 2450000.1, 2450000.2]),
+        "adaptive_summary": {
+            "aperture_sigma": 2.62,
+            "annulus_sigma": 9.00,
+            "frame_sigma": np.array([2.0, 2.1, 2.2]),
+            "fwhm_series": np.array([4.7, 4.8, 4.9]),
+            "sky_inner_series": np.array([12.0, 12.1, 12.2]),
+            "sky_outer_series": np.array([18.0, 18.1, 18.2]),
+            "sky_pixel_series": np.array([200.0, 201.0, 202.0]),
+            "aperture_median": 7.98,
+            "aperture_std": 0.41,
+            "aperture_min": 7.12,
+            "aperture_max": 8.76,
+            "annulus_median": 27.43,
+            "annulus_std": 1.39,
+            "annulus_min": 25.11,
+            "annulus_max": 30.08,
+        },
+    }
+    comp_star_header = {"ra": "10.1", "dec": "-20.2", "x": "493", "y": "202"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).aavso(
+        comp_star_header,
+        [1.0],
+        (0.1, 0.01),
+        (0.2, 0.01),
+        (0.3, 0.01),
+        (0.4, 0.01),
+        "abc123",
+        photometry_info=photometry_info,
+        frame_filtering_info={
+            "initial_frame_count": 5,
+            "after_missing_wcs_filter_frame_count": 4,
+            "final_prephotometry_frame_count": 3,
+            "ignore_header_wcs": False,
+            "bad_wcs_threshold_percent": 3.0,
+            "pointing_rejection_sigma": 3.0,
+            "dropped_missing_wcs_files": [tmp_path / "missing_wcs.fits"],
+            "dropped_pointing_files": [tmp_path / "bad_pointing.fits"],
+        },
+        astrometry_info={
+            "wcs_file": tmp_path / "wcs.fits",
+            "coordinate_source": "wcs",
+            "target_ra_dec_deg": [10.0, -20.0],
+            "comparison_ra_dec_deg": [[10.1, -20.2]],
+        },
+        bad_pixel_info={
+            "enabled": True,
+            "detected": True,
+            "bad_pixel_count": 3,
+            "frame_count": 10,
+            "required_count": 4,
+            "minimum_fraction": 0.3,
+            "counts_path": tmp_path / "temp" / "BadPixelDetectionCounts.fits",
+            "mask_path": tmp_path / "temp" / "BadPixelMask.fits",
+        },
+    )
+
+    output_text = (tmp_path / "AAVSO_HAT-P-32 b_2020-01-01.txt").read_text(encoding="utf-8")
+
+    results = aavso_json_header(output_text, "RESULTS-XC")
+    assert "a/R*" in results
+    assert "Impact Parameter (b)" in results
+    assert results["Transit depth (Rp/R*)^2"]["units"] == "percent"
+    assert results["Residual scatter around full model fit"]["value"] == "0.32"
+
+    qc = aavso_json_header(output_text, "QC-XC")
+    assert qc["status"] == "pass"
+    assert qc["ktmf_metric"] == pytest.approx(4.63)
+    assert qc["ktmf_contributions"][0]["label"] == "Model Evidence"
+
+    photometry = aavso_json_header(output_text, "PHOTOMETRY-XC")
+    assert photometry["selected_comparison_star"] == 2
+    assert photometry["comparison_field_score_percent"] == pytest.approx(0.42)
+    assert photometry["reused_selected_full_reduction_fit"] is True
+
+    aperture = aavso_json_header(output_text, "APERTURE-XC")
+    assert aperture["adaptive"] is True
+    assert aperture["aperture_sigma"] == pytest.approx(2.62)
+    assert aperture["fwhm_px"]["median"] == pytest.approx(4.8)
+
+    frame_filtering = aavso_json_header(output_text, "FRAME_FILTERING-XC")
+    assert frame_filtering["missing_wcs_rejections"]["files"] == ["missing_wcs.fits"]
+    assert frame_filtering["pointing_rejections"]["files"] == ["bad_pointing.fits"]
+    assert frame_filtering["lightcurve_dropped_point_count"] == 1
+
+    astrometry = aavso_json_header(output_text, "ASTROMETRY-XC")
+    assert astrometry["wcs_file"] == "wcs.fits"
+    assert astrometry["comparison_star_aavso_header"] == comp_star_header
+
+    bad_pixel = aavso_json_header(output_text, "BAD_PIXEL-XC")
+    assert bad_pixel["enabled"] is True
+    assert bad_pixel["bad_pixel_count"] == 3
+    assert bad_pixel["counts_path"] == "BadPixelDetectionCounts.fits"

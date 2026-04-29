@@ -61,6 +61,282 @@ def finite_float(value, default=np.nan):
     return value if np.isfinite(value) else default
 
 
+def aavso_json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): aavso_json_safe(subvalue) for key, subvalue in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [aavso_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0:
+            return aavso_json_safe(value.item())
+        return [aavso_json_safe(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return aavso_json_safe(value.item())
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, float):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, int):
+        return int(value)
+    return value
+
+
+def prune_aavso_metadata(value):
+    if isinstance(value, dict):
+        pruned = {}
+        for key, subvalue in value.items():
+            cleaned = prune_aavso_metadata(subvalue)
+            if cleaned is None or cleaned == "" or cleaned == [] or cleaned == {}:
+                continue
+            pruned[key] = cleaned
+        return pruned
+    if isinstance(value, np.ndarray):
+        return prune_aavso_metadata(value.tolist())
+    if isinstance(value, (list, tuple)):
+        return [
+            cleaned for cleaned in (prune_aavso_metadata(item) for item in value)
+            if cleaned is not None and cleaned != "" and cleaned != [] and cleaned != {}
+        ]
+    return aavso_json_safe(value)
+
+
+def format_aavso_json_header(name, payload):
+    payload = prune_aavso_metadata(payload)
+    if not payload:
+        return ""
+    return f"#{name}={dumps(payload, sort_keys=True)}\n"
+
+
+def aavso_result_entry(value, uncertainty=None, units=None):
+    value = finite_float(value)
+    uncertainty = finite_float(uncertainty)
+    if not np.isfinite(value):
+        return None
+
+    entry = {
+        'value': str(round_to_2(value, uncertainty)) if np.isfinite(uncertainty) else str(round_to_2(value)),
+    }
+    if np.isfinite(uncertainty):
+        entry['uncertainty'] = str(round_to_2(uncertainty))
+    if units:
+        entry['units'] = units
+    return entry
+
+
+def numeric_series_summary(values):
+    if values is None:
+        return {}
+
+    try:
+        series = np.asarray(values, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return {}
+
+    finite = series[np.isfinite(series)]
+    if finite.size == 0:
+        return {}
+
+    return {
+        'count': int(finite.size),
+        'median': float(np.nanmedian(finite)),
+        'std': float(np.nanstd(finite)),
+        'min': float(np.nanmin(finite)),
+        'max': float(np.nanmax(finite)),
+    }
+
+
+def path_name(value):
+    if value is None:
+        return None
+    return Path(str(value)).name
+
+
+def file_list_summary(files, limit=10):
+    files = list(files or [])
+    return {
+        'count': len(files),
+        'files': [path_name(file_name) for file_name in files[:limit]],
+        'omitted_file_count': max(0, len(files) - limit),
+    }
+
+
+def residual_scatter_fraction(fit):
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        qc_residual_scatter = finite_float(transit_qc.get('residual_scatter'))
+        if np.isfinite(qc_residual_scatter):
+            return qc_residual_scatter
+
+    residuals = np.asarray(getattr(fit, 'residuals', np.array([])), dtype=float)
+    data = np.asarray(getattr(fit, 'data', np.array([])), dtype=float)
+    if residuals.size == 0 or data.size == 0:
+        return np.nan
+
+    median_flux = np.nanmedian(data)
+    if not np.isfinite(median_flux) or median_flux == 0:
+        return np.nan
+
+    if residuals.shape == data.shape:
+        return float(np.nanstd(residuals) / median_flux)
+    if residuals.size == 1:
+        return float(abs(residuals.reshape(-1)[0]) / median_flux)
+    return np.nan
+
+
+def photometry_method_from_info(photometry_info):
+    if not isinstance(photometry_info, dict):
+        return None
+
+    min_aperture = photometry_info.get('min_aperture')
+    min_aperture = finite_float(min_aperture)
+    if not np.isfinite(min_aperture):
+        return None
+    if min_aperture == 0:
+        return "PSF photometry"
+    if min_aperture < 0:
+        return "Aperture photometry without comparison star"
+    return "Aperture photometry"
+
+
+def build_aavso_qc_metadata(fit):
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if not isinstance(transit_qc, dict):
+        return {}
+
+    fields = (
+        'computed', 'status', 'summary', 'preferred_model', 'point_count',
+        'transit_chi2', 'flat_chi2', 'delta_chi2', 'transit_bic', 'flat_bic',
+        'delta_bic', 'transit_parameter_count', 'flat_parameter_count',
+        'flat_baseline', 'flat_a2', 'flat_model_note', 'residual_scatter',
+        'rprs_sigma', 'duration_ratio', 'eebls_depth_snr',
+        'use_deviation_from_expected_transit_in_qc', 'deviation_sigma_threshold',
+        'expected_tmid', 'expected_tmid_unc', 'expected_tmid_unc_minutes',
+        'fitted_tmid', 'expected_rprs', 'expected_rprs_unc',
+        'tmid_deviation_days', 'tmid_deviation_minutes',
+        'tmid_deviation_threshold_minutes', 'tmid_deviation_sigma',
+        'rprs_deviation_sigma', 'tmid_deviation_score', 'rprs_deviation_score',
+        'deviation_from_expected_value', 'ktmf_metric', 'ktmf_contributions',
+        'notes',
+    )
+    return {field: transit_qc.get(field) for field in fields if field in transit_qc}
+
+
+def build_aavso_photometry_metadata(photometry_info):
+    if not isinstance(photometry_info, dict):
+        return {}
+
+    selected_source_indices = photometry_info.get('selected_source_indices')
+    selected_source_count = None
+    if selected_source_indices is not None:
+        try:
+            selected_source_count = int(np.asarray(selected_source_indices).size)
+        except (TypeError, ValueError):
+            selected_source_count = None
+
+    selected_times = numeric_series_summary(photometry_info.get('selected_fit_good_times'))
+    return {
+        'method': photometry_method_from_info(photometry_info),
+        'selected_comparison_star': photometry_info.get('comp_star_num'),
+        'selected_comparison_coordinates': photometry_info.get('comp_star_coords'),
+        'comparison_selection_basis': photometry_info.get('selection_basis'),
+        'comparison_selection_metric': photometry_info.get('selection_metric'),
+        'comparison_field_score': photometry_info.get('calibration_field_score'),
+        'comparison_field_score_percent': (
+            100.0 * finite_float(photometry_info.get('calibration_field_score'))
+            if np.isfinite(finite_float(photometry_info.get('calibration_field_score')))
+            else np.nan
+        ),
+        'selected_comparison_ktmf': photometry_info.get('comparison_ktmf_metric'),
+        'selected_comparison_eebls_snr': photometry_info.get('comparison_eebls_snr'),
+        'selected_comparison_transit_delta_bic': photometry_info.get('comparison_transit_delta_bic'),
+        'reused_selected_full_reduction_fit': photometry_info.get('reuse_selected_full_reduction_fit'),
+        'selected_source_point_count': selected_source_count,
+        'selected_fit_time_range': selected_times,
+    }
+
+
+def build_aavso_aperture_metadata(photometry_info):
+    if not isinstance(photometry_info, dict):
+        return {}
+
+    adaptive_summary = photometry_info.get('adaptive_summary')
+    payload = {
+        'method': photometry_method_from_info(photometry_info),
+        'aperture_index': photometry_info.get('aperture_index'),
+        'annulus_index': photometry_info.get('annulus_index'),
+        'configured_aperture_px': photometry_info.get('min_aperture'),
+        'configured_annulus_px': photometry_info.get('min_annulus'),
+        'adaptive': adaptive_summary is not None,
+    }
+    if not isinstance(adaptive_summary, dict):
+        return payload
+
+    payload.update({
+        'aperture_sigma': adaptive_summary.get('aperture_sigma'),
+        'annulus_sigma': adaptive_summary.get('annulus_sigma'),
+        'aperture_px': {
+            'median': adaptive_summary.get('aperture_median'),
+            'std': adaptive_summary.get('aperture_std'),
+            'min': adaptive_summary.get('aperture_min'),
+            'max': adaptive_summary.get('aperture_max'),
+        },
+        'annulus_px': {
+            'median': adaptive_summary.get('annulus_median'),
+            'std': adaptive_summary.get('annulus_std'),
+            'min': adaptive_summary.get('annulus_min'),
+            'max': adaptive_summary.get('annulus_max'),
+        },
+        'fwhm_px': numeric_series_summary(adaptive_summary.get('fwhm_series')),
+        'frame_sigma_px': numeric_series_summary(adaptive_summary.get('frame_sigma')),
+        'sky_inner_px': numeric_series_summary(adaptive_summary.get('sky_inner_series')),
+        'sky_outer_px': numeric_series_summary(adaptive_summary.get('sky_outer_series')),
+        'sky_pixels': numeric_series_summary(adaptive_summary.get('sky_pixel_series')),
+    })
+    return payload
+
+
+def build_aavso_frame_filtering_metadata(fit, frame_filtering_info):
+    payload = dict(frame_filtering_info or {})
+
+    for source_key, target_key in (
+        ('dropped_missing_wcs_files', 'missing_wcs_rejections'),
+        ('dropped_pointing_files', 'pointing_rejections'),
+    ):
+        if source_key in payload:
+            payload[target_key] = file_list_summary(payload.pop(source_key))
+
+    diagnostics = getattr(fit, 'frame_filter_diagnostics', None)
+    if diagnostics:
+        payload['lightcurve_filter_diagnostics'] = diagnostics
+        payload['lightcurve_dropped_point_count'] = sum(
+            int((diagnostic or {}).get('dropped_point_count', 0))
+            for diagnostic in diagnostics
+        )
+    return payload
+
+
+def build_aavso_astrometry_metadata(astrometry_info, comp_star):
+    payload = dict(astrometry_info or {})
+    if payload.get('wcs_file'):
+        payload['wcs_file'] = path_name(payload['wcs_file'])
+    if comp_star:
+        payload['comparison_star_aavso_header'] = comp_star
+    return payload
+
+
+def build_aavso_bad_pixel_metadata(bad_pixel_info):
+    if not isinstance(bad_pixel_info, dict):
+        return {}
+
+    payload = dict(bad_pixel_info)
+    for key in ('counts_path', 'mask_path'):
+        if payload.get(key):
+            payload[key] = path_name(payload[key])
+    return payload
+
+
 def format_parameter_with_error(value, error):
     value = finite_float(value)
     error = finite_float(error)
@@ -305,11 +581,19 @@ class OutputFiles:
         with params_file.open('w') as f:
             dump(final_params, f, indent=4)
 
-    def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3, epw_md5):
+    def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3, epw_md5,
+              photometry_info=None, astrometry_info=None, frame_filtering_info=None,
+              bad_pixel_info=None):
         priors_dict, filter_dict, results_dict = aavso_dicts(self.p_dict, self.fit, self.i_dict, self.durs,
                                                              ld0, ld1, ld2, ld3)
         aavso_airmass_terms = aavso_airmass_results(self.fit)
         detrend_model = aavso_detrend_model(self.fit)
+        qc_metadata = build_aavso_qc_metadata(self.fit)
+        photometry_metadata = build_aavso_photometry_metadata(photometry_info)
+        aperture_metadata = build_aavso_aperture_metadata(photometry_info)
+        frame_filtering_metadata = build_aavso_frame_filtering_metadata(self.fit, frame_filtering_info)
+        astrometry_metadata = build_aavso_astrometry_metadata(astrometry_info, comp_star)
+        bad_pixel_metadata = build_aavso_bad_pixel_metadata(bad_pixel_info)
         obs_name = format_aavso_header_value(self.i_dict.get('obs_name'))
         obs_name_header = f"#OBSNAME={obs_name}\n" if obs_name else ""
         gaia_dist = format_aavso_header_value(self.p_dict.get('dist'))
@@ -363,6 +647,12 @@ class OutputFiles:
                     f",{aavso_airmass_terms[0][0]}={aavso_airmass_terms[0][1]} +/- {aavso_airmass_terms[0][2]}"
                     f",{aavso_airmass_terms[1][0]}={aavso_airmass_terms[1][1]} +/- {aavso_airmass_terms[1][2]}\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
+            f.write(format_aavso_json_header("QC-XC", qc_metadata))
+            f.write(format_aavso_json_header("PHOTOMETRY-XC", photometry_metadata))
+            f.write(format_aavso_json_header("APERTURE-XC", aperture_metadata))
+            f.write(format_aavso_json_header("FRAME_FILTERING-XC", frame_filtering_metadata))
+            f.write(format_aavso_json_header("ASTROMETRY-XC", astrometry_metadata))
+            f.write(format_aavso_json_header("BAD_PIXEL-XC", bad_pixel_metadata))
 
             if epw_md5:
                 f.write(f"#EPW_MD5-XC={dumps({'epw_checkout_md5': epw_md5})}\n")
@@ -512,6 +802,38 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
         'value': aavso_airmass_terms[0][1],
         'uncertainty': aavso_airmass_terms[0][2]
     }
+    optional_results = {
+        'a/R*': aavso_result_entry(
+            fit.parameters.get('ars'),
+            fit.errors.get('ars'),
+        ),
+    }
+    impact_parameter, impact_error = fit_impact_parameter_value_error(fit)
+    optional_results['Impact Parameter (b)'] = aavso_result_entry(impact_parameter, impact_error)
+
+    rprs = finite_float(fit.parameters.get('rprs'))
+    rprs_error = finite_float(fit.errors.get('rprs'))
+    if np.isfinite(rprs):
+        optional_results['Transit depth (Rp/R*)^2'] = aavso_result_entry(
+            100.0 * (rprs ** 2.0),
+            100.0 * 2.0 * rprs * rprs_error if np.isfinite(rprs_error) else np.nan,
+            units="percent",
+        )
+
+    scatter = residual_scatter_fraction(fit)
+    optional_results['Residual scatter around full model fit'] = aavso_result_entry(
+        100.0 * scatter if np.isfinite(scatter) else np.nan,
+        units="percent",
+    )
+    if 'a0' in fit.parameters:
+        optional_results['a0'] = aavso_result_entry(fit.parameters.get('a0'), fit.errors.get('a0'))
+    elif 'a1' in fit.parameters:
+        optional_results['a1'] = aavso_result_entry(fit.parameters.get('a1'), fit.errors.get('a1'))
+
+    results.update({
+        key: value for key, value in optional_results.items()
+        if value is not None
+    })
 
     return priors, filter_type, results
 

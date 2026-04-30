@@ -10248,6 +10248,29 @@ def extract_lightcurve_fit_ktmf_contributions(fit):
     return contributions if isinstance(contributions, list) else []
 
 
+def compact_comparison_attempt_for_output(attempt):
+    if not isinstance(attempt, dict):
+        return {}
+
+    return {
+        'rank': attempt.get('rank'),
+        'comp_index': attempt.get('comp_index'),
+        'label': attempt.get('label'),
+        'selected': attempt.get('selected'),
+        'selection_reason': attempt.get('selection_reason'),
+        'ktmf_metric': attempt.get('ktmf_metric'),
+        'ktmf_contributions': attempt.get('ktmf_contributions') or [],
+        'transit_delta_bic': attempt.get('transit_delta_bic'),
+        'eebls_snr': attempt.get('eebls_snr'),
+        'residual_scatter': attempt.get('residual_scatter'),
+        'fit_point_count': attempt.get('fit_point_count'),
+        'transit_qc_status': attempt.get('transit_qc_status'),
+        'transit_qc_summary': attempt.get('transit_qc_summary'),
+        'rejected_by_transit_qc': attempt.get('rejected_by_transit_qc'),
+        'failure_reason': attempt.get('failure_reason'),
+    }
+
+
 def format_transit_delta_bic(value):
     if value is None:
         return "n/a"
@@ -13516,9 +13539,19 @@ def _main_impl():
                                            calibration_field_score=comparison_calibration['field_score'],
                                            selection_basis=selection_basis,
                                            selection_metric=comparison_fit_search.get('selection_metric', 'ktmf'),
+                                           selected_comparison_selection_reason=selected_attempt.get('selection_reason'),
+                                           selected_comparison_attempt=compact_comparison_attempt_for_output(selected_attempt),
+                                           comparison_fit_attempt_summaries=[
+                                               compact_comparison_attempt_for_output(attempt)
+                                               for attempt in comparison_fit_search.get('attempts', [])
+                                           ],
                                            comparison_ktmf_metric=selected_attempt.get('ktmf_metric', np.nan),
+                                           selected_comparison_ktmf_contributions=selected_attempt.get('ktmf_contributions') or [],
                                            comparison_eebls_snr=selected_attempt.get('eebls_snr', np.nan),
-                                           comparison_transit_delta_bic=selected_attempt.get('transit_delta_bic', np.nan))
+                                           comparison_transit_delta_bic=selected_attempt.get('transit_delta_bic', np.nan),
+                                           selected_comparison_fit_point_count=selected_attempt.get('fit_point_count'),
+                                           selected_comparison_transit_qc_status=selected_attempt.get('transit_qc_status'),
+                                           selected_comparison_transit_qc_summary=selected_attempt.get('transit_qc_summary'))
 
                     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
                                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
@@ -14329,7 +14362,8 @@ def _main_impl():
                                                     comp_star=bestCompStar, comp_coords=comp_coords,
                                                     min_aper=np.round(display_aperture, 2),
                                                     min_annul=np.round(display_annulus, 2),
-                                                    adaptive_summary=photometry_info.get('adaptive_summary'))
+                                                    adaptive_summary=photometry_info.get('adaptive_summary'),
+                                                    photometry_info=photometry_info)
             else:
                 output_files.final_planetary_params(phot_opt=False, vsp_params=vsp_params)
         except Exception as e:

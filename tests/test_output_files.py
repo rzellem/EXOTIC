@@ -355,6 +355,127 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
     assert "KTMF contribution 1" in output_text
 
 
+def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
+    fit = DummyFit()
+    fit.transit_qc = {
+        "status": "pass",
+        "summary": "Transit model strongly preferred over flat/null model.",
+        "ktmf_metric": 4.63,
+        "delta_bic": 18.4,
+        "delta_chi2": 27.1,
+        "ktmf_contributions": [
+            {
+                "label": "Model Evidence",
+                "available": True,
+                "points": 0.74,
+                "max_points": 0.80,
+                "score": 0.93,
+                "detail": "Delta BIC=18.40",
+            }
+        ],
+    }
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+    photometry_info = {
+        "selection_basis": "comparison_field_retry",
+        "selection_metric": "ktmf",
+        "comp_star_num": 2,
+        "comparison_ktmf_metric": 4.60,
+        "comparison_eebls_snr": 5.2,
+        "comparison_transit_delta_bic": 18.4,
+        "selected_comparison_selection_reason": "selected: highest KTMF among candidates",
+        "selected_comparison_ktmf_contributions": [
+            {
+                "label": "Residual Scatter Around Full Model Fit",
+                "available": True,
+                "points": 0.63,
+                "max_points": 0.70,
+                "score": 0.90,
+                "detail": "0.3500%",
+            }
+        ],
+        "comparison_fit_attempt_summaries": [
+            {
+                "rank": 1,
+                "comp_index": 0,
+                "label": "Comp 1",
+                "selected": False,
+                "selection_reason": "not selected: KTMF 3.20/5.00 was lower than the selected 4.60/5.00",
+                "ktmf_metric": 3.2,
+                "transit_delta_bic": 8.1,
+                "eebls_snr": 4.2,
+                "transit_qc_status": "marginal",
+            },
+            {
+                "rank": 2,
+                "comp_index": 1,
+                "label": "Comp 2",
+                "selected": True,
+                "selection_reason": "selected: highest KTMF among candidates",
+                "ktmf_metric": 4.6,
+                "transit_delta_bic": 18.4,
+                "eebls_snr": 5.2,
+                "transit_qc_status": "pass",
+            },
+        ],
+    }
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=True,
+        vsp_params=[],
+        comp_star=2,
+        comp_coords=[300.5, 400.5],
+        min_aper=7.5,
+        min_annul=22.5,
+        photometry_info=photometry_info,
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_data = json.loads(output_file.read_text(encoding="utf-8"))
+    final_params = output_data["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["KTMF target-fit decision"] == "PASS: KTMF=4.63 / 5.00"
+    assert final_params["KTMF comparison selection mode"] == "basis=comparison_field_retry, metric=ktmf"
+    assert "selected: highest KTMF" in final_params["KTMF selected comparison decision"]
+    assert "Comp 1" in final_params["KTMF comparison candidate 1"]
+    assert "not selected: KTMF" in final_params["KTMF comparison candidate 1"]
+    assert "Residual Scatter Around Full Model Fit" in final_params["KTMF selected comparison contribution 1"]
+
+
+def test_final_planetary_params_reports_absolute_fit_quality(tmp_path):
+    fit = DummyFit()
+    fit.data = np.array([1.0, 1.02, 0.98, 1.01, 0.99, 1.0])
+    fit.model = np.ones(6, dtype=float)
+    fit.residuals = fit.data - fit.model
+    fit.dataerr = np.full(6, 0.01, dtype=float)
+    fit.time = np.arange(6, dtype=float)
+    fit.airmass_model = np.ones(6, dtype=float)
+    fit.bounds = {"tmid": [0, 1], "rprs": [0, 1], "a1": [0, 2]}
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_data = json.loads(output_file.read_text(encoding="utf-8"))
+    final_params = output_data["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Fit quality reduced chi-square"] == "3.333"
+    assert final_params["Fit quality chi-square"] == "10.00"
+    assert final_params["Fit quality degrees of freedom"] == "3"
+    assert final_params["Fit quality RMS residual"] == "1.2910 %"
+    assert final_params["Fit quality median absolute normalized residual"] == "1.00 sigma"
+    assert final_params["Fit quality RMS residual / median uncertainty"] == "1.29"
+    assert final_params["Fit quality point count"] == "6"
+
+
 def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_path):
     fit = DummyFit()
     fit.airmass_fit_skipped = True
@@ -415,6 +536,13 @@ def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_p
 
 def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     fit = DummyFit()
+    fit.data = np.array([1.0, 1.02, 0.98, 1.01, 0.99, 1.0])
+    fit.model = np.ones(6, dtype=float)
+    fit.residuals = fit.data - fit.model
+    fit.dataerr = np.full(6, 0.01, dtype=float)
+    fit.time = np.arange(6, dtype=float) + 2450000.0
+    fit.airmass_model = np.ones(6, dtype=float)
+    fit.bounds = {"tmid": [0, 1], "rprs": [0, 1], "a1": [0, 2]}
     fit.transit_qc = {
         "computed": True,
         "status": "pass",
@@ -497,6 +625,52 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
         "comparison_ktmf_metric": 4.6,
         "comparison_eebls_snr": 5.2,
         "comparison_transit_delta_bic": 18.4,
+        "selected_comparison_selection_reason": "selected: highest KTMF among candidates",
+        "selected_comparison_ktmf_contributions": [
+            {
+                "label": "Residual Scatter Around Full Model Fit",
+                "available": True,
+                "points": 0.63,
+                "max_points": 0.70,
+                "score": 0.90,
+                "detail": "0.3500%",
+            }
+        ],
+        "comparison_fit_attempt_summaries": [
+            {
+                "rank": 1,
+                "comp_index": 0,
+                "label": "Comp 1",
+                "selected": False,
+                "selection_reason": "not selected: KTMF 3.20/5.00 was lower than the selected 4.60/5.00",
+                "ktmf_metric": 3.2,
+                "transit_delta_bic": 8.1,
+                "eebls_snr": 4.2,
+                "transit_qc_status": "marginal",
+                "ktmf_contributions": [],
+            },
+            {
+                "rank": 2,
+                "comp_index": 1,
+                "label": "Comp 2",
+                "selected": True,
+                "selection_reason": "selected: highest KTMF among candidates",
+                "ktmf_metric": 4.6,
+                "transit_delta_bic": 18.4,
+                "eebls_snr": 5.2,
+                "transit_qc_status": "pass",
+                "ktmf_contributions": [
+                    {
+                        "label": "Residual Scatter Around Full Model Fit",
+                        "available": True,
+                        "points": 0.63,
+                        "max_points": 0.70,
+                        "score": 0.90,
+                        "detail": "0.3500%",
+                    }
+                ],
+            },
+        ],
         "reuse_selected_full_reduction_fit": True,
         "selected_source_indices": np.array([0, 2, 3]),
         "selected_fit_good_times": np.array([2450000.0, 2450000.1, 2450000.2]),
@@ -522,7 +696,7 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
 
     OutputFiles(fit, p_dict, i_dict, [0.1]).aavso(
         comp_star_header,
-        [1.0],
+        np.ones(6, dtype=float),
         (0.1, 0.01),
         (0.2, 0.01),
         (0.3, 0.01),
@@ -569,6 +743,20 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     assert qc["status"] == "pass"
     assert qc["ktmf_metric"] == pytest.approx(4.63)
     assert qc["ktmf_contributions"][0]["label"] == "Model Evidence"
+
+    fit_quality = aavso_json_header(output_text, "FIT_QUALITY-XC")
+    assert fit_quality["reduced_chi_square"] == pytest.approx(10.0 / 3.0)
+    assert fit_quality["chi_square"] == pytest.approx(10.0)
+    assert fit_quality["degrees_of_freedom"] == 3
+    assert fit_quality["median_absolute_normalized_residual"] == pytest.approx(1.0)
+
+    ktmf_decision = aavso_json_header(output_text, "KTMF_DECISION-XC")
+    assert ktmf_decision["target_fit"]["ktmf_metric"] == pytest.approx(4.63)
+    assert ktmf_decision["comparison_selection"]["basis"] == "comparison_field"
+    assert ktmf_decision["comparison_selection"]["metric"] == "ktmf"
+    assert ktmf_decision["comparison_selection"]["selected"]["selection_reason"] == "selected: highest KTMF among candidates"
+    assert ktmf_decision["comparison_selection"]["candidate_count"] == 2
+    assert ktmf_decision["comparison_selection"]["candidates"][0]["selection_reason"].startswith("not selected: KTMF")
 
     photometry = aavso_json_header(output_text, "PHOTOMETRY-XC")
     assert photometry["selected_comparison_star"] == 2

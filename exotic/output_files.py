@@ -185,6 +185,133 @@ def residual_scatter_fraction(fit):
     return np.nan
 
 
+def fit_data_model_uncertainty(fit):
+    data = np.asarray(getattr(fit, 'data', np.array([])), dtype=float)
+    if data.ndim != 1 or data.size == 0:
+        return None, None, None
+
+    model = getattr(fit, 'model', None)
+    if model is None:
+        residuals = np.asarray(getattr(fit, 'residuals', np.array([])), dtype=float)
+        if residuals.shape == data.shape:
+            model = data - residuals
+    if model is None:
+        transit_model = getattr(fit, 'transit', None)
+        systematics_model = getattr(fit, 'airmass_model', None)
+        if transit_model is not None and systematics_model is not None:
+            model = np.asarray(transit_model, dtype=float) * np.asarray(systematics_model, dtype=float)
+    if model is None:
+        return data, None, None
+
+    model = np.asarray(model, dtype=float)
+    if model.shape != data.shape:
+        return data, None, None
+
+    uncertainty = getattr(fit, 'dataerr', None)
+    if uncertainty is not None:
+        uncertainty = np.asarray(uncertainty, dtype=float)
+        if uncertainty.shape != data.shape:
+            uncertainty = None
+
+    return data, model, uncertainty
+
+
+def infer_fit_quality_parameter_count(fit):
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        parameter_count = finite_float(transit_qc.get('transit_parameter_count'))
+        if np.isfinite(parameter_count) and parameter_count > 0:
+            return int(parameter_count)
+
+    bounds = getattr(fit, 'bounds', None)
+    if isinstance(bounds, dict) and bounds:
+        return len(bounds)
+
+    parameters = getattr(fit, 'parameters', None)
+    if isinstance(parameters, dict) and parameters:
+        return len(parameters)
+
+    return 0
+
+
+def build_fit_quality_metadata(fit):
+    data, model, uncertainty = fit_data_model_uncertainty(fit)
+    if data is None or model is None:
+        return {}
+
+    residuals = data - model
+    finite_mask = np.isfinite(data) & np.isfinite(model) & np.isfinite(residuals)
+    if not np.any(finite_mask):
+        return {}
+
+    finite_residuals = residuals[finite_mask]
+    median_flux = np.nanmedian(data[finite_mask])
+    rms_residual = float(np.sqrt(np.nanmean(finite_residuals ** 2)))
+    mad_residual = float(np.nanmedian(np.abs(finite_residuals)))
+    residual_scatter = (
+        float(np.nanstd(finite_residuals) / median_flux)
+        if np.isfinite(median_flux) and median_flux != 0
+        else np.nan
+    )
+    point_count = int(np.count_nonzero(finite_mask))
+    parameter_count = infer_fit_quality_parameter_count(fit)
+    degrees_of_freedom = point_count - parameter_count
+
+    payload = {
+        'point_count': point_count,
+        'parameter_count': parameter_count,
+        'degrees_of_freedom': degrees_of_freedom,
+        'rms_residual': rms_residual,
+        'rms_residual_percent': (
+            100.0 * rms_residual / median_flux
+            if np.isfinite(median_flux) and median_flux != 0
+            else np.nan
+        ),
+        'median_absolute_residual': mad_residual,
+        'median_flux': float(median_flux) if np.isfinite(median_flux) else np.nan,
+        'residual_scatter': residual_scatter,
+        'residual_scatter_percent': 100.0 * residual_scatter if np.isfinite(residual_scatter) else np.nan,
+        'uses_uncertainties': False,
+    }
+
+    if uncertainty is None:
+        return payload
+
+    uncertainty_mask = finite_mask & np.isfinite(uncertainty) & (uncertainty > 0)
+    if not np.any(uncertainty_mask):
+        return payload
+
+    weighted_residuals = residuals[uncertainty_mask]
+    weighted_uncertainties = uncertainty[uncertainty_mask]
+    normalized_residuals = weighted_residuals / weighted_uncertainties
+    chi_square = float(np.sum(normalized_residuals ** 2))
+    weighted_point_count = int(np.count_nonzero(uncertainty_mask))
+    weighted_degrees_of_freedom = weighted_point_count - parameter_count
+    median_uncertainty = float(np.nanmedian(weighted_uncertainties))
+
+    payload.update({
+        'uses_uncertainties': True,
+        'weighted_point_count': weighted_point_count,
+        'degrees_of_freedom': weighted_degrees_of_freedom,
+        'chi_square': chi_square,
+        'reduced_chi_square': (
+            chi_square / weighted_degrees_of_freedom
+            if weighted_degrees_of_freedom > 0
+            else np.nan
+        ),
+        'rms_normalized_residual': float(np.sqrt(np.nanmean(normalized_residuals ** 2))),
+        'median_absolute_normalized_residual': float(np.nanmedian(np.abs(normalized_residuals))),
+        'max_absolute_normalized_residual': float(np.nanmax(np.abs(normalized_residuals))),
+        'median_uncertainty': median_uncertainty,
+        'rms_residual_to_median_uncertainty': (
+            rms_residual / median_uncertainty
+            if np.isfinite(median_uncertainty) and median_uncertainty > 0
+            else np.nan
+        ),
+    })
+    return payload
+
+
 def photometry_method_from_info(photometry_info):
     if not isinstance(photometry_info, dict):
         return None
@@ -221,6 +348,284 @@ def build_aavso_qc_metadata(fit):
         'notes',
     )
     return {field: transit_qc.get(field) for field in fields if field in transit_qc}
+
+
+def compact_ktmf_contributions(contributions):
+    compact = []
+    for contribution in contributions or []:
+        if not isinstance(contribution, dict):
+            continue
+        compact.append({
+            'label': contribution.get('label'),
+            'available': contribution.get('available'),
+            'points': contribution.get('points'),
+            'max_points': contribution.get('max_points'),
+            'score': contribution.get('score'),
+            'detail': contribution.get('detail'),
+        })
+    return compact
+
+
+def compact_comparison_attempt_decision(attempt):
+    if not isinstance(attempt, dict):
+        return {}
+
+    comp_index = attempt.get('comp_index')
+    try:
+        comp_number = int(comp_index) + 1
+    except (TypeError, ValueError):
+        comp_number = None
+
+    return {
+        'rank': attempt.get('rank'),
+        'comparison_star': comp_number,
+        'label': attempt.get('label'),
+        'selected': attempt.get('selected'),
+        'selection_reason': attempt.get('selection_reason'),
+        'ktmf_metric': attempt.get('ktmf_metric'),
+        'ktmf_contributions': compact_ktmf_contributions(attempt.get('ktmf_contributions')),
+        'transit_delta_bic': attempt.get('transit_delta_bic'),
+        'eebls_snr': attempt.get('eebls_snr'),
+        'residual_scatter': attempt.get('residual_scatter'),
+        'fit_point_count': attempt.get('fit_point_count'),
+        'transit_qc_status': attempt.get('transit_qc_status'),
+        'transit_qc_summary': attempt.get('transit_qc_summary'),
+        'rejected_by_transit_qc': attempt.get('rejected_by_transit_qc'),
+        'failure_reason': attempt.get('failure_reason'),
+    }
+
+
+def compact_comparison_attempt_decisions(attempts, limit=10):
+    attempts = list(attempts or [])
+    return {
+        'candidate_count': len(attempts),
+        'candidates': [
+            compact_comparison_attempt_decision(attempt)
+            for attempt in attempts[:limit]
+        ],
+        'omitted_candidate_count': max(0, len(attempts) - limit),
+    }
+
+
+def build_ktmf_decision_metadata(fit, photometry_info=None):
+    transit_qc = getattr(fit, 'transit_qc', None)
+    payload = {}
+    if isinstance(transit_qc, dict):
+        payload['target_fit'] = {
+            'status': transit_qc.get('status'),
+            'summary': transit_qc.get('summary'),
+            'ktmf_metric': transit_qc.get('ktmf_metric'),
+            'ktmf_contributions': compact_ktmf_contributions(transit_qc.get('ktmf_contributions')),
+            'delta_bic': transit_qc.get('delta_bic'),
+            'delta_chi2': transit_qc.get('delta_chi2'),
+            'eebls_depth_snr': transit_qc.get('eebls_depth_snr'),
+            'residual_scatter': transit_qc.get('residual_scatter'),
+            'deviation_from_expected_value': transit_qc.get('deviation_from_expected_value'),
+        }
+
+    if isinstance(photometry_info, dict):
+        selected_attempt = photometry_info.get('selected_comparison_attempt')
+        selected_payload = compact_comparison_attempt_decision(selected_attempt)
+        if not selected_payload:
+            selected_payload = {
+                'comparison_star': photometry_info.get('comp_star_num'),
+                'selected': photometry_info.get('comp_star_num') is not None,
+                'selection_reason': photometry_info.get('selected_comparison_selection_reason'),
+                'ktmf_metric': photometry_info.get('comparison_ktmf_metric'),
+                'ktmf_contributions': compact_ktmf_contributions(
+                    photometry_info.get('selected_comparison_ktmf_contributions')
+                ),
+                'transit_delta_bic': photometry_info.get('comparison_transit_delta_bic'),
+                'eebls_snr': photometry_info.get('comparison_eebls_snr'),
+                'fit_point_count': photometry_info.get('selected_comparison_fit_point_count'),
+                'transit_qc_status': photometry_info.get('selected_comparison_transit_qc_status'),
+                'transit_qc_summary': photometry_info.get('selected_comparison_transit_qc_summary'),
+            }
+
+        payload['comparison_selection'] = {
+            'basis': photometry_info.get('selection_basis'),
+            'metric': photometry_info.get('selection_metric'),
+            'field_score': photometry_info.get('calibration_field_score'),
+            'selected': selected_payload,
+        }
+
+        attempt_summary = compact_comparison_attempt_decisions(
+            photometry_info.get('comparison_fit_attempt_summaries')
+        )
+        if attempt_summary['candidate_count']:
+            payload['comparison_selection'].update(attempt_summary)
+
+    return payload
+
+
+def format_ktmf_metric(value):
+    value = finite_float(value)
+    return f"{value:.2f} / 5.00" if np.isfinite(value) else "n/a"
+
+
+def format_optional_metric(label, value, precision=2):
+    value = finite_float(value)
+    if not np.isfinite(value):
+        return None
+    return f"{label}={value:.{precision}f}"
+
+
+def format_ktmf_candidate_decision(attempt):
+    attempt = compact_comparison_attempt_decision(attempt)
+    label = attempt.get('label') or (
+        f"Comp {attempt['comparison_star']}" if attempt.get('comparison_star') is not None else "Comparison candidate"
+    )
+    selected_text = " [selected]" if attempt.get('selected') else ""
+    parts = [
+        f"{label}{selected_text}: KTMF={format_ktmf_metric(attempt.get('ktmf_metric'))}",
+    ]
+    for metric_text in (
+        format_optional_metric("Delta BIC", attempt.get('transit_delta_bic')),
+        format_optional_metric("EEBLS SNR", attempt.get('eebls_snr')),
+    ):
+        if metric_text:
+            parts.append(metric_text)
+    qc_status = attempt.get('transit_qc_status')
+    if qc_status:
+        parts.append(f"QC={str(qc_status).upper()}")
+    reason = attempt.get('selection_reason') or attempt.get('failure_reason')
+    if reason:
+        parts.append(f"reason={reason}")
+    return ", ".join(parts)
+
+
+def format_ktmf_decision_final_params(fit, photometry_info=None):
+    params = {}
+
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if isinstance(transit_qc, dict):
+        ktmf_metric = finite_float(transit_qc.get('ktmf_metric'))
+        if np.isfinite(ktmf_metric):
+            target_status = str(transit_qc.get('status', 'unknown')).upper()
+            params["KTMF target-fit decision"] = (
+                f"{target_status}: KTMF={format_ktmf_metric(ktmf_metric)}"
+            )
+        for contribution_index, contribution in enumerate(
+            compact_ktmf_contributions(transit_qc.get('ktmf_contributions')),
+            start=1,
+        ):
+            label = contribution.get('label', f'Component {contribution_index}')
+            available = bool(contribution.get('available'))
+            points = finite_float(contribution.get('points'), 0.0)
+            max_points = finite_float(contribution.get('max_points'), 0.0)
+            score = finite_float(contribution.get('score'))
+            detail = contribution.get('detail') or 'n/a'
+            if available and np.isfinite(score):
+                params[f"KTMF target contribution {contribution_index}"] = (
+                    f"{label}: +{points:.2f}/{max_points:.2f} (score={score:.2f}; {detail})"
+                )
+            else:
+                params[f"KTMF target contribution {contribution_index}"] = (
+                    f"{label}: +0.00/0.00 (unavailable; {detail})"
+                )
+
+    if not isinstance(photometry_info, dict):
+        return params
+
+    basis = photometry_info.get('selection_basis')
+    metric = photometry_info.get('selection_metric')
+    if basis or metric:
+        params["KTMF comparison selection mode"] = (
+            f"basis={basis or 'n/a'}, metric={metric or 'n/a'}"
+        )
+
+    selected_attempt = photometry_info.get('selected_comparison_attempt')
+    if selected_attempt:
+        params["KTMF selected comparison decision"] = format_ktmf_candidate_decision(selected_attempt)
+    elif photometry_info.get('comp_star_num') is not None:
+        selected_payload = {
+            'label': f"Comp {photometry_info.get('comp_star_num')}",
+            'selected': True,
+            'selection_reason': photometry_info.get('selected_comparison_selection_reason'),
+            'ktmf_metric': photometry_info.get('comparison_ktmf_metric'),
+            'ktmf_contributions': photometry_info.get('selected_comparison_ktmf_contributions'),
+            'transit_delta_bic': photometry_info.get('comparison_transit_delta_bic'),
+            'eebls_snr': photometry_info.get('comparison_eebls_snr'),
+            'transit_qc_status': photometry_info.get('selected_comparison_transit_qc_status'),
+        }
+        params["KTMF selected comparison decision"] = format_ktmf_candidate_decision(selected_payload)
+
+    for contribution_index, contribution in enumerate(
+        compact_ktmf_contributions(photometry_info.get('selected_comparison_ktmf_contributions')),
+        start=1,
+    ):
+        label = contribution.get('label', f'Component {contribution_index}')
+        available = bool(contribution.get('available'))
+        points = finite_float(contribution.get('points'), 0.0)
+        max_points = finite_float(contribution.get('max_points'), 0.0)
+        score = finite_float(contribution.get('score'))
+        detail = contribution.get('detail') or 'n/a'
+        if available and np.isfinite(score):
+            params[f"KTMF selected comparison contribution {contribution_index}"] = (
+                f"{label}: +{points:.2f}/{max_points:.2f} (score={score:.2f}; {detail})"
+            )
+        else:
+            params[f"KTMF selected comparison contribution {contribution_index}"] = (
+                f"{label}: +0.00/0.00 (unavailable; {detail})"
+            )
+
+    for attempt_index, attempt in enumerate(
+        (photometry_info.get('comparison_fit_attempt_summaries') or [])[:10],
+        start=1,
+    ):
+        params[f"KTMF comparison candidate {attempt_index}"] = format_ktmf_candidate_decision(attempt)
+
+    return params
+
+
+def format_fit_quality_final_params(fit_quality):
+    fit_quality = fit_quality or {}
+    params = {}
+
+    reduced_chi_square = finite_float(fit_quality.get('reduced_chi_square'))
+    if np.isfinite(reduced_chi_square):
+        params["Fit quality reduced chi-square"] = f"{reduced_chi_square:.3f}"
+
+    chi_square = finite_float(fit_quality.get('chi_square'))
+    if np.isfinite(chi_square):
+        params["Fit quality chi-square"] = f"{chi_square:.2f}"
+
+    degrees_of_freedom = fit_quality.get('degrees_of_freedom')
+    try:
+        degrees_of_freedom = int(degrees_of_freedom)
+    except (TypeError, ValueError):
+        degrees_of_freedom = None
+    if degrees_of_freedom is not None:
+        params["Fit quality degrees of freedom"] = str(degrees_of_freedom)
+
+    rms_residual_percent = finite_float(fit_quality.get('rms_residual_percent'))
+    if np.isfinite(rms_residual_percent):
+        params["Fit quality RMS residual"] = f"{rms_residual_percent:.4f} %"
+
+    median_abs_normalized_residual = finite_float(
+        fit_quality.get('median_absolute_normalized_residual')
+    )
+    if np.isfinite(median_abs_normalized_residual):
+        params["Fit quality median absolute normalized residual"] = (
+            f"{median_abs_normalized_residual:.2f} sigma"
+        )
+
+    rms_uncertainty_ratio = finite_float(fit_quality.get('rms_residual_to_median_uncertainty'))
+    if np.isfinite(rms_uncertainty_ratio):
+        params["Fit quality RMS residual / median uncertainty"] = f"{rms_uncertainty_ratio:.2f}"
+
+    point_count = fit_quality.get('weighted_point_count', fit_quality.get('point_count'))
+    try:
+        point_count = int(point_count)
+    except (TypeError, ValueError):
+        point_count = None
+    if point_count is not None:
+        params["Fit quality point count"] = str(point_count)
+
+    if fit_quality and not fit_quality.get('uses_uncertainties'):
+        params["Fit quality note"] = "Per-point uncertainties unavailable; chi-square metrics not reported."
+
+    return params
 
 
 def build_aavso_photometry_metadata(photometry_info):
@@ -414,10 +819,11 @@ class OutputFiles:
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
-                               min_annul=None, adaptive_summary=None):
+                               min_annul=None, adaptive_summary=None, photometry_info=None):
         params_file = self.dir / "temp" / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
 
         transit_qc = getattr(self.fit, 'transit_qc', None)
+        fit_quality = build_fit_quality_metadata(self.fit)
         qc_residual_scatter = np.nan
         if isinstance(transit_qc, dict):
             qc_residual_scatter = transit_qc.get('residual_scatter', np.nan)
@@ -456,6 +862,8 @@ class OutputFiles:
             params_num["Impact Parameter (b)"] = impact_text
         if np.isfinite(qc_residual_scatter):
             params_num["Residual scatter around full model fit"] = f"{qc_residual_scatter * 100.0:.4f} %"
+        params_num.update(format_fit_quality_final_params(fit_quality))
+        params_num.update(format_ktmf_decision_final_params(self.fit, photometry_info))
         if getattr(self.fit, 'airmass_fit_skipped', False):
             params_num["Airmass correction"] = getattr(
                 self.fit,
@@ -589,6 +997,8 @@ class OutputFiles:
         aavso_airmass_terms = aavso_airmass_results(self.fit)
         detrend_model = aavso_detrend_model(self.fit)
         qc_metadata = build_aavso_qc_metadata(self.fit)
+        fit_quality_metadata = build_fit_quality_metadata(self.fit)
+        ktmf_decision_metadata = build_ktmf_decision_metadata(self.fit, photometry_info)
         photometry_metadata = build_aavso_photometry_metadata(photometry_info)
         aperture_metadata = build_aavso_aperture_metadata(photometry_info)
         frame_filtering_metadata = build_aavso_frame_filtering_metadata(self.fit, frame_filtering_info)
@@ -648,6 +1058,8 @@ class OutputFiles:
                     f",{aavso_airmass_terms[1][0]}={aavso_airmass_terms[1][1]} +/- {aavso_airmass_terms[1][2]}\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
             f.write(format_aavso_json_header("QC-XC", qc_metadata))
+            f.write(format_aavso_json_header("FIT_QUALITY-XC", fit_quality_metadata))
+            f.write(format_aavso_json_header("KTMF_DECISION-XC", ktmf_decision_metadata))
             f.write(format_aavso_json_header("PHOTOMETRY-XC", photometry_metadata))
             f.write(format_aavso_json_header("APERTURE-XC", aperture_metadata))
             f.write(format_aavso_json_header("FRAME_FILTERING-XC", frame_filtering_metadata))

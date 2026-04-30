@@ -481,6 +481,35 @@ def test_collect_transform_frame_pointings_logs_alignment_progress(monkeypatch):
     ]
 
 
+def test_collect_transform_frame_pointings_can_return_transform_cache(monkeypatch):
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda *_args, **_kwargs: None,
+    )
+
+    expected_transform = exotic_module.SimilarityTransform(scale=1, rotation=0, translation=[2.0, -1.0])
+    monkeypatch.setattr(
+        exotic_module,
+        "transformation",
+        lambda image_data, file_name, report_failure=False, reference_image=None: expected_transform,
+    )
+
+    frames = ["frame_0001.fits", "frame_0002.fits"]
+    frame_loader = lambda file_name: np.ones((8, 8), dtype=float)
+
+    positions, usable_mask, transforms = exotic_module.collect_transform_frame_pointings(
+        frames,
+        frame_loader=frame_loader,
+        return_transforms=True,
+    )
+
+    assert usable_mask.tolist() == [True, True]
+    assert np.allclose(positions[1], [5.5, 2.5])
+    assert set(transforms) == set(frames)
+    assert transforms[frames[1]] is expected_transform
+
+
 def test_check_wcs_ignores_header_wcs_when_override_enabled(monkeypatch):
     monkeypatch.setattr(
         exotic_module,
@@ -554,6 +583,118 @@ def test_should_use_multiprocess_transform_precompute_respects_header_wcs_overri
         requested_processes=2,
         ignore_header_wcs=True,
     ) is True
+
+
+def test_transformation_pool_initializer_suppresses_inherited_tk_cleanup(monkeypatch):
+    calls = []
+    reference_image = np.ones((4, 4), dtype=float)
+    monkeypatch.setattr(exotic_module, "suppress_inherited_tk_cleanup_in_worker", lambda: calls.append(True))
+    monkeypatch.setattr(exotic_module, "load_image_data", lambda _file_name: reference_image)
+
+    exotic_module._TRANSFORM_REFERENCE_IMAGE = None
+    exotic_module._TRANSFORM_REFERENCE_CACHE = {"stale": True}
+
+    exotic_module._transformation_pool_initializer("reference.fits")
+
+    assert calls == [True]
+    assert exotic_module._TRANSFORM_REFERENCE_IMAGE is reference_image
+    assert exotic_module._TRANSFORM_REFERENCE_CACHE is None
+
+
+def test_apply_parallel_alignment_result_uses_precomputed_fallback_when_wcs_geometry_fails(monkeypatch):
+    psf_data = {
+        "target": np.zeros((2, 7), dtype=float),
+        "comp1": np.zeros((2, 7), dtype=float),
+    }
+    psf_data["target"][0] = np.array([10.0, 10.0, 100.0, 2.0, 2.0, 0.0, 50.0])
+    psf_data["comp1"][0] = np.array([20.0, 10.0, 100.0, 2.0, 2.0, 0.0, 50.0])
+    tar_comp_dist = {"comp1": np.array([10, 0], dtype=int)}
+    warnings = []
+
+    monkeypatch.setattr(
+        exotic_module.plateStatus,
+        "lowFluxAmplitudeWarning",
+        lambda star_index, xc, yc: warnings.append((star_index, xc, yc)),
+    )
+
+    result = {
+        "index": 1,
+        "file_name": "frame_0002.fits",
+        "wcs": {
+            "projected_off_frame": False,
+            "psf_rows": {
+                "target": np.array([10.0, 10.0, 100.0, 2.0, 2.0, 0.0, 50.0]),
+                "comp1": np.array([50.0, 50.0, 100.0, 2.0, 2.0, 0.0, 50.0]),
+            },
+            "warnings": [("low_flux", 1, 50.0, 50.0)],
+        },
+        "fallback": {
+            "psf_rows": {
+                "target": np.array([11.0, 10.0, 100.0, 2.0, 2.0, 0.0, 50.0]),
+                "comp1": np.array([21.0, 10.0, 90.0, 2.0, 2.0, 0.0, 50.0]),
+            },
+            "warnings": [("low_flux", 1, 21.0, 10.0)],
+        },
+    }
+
+    selected = exotic_module.apply_parallel_alignment_result(
+        result,
+        1,
+        psf_data,
+        tar_comp_dist,
+        ["comp1"],
+    )
+
+    assert selected == "fallback"
+    assert psf_data["target"][1, 0] == pytest.approx(11.0)
+    assert psf_data["comp1"][1, 0] == pytest.approx(21.0)
+    assert warnings == [(1, 21.0, 10.0)]
+
+
+def test_parallel_alignment_task_uses_precomputed_fallback_transform(monkeypatch):
+    target_and_comp_pixels = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=float)
+    precomputed_transform = exotic_module.SimilarityTransform(
+        scale=1,
+        rotation=0,
+        translation=[5.0, -1.0],
+    )
+
+    monkeypatch.setattr(
+        exotic_module,
+        "_load_alignment_worker_frame",
+        lambda _file_name: ({}, np.ones((10, 10), dtype=float)),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "transformation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cached transform should be used")
+        ),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "_fit_alignment_candidate_psfs",
+        lambda image_data, predicted_coords, *_args: {
+            "coords": np.asarray(predicted_coords, dtype=float),
+            "psf_rows": {"target": np.zeros(7, dtype=float)},
+            "warnings": [],
+        },
+    )
+
+    result = exotic_module._parallel_alignment_task((
+        1,
+        "frame_0002.fits",
+        target_and_comp_pixels,
+        None,
+        True,
+        False,
+        False,
+        True,
+        False,
+        precomputed_transform,
+    ))
+
+    assert np.allclose(result["fallback"]["coords"], [[6.0, 1.0], [8.0, 3.0]])
 
 
 def test_filter_sparse_missing_wcs_frames_drops_files_below_three_percent(monkeypatch):
@@ -651,21 +792,30 @@ def test_filter_pointing_outlier_frames_falls_back_to_transform_when_wcs_is_inco
         ),
     )
 
-    def fake_collect_transform_frame_pointings(inputfiles, frame_loader=None):
-        transform_calls.append((tuple(inputfiles), frame_loader))
+    def fake_collect_transform_frame_pointings(inputfiles, frame_loader=None, return_transforms=False, **kwargs):
+        transform_calls.append((tuple(inputfiles), frame_loader, return_transforms, kwargs))
+        transforms = {
+            str(file_name): exotic_module.SimilarityTransform(scale=1, rotation=0, translation=[index, 0])
+            for index, file_name in enumerate(inputfiles)
+        }
+        if return_transforms:
+            return transform_positions, np.ones(len(inputfiles), dtype=bool), transforms
         return transform_positions, np.ones(len(inputfiles), dtype=bool)
 
     monkeypatch.setattr(exotic_module, "collect_transform_frame_pointings", fake_collect_transform_frame_pointings)
 
-    filtered, keep_mask, dropped = exotic_module.filter_pointing_outlier_frames(
+    filtered, keep_mask, dropped, cached_transforms = exotic_module.filter_pointing_outlier_frames(
         frames,
         pointing_rejection_sigma=3.0,
+        return_alignment_transforms=True,
     )
 
     assert len(transform_calls) == 1
+    assert transform_calls[0][2] is True
     assert filtered.tolist() == frames[:-1]
     assert keep_mask.tolist() == [True, True, True, True, True, False]
     assert dropped == [frames[-1]]
+    assert set(cached_transforms) == set(frames[:-1])
 
 
 def test_abort_if_reference_frame_rejected_reports_error_and_removal_recommendation(monkeypatch):

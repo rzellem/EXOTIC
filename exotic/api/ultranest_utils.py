@@ -1,3 +1,4 @@
+import gc
 import logging
 import math
 import multiprocessing
@@ -12,6 +13,7 @@ import numpy as np
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSEY = {"0", "false", "no", "off", "n"}
+_AUTO_WORKER_VALUES = {"auto", "all", "available", "cpu", "cpus", "core", "cores"}
 DEFAULT_PROGRESS_INTERVAL_SECONDS = 10.0
 DEFAULT_MIN_NUM_LIVE_POINTS = 200
 DEFAULT_RUN_KWARGS = {
@@ -44,6 +46,7 @@ ULTRANEST_WORKER_ENV_KEYS = (
 )
 ULTRANEST_WORKER_BACKEND_ENV = "EXOTIC_ULTRANEST_WORKER_BACKEND"
 _PROCESS_LOGLIKE = None
+_TK_CLEANUP_CLASSES = ("Image", "Variable")
 
 
 def _is_enabled(value):
@@ -52,6 +55,10 @@ def _is_enabled(value):
 
 def _is_disabled(value):
     return str(value).strip().lower() in _FALSEY
+
+
+def _is_auto_worker_count(value):
+    return str(value).strip().lower() in _AUTO_WORKER_VALUES
 
 
 def _coerce_positive_int(value, default=None):
@@ -118,6 +125,15 @@ def _is_colab_runtime():
     )
 
 
+def _available_cpu_count():
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if callable(process_cpu_count):
+        count = process_cpu_count()
+    else:
+        count = os.cpu_count()
+    return max(_coerce_positive_int(count, default=1), 1)
+
+
 def _configured_ultranest_workers():
     for env_key in ULTRANEST_WORKER_ENV_KEYS:
         value = os.environ.get(env_key)
@@ -125,11 +141,13 @@ def _configured_ultranest_workers():
             continue
         if _is_disabled(value):
             return 1
+        if _is_auto_worker_count(value):
+            return _available_cpu_count()
         parsed = _coerce_positive_int(value, default=None)
         if parsed is not None:
             return parsed
 
-    return 1
+    return _available_cpu_count()
 
 
 def _configured_ultranest_worker_backend():
@@ -147,6 +165,53 @@ def _process_loglike_chunk(chunk):
     return _PROCESS_LOGLIKE(chunk)
 
 
+def _noop_tk_destructor(_instance):
+    return None
+
+
+def _suppress_inherited_tk_cleanup():
+    """Avoid noisy Tk destructor calls in forked worker processes."""
+    tkinter_module = sys.modules.get("tkinter")
+    if tkinter_module is None:
+        return False
+
+    patched = False
+    for class_name in _TK_CLEANUP_CLASSES:
+        tk_class = getattr(tkinter_module, class_name, None)
+        if tk_class is None or getattr(tk_class, "_exotic_worker_tk_cleanup_suppressed", False):
+            continue
+
+        try:
+            original_del = getattr(tk_class, "__del__", None)
+            if original_del is None:
+                continue
+            setattr(tk_class, "_exotic_worker_original_del", original_del)
+            setattr(tk_class, "__del__", _noop_tk_destructor)
+            setattr(tk_class, "_exotic_worker_tk_cleanup_suppressed", True)
+            patched = True
+        except Exception:
+            continue
+
+    return patched
+
+
+def suppress_inherited_tk_cleanup_in_worker():
+    return _suppress_inherited_tk_cleanup()
+
+
+@contextmanager
+def suppress_tk_cleanup_during_process_pool():
+    suppress_inherited_tk_cleanup_in_worker()
+    restore_gc_after_pool = gc.isenabled()
+    if restore_gc_after_pool:
+        gc.disable()
+    try:
+        yield
+    finally:
+        if restore_gc_after_pool:
+            gc.enable()
+
+
 @contextmanager
 def _parallel_vectorized_loglike(sampler, workers=None):
     worker_count = max(int(workers or _configured_ultranest_workers()), 1)
@@ -162,14 +227,22 @@ def _parallel_vectorized_loglike(sampler, workers=None):
 
     pool = None
     executor = None
+    process_pool_guard = None
     if backend == "process":
         if not sys.platform.startswith("linux") or _is_colab_runtime():
             yield 1, "single"
             return
         global _PROCESS_LOGLIKE
+        process_pool_guard = suppress_tk_cleanup_during_process_pool()
+        process_pool_guard.__enter__()
         _PROCESS_LOGLIKE = original_loglike
-        ctx = multiprocessing.get_context("fork")
-        pool = ctx.Pool(processes=worker_count)
+        try:
+            ctx = multiprocessing.get_context("fork")
+            pool = ctx.Pool(processes=worker_count, initializer=suppress_inherited_tk_cleanup_in_worker)
+        except Exception:
+            _PROCESS_LOGLIKE = None
+            process_pool_guard.__exit__(*sys.exc_info())
+            raise
     elif backend == "thread":
         executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="exotic-ultranest")
     else:
@@ -195,9 +268,13 @@ def _parallel_vectorized_loglike(sampler, workers=None):
     finally:
         sampler.loglike = original_loglike
         if pool is not None:
-            pool.close()
-            pool.join()
-            _PROCESS_LOGLIKE = None
+            try:
+                pool.close()
+                pool.join()
+            finally:
+                _PROCESS_LOGLIKE = None
+                if process_pool_guard is not None:
+                    process_pool_guard.__exit__(None, None, None)
         if executor is not None:
             executor.shutdown(wait=True)
 

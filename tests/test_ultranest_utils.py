@@ -1,5 +1,7 @@
 import io
 import logging
+import sys
+import types
 
 import numpy as np
 
@@ -158,6 +160,29 @@ def test_run_reactive_sampler_uses_env_live_point_override(monkeypatch):
     assert sampler.kwargs["min_num_live_points"] == 320
 
 
+def test_configured_ultranest_workers_defaults_to_available_cpu_count(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setattr(ultranest_utils.os, "process_cpu_count", lambda: 12, raising=False)
+
+    assert ultranest_utils._configured_ultranest_workers() == 12
+
+
+def test_configured_ultranest_workers_accepts_auto_override(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "auto")
+    monkeypatch.setattr(ultranest_utils.os, "process_cpu_count", lambda: 10, raising=False)
+
+    assert ultranest_utils._configured_ultranest_workers() == 10
+
+
+def test_configured_ultranest_workers_preserves_numeric_override(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "3")
+    monkeypatch.setattr(ultranest_utils.os, "process_cpu_count", lambda: 12, raising=False)
+
+    assert ultranest_utils._configured_ultranest_workers() == 3
+
+
 def test_run_reactive_sampler_parallelizes_vectorized_loglike_batches(monkeypatch):
     _reset_ultranest_env(monkeypatch)
     monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "3")
@@ -184,6 +209,126 @@ def test_run_reactive_sampler_parallelizes_vectorized_loglike_batches(monkeypatc
 
     assert result["values"].tolist() == [0, 2, 4, 6, 8, 10]
     assert sorted(sampler.chunk_sizes) == [2, 2, 2]
+
+
+def test_run_reactive_sampler_auto_workers_uses_available_cpu_count(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKER_BACKEND", "thread")
+    monkeypatch.setattr(ultranest_utils.os, "process_cpu_count", lambda: 4, raising=False)
+
+    class FakeSampler:
+        def __init__(self):
+            self.chunk_sizes = []
+
+            def loglike(points):
+                self.chunk_sizes.append(len(points))
+                return points[:, 0]
+
+            self.loglike = loglike
+
+        def run(self, **kwargs):
+            return {"values": self.loglike(np.arange(16, dtype=float).reshape(8, 2))}
+
+    sampler = FakeSampler()
+    result = run_reactive_sampler(sampler, verbose=False)
+
+    assert result["values"].tolist() == [0, 2, 4, 6, 8, 10, 12, 14]
+    assert sorted(sampler.chunk_sizes) == [2, 2, 2, 2]
+
+
+def test_process_backend_disables_parent_gc_while_pool_is_active(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "2")
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKER_BACKEND", "process")
+    monkeypatch.setattr(ultranest_utils.sys, "platform", "linux")
+    monkeypatch.setattr(ultranest_utils, "_is_colab_runtime", lambda: False)
+    monkeypatch.setattr(
+        ultranest_utils,
+        "get_mpi_status",
+        lambda: {"available": False, "size": 1, "rank": 0, "source": "test", "error": None},
+    )
+
+    cleanup_calls = []
+    monkeypatch.setattr(
+        ultranest_utils,
+        "suppress_inherited_tk_cleanup_in_worker",
+        lambda: cleanup_calls.append("suppress"),
+    )
+
+    pool_events = []
+
+    class FakePool:
+        def __init__(self, processes, initializer):
+            pool_events.append(("init", processes, initializer))
+
+        def map(self, func, chunks):
+            pool_events.append(("map", ultranest_utils.gc.isenabled()))
+            return [func(chunk) for chunk in chunks]
+
+        def close(self):
+            pool_events.append(("close", None))
+
+        def join(self):
+            pool_events.append(("join", None))
+
+    class FakeContext:
+        Pool = FakePool
+
+    monkeypatch.setattr(ultranest_utils.multiprocessing, "get_context", lambda _method: FakeContext())
+
+    class FakeSampler:
+        def __init__(self):
+            self.chunk_sizes = []
+
+            def loglike(points):
+                self.chunk_sizes.append(len(points))
+                return points[:, 0]
+
+            self.loglike = loglike
+
+        def run(self, **kwargs):
+            assert ultranest_utils.gc.isenabled() is False
+            return {"values": self.loglike(np.arange(8, dtype=float).reshape(4, 2))}
+
+    gc_was_enabled = ultranest_utils.gc.isenabled()
+    ultranest_utils.gc.enable()
+    try:
+        sampler = FakeSampler()
+        result = run_reactive_sampler(sampler, verbose=False)
+        assert ultranest_utils.gc.isenabled() is True
+    finally:
+        if not gc_was_enabled:
+            ultranest_utils.gc.disable()
+
+    assert result["values"].tolist() == [0, 2, 4, 6]
+    assert sorted(sampler.chunk_sizes) == [2, 2]
+    assert cleanup_calls == ["suppress"]
+    assert pool_events[0] == ("init", 2, ultranest_utils.suppress_inherited_tk_cleanup_in_worker)
+    assert ("map", False) in pool_events
+    assert pool_events[-2:] == [("close", None), ("join", None)]
+
+
+def test_process_worker_initializer_suppresses_inherited_tk_destructors(monkeypatch):
+    class FakeImage:
+        def __del__(self):
+            raise RuntimeError("main thread is not in main loop")
+
+    class FakeVariable:
+        def __del__(self):
+            raise RuntimeError("main thread is not in main loop")
+
+    original_image_del = FakeImage.__del__
+    original_variable_del = FakeVariable.__del__
+    fake_tkinter = types.SimpleNamespace(Image=FakeImage, Variable=FakeVariable)
+    monkeypatch.setitem(sys.modules, "tkinter", fake_tkinter)
+
+    assert ultranest_utils._suppress_inherited_tk_cleanup() is True
+
+    assert FakeImage._exotic_worker_original_del is original_image_del
+    assert FakeVariable._exotic_worker_original_del is original_variable_del
+    assert FakeImage().__del__() is None
+    assert FakeVariable().__del__() is None
+    assert ultranest_utils._suppress_inherited_tk_cleanup() is False
 
 
 def test_run_reactive_sampler_preserves_explicit_live_point_override(monkeypatch):

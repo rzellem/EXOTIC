@@ -126,9 +126,17 @@ try:  # plate solution
 except ImportError:  # package import
     from api.plate_solution import NextAstroPlateSolution, PlateSolution
 try:
-    from .api.ultranest_utils import get_mpi_status
+    from .api.ultranest_utils import (
+        get_mpi_status,
+        suppress_inherited_tk_cleanup_in_worker,
+        suppress_tk_cleanup_during_process_pool,
+    )
 except ImportError:
-    from api.ultranest_utils import get_mpi_status
+    from api.ultranest_utils import (
+        get_mpi_status,
+        suppress_inherited_tk_cleanup_in_worker,
+        suppress_tk_cleanup_during_process_pool,
+    )
 try:
     from .api.http_compression import build_compressed_json_request
 except ImportError:
@@ -6399,15 +6407,45 @@ def log_pointing_precheck_alignment_progress(i, total_files, file_name):
     )
 
 
-def collect_transform_frame_pointings(inputfiles, frame_loader=None):
+def _pointing_precheck_return(positions, usable_mask, alignment_transforms, return_transforms):
+    if return_transforms:
+        return positions, usable_mask, alignment_transforms
+    return positions, usable_mask
+
+
+def _filter_alignment_transform_cache(alignment_transforms, retained_files):
+    if not alignment_transforms:
+        return {}
+
+    retained_keys = {str(file_name) for file_name in retained_files}
+    return {
+        file_key: tform
+        for file_key, tform in alignment_transforms.items()
+        if file_key in retained_keys
+    }
+
+
+def collect_transform_frame_pointings(inputfiles, frame_loader=None, return_transforms=False,
+                                      multiprocess_transformations=None,
+                                      generalDark=None, generalBias=None, generalFlat=None,
+                                      demosaic_fmt=None, demosaic_out=None, demosaic_mult=None):
     positions = np.full((len(inputfiles), 2), np.nan, dtype=float)
     usable_mask = np.zeros(len(inputfiles), dtype=bool)
+    alignment_transforms = {}
 
     if len(inputfiles) == 0:
-        return positions, usable_mask
+        return _pointing_precheck_return(positions, usable_mask, alignment_transforms, return_transforms)
 
     if frame_loader is None:
-        frame_loader = load_image_data
+        frame_loader = lambda file_name: load_calibrated_reduction_image(
+            file_name,
+            generalDark,
+            generalBias,
+            generalFlat,
+            demosaic_fmt,
+            demosaic_out,
+            demosaic_mult,
+        )
 
     total_files = len(inputfiles)
     log_pointing_precheck_alignment_progress(0, total_files, inputfiles[0])
@@ -6419,16 +6457,38 @@ def collect_transform_frame_pointings(inputfiles, frame_loader=None):
             f"{_display_filename(inputfiles[0])} ({exc}).",
             warn=True,
         )
-        return positions, usable_mask
+        return _pointing_precheck_return(positions, usable_mask, alignment_transforms, return_transforms)
 
     if getattr(reference_image, "ndim", 0) != 2:
         log_info("Warning: pointing precheck alignment fallback requires 2-D images; skipping.", warn=True)
-        return positions, usable_mask
+        return _pointing_precheck_return(positions, usable_mask, alignment_transforms, return_transforms)
 
     height, width = reference_image.shape
     reference_anchor = np.array([[(width - 1) / 2.0, (height - 1) / 2.0]], dtype=float)
     positions[0] = reference_anchor[0]
     usable_mask[0] = True
+    alignment_transforms[str(inputfiles[0])] = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+
+    if multiprocess_transformations is not None and multiprocess_transformations > 0 and len(inputfiles) > 1:
+        try:
+            positions, usable_mask, alignment_transforms = build_multiprocess_pointing_precheck_transforms(
+                inputfiles,
+                multiprocess_transformations,
+                reference_anchor,
+                generalDark=generalDark,
+                generalBias=generalBias,
+                generalFlat=generalFlat,
+                demosaic_fmt=demosaic_fmt,
+                demosaic_out=demosaic_out,
+                demosaic_mult=demosaic_mult,
+            )
+            return _pointing_precheck_return(positions, usable_mask, alignment_transforms, return_transforms)
+        except Exception as exc:
+            log_info(
+                "Warning: pointing precheck multiprocessing failed; falling back to serial alignment "
+                f"({exc}).",
+                warn=True,
+            )
 
     for index, file_name in enumerate(inputfiles[1:], start=1):
         log_pointing_precheck_alignment_progress(index, total_files, file_name)
@@ -6447,10 +6507,11 @@ def collect_transform_frame_pointings(inputfiles, frame_loader=None):
             if np.all(np.isfinite(mapped_anchor)):
                 positions[index] = mapped_anchor
                 usable_mask[index] = True
+                alignment_transforms[str(file_name)] = tform
         except Exception:
             continue
 
-    return positions, usable_mask
+    return _pointing_precheck_return(positions, usable_mask, alignment_transforms, return_transforms)
 
 
 def sigma_clip_pointing_positions(positions, sigma=3.0, max_iters=5):
@@ -6501,19 +6562,33 @@ def sigma_clip_pointing_positions(positions, sigma=3.0, max_iters=5):
 
 
 def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ignore_header_wcs=False,
-                                   frame_loader=None):
+                                   frame_loader=None, return_alignment_transforms=False,
+                                   multiprocess_transformations=None,
+                                   generalDark=None, generalBias=None, generalFlat=None,
+                                   demosaic_fmt=None, demosaic_out=None, demosaic_mult=None):
     inputfiles = np.array(inputfiles)
     keep_mask = np.ones(len(inputfiles), dtype=bool)
+    alignment_transforms = {}
+
+    def format_result(result_inputfiles, result_keep_mask, dropped_files):
+        if return_alignment_transforms:
+            return (
+                result_inputfiles,
+                result_keep_mask,
+                dropped_files,
+                _filter_alignment_transform_cache(alignment_transforms, result_inputfiles),
+            )
+        return result_inputfiles, result_keep_mask, dropped_files
 
     if len(inputfiles) == 0 or pointing_rejection_sigma is None:
-        return inputfiles, keep_mask, []
+        return format_result(inputfiles, keep_mask, [])
 
     if len(inputfiles) < POINTING_REJECTION_MIN_FRAMES:
         log_info(
             f"Pointing precheck skipped: only {len(inputfiles)} frame(s); "
             f"need at least {POINTING_REJECTION_MIN_FRAMES}.",
         )
-        return inputfiles, keep_mask, []
+        return format_result(inputfiles, keep_mask, [])
 
     positions = None
     usable_mask = None
@@ -6535,7 +6610,18 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
             log_info("Pointing precheck: no usable WCS-derived pointing centers found; using alignment-derived positions.")
 
     if positions is None:
-        positions, usable_mask = collect_transform_frame_pointings(inputfiles, frame_loader=frame_loader)
+        positions, usable_mask, alignment_transforms = collect_transform_frame_pointings(
+            inputfiles,
+            frame_loader=frame_loader,
+            return_transforms=True,
+            multiprocess_transformations=multiprocess_transformations,
+            generalDark=generalDark,
+            generalBias=generalBias,
+            generalFlat=generalFlat,
+            demosaic_fmt=demosaic_fmt,
+            demosaic_out=demosaic_out,
+            demosaic_mult=demosaic_mult,
+        )
         mode_label = "alignment"
 
     usable_count = int(np.count_nonzero(usable_mask))
@@ -6544,7 +6630,7 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
             f"Pointing precheck skipped: only {usable_count} usable {mode_label}-derived pointing estimate(s); "
             f"need at least {POINTING_REJECTION_MIN_FRAMES}.",
         )
-        return inputfiles, keep_mask, []
+        return format_result(inputfiles, keep_mask, [])
 
     keep_mask[np.flatnonzero(usable_mask)] = sigma_clip_pointing_positions(
         positions[usable_mask],
@@ -6558,7 +6644,7 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
             f"Pointing precheck ({mode_label}): no frames exceeded the "
             f"{float(pointing_rejection_sigma):g}-sigma pointing threshold."
         )
-        return inputfiles, keep_mask, []
+        return format_result(inputfiles, keep_mask, [])
 
     retained_files = inputfiles[keep_mask]
     log_info(
@@ -6567,7 +6653,7 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
         "median pointing."
     )
     log_file_preview(dropped_files, "Pointing precheck dropped files")
-    return retained_files, keep_mask, dropped_files
+    return format_result(retained_files, keep_mask, dropped_files)
 
 
 def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_missing_fraction=None):
@@ -7764,6 +7850,7 @@ def _get_reference_transform_cache(reference_image, roi):
 
 def _transformation_pool_initializer(reference_file):
     global _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE
+    suppress_inherited_tk_cleanup_in_worker()
     _TRANSFORM_REFERENCE_IMAGE = load_image_data(reference_file)
     _TRANSFORM_REFERENCE_CACHE = None
 
@@ -7771,6 +7858,440 @@ def _transformation_pool_initializer(reference_file):
 def transformation_task_with_cached_reference(i, file_name):
     image_data = load_image_data(file_name)
     return i, transformation(image_data, file_name, report_failure=False, reference_image=_TRANSFORM_REFERENCE_IMAGE)
+
+
+class _ParallelPlateStatusRecorder:
+    def __init__(self):
+        self.warnings = []
+
+    def setCurrentFilename(self, filename):
+        return self
+
+    def outOfFrameWarning(self, starIndex):
+        self.warnings.append(('out_of_frame', int(starIndex), np.nan, np.nan))
+
+    def lowFluxAmplitudeWarning(self, starIndex, xc, yc):
+        self.warnings.append(('low_flux', int(starIndex), float(xc), float(yc)))
+
+    def alignmentError(self):
+        self.warnings.append(('alignment_error', -1, np.nan, np.nan))
+
+
+_ALIGNMENT_POOL_CONTEXT = {}
+
+
+def _alignment_pool_initializer(reference_file, generalDark, generalBias, generalFlat,
+                                demosaic_fmt, demosaic_out, demosaic_mult, bad_pixel_reference):
+    global _ALIGNMENT_POOL_CONTEXT, _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE
+    suppress_inherited_tk_cleanup_in_worker()
+    _ALIGNMENT_POOL_CONTEXT = {
+        'generalDark': generalDark,
+        'generalBias': generalBias,
+        'generalFlat': generalFlat,
+        'demosaic_fmt': demosaic_fmt,
+        'demosaic_out': demosaic_out,
+        'demosaic_mult': demosaic_mult,
+        'bad_pixel_reference': bad_pixel_reference,
+    }
+    _TRANSFORM_REFERENCE_IMAGE = load_calibrated_reduction_image(
+        reference_file,
+        generalDark,
+        generalBias,
+        generalFlat,
+        demosaic_fmt,
+        demosaic_out,
+        demosaic_mult,
+        bad_pixel_reference=bad_pixel_reference,
+    )
+    _TRANSFORM_REFERENCE_CACHE = None
+
+
+def _load_alignment_worker_frame(file_name):
+    context = _ALIGNMENT_POOL_CONTEXT
+    hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+    extension = 0
+    image_header = hdul[extension].header
+    while image_header["NAXIS"] == 0:
+        extension += 1
+        image_header = hdul[extension].header
+
+    image_data = hdul[extension].data
+    hdul.close()
+
+    image_data = apply_cals(
+        image_data,
+        context.get('generalDark'),
+        context.get('generalBias'),
+        context.get('generalFlat'),
+        1,
+    )
+    image_data = demosaic_img(
+        image_data,
+        context.get('demosaic_fmt'),
+        context.get('demosaic_out'),
+        context.get('demosaic_mult'),
+        1,
+    )
+    image_data = repair_bad_pixels_in_frame(image_data, context.get('bad_pixel_reference'))
+    return image_header, image_data
+
+
+def _pointing_precheck_alignment_task(task):
+    i, file_name, reference_anchor = task
+    try:
+        _, image_data = _load_alignment_worker_frame(file_name)
+        if getattr(image_data, "ndim", 0) != 2:
+            return {
+                'index': i,
+                'file_name': file_name,
+                'usable': False,
+                'position': np.array([np.nan, np.nan], dtype=float),
+                'transform': None,
+            }
+
+        tform = transformation(
+            image_data,
+            file_name,
+            report_failure=False,
+            reference_image=_TRANSFORM_REFERENCE_IMAGE,
+        )
+        mapped_anchor = np.asarray(tform(reference_anchor), dtype=float).reshape(-1, 2)[0]
+        usable = bool(np.all(np.isfinite(mapped_anchor)))
+        return {
+            'index': i,
+            'file_name': file_name,
+            'usable': usable,
+            'position': mapped_anchor,
+            'transform': tform if usable else None,
+        }
+    except Exception as exc:
+        return {
+            'index': i,
+            'file_name': file_name,
+            'usable': False,
+            'position': np.array([np.nan, np.nan], dtype=float),
+            'transform': None,
+            'error': str(exc),
+        }
+
+
+def build_multiprocess_pointing_precheck_transforms(inputfiles, max_processes, reference_anchor,
+                                                   generalDark=None, generalBias=None, generalFlat=None,
+                                                   demosaic_fmt=None, demosaic_out=None, demosaic_mult=None):
+    total_jobs = len(inputfiles)
+    positions = np.full((total_jobs, 2), np.nan, dtype=float)
+    usable_mask = np.zeros(total_jobs, dtype=bool)
+    alignment_transforms = {}
+    if total_jobs == 0:
+        return positions, usable_mask, alignment_transforms
+
+    reference_anchor = np.asarray(reference_anchor, dtype=float).reshape(-1, 2)
+    positions[0] = reference_anchor[0]
+    usable_mask[0] = True
+    alignment_transforms[str(inputfiles[0])] = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+    if total_jobs == 1:
+        return positions, usable_mask, alignment_transforms
+
+    max_workers = min(max_processes, os.cpu_count() or 1, total_jobs - 1, MAX_MULTIPROCESS_TRANSFORM_WORKERS)
+    log_info(
+        "Using multiprocessing for pointing precheck alignment "
+        f"with {max_workers} worker(s) across {total_jobs} image(s)."
+    )
+
+    tasks = [
+        (i, str(file_name), reference_anchor)
+        for i, file_name in enumerate(inputfiles)
+        if i != 0
+    ]
+
+    with suppress_tk_cleanup_during_process_pool():
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_alignment_pool_initializer,
+            initargs=(
+                str(inputfiles[0]),
+                generalDark,
+                generalBias,
+                generalFlat,
+                demosaic_fmt,
+                demosaic_out,
+                demosaic_mult,
+                None,
+            ),
+        ) as executor:
+            futures = [executor.submit(_pointing_precheck_alignment_task, task) for task in tasks]
+            completed = 1
+            for future in as_completed(futures):
+                result = future.result()
+                index = result['index']
+                if result.get('usable'):
+                    positions[index] = result['position']
+                    usable_mask[index] = True
+                    alignment_transforms[result['file_name']] = result['transform']
+                completed += 1
+                if completed == total_jobs or completed % 10 == 0:
+                    log_info(f"Pointing precheck alignment progress: {completed}/{total_jobs}")
+
+    return positions, usable_mask, alignment_transforms
+
+
+def _fit_alignment_candidate_psfs(image_data, predicted_coords, target_fast_centroid, frame_fast_centroid):
+    global plateStatus
+    predicted_coords = np.asarray(predicted_coords, dtype=float)
+    original_plate_status = plateStatus
+    recorder = _ParallelPlateStatusRecorder()
+    plateStatus = recorder
+    try:
+        psf_rows = {
+            'target': fit_centroid_or_warn_out_of_frame(
+                image_data,
+                choose_centroid_seed_position(predicted_coords[0], None),
+                0,
+                fast_mode=target_fast_centroid,
+            )
+        }
+        for comp_idx in range(max(0, predicted_coords.shape[0] - 1)):
+            psf_rows[f"comp{comp_idx + 1}"] = fit_centroid_or_warn_out_of_frame(
+                image_data,
+                choose_centroid_seed_position(predicted_coords[comp_idx + 1], None),
+                comp_idx + 1,
+                fast_mode=frame_fast_centroid,
+            )
+        return {
+            'coords': predicted_coords,
+            'psf_rows': psf_rows,
+            'warnings': list(recorder.warnings),
+        }
+    finally:
+        plateStatus = original_plate_status
+
+
+def _parallel_alignment_task(task):
+    (
+        i,
+        file_name,
+        target_and_comp_pixels,
+        target_and_comp_radec,
+        ignore_header_wcs,
+        target_fast_centroid,
+        frame_fast_centroid,
+        compute_fallback_transform,
+        first_frame_uses_input_comp_pixels,
+        precomputed_fallback_transform,
+    ) = task
+
+    target_and_comp_pixels = np.asarray(target_and_comp_pixels, dtype=float)
+    if target_and_comp_radec is not None:
+        target_and_comp_radec = np.asarray(target_and_comp_radec, dtype=float)
+
+    image_header, image_data = _load_alignment_worker_frame(file_name)
+    result = {
+        'index': i,
+        'file_name': file_name,
+        'wcs': None,
+        'fallback': None,
+    }
+
+    if not ignore_header_wcs and target_and_comp_radec is not None:
+        try:
+            wcs_hdr = search_wcs_from_header(image_header)
+            if wcs_hdr.is_celestial:
+                pix_x, pix_y = wcs_hdr.world_to_pixel_values(
+                    target_and_comp_radec[:, 0],
+                    target_and_comp_radec[:, 1],
+                )
+                pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
+                pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
+                projected_coords = np.column_stack((pix_x, pix_y))
+                if i == 0:
+                    projected_coords[0] = target_and_comp_pixels[0]
+                    if first_frame_uses_input_comp_pixels:
+                        projected_coords = np.array(target_and_comp_pixels, dtype=float, copy=True)
+
+                wcs_candidate = _fit_alignment_candidate_psfs(
+                    image_data,
+                    projected_coords,
+                    target_fast_centroid,
+                    frame_fast_centroid,
+                )
+                wcs_candidate['projected_off_frame'] = any_projected_coord_out_of_frame(
+                    projected_coords,
+                    image_data.shape,
+                )
+                result['wcs'] = wcs_candidate
+        except Exception as exc:
+            result['wcs_error'] = str(exc)
+
+    if precomputed_fallback_transform is not None or compute_fallback_transform or result['wcs'] is None:
+        if precomputed_fallback_transform is not None:
+            tform = precomputed_fallback_transform
+        elif i == 0:
+            tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+        else:
+            tform = transformation(
+                image_data,
+                file_name,
+                report_failure=False,
+                reference_image=_TRANSFORM_REFERENCE_IMAGE,
+            )
+        transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+        result['fallback'] = _fit_alignment_candidate_psfs(
+            image_data,
+            transformed_coords,
+            target_fast_centroid,
+            frame_fast_centroid,
+        )
+
+    return result
+
+
+def _replay_parallel_alignment_warnings(file_name, warnings):
+    if not warnings:
+        return
+
+    plateStatus.setCurrentFilename(file_name)
+    for warning_type, star_index, xc, yc in warnings:
+        if warning_type == 'out_of_frame':
+            plateStatus.outOfFrameWarning(star_index)
+        elif warning_type == 'low_flux':
+            plateStatus.lowFluxAmplitudeWarning(star_index, xc, yc)
+        elif warning_type == 'alignment_error':
+            plateStatus.alignmentError()
+
+
+def _store_alignment_candidate_psfs(candidate, frame_index, psf_data, comp_keys):
+    psf_data['target'][frame_index] = candidate['psf_rows']['target']
+    for comp_idx, comp_key in enumerate(comp_keys):
+        psf_data[comp_key][frame_index] = candidate['psf_rows'].get(
+            f"comp{comp_idx + 1}",
+            _nan_psf_result(),
+        )
+
+
+def _update_reference_comp_offsets(psf_data, tar_comp_dist, comp_keys):
+    target_row = psf_data['target'][0]
+    if not centroid_position_is_finite(target_row):
+        return
+
+    for comp_key in comp_keys:
+        comp_row = psf_data[comp_key][0]
+        if not centroid_position_is_finite(comp_row):
+            continue
+        tar_comp_dist[comp_key][0] = abs(int(comp_row[0]) - int(target_row[0]))
+        tar_comp_dist[comp_key][1] = abs(int(comp_row[1]) - int(target_row[1]))
+
+
+def apply_parallel_alignment_result(result, frame_index, psf_data, tar_comp_dist, comp_keys):
+    wcs_candidate = result.get('wcs')
+    selected_candidate = None
+    selected_source = 'fallback'
+
+    if wcs_candidate is not None:
+        comp_psf_rows = {
+            comp_key: wcs_candidate['psf_rows'].get(f"comp{comp_idx + 1}", _nan_psf_result())
+            for comp_idx, comp_key in enumerate(comp_keys)
+        }
+        previous_comp_psf_rows = {}
+        if frame_index != 0:
+            previous_comp_psf_rows = {comp_key: psf_data[comp_key][frame_index - 1] for comp_key in comp_keys}
+
+        wcs_alignment_decision = should_keep_header_wcs_alignment(
+            wcs_candidate.get('projected_off_frame', False),
+            frame_index,
+            wcs_candidate['psf_rows']['target'],
+            previous_target_psf_row=None if frame_index == 0 else psf_data['target'][frame_index - 1],
+            comp_psf_rows=comp_psf_rows,
+            previous_comp_psf_rows=previous_comp_psf_rows,
+            expected_offsets=tar_comp_dist,
+        )
+        if wcs_alignment_decision['use_wcs_alignment']:
+            selected_candidate = wcs_candidate
+            selected_source = 'wcs'
+
+    if selected_candidate is None:
+        selected_candidate = result.get('fallback') or wcs_candidate
+
+    if selected_candidate is None:
+        selected_candidate = {
+            'psf_rows': {'target': _nan_psf_result()},
+            'warnings': [('alignment_error', -1, np.nan, np.nan)],
+        }
+
+    _store_alignment_candidate_psfs(selected_candidate, frame_index, psf_data, comp_keys)
+    _replay_parallel_alignment_warnings(result.get('file_name'), selected_candidate.get('warnings'))
+    if frame_index == 0:
+        _update_reference_comp_offsets(psf_data, tar_comp_dist, comp_keys)
+
+    return selected_source
+
+
+def build_multiprocess_alignment_results(inputfiles, max_processes, target_and_comp_pixels,
+                                         target_and_comp_radec=None, ignore_header_wcs=False,
+                                         generalDark=None, generalBias=None, generalFlat=None,
+                                         demosaic_fmt=None, demosaic_out=None, demosaic_mult=None,
+                                         bad_pixel_reference=None, use_fast_centroid_cadence=False,
+                                         use_adaptive_apertures=False, compute_fallback_transform=True,
+                                         first_frame_uses_input_comp_pixels=False,
+                                         precomputed_fallback_transforms=None):
+    total_jobs = len(inputfiles)
+    if total_jobs == 0:
+        return []
+
+    max_workers = min(max_processes, os.cpu_count() or 1, total_jobs, MAX_MULTIPROCESS_TRANSFORM_WORKERS)
+    results = [None] * total_jobs
+
+    log_info(
+        "Using multiprocessing for alignment "
+        f"with {max_workers} worker(s) across {total_jobs} image(s)."
+    )
+
+    tasks = []
+    for i, file_name in enumerate(inputfiles):
+        precomputed_fallback_transform = None
+        if precomputed_fallback_transforms:
+            precomputed_fallback_transform = precomputed_fallback_transforms.get(str(file_name))
+        frame_fast_centroid = should_use_fast_centroid(i) if use_fast_centroid_cadence else False
+        target_fast_centroid = (
+            should_use_fast_target_centroid(i, adaptive_apertures=use_adaptive_apertures)
+            if use_fast_centroid_cadence else False
+        )
+        tasks.append((
+            i,
+            str(file_name),
+            target_and_comp_pixels,
+            target_and_comp_radec,
+            ignore_header_wcs,
+            target_fast_centroid,
+            frame_fast_centroid,
+            compute_fallback_transform,
+            first_frame_uses_input_comp_pixels,
+            precomputed_fallback_transform,
+        ))
+
+    with ProcessPoolExecutor(
+        max_workers=max_workers,
+        initializer=_alignment_pool_initializer,
+        initargs=(
+            str(inputfiles[0]),
+            generalDark,
+            generalBias,
+            generalFlat,
+            demosaic_fmt,
+            demosaic_out,
+            demosaic_mult,
+            bad_pixel_reference,
+        ),
+    ) as executor:
+        futures = [executor.submit(_parallel_alignment_task, task) for task in tasks]
+        completed = 0
+        for future in as_completed(futures):
+            result = future.result()
+            results[result['index']] = result
+            completed += 1
+            if completed == total_jobs or completed % 10 == 0:
+                log_info(f"Multiprocessing alignment progress: {completed}/{total_jobs}")
+
+    return results
 
 
 MAX_MULTIPROCESS_TRANSFORM_WORKERS = 8
@@ -7815,19 +8336,20 @@ def build_multiprocess_transformations(inputfiles, max_processes):
 
     transforms[0] = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
-    with ProcessPoolExecutor(max_workers=max_workers, initializer=_transformation_pool_initializer,
-                             initargs=(reference_file,)) as executor:
-        futures = [executor.submit(transformation_task_with_cached_reference, i, str(file_name))
-                   for i, file_name in enumerate(inputfiles) if i != 0]
+    with suppress_tk_cleanup_during_process_pool():
+        with ProcessPoolExecutor(max_workers=max_workers, initializer=_transformation_pool_initializer,
+                                 initargs=(reference_file,)) as executor:
+            futures = [executor.submit(transformation_task_with_cached_reference, i, str(file_name))
+                       for i, file_name in enumerate(inputfiles) if i != 0]
 
-        completed = 1
-        for future in as_completed(futures):
-            i, tform = future.result()
-            transforms[i] = tform
-            completed += 1
+            completed = 1
+            for future in as_completed(futures):
+                i, tform = future.result()
+                transforms[i] = tform
+                completed += 1
 
-            if completed == total_jobs or completed % 10 == 0:
-                log_info(f"Multiprocessing transformations progress: {completed}/{total_jobs}")
+                if completed == total_jobs or completed % 10 == 0:
+                    log_info(f"Multiprocessing transformations progress: {completed}/{total_jobs}")
 
     return transforms
 
@@ -8817,10 +9339,12 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         plateStatus.initializeFilenames(list(inputfiles))
     pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
     pointing_reference_file = inputfiles[0] if len(inputfiles) else None
-    inputfiles, _, dropped_pointing_files = filter_pointing_outlier_frames(
+    inputfiles, _, dropped_pointing_files, pointing_alignment_transforms = filter_pointing_outlier_frames(
         inputfiles,
         pointing_rejection_sigma=pointing_rejection_sigma,
         ignore_header_wcs=ignore_header_wcs,
+        return_alignment_transforms=True,
+        multiprocess_transformations=multiprocess_transformations,
     )
     if dropped_pointing_files:
         if abort_if_reference_frame_rejected(
@@ -8857,13 +9381,6 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     else:
         log_info("Bad-pixel precheck disabled per optional_info setting.")
 
-    use_multiprocess_transform_precompute = should_use_multiprocess_transform_precompute(
-        inputfiles, multiprocess_transformations, ignore_header_wcs=ignore_header_wcs
-    )
-    fallback_transforms = {}
-    if use_multiprocess_transform_precompute:
-        fallback_transforms = build_multiprocess_transformations(inputfiles, multiprocess_transformations)
-
     exotic_UIprevTPX = info_dict['tar_coords'][0]
     exotic_UIprevTPY = info_dict['tar_coords'][1]
 
@@ -8891,6 +9408,10 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     target_and_comp_radec = None
     if tar_radec is not None and comp_radec:
         target_and_comp_radec = np.array([tar_radec, comp_radec[0]], dtype=float)
+    target_and_comp_pixels = np.array(
+        [[exotic_UIprevTPX, exotic_UIprevTPY], comp_star],
+        dtype=float,
+    )
 
     centroid_reference_image = load_image_data(inputfiles[0])
     centroid_reference_image = repair_bad_pixels_in_frame(centroid_reference_image, bad_pixel_reference)
@@ -8921,6 +9442,24 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     # open files, calibrate, align, photometry
     reset_transform_timing_stats()
     reset_photometry_timing_stats()
+    multiprocess_alignment_results = None
+    use_multiprocess_alignment = multiprocess_transformations is not None and multiprocess_transformations > 0
+    if use_multiprocess_alignment:
+        multiprocess_alignment_results = build_multiprocess_alignment_results(
+            inputfiles,
+            multiprocess_transformations,
+            target_and_comp_pixels,
+            target_and_comp_radec=target_and_comp_radec,
+            ignore_header_wcs=ignore_header_wcs,
+            bad_pixel_reference=bad_pixel_reference,
+            use_fast_centroid_cadence=True,
+            use_adaptive_apertures=use_adaptive_apertures,
+            compute_fallback_transform=True,
+            first_frame_uses_input_comp_pixels=True,
+            precomputed_fallback_transforms=pointing_alignment_transforms,
+        )
+    use_multiprocess_transform_precompute = False
+    fallback_transforms = pointing_alignment_transforms
     for i, fileName in enumerate(inputfiles):
         plateStatus.setCurrentFilename(fileName)
         hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
@@ -8945,45 +9484,111 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         if i == 0:
             firstImage = np.copy(imageData)
 
-        use_wcs_alignment = False
-        if not ignore_header_wcs:
-            try:
-                wcs_hdr = search_wcs_from_header(image_header)
-                use_wcs_alignment = wcs_hdr.is_celestial
-            except Exception:
-                use_wcs_alignment = False
+        if multiprocess_alignment_results is not None:
+            apply_parallel_alignment_result(
+                multiprocess_alignment_results[i],
+                i,
+                psf_data,
+                tar_comp_dist,
+                ['comp'],
+            )
+        else:
+            use_wcs_alignment = False
+            if not ignore_header_wcs:
+                try:
+                    wcs_hdr = search_wcs_from_header(image_header)
+                    use_wcs_alignment = wcs_hdr.is_celestial
+                except Exception:
+                    use_wcs_alignment = False
 
-        if use_wcs_alignment:
-            try:
-                if i == 0:
-                    tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
-                    cx, cy = comp_star
-                else:
-                    pix_x, pix_y = wcs_hdr.world_to_pixel_values(
-                        target_and_comp_radec[:, 0],
-                        target_and_comp_radec[:, 1],
+            if use_wcs_alignment:
+                try:
+                    if i == 0:
+                        tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
+                        cx, cy = comp_star
+                    else:
+                        pix_x, pix_y = wcs_hdr.world_to_pixel_values(
+                            target_and_comp_radec[:, 0],
+                            target_and_comp_radec[:, 1],
+                        )
+                        pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
+                        pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
+                        tx, ty = pix_x[0], pix_y[0]
+                        cx, cy = pix_x[1], pix_y[1]
+
+                    projected_coords = np.array([[tx, ty], [cx, cy]], dtype=float)
+                    projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
+                    target_seed = choose_centroid_seed_position(
+                        [tx, ty],
+                        None if i == 0 else psf_data['target'][i - 1],
                     )
-                    pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
-                    pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
-                    tx, ty = pix_x[0], pix_y[0]
-                    cx, cy = pix_x[1], pix_y[1]
+                    comp_seed = choose_centroid_seed_position(
+                        [cx, cy],
+                        None if i == 0 else psf_data['comp'][i - 1],
+                    )
 
-                projected_coords = np.array([[tx, ty], [cx, cy]], dtype=float)
-                projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
+                    psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
+                        imageData,
+                        target_seed,
+                        0,
+                        fast_mode=target_fast_centroid,
+                    )
+                    psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
+                        imageData,
+                        comp_seed,
+                        1,
+                        fast_mode=frame_fast_centroid,
+                    )
+
+                    if i == 0:
+                        tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
+                        tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
+                    wcs_alignment_decision = should_keep_header_wcs_alignment(
+                        projected_off_frame,
+                        i,
+                        psf_data['target'][i],
+                        previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
+                        comp_psf_rows={'comp': psf_data['comp'][i]},
+                        previous_comp_psf_rows={} if i == 0 else {'comp': psf_data['comp'][i - 1]},
+                        expected_offsets={'comp': tar_comp_dist['comp']},
+                    )
+                    use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
+                except Exception:
+                    use_wcs_alignment = False
+
+            log_alignment_progress(
+                i,
+                len(inputfiles),
+                fileName,
+                use_multiprocess_transform_precompute,
+            )
+
+            if not use_wcs_alignment:
+                cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
+                if cached_tform is not None:
+                    tform = cached_tform
+                elif i == 0:
+                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+                else:
+                    tform = transformation(imageData, fileName, reference_image=firstImage)
+
+                transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+                tx, ty = transformed_coords[0]
                 target_seed = choose_centroid_seed_position(
                     [tx, ty],
                     None if i == 0 else psf_data['target'][i - 1],
                 )
-                comp_seed = choose_centroid_seed_position(
-                    [cx, cy],
-                    None if i == 0 else psf_data['comp'][i - 1],
-                )
-
                 psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
                     imageData,
                     target_seed,
                     0,
                     fast_mode=target_fast_centroid,
+                )
+
+                cx, cy = transformed_coords[1]
+                comp_seed = choose_centroid_seed_position(
+                    [cx, cy],
+                    None if i == 0 else psf_data['comp'][i - 1],
                 )
                 psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
                     imageData,
@@ -8995,63 +9600,6 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 if i == 0:
                     tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
                     tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
-                wcs_alignment_decision = should_keep_header_wcs_alignment(
-                    projected_off_frame,
-                    i,
-                    psf_data['target'][i],
-                    previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
-                    comp_psf_rows={'comp': psf_data['comp'][i]},
-                    previous_comp_psf_rows={} if i == 0 else {'comp': psf_data['comp'][i - 1]},
-                    expected_offsets={'comp': tar_comp_dist['comp']},
-                )
-                use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
-            except Exception:
-                use_wcs_alignment = False
-
-        log_alignment_progress(
-            i,
-            len(inputfiles),
-            fileName,
-            use_multiprocess_transform_precompute,
-        )
-
-        if not use_wcs_alignment:
-            if i == 0:
-                tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-            else:
-                tform = fallback_transforms[i] if i in fallback_transforms else transformation(imageData, fileName, reference_image=firstImage)
-
-            transformed_coords = np.asarray(
-                tform(np.array([[exotic_UIprevTPX, exotic_UIprevTPY], comp_star], dtype=float)),
-                dtype=float,
-            )
-            tx, ty = transformed_coords[0]
-            target_seed = choose_centroid_seed_position(
-                [tx, ty],
-                None if i == 0 else psf_data['target'][i - 1],
-            )
-            psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
-                imageData,
-                target_seed,
-                0,
-                fast_mode=target_fast_centroid,
-            )
-
-            cx, cy = transformed_coords[1]
-            comp_seed = choose_centroid_seed_position(
-                [cx, cy],
-                None if i == 0 else psf_data['comp'][i - 1],
-            )
-            psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
-                imageData,
-                comp_seed,
-                1,
-                fast_mode=frame_fast_centroid,
-            )
-
-            if i == 0:
-                tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
-                tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
 
         # aperture photometry
         frame_sigma = psf_sigma_from_fit(psf_data['target'][i], fallback_sigma=sigma)
@@ -9963,8 +10511,12 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
 
     if multiprocess_lightcurve_fits is not None and multiprocess_lightcurve_fits > 0:
         log_info(f"Using multiprocessing for candidate lightcurve fits ({multiprocess_lightcurve_fits} processes).")
-        with ProcessPoolExecutor(max_workers=multiprocess_lightcurve_fits) as executor:
-            fit_results = list(executor.map(evaluate_lightcurve_candidate, fit_tasks))
+        with suppress_tk_cleanup_during_process_pool():
+            with ProcessPoolExecutor(
+                max_workers=multiprocess_lightcurve_fits,
+                initializer=suppress_inherited_tk_cleanup_in_worker,
+            ) as executor:
+                fit_results = list(executor.map(evaluate_lightcurve_candidate, fit_tasks))
     else:
         fit_results = [evaluate_lightcurve_candidate(task) for task in fit_tasks]
 
@@ -12281,7 +12833,7 @@ def parse_args():
     parser.add_argument('--multiprocess-transformations',
                         type=int,
                         default=None,
-                        help="Use multiprocessing when finding image transformations. "
+                        help="Use multiprocessing for frame alignment and fallback image transformations. "
                              "Provide an integer number of processes to use.")
     parser.add_argument('--multiprocess-lightcurve-fits',
                         type=int,
@@ -12625,7 +13177,7 @@ def _main_impl():
             post_wcs_inputfile_count = int(len(inputfiles))
             pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
             pointing_reference_file = inputfiles[0] if len(inputfiles) else None
-            inputfiles, pointing_keep_mask, dropped_pointing_files = filter_pointing_outlier_frames(
+            inputfiles, pointing_keep_mask, dropped_pointing_files, pointing_alignment_transforms = filter_pointing_outlier_frames(
                 inputfiles,
                 pointing_rejection_sigma=pointing_rejection_sigma,
                 ignore_header_wcs=ignore_header_wcs,
@@ -12638,6 +13190,14 @@ def _main_impl():
                     demosaic_out,
                     demosaic_mult,
                 ),
+                return_alignment_transforms=True,
+                multiprocess_transformations=args.multiprocess_transformations,
+                generalDark=generalDark,
+                generalBias=generalBias,
+                generalFlat=generalFlat,
+                demosaic_fmt=demosaic_fmt,
+                demosaic_out=demosaic_out,
+                demosaic_mult=demosaic_mult,
             )
             if dropped_pointing_files:
                 if abort_if_reference_frame_rejected(
@@ -12713,6 +13273,7 @@ def _main_impl():
                 inputfiles = inputfiles[inc:]
                 times = times[inc:]
                 jd_times = jd_times[inc:]
+                pointing_alignment_transforms = {}
             plateStatus.setCurrentFilename(inputfiles[0])
             header = get_first_image_header(inputfiles[0])
 
@@ -12906,13 +13467,6 @@ def _main_impl():
             aper_data = None
             coarse_frame_cache = [None] * coarse_tune_frames if use_aperture_photometry else []
 
-            use_multiprocess_transform_precompute = should_use_multiprocess_transform_precompute(
-                inputfiles, args.multiprocess_transformations, ignore_header_wcs=ignore_header_wcs
-            )
-            fallback_transforms = {}
-            if use_multiprocess_transform_precompute:
-                fallback_transforms = build_multiprocess_transformations(inputfiles, args.multiprocess_transformations)
-
             target_and_comp_radec = None
             if ra_dec_tar is not None and ra_dec_wcs:
                 target_and_comp_radec = np.array([ra_dec_tar, *ra_dec_wcs], dtype=float)
@@ -12927,6 +13481,32 @@ def _main_impl():
             # open files, calibrate, align, photometry
             reset_transform_timing_stats()
             reset_photometry_timing_stats()
+            multiprocess_alignment_results = None
+            use_multiprocess_alignment = (
+                args.multiprocess_transformations is not None and args.multiprocess_transformations > 0
+            )
+            comp_alignment_keys = [f"comp{j + 1}" for j in range(comp_star_count)]
+            if use_multiprocess_alignment:
+                multiprocess_alignment_results = build_multiprocess_alignment_results(
+                    inputfiles,
+                    args.multiprocess_transformations,
+                    target_and_comp_pixels,
+                    target_and_comp_radec=target_and_comp_radec,
+                    ignore_header_wcs=ignore_header_wcs,
+                    generalDark=generalDark,
+                    generalBias=generalBias,
+                    generalFlat=generalFlat,
+                    demosaic_fmt=demosaic_fmt,
+                    demosaic_out=demosaic_out,
+                    demosaic_mult=demosaic_mult,
+                    bad_pixel_reference=bad_pixel_reference,
+                    use_fast_centroid_cadence=False,
+                    use_adaptive_apertures=use_adaptive_apertures,
+                    compute_fallback_transform=True,
+                    precomputed_fallback_transforms=pointing_alignment_transforms,
+                )
+            use_multiprocess_transform_precompute = False
+            fallback_transforms = pointing_alignment_transforms
             for i, fileName in enumerate(inputfiles):
                 plateStatus.setCurrentFilename(fileName)
                 hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
@@ -12959,40 +13539,117 @@ def _main_impl():
                 if i == 0:
                     firstImage = np.copy(imageData)
 
-                use_wcs_alignment = False
-                if not ignore_header_wcs:
-                    try:
-                        wcs_hdr = search_wcs_from_header(image_header)
-                        use_wcs_alignment = wcs_hdr.is_celestial
-                    except Exception:
-                        use_wcs_alignment = False
+                if multiprocess_alignment_results is not None:
+                    apply_parallel_alignment_result(
+                        multiprocess_alignment_results[i],
+                        i,
+                        psf_data,
+                        tar_comp_dist,
+                        comp_alignment_keys,
+                    )
+                else:
+                    use_wcs_alignment = False
+                    if not ignore_header_wcs:
+                        try:
+                            wcs_hdr = search_wcs_from_header(image_header)
+                            use_wcs_alignment = wcs_hdr.is_celestial
+                        except Exception:
+                            use_wcs_alignment = False
 
-                if use_wcs_alignment:
-                    try:
-                        pix_x = pix_y = None
-                        if target_and_comp_radec is not None:
-                            pix_x, pix_y = wcs_hdr.world_to_pixel_values(
-                                target_and_comp_radec[:, 0],
-                                target_and_comp_radec[:, 1],
+                    if use_wcs_alignment:
+                        try:
+                            pix_x = pix_y = None
+                            if target_and_comp_radec is not None:
+                                pix_x, pix_y = wcs_hdr.world_to_pixel_values(
+                                    target_and_comp_radec[:, 0],
+                                    target_and_comp_radec[:, 1],
+                                )
+                                pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
+                                pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
+
+                            if i == 0:
+                                tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
+                            else:
+                                tx, ty = pix_x[0], pix_y[0]
+
+                            projected_coords = np.array(
+                                [[tx, ty], *np.column_stack((pix_x[1:], pix_y[1:]))] if pix_x is not None else [[tx, ty]],
+                                dtype=float,
                             )
-                            pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
-                            pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
+                            projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
+                            target_seed = choose_centroid_seed_position(
+                                [tx, ty],
+                                None if i == 0 else psf_data['target'][i - 1],
+                            )
 
-                        if i == 0:
-                            tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
+                            psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
+                                imageData,
+                                target_seed,
+                                0,
+                                fast_mode=target_fast_centroid,
+                            )
+
+                            # TODO: Add check for flux on target/comp stars relative to others in the field
+                            # in case of cloudy data, large changes, etc.
+                            current_comp_psf_rows = {}
+                            previous_comp_psf_rows = {}
+                            for j in range(len(exotic_infoDict['comp_stars'])):
+                                ckey = f"comp{j + 1}"
+
+                                cx, cy = pix_x[j + 1], pix_y[j + 1]
+                                comp_seed = choose_centroid_seed_position(
+                                    [cx, cy],
+                                    None if i == 0 else psf_data[ckey][i - 1],
+                                )
+                                psf_data[ckey][i] = fit_centroid_or_warn_out_of_frame(
+                                    imageData,
+                                    comp_seed,
+                                    j + 1,
+                                    fast_mode=frame_fast_centroid,
+                                )
+
+                                current_comp_psf_rows[ckey] = psf_data[ckey][i]
+                                if i != 0:
+                                    previous_comp_psf_rows[ckey] = psf_data[ckey][i - 1]
+                                else:
+                                    tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
+                                    tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
+
+                            wcs_alignment_decision = should_keep_header_wcs_alignment(
+                                projected_off_frame,
+                                i,
+                                psf_data['target'][i],
+                                previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
+                                comp_psf_rows=current_comp_psf_rows,
+                                previous_comp_psf_rows=previous_comp_psf_rows,
+                                expected_offsets=tar_comp_dist,
+                            )
+                            use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
+                        except Exception:
+                            use_wcs_alignment = False
+
+                    log_alignment_progress(
+                        i,
+                        len(inputfiles),
+                        fileName,
+                        use_multiprocess_transform_precompute,
+                    )
+
+                    if not use_wcs_alignment:
+                        cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
+                        if cached_tform is not None:
+                            tform = cached_tform
+                        elif i == 0:
+                            tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
                         else:
-                            tx, ty = pix_x[0], pix_y[0]
+                            tform = transformation(imageData, fileName, reference_image=firstImage)
 
-                        projected_coords = np.array(
-                            [[tx, ty], *np.column_stack((pix_x[1:], pix_y[1:]))] if pix_x is not None else [[tx, ty]],
-                            dtype=float,
-                        )
-                        projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
+                        transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+                        tx, ty = transformed_coords[0]
                         target_seed = choose_centroid_seed_position(
                             [tx, ty],
                             None if i == 0 else psf_data['target'][i - 1],
                         )
-
                         psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
                             imageData,
                             target_seed,
@@ -13000,14 +13657,10 @@ def _main_impl():
                             fast_mode=target_fast_centroid,
                         )
 
-                        # TODO: Add check for flux on target/comp stars relative to others in the field
-                        # in case of cloudy data, large changes, etc.
-                        current_comp_psf_rows = {}
-                        previous_comp_psf_rows = {}
-                        for j in range(len(exotic_infoDict['comp_stars'])):
+                        for j, coord in enumerate(exotic_infoDict['comp_stars']):
                             ckey = f"comp{j + 1}"
 
-                            cx, cy = pix_x[j + 1], pix_y[j + 1]
+                            cx, cy = transformed_coords[j + 1]
                             comp_seed = choose_centroid_seed_position(
                                 [cx, cy],
                                 None if i == 0 else psf_data[ckey][i - 1],
@@ -13019,70 +13672,9 @@ def _main_impl():
                                 fast_mode=frame_fast_centroid,
                             )
 
-                            current_comp_psf_rows[ckey] = psf_data[ckey][i]
-                            if i != 0:
-                                previous_comp_psf_rows[ckey] = psf_data[ckey][i - 1]
-                            else:
+                            if i == 0:
                                 tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
                                 tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
-
-                        wcs_alignment_decision = should_keep_header_wcs_alignment(
-                            projected_off_frame,
-                            i,
-                            psf_data['target'][i],
-                            previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
-                            comp_psf_rows=current_comp_psf_rows,
-                            previous_comp_psf_rows=previous_comp_psf_rows,
-                            expected_offsets=tar_comp_dist,
-                        )
-                        use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
-                    except Exception:
-                        use_wcs_alignment = False
-
-                log_alignment_progress(
-                    i,
-                    len(inputfiles),
-                    fileName,
-                    use_multiprocess_transform_precompute,
-                )
-
-                if not use_wcs_alignment:
-                    if i == 0:
-                        tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-                    else:
-                        tform = fallback_transforms[i] if i in fallback_transforms else transformation(imageData, fileName, reference_image=firstImage)
-
-                    transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
-                    tx, ty = transformed_coords[0]
-                    target_seed = choose_centroid_seed_position(
-                        [tx, ty],
-                        None if i == 0 else psf_data['target'][i - 1],
-                    )
-                    psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
-                        imageData,
-                        target_seed,
-                        0,
-                        fast_mode=target_fast_centroid,
-                    )
-
-                    for j, coord in enumerate(exotic_infoDict['comp_stars']):
-                        ckey = f"comp{j + 1}"
-
-                        cx, cy = transformed_coords[j + 1]
-                        comp_seed = choose_centroid_seed_position(
-                            [cx, cy],
-                            None if i == 0 else psf_data[ckey][i - 1],
-                        )
-                        psf_data[ckey][i] = fit_centroid_or_warn_out_of_frame(
-                            imageData,
-                            comp_seed,
-                            j + 1,
-                            fast_mode=frame_fast_centroid,
-                        )
-
-                        if i == 0:
-                            tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
-                            tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
 
                 # aperture photometry
                 if use_aperture_photometry and i == 0:

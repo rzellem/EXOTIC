@@ -6,7 +6,16 @@ from matplotlib.lines import Line2D
 import numpy as np
 from pathlib import Path
 
+try:
+    from utils import filename_date_token, safe_output_filename
+except ImportError:
+    from .utils import filename_date_token, safe_output_filename
+
 plt.style.use(astropy_mpl_style)
+
+
+def _dated_plot_filename(prefix, *parts, date, extension):
+    return safe_output_filename(prefix, *parts, filename_date_token(date), extension=extension)
 
 
 # Plots of the centroid positions as a function of time
@@ -46,7 +55,12 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
         axs[2, 1].plot(times[e] - np.nanmin(times), abs(y_targ[e] - y_ref[e]), 'k.')
 
     plt.tight_layout()
-    plt.savefig(Path(save) / "temp" / f"CentroidPositions&Distances_{target_name}_{date}.pdf")
+    plt.savefig(Path(save) / "temp" / _dated_plot_filename(
+        "CentroidPositions&Distances",
+        target_name,
+        date=date,
+        extension="pdf",
+    ))
     plt.close()
 
 def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date,
@@ -146,10 +160,21 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         Path(save).mkdir(parents=True, exist_ok=True)
         Path(save, "temp").mkdir(parents=True, exist_ok=True)
 
-        plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
-                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.pdf", bbox_inches='tight')
-        plt.savefig(Path(save) / "temp" / f"FOV_{targ_name}_{date}_"
-                    f"{str(stretch.__class__).split('.')[-1].split(apos)[0]}.png", bbox_inches='tight')
+        stretch_name = str(stretch.__class__).split('.')[-1].split(apos)[0]
+        plt.savefig(Path(save) / "temp" / _dated_plot_filename(
+            "FOV",
+            targ_name,
+            stretch_name,
+            date=date,
+            extension="pdf",
+        ), bbox_inches='tight')
+        plt.savefig(Path(save) / "temp" / _dated_plot_filename(
+            "FOV",
+            targ_name,
+            stretch_name,
+            date=date,
+            extension="png",
+        ), bbox_inches='tight')
         plt.close()
 
 
@@ -159,7 +184,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Flux [ADU]")
     plt.errorbar(times, targ, yerr=targ_unc, linestyle='None', fmt='-o')
-    plt.savefig(Path(save) / "temp" / f"TargetRawFlux_{targ_name}_{date}.pdf")
+    plt.savefig(Path(save) / "temp" / _dated_plot_filename("TargetRawFlux", targ_name, date=date, extension="pdf"))
     plt.close()
 
     plt.figure()
@@ -167,7 +192,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Flux [ADU]")
     plt.errorbar(times, ref, yerr=ref_unc, linestyle='None', fmt='-o')
-    plt.savefig(Path(save) / "temp" / f"CompRawFlux_{targ_name}_{date}.pdf")
+    plt.savefig(Path(save) / "temp" / _dated_plot_filename("CompRawFlux", targ_name, date=date, extension="pdf"))
     plt.close()
 
     # Plots final reduced light curve (after the 3 sigma clip)
@@ -176,11 +201,11 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Normalized Flux")
     plt.errorbar(times, norm_flux, yerr=norm_unc, linestyle='None', fmt='-bo')
-    plt.savefig(Path(save) / "temp" / f"NormalizedFluxTime_{targ_name}_{date}.pdf")
+    plt.savefig(Path(save) / "temp" / _dated_plot_filename("NormalizedFluxTime", targ_name, date=date, extension="pdf"))
     plt.close()
 
     # Save normalized flux to text file prior to NS
-    params_file = Path(save) / "temp" / f"NormalizedFlux_{targ_name}_{date}.txt"
+    params_file = Path(save) / "temp" / _dated_plot_filename("NormalizedFlux", targ_name, date=date, extension="txt")
     with params_file.open('w') as f:
         f.write("BJD,Norm Flux,Norm Err,AM\n")
 
@@ -221,8 +246,8 @@ def plot_comp_star_pairwise_matrix(pairwise_matrix, best_comp_index, targ_name, 
     ax.set_xlabel("Reference Comparison Star")
     ax.set_ylabel("Candidate Comparison Star")
     fig.tight_layout()
-    fig.savefig(temp_dir / f"CompStarPairwiseScatter_{targ_name}_{date}.png", bbox_inches="tight")
-    fig.savefig(temp_dir / f"CompStarPairwiseScatter_{targ_name}_{date}.pdf", bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("CompStarPairwiseScatter", targ_name, date=date, extension="png"), bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("CompStarPairwiseScatter", targ_name, date=date, extension="pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -246,8 +271,8 @@ def plot_comp_star_calibration_series(times, comp_summaries, targ_name, save, da
     axes[-1].set_xlabel("Time [BJD_TDB]")
     fig.suptitle(f"{targ_name} Comparison-Star Calibration Curves\n{method_label}", y=1.01)
     fig.tight_layout()
-    fig.savefig(temp_dir / f"CompStarCalibrationCurves_{targ_name}_{date}.png", bbox_inches="tight")
-    fig.savefig(temp_dir / f"CompStarCalibrationCurves_{targ_name}_{date}.pdf", bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("CompStarCalibrationCurves", targ_name, date=date, extension="png"), bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("CompStarCalibrationCurves", targ_name, date=date, extension="pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -267,8 +292,20 @@ def plot_individual_comp_star_calibration_series(times, comp_summaries, targ_nam
         fig.suptitle(f"{targ_name} {summary['label']} Calibration Curves\n{method_label}")
         fig.tight_layout()
         label_slug = summary['label'].replace(" ", "")
-        fig.savefig(temp_dir / f"CompStarCalibrationCurve_{label_slug}_{targ_name}_{date}.png", bbox_inches="tight")
-        fig.savefig(temp_dir / f"CompStarCalibrationCurve_{label_slug}_{targ_name}_{date}.pdf", bbox_inches="tight")
+        fig.savefig(temp_dir / _dated_plot_filename(
+            "CompStarCalibrationCurve",
+            label_slug,
+            targ_name,
+            date=date,
+            extension="png",
+        ), bbox_inches="tight")
+        fig.savefig(temp_dir / _dated_plot_filename(
+            "CompStarCalibrationCurve",
+            label_slug,
+            targ_name,
+            date=date,
+            extension="pdf",
+        ), bbox_inches="tight")
         plt.close(fig)
 
 
@@ -292,8 +329,20 @@ def plot_comp_star_candidate_lightcurve_fits(candidate_fit_summaries, targ_name,
         ax_res.set_title("")
 
         label_slug = summary['label'].replace(" ", "")
-        fig.savefig(temp_dir / f"CompStarLightCurveFit_{label_slug}_{targ_name}_{date}.png", bbox_inches="tight")
-        fig.savefig(temp_dir / f"CompStarLightCurveFit_{label_slug}_{targ_name}_{date}.pdf", bbox_inches="tight")
+        fig.savefig(temp_dir / _dated_plot_filename(
+            "CompStarLightCurveFit",
+            label_slug,
+            targ_name,
+            date=date,
+            extension="png",
+        ), bbox_inches="tight")
+        fig.savefig(temp_dir / _dated_plot_filename(
+            "CompStarLightCurveFit",
+            label_slug,
+            targ_name,
+            date=date,
+            extension="pdf",
+        ), bbox_inches="tight")
         plt.close(fig)
 
 
@@ -355,8 +404,8 @@ def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_lab
     ax.legend()
     ax.grid(axis='y', alpha=0.25)
     fig.tight_layout()
-    fig.savefig(temp_dir / f"CompStarSuitability_{targ_name}_{date}.png", bbox_inches="tight")
-    fig.savefig(temp_dir / f"CompStarSuitability_{targ_name}_{date}.pdf", bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("CompStarSuitability", targ_name, date=date, extension="png"), bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("CompStarSuitability", targ_name, date=date, extension="pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -435,8 +484,8 @@ def plot_adaptive_aperture_diagnostics(times, aperture_series, annulus_series, f
     axes[1, 1].grid(alpha=0.25)
 
     fig.tight_layout()
-    fig.savefig(temp_dir / f"AdaptiveApertureDiagnostics_{targ_name}_{date}.png", bbox_inches="tight")
-    fig.savefig(temp_dir / f"AdaptiveApertureDiagnostics_{targ_name}_{date}.pdf", bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("AdaptiveApertureDiagnostics", targ_name, date=date, extension="png"), bbox_inches="tight")
+    fig.savefig(temp_dir / _dated_plot_filename("AdaptiveApertureDiagnostics", targ_name, date=date, extension="pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -544,8 +593,8 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
         plt.tight_layout()
 
         try:
-            fig.savefig(temp_dir / f"Observing_Statistics_{key}_{date}.png", bbox_inches="tight")
-            fig.savefig(temp_dir / f"Observing_Statistics_{key}_{date}.pdf", bbox_inches="tight")
+            fig.savefig(temp_dir / _dated_plot_filename("Observing_Statistics", key, date=date, extension="png"), bbox_inches="tight")
+            fig.savefig(temp_dir / _dated_plot_filename("Observing_Statistics", key, date=date, extension="pdf"), bbox_inches="tight")
         except Exception:
             pass
         plt.close()
@@ -563,8 +612,8 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
 
     Path(save).mkdir(parents=True, exist_ok=True)
     try:
-        f.savefig(Path(save) / f"FinalLightCurve_{targ_name}_{date}.png", bbox_inches="tight")
-        f.savefig(Path(save) / f"FinalLightCurve_{targ_name}_{date}.pdf", bbox_inches="tight")
+        f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="png"), bbox_inches="tight")
+        f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="pdf"), bbox_inches="tight")
     except Exception:
         pass
     plt.close()

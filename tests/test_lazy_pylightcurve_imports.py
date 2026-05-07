@@ -85,7 +85,7 @@ def test_imports_eagerly_load_pylightcurve_without_noise():
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert "imports-ok" in result.stdout
-    assert result.stdout.count("Importing modules. Please wait.......") == 1
+    assert "Importing modules. Please wait......." not in result.stdout
     assert "LOUD-STDOUT" not in result.stdout
     assert "LOUD-STDERR" not in result.stderr
 

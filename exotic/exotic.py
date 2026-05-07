@@ -178,9 +178,9 @@ except ImportError:  # package import
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
         plot_adaptive_aperture_diagnostics
 try:  # tools
-    from utils import round_to_2, user_input
+    from utils import filename_date_token, round_to_2, safe_output_filename, user_input
 except ImportError: # package import
-    from .utils import round_to_2, user_input
+    from .utils import filename_date_token, round_to_2, safe_output_filename, user_input
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -1572,14 +1572,23 @@ def comparison_candidate_output_dir(save_dir, comp_index):
 
 
 def triangle_plot_output_path(save_dir, planet_name, observation_date):
-    return Path(save_dir) / "temp" / f"Triangle_{planet_name}_{observation_date}.png"
+    return (
+        Path(save_dir)
+        / "temp"
+        / safe_output_filename("Triangle", planet_name, filename_date_token(observation_date), extension="png")
+    )
 
 
 def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observation_date, comp_index):
     return (
         Path(save_dir)
         / "temp"
-        / f"Comp{int(comp_index) + 1}_Triangle_{planet_name}_{observation_date}.png"
+        / safe_output_filename(
+            f"Comp{int(comp_index) + 1}_Triangle",
+            planet_name,
+            filename_date_token(observation_date),
+            extension="png",
+        )
     )
 
 
@@ -2006,7 +2015,12 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
     if callable(plotter):
         try:
             fig, _ = plotter()
-            bestfit_plot_path = temp_dir / f"BestFit_{p_dict['pName']}_{observation_date}.png"
+            bestfit_plot_path = temp_dir / safe_output_filename(
+                "BestFit",
+                p_dict['pName'],
+                filename_date_token(observation_date),
+                extension="png",
+            )
             fig.savefig(bestfit_plot_path)
             plt.close(fig)
         except Exception as exc:
@@ -2080,7 +2094,12 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
             exc,
         ))
 
-    summary_path = temp_dir / f"ComparisonCandidateSummary_{p_dict['pName']}_{observation_date}.json"
+    summary_path = temp_dir / safe_output_filename(
+        "ComparisonCandidateSummary",
+        p_dict['pName'],
+        filename_date_token(observation_date),
+        extension="json",
+    )
     summary_payload = {
         'planet_name': p_dict['pName'],
         'observation_date': observation_date,
@@ -2136,7 +2155,12 @@ def archive_failed_comparison_fit(save_dir, planet_name, observation_date, attem
         if callable(plotter):
             try:
                 fig, _ = plotter()
-                bestfit_plot_path = temp_dir / f"BestFit_{planet_name}_{observation_date}.png"
+                bestfit_plot_path = temp_dir / safe_output_filename(
+                    "BestFit",
+                    planet_name,
+                    filename_date_token(observation_date),
+                    extension="png",
+                )
                 fig.savefig(bestfit_plot_path)
                 plt.close(fig)
             except Exception as exc:
@@ -2145,7 +2169,12 @@ def archive_failed_comparison_fit(save_dir, planet_name, observation_date, attem
                     exc,
                 ))
 
-    summary_path = temp_dir / f"FailedFitSummary_{planet_name}_{observation_date}.json"
+    summary_path = temp_dir / safe_output_filename(
+        "FailedFitSummary",
+        planet_name,
+        filename_date_token(observation_date),
+        extension="json",
+    )
     summary_payload = {
         'planet_name': planet_name,
         'observation_date': observation_date,
@@ -2205,7 +2234,12 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
 
     output_dir = Path(save_dir) / "temp"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"SelectedPhotometryRawRatio_{planet_name}_{observation_date}.csv"
+    output_path = output_dir / safe_output_filename(
+        "SelectedPhotometryRawRatio",
+        planet_name,
+        filename_date_token(observation_date),
+        extension="csv",
+    )
 
     output_rows = np.column_stack(
         [
@@ -10665,44 +10699,24 @@ def format_comp_star_position(position):
 
 
 def deduplicate_comparison_star_coords(comp_stars, min_separation_pixels=COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS):
+    """Normalize comparison-star coordinates without merging nearby stars.
+
+    The function name is historical. User-provided comparison-star selections
+    are intentional inputs, so nearby stars must remain distinct candidates.
+    """
     if comp_stars is None:
         return [], []
 
-    try:
-        threshold = float(min_separation_pixels)
-    except (TypeError, ValueError):
-        threshold = COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS
-    if not np.isfinite(threshold) or threshold <= 0:
-        threshold = COMPARISON_STAR_DUPLICATE_DISTANCE_PIXELS
-
-    unique_coords = []
-    duplicate_messages = []
-    for index, coord in enumerate(comp_stars, start=1):
+    normalized_coords = []
+    for coord in comp_stars:
         try:
             x_pos, y_pos = float(coord[0]), float(coord[1])
         except (TypeError, ValueError, IndexError):
             continue
 
-        duplicate_entry = None
-        for unique_index, unique_coord in enumerate(unique_coords, start=1):
-            separation = float(np.hypot(x_pos - unique_coord[0], y_pos - unique_coord[1]))
-            if separation <= threshold:
-                duplicate_entry = (unique_index, unique_coord, separation)
-                break
+        normalized_coords.append([x_pos, y_pos])
 
-        if duplicate_entry is not None:
-            kept_index, kept_coord, separation = duplicate_entry
-            duplicate_messages.append(
-                "Merged comparison star "
-                f"#{index} ({x_pos:.1f}, {y_pos:.1f}) into comparison star "
-                f"#{kept_index} ({kept_coord[0]:.1f}, {kept_coord[1]:.1f}) "
-                f"because they were only {separation:.2f} px apart."
-            )
-            continue
-
-        unique_coords.append([x_pos, y_pos])
-
-    return unique_coords, duplicate_messages
+    return normalized_coords, []
 
 
 def format_comp_star_coverage_text(summary):

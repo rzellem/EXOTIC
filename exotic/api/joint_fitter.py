@@ -37,13 +37,11 @@
 # ########################################################################### #
 from astropy import constants as const
 from astropy import units as u
-import builtins
 from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 import faulthandler
 import io
 from itertools import cycle
-import multiprocessing
 import os
 import sys
 import matplotlib.pyplot as plt
@@ -66,14 +64,6 @@ try:
     from ultranest_utils import run_reactive_sampler
 except ImportError:
     from .ultranest_utils import run_reactive_sampler
-
-if (
-    multiprocessing.current_process().name == "MainProcess"
-    and not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False)
-):
-    print("Importing modules. Please wait.......", flush=True)
-    builtins._EXOTIC_IMPORTING_MODULES_PRINTED = True
-
 
 def _pylightcurve_import_watchdog_seconds():
     try:

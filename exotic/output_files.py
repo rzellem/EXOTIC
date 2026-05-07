@@ -4,9 +4,9 @@ from pathlib import Path
 import numpy as np
 
 try:
-    from utils import round_to_2
+    from utils import filename_date_token, round_to_2, safe_output_filename
 except ImportError:
-    from .utils import round_to_2
+    from .utils import filename_date_token, round_to_2, safe_output_filename
 try:
     from version import __version__
 except ImportError:
@@ -807,7 +807,12 @@ class OutputFiles:
         self.dir = Path(self.i_dict['save'])
 
     def final_lightcurve(self, phase):
-        params_file = self.dir / "temp" / f"FinalLightCurve_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
+        params_file = self.dir / "temp" / safe_output_filename(
+            "FinalLightCurve",
+            self.p_dict['pName'],
+            filename_date_token(self.i_dict['date']),
+            extension="csv",
+        )
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
@@ -820,7 +825,12 @@ class OutputFiles:
 
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
                                min_annul=None, adaptive_summary=None, photometry_info=None):
-        params_file = self.dir / "temp" / f"FinalParams_{self.p_dict['pName']}_{self.i_dict['date']}.json"
+        params_file = self.dir / "temp" / safe_output_filename(
+            "FinalParams",
+            self.p_dict['pName'],
+            filename_date_token(self.i_dict['date']),
+            extension="json",
+        )
 
         transit_qc = getattr(self.fit, 'transit_qc', None)
         fit_quality = build_fit_quality_metadata(self.fit)
@@ -1013,7 +1023,12 @@ class OutputFiles:
         gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
         gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
-        params_file = self.dir / f"AAVSO_{self.p_dict['pName']}_{self.i_dict['date']}.txt"
+        params_file = self.dir / safe_output_filename(
+            "AAVSO",
+            self.p_dict['pName'],
+            filename_date_token(self.i_dict['date']),
+            extension="txt",
+        )
 
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed
@@ -1086,7 +1101,12 @@ class OutputFiles:
                         f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
                         f"{round(detrend_model[aavsoC], 7)}\n")
     def plate_status(self, plate_status: PlateStatus):
-        plate_status_file = self.dir / "temp" / f"PlateStatus_{self.p_dict['pName']}_{self.i_dict['date']}.csv"
+        plate_status_file = self.dir / "temp" / safe_output_filename(
+            "PlateStatus",
+            self.p_dict['pName'],
+            filename_date_token(self.i_dict['date']),
+            extension="csv",
+        )
         plate_status.writePlateStatus(plate_status_file)
 
 class AIDOutputFiles:
@@ -1100,7 +1120,12 @@ class AIDOutputFiles:
         self.vsp_params = vsp_params
 
     def aavso(self):
-        params_file = self.dir / f"AID_AAVSO_{self.p_dict['sName']}_{self.i_dict['date']}.txt"
+        params_file = self.dir / safe_output_filename(
+            "AID_AAVSO",
+            self.p_dict['sName'],
+            filename_date_token(self.i_dict['date']),
+            extension="txt",
+        )
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
@@ -1263,7 +1288,12 @@ def save_comp_star_calibration_summary(save_dir, target_name, date, method_label
                                        comp_summaries, best_comp_index):
     temp_dir = Path(save_dir) / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    summary_file = temp_dir / f"CompStarCalibrationSummary_{target_name}_{date}.csv"
+    summary_file = temp_dir / safe_output_filename(
+        "CompStarCalibrationSummary",
+        target_name,
+        filename_date_token(date),
+        extension="csv",
+    )
 
     with summary_file.open('w') as handle:
         handle.write(f"# Comparison-star calibration summary for {target_name}\n")

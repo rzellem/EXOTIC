@@ -13,6 +13,51 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+_WINDOWS_RESERVED_FILENAME_STEMS = {
+    'CON',
+    'PRN',
+    'AUX',
+    'NUL',
+    *(f'COM{i}' for i in range(1, 10)),
+    *(f'LPT{i}' for i in range(1, 10)),
+}
+_WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+
+
+def sanitize_filename_component(value, fallback='output'):
+    """Return one filename component that is safe on Windows, macOS, and Linux."""
+
+    cleaned = _WINDOWS_ILLEGAL_FILENAME_CHARS_RE.sub('-', str(value or ''))
+    cleaned = cleaned.rstrip(' .')
+    if cleaned in {'', '.', '..'}:
+        cleaned = fallback
+    device_stem = cleaned.split('.', 1)[0].upper()
+    if device_stem in _WINDOWS_RESERVED_FILENAME_STEMS:
+        cleaned = f'_{cleaned}'
+    return cleaned
+
+
+def filename_date_token(value):
+    """Return YYYY-MM-DD when a filename date includes a time component."""
+
+    text = str(value or '').strip()
+    match = re.match(r'(\d{4})[-/]?(\d{2})[-/]?(\d{2})', text)
+    if match:
+        return f'{match.group(1)}-{match.group(2)}-{match.group(3)}'
+    return text
+
+
+def safe_output_filename(prefix, *parts, extension):
+    """Build a filename from EXOTIC output labels without illegal path characters."""
+
+    stem_parts = [str(prefix), *(str(part) for part in parts)]
+    safe_stem = sanitize_filename_component('_'.join(stem_parts), fallback=str(prefix or 'output'))
+    ext = str(extension or '')
+    if ext and not ext.startswith('.'):
+        ext = f'.{ext}'
+    return f'{safe_stem}{ext}'
+
+
 def user_input(prompt, type_, values=None, max_tries=1000):
     """
     Captures user_input and casts it to the expected type

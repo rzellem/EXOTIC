@@ -40,13 +40,11 @@
 # Fit an exoplanet transit model to time series data.
 # ########################################################################### #
 from astropy.time import Time
-import builtins
 import copy
 from contextlib import redirect_stderr, redirect_stdout
 import faulthandler
 import io
 from itertools import cycle
-import multiprocessing
 import os
 import sys
 import bottleneck as bn
@@ -74,14 +72,6 @@ except ImportError:
     from .ultranest_utils import run_reactive_sampler
 
 BAD_LOG_LIKELIHOOD = -1.0e100
-
-if (
-    multiprocessing.current_process().name == "MainProcess"
-    and not getattr(builtins, "_EXOTIC_IMPORTING_MODULES_PRINTED", False)
-):
-    print("Importing modules. Please wait.......", flush=True)
-    builtins._EXOTIC_IMPORTING_MODULES_PRINTED = True
-
 
 def _pylightcurve_import_watchdog_seconds():
     try:

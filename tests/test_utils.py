@@ -2,6 +2,23 @@ from exotic.utils import *
 from unittest.mock import patch
 
 
+def test_filename_date_token_uses_date_only_for_iso_timestamp():
+    assert filename_date_token("2026-05-06T19:51:13.964-0700") == "2026-05-06"
+    assert filename_date_token("20260506T195113") == "2026-05-06"
+    assert filename_date_token("2026/05/06 19:51:13") == "2026-05-06"
+
+
+def test_safe_output_filename_sanitizes_filename_chars():
+    filename = safe_output_filename(
+        "BestFit",
+        "XO-1/b",
+        filename_date_token("2026-05-06T19:51:13.964-0700"),
+        extension="png",
+    )
+
+    assert filename == "BestFit_XO-1-b_2026-05-06.png"
+
+
 class TestUserInput:
     """tests the `user_input()` function"""
 

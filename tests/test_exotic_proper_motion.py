@@ -212,6 +212,17 @@ def test_comparison_candidate_triangle_plot_uses_candidate_specific_name(tmp_pat
     assert output_path.parent == tmp_path / "comp7" / "temp"
 
 
+def test_comparison_candidate_triangle_plot_uses_date_only_from_timestamp(tmp_path):
+    output_path = comparison_candidate_triangle_plot_output_path(
+        tmp_path / "comp7",
+        "XO-1/b",
+        "2026-05-06T19:51:13.964-0700",
+        6,
+    )
+
+    assert output_path.name == "Comp7_Triangle_XO-1-b_2026-05-06.png"
+
+
 def test_save_final_triangle_plot_regenerates_when_selected_artifact_missing(tmp_path):
     class DummyFigure:
         def savefig(self, path):
@@ -463,8 +474,8 @@ def test_detrend_flux_on_out_of_transit_baseline_falls_back_to_prior_ephemeris()
     assert "ephemeris-centered transit window" in fallback["note"]
 
 
-def test_deduplicate_comparison_star_coords_merges_nearby_duplicates():
-    unique_coords, duplicate_messages = deduplicate_comparison_star_coords(
+def test_deduplicate_comparison_star_coords_preserves_nearby_user_stars():
+    preserved_coords, duplicate_messages = deduplicate_comparison_star_coords(
         [
             [1826.0, 1499.0],
             [1827.0, 1511.0],
@@ -474,9 +485,13 @@ def test_deduplicate_comparison_star_coords_merges_nearby_duplicates():
         min_separation_pixels=15.0,
     )
 
-    assert unique_coords == [[1826.0, 1499.0], [842.0, 1810.0]]
-    assert len(duplicate_messages) == 2
-    assert "Merged comparison star #2" in duplicate_messages[0]
+    assert preserved_coords == [
+        [1826.0, 1499.0],
+        [1827.0, 1511.0],
+        [1828.0, 1487.0],
+        [842.0, 1810.0],
+    ]
+    assert duplicate_messages == []
 
 
 def test_robust_flux_floor_mask_rejects_tiny_positive_outliers():

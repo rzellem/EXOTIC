@@ -1043,6 +1043,169 @@ def test_triangle_payload_expands_degenerate_error_ranges_to_sample_cloud(monkey
     assert payload["ranges"][1][1] >= 0.0038
 
 
+def test_triangle_payload_title_uses_visible_histogram_peak(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.34],
+        "a0": [0.95, 1.05],
+    }
+    fit.sample_bounds = dict(fit.bounds)
+    fit.sampled_keys = ["rprs", "a0"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.33796, "a0": 1.0}
+    fit.errors = {"rprs": 0.09150, "a0": 0.001}
+    fit.sample_parameters = dict(fit.parameters)
+    fit.sample_errors = dict(fit.errors)
+    rprs_samples = np.concatenate([
+        np.linspace(0.108, 0.122, 20),
+        np.linspace(0.318, 0.338, 80),
+    ])
+    weights = np.concatenate([
+        np.ones(20, dtype=float),
+        np.full(80, 0.01, dtype=float),
+    ])
+    points = np.column_stack([rprs_samples, np.linspace(0.998, 1.002, rprs_samples.size)])
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+            "weights": weights,
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    assert payload["titles"][0].startswith("0.11900 +-")
+    assert not payload["titles"][0].startswith("0.33796")
+    np.testing.assert_allclose(payload["display_weights"], weights)
+
+
+def test_plot_triangle_passes_ultranest_weights_to_visible_histograms(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    captured = {}
+
+    def fake_corner(*args, **kwargs):
+        captured["weights"] = kwargs["weights"]
+        return "figure"
+
+    monkeypatch.setattr(elca, "corner", fake_corner)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.2],
+        "a0": [0.95, 1.05],
+    }
+    fit.sample_bounds = dict(fit.bounds)
+    fit.sampled_keys = ["rprs", "a0"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.1, "a0": 1.0}
+    fit.errors = {"rprs": 0.01, "a0": 0.001}
+    fit.sample_parameters = dict(fit.parameters)
+    fit.sample_errors = dict(fit.errors)
+    points = np.column_stack([
+        np.linspace(0.09, 0.11, 12),
+        np.linspace(0.998, 1.002, 12),
+    ])
+    weights = np.linspace(1.0, 2.0, points.shape[0])
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+            "weights": weights,
+        },
+        "samples": points.copy(),
+    }
+
+    fig = fit.plot_triangle()
+
+    assert fig == "figure"
+    np.testing.assert_allclose(captured["weights"], weights)
+
+
+def test_triangle_payload_expands_sparse_visible_ranges_to_sample_cloud(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.2],
+        "a0": [0.95, 1.05],
+    }
+    fit.sample_bounds = dict(fit.bounds)
+    fit.sampled_keys = ["rprs", "a0"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.100, "a0": 1.0}
+    fit.errors = {"rprs": 0.01, "a0": 1e-4}
+    fit.sample_parameters = dict(fit.parameters)
+    fit.sample_errors = dict(fit.errors)
+    points = np.column_stack(
+        [
+            np.linspace(0.090, 0.110, 100),
+            np.linspace(0.980, 1.020, 100),
+        ]
+    )
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    assert payload["ranges"][1][0] <= 0.981
+    assert payload["ranges"][1][1] >= 1.019
+
+
+def test_triangle_payload_expands_mirrored_impact_parameter_range_to_sample_cloud(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.2],
+        "inc": [84.0, 90.0],
+        "a0": [0.95, 1.05],
+    }
+    fit.sampled_keys = ["rprs", "b", "a0"]
+    fit.sample_bounds = {
+        "rprs": [0.0, 0.2],
+        "b": [0.0, 1.2],
+        "a0": [0.95, 1.05],
+    }
+    fit.prior = make_prior()
+    fit.sample_parameters = {"rprs": 0.10, "b": 0.30, "a0": 1.0}
+    fit.sample_errors = {"rprs": 0.01, "b": 0.01, "a0": 0.001}
+    fit.parameters = {"rprs": 0.10, "inc": 88.6, "a0": 1.0}
+    fit.errors = {"rprs": 0.01, "inc": 0.75, "a0": 0.001}
+    points = np.column_stack(
+        [
+            np.linspace(0.090, 0.110, 100),
+            np.linspace(0.10, 0.80, 100),
+            np.linspace(0.998, 1.002, 100),
+        ]
+    )
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    assert payload["labels"][1] == r"$\Delta b$"
+    assert payload["ranges"][1][0] <= -0.52
+    assert payload["ranges"][1][1] >= 0.52
+
+
 def test_triangle_payload_tracks_left_and_right_geometry_branches_for_inclination(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)

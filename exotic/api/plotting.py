@@ -480,6 +480,35 @@ def quantile(x, q, weights=None):
         cdf = np.append(0, cdf)
         return np.interp(q, cdf, x[idx]).tolist()
 
+def _contour_levels_within_surface(levels, surface_min, surface_max):
+    levels = np.asarray(levels, dtype=float)
+    levels = np.unique(levels[np.isfinite(levels)])
+    if levels.size == 0:
+        return levels
+
+    if (
+        not np.isfinite(surface_min)
+        or not np.isfinite(surface_max)
+        or surface_min >= surface_max
+    ):
+        return np.array([], dtype=float)
+
+    valid_levels = levels[(levels > surface_min) & (levels < surface_max)]
+    if valid_levels.size > 0:
+        return valid_levels
+
+    surface_span = float(surface_max - surface_min)
+    epsilon = max(
+        surface_span * 1e-9,
+        np.finfo(float).eps * max(1.0, abs(float(surface_min)), abs(float(surface_max))),
+    )
+    lower = float(surface_min) + epsilon
+    upper = float(surface_max) - epsilon
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        return np.array([0.5 * (float(surface_min) + float(surface_max))], dtype=float)
+
+    return np.unique(np.clip(levels, lower, upper))
+
 def hist2d(x, y, bins=20, range=None, levels=[2],
            ax=None, plot_datapoints=True, plot_contours=True, 
            contour_kwargs=None, contourf_kwargs=None, data_kwargs=None,
@@ -528,9 +557,7 @@ def hist2d(x, y, bins=20, range=None, levels=[2],
             surface_max = np.nanmax(contour_surface)
             if not np.isfinite(surface_min) or not np.isfinite(surface_max) or np.isclose(surface_min, surface_max):
                 raise ValueError("degenerate contour surface")
-            contour_levels = contour_levels[
-                (contour_levels > surface_min) & (contour_levels < surface_max)
-            ]
+            contour_levels = _contour_levels_within_surface(contour_levels, surface_min, surface_max)
             if contour_levels.size == 0:
                 raise ValueError("no contour levels fall within the plotted surface")
 

@@ -728,7 +728,14 @@ class lc_fitter(object):
 
         return [lower, upper]
 
-    def _expand_plot_range_for_sample_cloud(self, key, plot_range, sample_values, center):
+    def _expand_plot_range_for_sample_cloud(
+        self,
+        key,
+        plot_range,
+        sample_values,
+        center,
+        required_visible_fraction=0.95,
+    ):
         sample_values = np.asarray(sample_values, dtype=float)
         finite_values = sample_values[np.isfinite(sample_values)]
         if finite_values.size < 2:
@@ -736,8 +743,8 @@ class lc_fitter(object):
 
         lower, upper = [float(value) for value in plot_range]
         in_range = (finite_values >= lower) & (finite_values <= upper)
-        minimum_in_range = min(finite_values.size, max(8, int(0.05 * finite_values.size)))
-        if np.count_nonzero(in_range) >= minimum_in_range:
+        visible_fraction = np.count_nonzero(in_range) / float(finite_values.size)
+        if visible_fraction >= required_visible_fraction:
             return plot_range
 
         q_lower, q_upper = np.nanpercentile(finite_values, [0.5, 99.5])
@@ -761,19 +768,40 @@ class lc_fitter(object):
 
     def _get_triangle_plot_samples(self):
         if self.ns_type == 'ultranest':
-            points = np.asarray(self.results['weighted_samples']['points'], dtype=float)
-            logl = np.asarray(self.results['weighted_samples']['logl'], dtype=float)
-            return points, logl
+            weighted_samples = self.results['weighted_samples']
+            points = np.asarray(weighted_samples['points'], dtype=float)
+            logl = np.asarray(weighted_samples['logl'], dtype=float)
+            weights = self._get_triangle_plot_sample_weights(
+                weighted_samples.get('weights'),
+                points.shape[0],
+            )
+            return points, logl, weights
 
         points = np.asarray(self.results.samples, dtype=float)
         weights = np.exp(self.results.logwt - self.results.logz[-1])
         index_samples = resample_equal(np.arange(points.shape[0], dtype=float)[:, None], weights)
         index_samples = np.clip(np.rint(index_samples[:, 0]).astype(int), 0, points.shape[0] - 1)
-        return points[index_samples], np.asarray(self.results.logl, dtype=float)[index_samples]
+        return points[index_samples], np.asarray(self.results.logl, dtype=float)[index_samples], None
+
+    def _get_triangle_plot_sample_weights(self, weights, sample_count):
+        if weights is None:
+            return None
+
+        weights = np.asarray(weights, dtype=float)
+        if weights.ndim != 1 or weights.shape[0] != sample_count:
+            return None
+
+        finite = np.isfinite(weights) & (weights >= 0)
+        if not np.all(finite):
+            weights = np.where(finite, weights, 0.0)
+
+        if not np.isfinite(np.sum(weights)) or np.sum(weights) <= 0:
+            return None
+        return weights
 
     def get_parameter_posterior_samples(self, key):
         try:
-            sample_points, _ = self._get_triangle_plot_samples()
+            sample_points, _, _ = self._get_triangle_plot_samples()
         except Exception:
             return np.array([], dtype=float)
 
@@ -794,9 +822,23 @@ class lc_fitter(object):
         ]
         return np.asarray(physical_samples, dtype=float)
 
-    def _estimate_histogram_mode(self, samples, bounds=None, bins=None):
+    def _estimate_histogram_mode(self, samples, bounds=None, bins=None, weights=None):
         samples = np.asarray(samples, dtype=float)
-        finite_samples = samples[np.isfinite(samples)]
+        if weights is None:
+            finite_mask = np.isfinite(samples)
+            finite_weights = None
+        else:
+            weights = np.asarray(weights, dtype=float)
+            if weights.shape != samples.shape:
+                finite_mask = np.isfinite(samples)
+                finite_weights = None
+            else:
+                finite_mask = np.isfinite(samples) & np.isfinite(weights) & (weights >= 0)
+                finite_weights = weights[finite_mask]
+                if finite_weights.size == 0 or np.sum(finite_weights) <= 0:
+                    finite_weights = None
+
+        finite_samples = samples[finite_mask]
         if finite_samples.size == 0:
             return np.nan, np.nan
         if finite_samples.size == 1:
@@ -818,14 +860,22 @@ class lc_fitter(object):
             bins = int(np.clip(np.sqrt(finite_samples.size), 10, 80))
         bins = max(1, int(bins))
 
-        counts, edges = np.histogram(finite_samples, bins=bins, range=(lower, upper))
+        counts, edges = np.histogram(finite_samples, bins=bins, range=(lower, upper), weights=finite_weights)
         if counts.size == 0:
+            return float(np.nanmedian(finite_samples)), np.nan
+        if not np.any(counts > 0):
             return float(np.nanmedian(finite_samples)), np.nan
 
         mode_index = int(np.argmax(counts))
         mode = float(0.5 * (edges[mode_index] + edges[mode_index + 1]))
         bin_width = float(edges[1] - edges[0]) if edges.size > 1 else np.nan
         return mode, bin_width
+
+    def _get_triangle_plot_title_center(self, samples, plot_range, fallback_center, bins, weights=None):
+        mode, _ = self._estimate_histogram_mode(samples, bounds=plot_range, bins=bins, weights=weights)
+        if np.isfinite(mode):
+            return float(mode)
+        return fallback_center
 
     def get_parameter_posterior_recenter_diagnostics(self, key, sigma_scale=5.0, bins=None):
         diagnostics = {
@@ -1020,6 +1070,12 @@ class lc_fitter(object):
         if not np.isfinite(error) or error <= 0:
             error = float(np.nanstd(magnitude_samples))
         plot_lower, plot_upper = self._get_plot_range(key)
+        plot_lower, plot_upper = self._expand_plot_range_for_sample_cloud(
+            key,
+            [plot_lower, plot_upper],
+            sample_points[:, geometry_index],
+            center,
+        )
         max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
         if not np.isfinite(max_distance) or max_distance <= 0:
             max_distance = float(np.nanmax(magnitude_samples))
@@ -1170,13 +1226,14 @@ class lc_fitter(object):
         sampled_keys = getattr(self, 'sampled_keys', list(self.bounds.keys()))
         sample_parameters = getattr(self, 'sample_parameters', self.parameters)
         sample_errors = getattr(self, 'sample_errors', self.errors)
-        sample_points, sample_logl = self._get_triangle_plot_samples()
+        sample_points, sample_logl, sample_weights = self._get_triangle_plot_samples()
         display_spec = self._get_triangle_plot_display_spec(sampled_keys, sample_parameters, sample_errors, sample_points)
         geometry_overlay = self._get_triangle_plot_geometry_overlay(display_spec, sample_points)
         geometry_summary = self._get_triangle_plot_geometry_summary(sampled_keys, sample_points)
 
         display_points = np.array(sample_points, copy=True)
         display_logl = np.array(sample_logl, copy=True)
+        display_weights = None if sample_weights is None else np.array(sample_weights, copy=True)
         mask_values = np.array(sample_points, copy=True)
 
         if display_spec is not None:
@@ -1187,7 +1244,11 @@ class lc_fitter(object):
             negative_points[:, geometry_index] = -display_spec['magnitude_samples']
             display_points = np.vstack([positive_points, negative_points])
             display_logl = np.concatenate([sample_logl, sample_logl])
+            if sample_weights is not None:
+                display_weights = np.concatenate([sample_weights, sample_weights])
             mask_values = np.array(display_points, copy=True)
+
+        plot_bins = int(max(1, np.sqrt(display_points.shape[0])))
 
         flabels = {
             'rprs': r'R$_{p}$/R$_{s}$',
@@ -1222,7 +1283,6 @@ class lc_fitter(object):
             center = sample_parameters.get(key, self.parameters.get(key, 0.0))
             error = sample_errors.get(key, self.errors.get(key, 0.0))
             label = flabels.get(key, key)
-            title = f"{center:.5f} +- {error:.5f}"
             plot_range = self._get_plot_range(key)
             if sample_points.ndim == 2 and i < sample_points.shape[1]:
                 plot_range = self._expand_plot_range_for_sample_cloud(
@@ -1231,6 +1291,16 @@ class lc_fitter(object):
                     sample_points[:, i],
                     center,
                 )
+            title_center = center
+            if display_points.ndim == 2 and i < display_points.shape[1]:
+                title_center = self._get_triangle_plot_title_center(
+                    display_points[:, i],
+                    plot_range,
+                    center,
+                    plot_bins,
+                    weights=None if display_weights is None else display_weights,
+                )
+            title = f"{title_center:.5f} +- {error:.5f}"
 
             if display_spec is not None and key == display_spec['key']:
                 label = display_spec['label']
@@ -1249,6 +1319,7 @@ class lc_fitter(object):
             'sampled_keys': sampled_keys,
             'display_points': display_points,
             'display_logl': display_logl,
+            'display_weights': display_weights,
             'mask_values': mask_values,
             'display_spec': display_spec,
             'geometry_overlay': geometry_overlay,
@@ -1850,6 +1921,7 @@ class lc_fitter(object):
                      labels=payload['labels'],
                      bins=int(np.sqrt(payload['display_points'].shape[0])),
                      range=payload['ranges'],
+                     weights=payload['display_weights'],
                      plot_contours=True,
                      levels=self._triangle_contour_levels(chi2, mask1, mask2, mask3),
                      plot_density=False,

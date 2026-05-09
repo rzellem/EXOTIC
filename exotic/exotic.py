@@ -235,6 +235,9 @@ ARS_SEARCH_BOUND_MIN = 1e-6
 ARS_SEARCH_BOUND_FALLBACK_MAX = 100.0
 ARS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 ARS_RETRY_MIN_HALF_WIDTH = 0.0
+IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT = 5
+INCLINATION_SEARCH_BOUND_MIN = 0.0
+INCLINATION_SEARCH_BOUND_MAX = 90.0
 INITIAL_ARS_BOUND_SIGMA_MULTIPLIER = 5.0
 INITIAL_ARS_BOUND_FALLBACK_RELATIVE_HALF_WIDTH = 0.25
 DURATION_PRIOR_MONTE_CARLO_SAMPLES = 256
@@ -2273,6 +2276,10 @@ def annotate_ars_posterior_refit(fit, applied, note=None, history=None):
     annotate_parameter_posterior_refit(fit, 'ars', applied, note=note, history=history)
 
 
+def annotate_impact_parameter_posterior_refit(fit, applied, note=None, history=None):
+    annotate_parameter_posterior_refit(fit, 'b', applied, note=note, history=history)
+
+
 def annotate_parameter_posterior_refit(fit, parameter_key, applied, note=None, history=None):
     if fit is None:
         return
@@ -2383,7 +2390,7 @@ def get_posterior_refit_final_bounds(fit, fallback_bounds):
     fit_bounds = getattr(fit, 'posterior_refit_final_bounds', None)
     if not isinstance(fit_bounds, dict):
         fit_bounds = {}
-        for key in ('rprs', 'ars'):
+        for key in ('rprs', 'ars', 'inc'):
             refit_bounds = getattr(fit, f'{key}_posterior_refit_bounds', None)
             if refit_bounds is not None:
                 fit_bounds[key] = refit_bounds
@@ -2461,8 +2468,133 @@ def sanitize_ars_search_bounds(bounds):
     )
 
 
+def sanitize_inclination_search_bounds(bounds):
+    return sanitize_parameter_search_bounds(
+        bounds,
+        'inc',
+        INCLINATION_SEARCH_BOUND_MIN,
+        maximum_bound=INCLINATION_SEARCH_BOUND_MAX,
+        fallback_maximum=INCLINATION_SEARCH_BOUND_MAX,
+    )
+
+
 def sanitize_retry_search_bounds(bounds):
-    return sanitize_ars_search_bounds(sanitize_rprs_search_bounds(bounds))
+    return sanitize_inclination_search_bounds(sanitize_ars_search_bounds(sanitize_rprs_search_bounds(bounds)))
+
+
+def impact_parameter_scale_for_retry(values):
+    try:
+        ars = float(values['ars'])
+    except (KeyError, TypeError, ValueError):
+        return np.nan
+
+    try:
+        ecc = float(values.get('ecc', 0.0))
+    except (TypeError, ValueError):
+        ecc = 0.0
+
+    try:
+        omega = np.deg2rad(float(values.get('omega', 0.0)))
+    except (TypeError, ValueError):
+        omega = 0.0
+
+    denom = 1.0 + ecc * np.sin(omega)
+    if np.isclose(denom, 0.0):
+        denom = np.finfo(float).eps
+    scale = ars * (1.0 - ecc ** 2) / denom
+    return float(scale) if np.isfinite(scale) and scale > 0 else np.nan
+
+
+def impact_parameter_scale_range_for_retry(prior, bounds):
+    values = dict(prior)
+    ars_candidates = []
+    if 'ars' in bounds:
+        try:
+            ars_candidates.extend(
+                float(value) for value in np.asarray(bounds['ars'], dtype=float).reshape(-1)[:2]
+            )
+        except (TypeError, ValueError, IndexError):
+            pass
+    if 'ars' in values:
+        try:
+            ars_candidates.append(float(values['ars']))
+        except (TypeError, ValueError):
+            pass
+
+    scales = []
+    for ars_value in ars_candidates:
+        candidate_values = dict(values)
+        candidate_values['ars'] = ars_value
+        scale = impact_parameter_scale_for_retry(candidate_values)
+        if np.isfinite(scale) and scale > 0:
+            scales.append(scale)
+
+    if not scales:
+        scale = impact_parameter_scale_for_retry(values)
+        if np.isfinite(scale) and scale > 0:
+            scales.append(scale)
+
+    if not scales:
+        return np.nan, np.nan
+    return float(np.nanmin(scales)), float(np.nanmax(scales))
+
+
+def inclination_from_impact_parameter_for_retry(impact_parameter, scale):
+    if not np.isfinite(scale) or scale <= 0:
+        return np.nan
+    try:
+        impact_parameter = float(impact_parameter)
+    except (TypeError, ValueError):
+        return np.nan
+    cosi = np.clip(impact_parameter / scale, -1.0, 1.0)
+    return float(np.rad2deg(np.arccos(cosi)))
+
+
+def impact_parameter_retry_proposed_inclination_bounds(diagnostics, current_prior, current_bounds):
+    if not diagnostics:
+        return None
+    if 'inc' not in current_bounds:
+        return None
+
+    try:
+        previous_lower, previous_upper = [
+            float(value) for value in np.asarray(current_bounds['inc'], dtype=float).reshape(-1)[:2]
+        ]
+        proposed_b_lower, proposed_b_upper = [
+            float(value) for value in np.asarray(diagnostics.get('bounds'), dtype=float).reshape(-1)[:2]
+        ]
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    if (
+        not np.isfinite(previous_lower)
+        or not np.isfinite(previous_upper)
+        or previous_lower >= previous_upper
+        or not np.isfinite(proposed_b_lower)
+        or not np.isfinite(proposed_b_upper)
+        or proposed_b_lower >= proposed_b_upper
+    ):
+        return None
+
+    min_scale, max_scale = impact_parameter_scale_range_for_retry(current_prior, current_bounds)
+    if not np.isfinite(min_scale) or not np.isfinite(max_scale):
+        return None
+
+    new_lower = previous_lower
+    new_upper = previous_upper
+    clipped_edge = diagnostics.get('edge')
+
+    if clipped_edge in ('upper', None):
+        inc_for_upper_b = inclination_from_impact_parameter_for_retry(proposed_b_upper, max_scale)
+        if np.isfinite(inc_for_upper_b):
+            new_lower = min(new_lower, inc_for_upper_b)
+
+    if clipped_edge in ('lower', None):
+        inc_for_lower_b = inclination_from_impact_parameter_for_retry(max(0.0, proposed_b_lower), min_scale)
+        if np.isfinite(inc_for_lower_b):
+            new_upper = max(new_upper, inc_for_lower_b)
+
+    return [float(new_lower), float(new_upper)]
 
 
 def clamp_parameter_prior_to_bounds(prior, bounds, key):
@@ -2494,8 +2626,15 @@ def clamp_ars_prior_to_bounds(prior, bounds):
     return clamp_parameter_prior_to_bounds(prior, bounds, 'ars')
 
 
+def clamp_inclination_prior_to_bounds(prior, bounds):
+    return clamp_parameter_prior_to_bounds(prior, bounds, 'inc')
+
+
 def clamp_retry_priors_to_bounds(prior, bounds):
-    return clamp_ars_prior_to_bounds(clamp_rprs_prior_to_bounds(prior, bounds), bounds)
+    return clamp_inclination_prior_to_bounds(
+        clamp_ars_prior_to_bounds(clamp_rprs_prior_to_bounds(prior, bounds), bounds),
+        bounds,
+    )
 
 
 def enforce_minimum_parameter_retry_half_width(
@@ -2570,27 +2709,97 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     max_rprs_retries=RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
     duration_prior=None,
     max_ars_retries=ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
+    max_impact_parameter_retries=IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT,
 ):
+    def impact_parameter_retry_available(fit, local_bounds):
+        if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
+            return False
+        sampled_keys = getattr(fit, 'sampled_keys', []) or []
+        sample_bounds = getattr(fit, 'sample_bounds', {})
+        return 'b' in sampled_keys or (isinstance(sample_bounds, dict) and 'b' in sample_bounds)
+
+    def identity_retry_bounds(diagnostics, local_prior, local_bounds, config):
+        return diagnostics.get('bounds') if diagnostics else None
+
+    def impact_parameter_retry_bounds(diagnostics, local_prior, local_bounds, config):
+        return impact_parameter_retry_proposed_inclination_bounds(
+            diagnostics,
+            local_prior,
+            local_bounds,
+        )
+
+    def normal_retry_expands(previous_bounds, new_bounds, clipped_edge, config):
+        previous_lower, previous_upper = [
+            float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]
+        ]
+        new_lower, new_upper = [
+            float(value) for value in np.asarray(new_bounds, dtype=float).reshape(-1)[:2]
+        ]
+        if clipped_edge == 'upper':
+            return new_upper > previous_upper + 1e-12
+        if clipped_edge == 'lower':
+            return new_lower < previous_lower - 1e-12
+        return new_lower < previous_lower - 1e-12 or new_upper > previous_upper + 1e-12
+
+    def impact_parameter_retry_expands(previous_bounds, new_bounds, clipped_edge, config):
+        previous_lower, previous_upper = [
+            float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]
+        ]
+        new_lower, new_upper = [
+            float(value) for value in np.asarray(new_bounds, dtype=float).reshape(-1)[:2]
+        ]
+        if clipped_edge == 'upper':
+            return new_lower < previous_lower - 1e-12
+        if clipped_edge == 'lower':
+            return new_upper > previous_upper + 1e-12
+        return new_lower < previous_lower - 1e-12 or new_upper > previous_upper + 1e-12
+
     retry_configs = [
         {
             'key': 'rprs',
+            'diagnostic_key': 'rprs',
+            'bounds_key': 'rprs',
             'label': 'Rp/R*',
             'sanitize_bounds': sanitize_rprs_search_bounds,
             'enforce_half_width': enforce_minimum_rprs_retry_half_width,
+            'propose_bounds': identity_retry_bounds,
+            'expands_bounds': normal_retry_expands,
             'max_retries': max_rprs_retries,
             'min_bound': RPRS_SEARCH_BOUND_MIN,
             'max_bound': RPRS_SEARCH_BOUND_MAX,
+            'prior_mode_key': 'rprs',
             'annotate': annotate_rprs_posterior_refit,
         },
         {
             'key': 'ars',
+            'diagnostic_key': 'ars',
+            'bounds_key': 'ars',
             'label': 'a/Rs',
             'sanitize_bounds': sanitize_ars_search_bounds,
             'enforce_half_width': enforce_minimum_ars_retry_half_width,
+            'propose_bounds': identity_retry_bounds,
+            'expands_bounds': normal_retry_expands,
             'max_retries': max_ars_retries,
             'min_bound': ARS_SEARCH_BOUND_MIN,
             'max_bound': None,
+            'prior_mode_key': 'ars',
             'annotate': annotate_ars_posterior_refit,
+        },
+        {
+            'key': 'b',
+            'diagnostic_key': 'b',
+            'bounds_key': 'inc',
+            'label': 'impact parameter',
+            'sanitize_bounds': sanitize_inclination_search_bounds,
+            'enforce_half_width': lambda mode, bounds: bounds,
+            'propose_bounds': impact_parameter_retry_bounds,
+            'expands_bounds': impact_parameter_retry_expands,
+            'max_retries': max_impact_parameter_retries,
+            'min_bound': INCLINATION_SEARCH_BOUND_MIN,
+            'max_bound': INCLINATION_SEARCH_BOUND_MAX,
+            'prior_mode_key': None,
+            'available': impact_parameter_retry_available,
+            'annotate': annotate_impact_parameter_posterior_refit,
         },
     ]
 
@@ -2635,10 +2844,16 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         diagnostics = None
         for config in retry_configs:
             key = config['key']
-            if key not in current_bounds:
+            diagnostic_key = config.get('diagnostic_key', key)
+            bounds_key = config.get('bounds_key', key)
+            if bounds_key not in current_bounds:
                 continue
 
-            parameter_diagnostics = diagnostics_getter(key)
+            available = config.get('available')
+            if callable(available) and not available(fit, current_bounds):
+                continue
+
+            parameter_diagnostics = diagnostics_getter(diagnostic_key)
             latest_diagnostics[key] = parameter_diagnostics
             if key in blocked_retry_keys:
                 continue
@@ -2656,8 +2871,14 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             break
 
         key = retry_config['key']
+        bounds_key = retry_config.get('bounds_key', key)
         label = retry_config['label']
-        new_bounds = diagnostics.get('bounds')
+        new_bounds = retry_config.get('propose_bounds', identity_retry_bounds)(
+            diagnostics,
+            current_prior,
+            current_bounds,
+            retry_config,
+        )
         try:
             new_lower, new_upper = [float(value) for value in new_bounds]
         except (TypeError, ValueError):
@@ -2669,30 +2890,26 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             blocked_retry_keys.add(key)
             continue
 
-        previous_bounds = current_bounds.get(key)
-        clamped_bounds = retry_config['sanitize_bounds']({key: [new_lower, new_upper]}).get(
-            key,
+        previous_bounds = current_bounds.get(bounds_key)
+        clamped_bounds = retry_config['sanitize_bounds']({bounds_key: [new_lower, new_upper]}).get(
+            bounds_key,
             [new_lower, new_upper],
         )
         clamped_bounds = retry_config['enforce_half_width'](
             diagnostics.get('mode', np.nan),
             clamped_bounds,
         )
-        clamped_bounds = retry_config['sanitize_bounds']({key: clamped_bounds}).get(key, clamped_bounds)
+        clamped_bounds = retry_config['sanitize_bounds']({bounds_key: clamped_bounds}).get(bounds_key, clamped_bounds)
         new_lower, new_upper = [float(value) for value in clamped_bounds]
         if previous_bounds is not None:
             previous_lower, previous_upper = [float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]]
             clipped_edge = diagnostics.get('edge')
-            expands_sampled_range = False
-            if clipped_edge == 'upper':
-                expands_sampled_range = new_upper > previous_upper + 1e-12
-            elif clipped_edge == 'lower':
-                expands_sampled_range = new_lower < previous_lower - 1e-12
-            else:
-                expands_sampled_range = (
-                    new_lower < previous_lower - 1e-12 or
-                    new_upper > previous_upper + 1e-12
-                )
+            expands_sampled_range = retry_config.get('expands_bounds', normal_retry_expands)(
+                previous_bounds,
+                [new_lower, new_upper],
+                clipped_edge,
+                retry_config,
+            )
 
             if not expands_sampled_range:
                 maximum_bound = retry_config['max_bound']
@@ -2727,17 +2944,18 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         )
 
         updated_bounds = clone_lightcurve_bounds(current_bounds)
-        updated_bounds[key] = [new_lower, new_upper]
+        updated_bounds[bounds_key] = [new_lower, new_upper]
         updated_bounds = sanitize_retry_search_bounds(updated_bounds)
 
         updated_prior = dict(current_prior)
         fit_parameters = getattr(fit, 'parameters', {})
         if isinstance(fit_parameters, dict):
-            for key in updated_bounds:
-                if key in fit_parameters:
-                    updated_prior[key] = fit_parameters[key]
-        if np.isfinite(diagnostics.get('mode', np.nan)):
-            updated_prior[retry_config['key']] = float(diagnostics['mode'])
+            for bound_key in updated_bounds:
+                if bound_key in fit_parameters:
+                    updated_prior[bound_key] = fit_parameters[bound_key]
+        prior_mode_key = retry_config.get('prior_mode_key', key)
+        if prior_mode_key is not None and np.isfinite(diagnostics.get('mode', np.nan)):
+            updated_prior[prior_mode_key] = float(diagnostics['mode'])
         updated_prior = clamp_retry_priors_to_bounds(updated_prior, updated_bounds)
 
         current_prior = updated_prior
@@ -2748,11 +2966,15 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     annotate_posterior_refit_final_bounds(fit, current_bounds)
     for config in retry_configs:
         key = config['key']
+        diagnostic_key = config.get('diagnostic_key', key)
+        bounds_key = config.get('bounds_key', key)
         label = config['label']
         history = retry_histories[key]
         final_diagnostics = None
-        if callable(final_diagnostics_getter) and key in current_bounds:
-            final_diagnostics = final_diagnostics_getter(key)
+        available = config.get('available')
+        config_available = not callable(available) or available(fit, current_bounds)
+        if callable(final_diagnostics_getter) and bounds_key in current_bounds and config_available:
+            final_diagnostics = final_diagnostics_getter(diagnostic_key)
         elif latest_diagnostics.get(key) is not None:
             final_diagnostics = latest_diagnostics[key]
 
@@ -10902,6 +11124,10 @@ def summarize_lightcurve_fit_assessment(fit):
         rprs_retry_count = int(getattr(fit, 'rprs_posterior_refit_count', 0) or 0)
     except (TypeError, ValueError):
         rprs_retry_count = 0
+    try:
+        b_retry_count = int(getattr(fit, 'b_posterior_refit_count', 0) or 0)
+    except (TypeError, ValueError):
+        b_retry_count = 0
 
     return {
         'fit_method': fit_method,
@@ -10910,6 +11136,9 @@ def summarize_lightcurve_fit_assessment(fit):
         'rprs_posterior_refit_applied': bool(getattr(fit, 'rprs_posterior_refit_applied', False)),
         'rprs_posterior_refit_count': rprs_retry_count,
         'rprs_posterior_refit_note': getattr(fit, 'rprs_posterior_refit_note', None),
+        'b_posterior_refit_applied': bool(getattr(fit, 'b_posterior_refit_applied', False)),
+        'b_posterior_refit_count': b_retry_count,
+        'b_posterior_refit_note': getattr(fit, 'b_posterior_refit_note', None),
         'prefit_refinement_applied': bool(getattr(fit, 'prefit_refinement_applied', False)),
         'prefit_refinement_note': getattr(fit, 'prefit_refinement_note', None),
         'oot_baseline_detrending_applied': bool(getattr(fit, 'oot_baseline_detrending_applied', False)),
@@ -10945,6 +11174,14 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
             if retry_count > 0 else
             "applied"
         )
+    b_retry_status = "not applied"
+    if assessment['b_posterior_refit_applied']:
+        retry_count = assessment['b_posterior_refit_count']
+        b_retry_status = (
+            f"applied ({retry_count} refit(s))"
+            if retry_count > 0 else
+            "applied"
+        )
     prefit_status = "applied" if assessment['prefit_refinement_applied'] else "not applied"
     oot_status = "applied" if assessment['oot_baseline_detrending_applied'] else "not applied"
     duration_prior_status = "applied" if assessment['duration_prior_applied'] else "not applied"
@@ -10953,6 +11190,7 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         f"{indent}fit assessment: fit_method={assessment['fit_method']}, "
         f"duration_prior={duration_prior_status}, "
         f"Rp/R* posterior retry={rprs_retry_status}, "
+        f"impact parameter posterior retry={b_retry_status}, "
         f"prefit_refinement={prefit_status}, "
         f"oot_baseline_detrending={oot_status}"
     )
@@ -10960,6 +11198,8 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         log_info(f"{indent}Duration prior note: {assessment['duration_prior_note']}")
     if assessment.get('rprs_posterior_refit_note'):
         log_info(f"{indent}Rp/R* posterior retry note: {assessment['rprs_posterior_refit_note']}")
+    if assessment.get('b_posterior_refit_note'):
+        log_info(f"{indent}Impact parameter posterior retry note: {assessment['b_posterior_refit_note']}")
     if assessment.get('prefit_refinement_note'):
         log_info(f"{indent}Prefit refinement note: {assessment['prefit_refinement_note']}")
     if assessment.get('oot_baseline_detrending_note'):

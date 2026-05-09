@@ -2,6 +2,8 @@ import importlib
 import sys
 import types
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
@@ -396,13 +398,13 @@ def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
 
     assert fig == "figure"
     assert captured["labels"][1] == r"$\Delta i$"
-    assert captured["range"][0][0] == pytest.approx(0.05)
+    assert captured["range"][0][0] == pytest.approx(0.0)
     assert captured["range"][0][1] == pytest.approx(0.125)
-    expected_inc_distance_limit = np.max(np.abs(np.array([84.67, 90.0]) - fit.parameters["inc"]))
+    expected_inc_distance_limit = np.max(np.abs(np.array([84.0, 90.0]) - fit.parameters["inc"]))
     assert captured["range"][1][0] == pytest.approx(-expected_inc_distance_limit)
     assert captured["range"][1][1] == pytest.approx(expected_inc_distance_limit)
     assert captured["range"][2][0] == pytest.approx(0.95)
-    assert captured["range"][2][1] == pytest.approx(0.96932)
+    assert captured["range"][2][1] == pytest.approx(1.05)
     assert captured["points"].shape == (10, 3)
     expected_inc_distance = np.abs(points[:, 1] - fit.parameters["inc"])
     np.testing.assert_allclose(captured["points"][:5, 1], expected_inc_distance)
@@ -982,8 +984,9 @@ def test_plot_triangle_uses_mirrored_distance_from_fitted_impact_parameter_axis(
 
     assert fig == "figure"
     assert captured["labels"][1] == r"$\Delta b$"
-    assert captured["range"][1][0] == pytest.approx(-0.25)
-    assert captured["range"][1][1] == pytest.approx(0.25)
+    expected_b_distance_limit = np.max(np.abs(np.array([0.0, 1.25434156]) - fit.sample_parameters["b"]))
+    assert captured["range"][1][0] == pytest.approx(-expected_b_distance_limit)
+    assert captured["range"][1][1] == pytest.approx(expected_b_distance_limit)
     assert captured["points"].shape == (10, 3)
     expected_b_distance = np.abs(points[:, 1] - fit.sample_parameters["b"])
     np.testing.assert_allclose(captured["points"][:5, 1], expected_b_distance)
@@ -1161,6 +1164,50 @@ def test_triangle_payload_expands_sparse_visible_ranges_to_sample_cloud(monkeypa
 
     assert payload["ranges"][1][0] <= 0.981
     assert payload["ranges"][1][1] >= 1.019
+
+
+def test_triangle_payload_uses_tested_rprs_range_when_posterior_is_narrow(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.2],
+        "a0": [0.95, 1.05],
+    }
+    fit.sample_bounds = dict(fit.bounds)
+    fit.sampled_keys = ["rprs", "a0"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.100, "a0": 1.0}
+    fit.errors = {"rprs": 0.001, "a0": 0.001}
+    fit.sample_parameters = dict(fit.parameters)
+    fit.sample_errors = dict(fit.errors)
+    points = np.column_stack(
+        [
+            np.linspace(0.090, 0.110, 120),
+            np.linspace(0.998, 1.002, 120),
+        ]
+    )
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+    rprs_range = payload["ranges"][0]
+    plot_bins = int(max(1, np.sqrt(points.shape[0])))
+    lower_fraction, upper_fraction, _ = fit._histogram_edge_peak_fractions(
+        points[:, 0],
+        rprs_range,
+        plot_bins,
+    )
+
+    assert rprs_range == pytest.approx([0.0, 0.2])
+    assert lower_fraction < elca.TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX
+    assert upper_fraction < elca.TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX
 
 
 def test_triangle_payload_expands_mirrored_impact_parameter_range_to_sample_cloud(monkeypatch, tmp_path):

@@ -72,6 +72,9 @@ except ImportError:
     from .ultranest_utils import run_reactive_sampler
 
 BAD_LOG_LIKELIHOOD = -1.0e100
+TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX = 0.50
+TRIANGLE_PLOT_EDGE_MIN_SAMPLE_COUNT = 30
+TRIANGLE_PLOT_EDGE_EXPANSION_STEPS = 8
 
 def _pylightcurve_import_watchdog_seconds():
     try:
@@ -707,26 +710,28 @@ class lc_fitter(object):
     def _get_plot_range(self, key):
         sample_parameters = getattr(self, 'sample_parameters', {})
         sample_errors = getattr(self, 'sample_errors', {})
-        sample_bounds = getattr(self, 'sample_bounds', self.bounds)
+        sample_bounds = getattr(self, 'sample_bounds', getattr(self, 'bounds', {}))
         center = sample_parameters[key] if key in sample_parameters else self.parameters[key]
         error = sample_errors[key] if key in sample_errors else self.errors[key]
+
+        if isinstance(sample_bounds, dict) and key in sample_bounds:
+            try:
+                lower, upper = [
+                    float(value) for value in np.asarray(sample_bounds[key], dtype=float).reshape(-1)[:2]
+                ]
+            except (TypeError, ValueError, IndexError):
+                lower = np.nan
+                upper = np.nan
+            if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+                return [lower, upper]
+
         lower = center - 5 * error
         upper = center + 5 * error
+        if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+            return [lower, upper]
 
-        if key in sample_bounds:
-            bound_lower, bound_upper = sample_bounds[key]
-            lower = max(lower, bound_lower)
-            upper = min(upper, bound_upper)
-
-        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
-            if key in sample_bounds:
-                bound_lower, bound_upper = sample_bounds[key]
-                return [bound_lower, bound_upper]
-
-            pad = error if np.isfinite(error) and error > 0 else max(abs(center) * 1e-6, 1e-6)
-            return [center - pad, center + pad]
-
-        return [lower, upper]
+        pad = error if np.isfinite(error) and error > 0 else max(abs(center) * 1e-6, 1e-6)
+        return [center - pad, center + pad]
 
     def _expand_plot_range_for_sample_cloud(
         self,
@@ -765,6 +770,165 @@ class lc_fitter(object):
         if not np.isfinite(new_lower) or not np.isfinite(new_upper) or new_lower >= new_upper:
             return plot_range
         return [float(new_lower), float(new_upper)]
+
+    def _histogram_edge_peak_fractions(self, sample_values, plot_range, bins, weights=None):
+        sample_values = np.asarray(sample_values, dtype=float)
+        finite_mask = np.isfinite(sample_values)
+        finite_weights = None
+
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+            if weights.shape == sample_values.shape:
+                finite_mask &= np.isfinite(weights) & (weights >= 0)
+                finite_weights = weights[finite_mask]
+                finite_weight_sum = np.sum(finite_weights)
+                if (
+                    finite_weights.size == 0
+                    or not np.isfinite(finite_weight_sum)
+                    or finite_weight_sum <= 0
+                ):
+                    finite_weights = None
+
+        finite_values = sample_values[finite_mask]
+        if finite_values.size < 2:
+            return np.nan, np.nan, np.nan
+
+        try:
+            lower, upper = [float(value) for value in np.asarray(plot_range, dtype=float).reshape(-1)[:2]]
+        except (TypeError, ValueError, IndexError):
+            return np.nan, np.nan, np.nan
+
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            return np.nan, np.nan, np.nan
+
+        bins = max(1, int(bins))
+        counts, _ = np.histogram(
+            finite_values,
+            bins=bins,
+            range=(lower, upper),
+            weights=finite_weights,
+        )
+        counts = np.asarray(counts, dtype=float)
+        if counts.size == 0:
+            return np.nan, np.nan, np.nan
+
+        peak = float(np.nanmax(counts))
+        if not np.isfinite(peak) or peak <= 0:
+            return np.nan, np.nan, np.nan
+
+        lower_fraction = float(counts[0] / peak)
+        upper_fraction = float(counts[-1] / peak)
+        return lower_fraction, upper_fraction, peak
+
+    def _get_plot_range_expansion_bounds(self, key, sample_values, center):
+        sample_bounds = getattr(self, 'sample_bounds', getattr(self, 'bounds', {}))
+        if isinstance(sample_bounds, dict) and key in sample_bounds:
+            try:
+                bound_lower, bound_upper = [
+                    float(value) for value in np.asarray(sample_bounds[key], dtype=float).reshape(-1)[:2]
+                ]
+            except (TypeError, ValueError, IndexError):
+                bound_lower = np.nan
+                bound_upper = np.nan
+
+            if np.isfinite(bound_lower) and np.isfinite(bound_upper) and bound_lower < bound_upper:
+                return [bound_lower, bound_upper]
+
+        sample_values = np.asarray(sample_values, dtype=float)
+        finite_values = sample_values[np.isfinite(sample_values)]
+        try:
+            center = float(center)
+        except (TypeError, ValueError):
+            center = np.nan
+        if np.isfinite(center):
+            finite_values = np.concatenate([finite_values, [center]])
+        if finite_values.size < 2:
+            return None
+
+        bound_lower = float(np.nanmin(finite_values))
+        bound_upper = float(np.nanmax(finite_values))
+        width = bound_upper - bound_lower
+        if not np.isfinite(width) or width <= 0:
+            padding = max(abs(float(center)) * 1e-6 if np.isfinite(center) else 0.0, 1e-6)
+        else:
+            padding = 0.05 * width
+        return [bound_lower - padding, bound_upper + padding]
+
+    def _expand_plot_range_for_histogram_edge_dropoff(
+        self,
+        key,
+        plot_range,
+        sample_values,
+        center,
+        bins=None,
+        weights=None,
+        max_edge_peak_fraction=TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX,
+        minimum_count=TRIANGLE_PLOT_EDGE_MIN_SAMPLE_COUNT,
+        max_steps=TRIANGLE_PLOT_EDGE_EXPANSION_STEPS,
+    ):
+        sample_values = np.asarray(sample_values, dtype=float)
+        finite_values = sample_values[np.isfinite(sample_values)]
+        if finite_values.size < int(minimum_count):
+            return plot_range
+
+        try:
+            lower, upper = [float(value) for value in np.asarray(plot_range, dtype=float).reshape(-1)[:2]]
+        except (TypeError, ValueError, IndexError):
+            return plot_range
+
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            return plot_range
+
+        expansion_bounds = self._get_plot_range_expansion_bounds(key, finite_values, center)
+        if expansion_bounds is None:
+            return plot_range
+
+        bound_lower, bound_upper = expansion_bounds
+        if not np.isfinite(bound_lower) or not np.isfinite(bound_upper) or bound_lower >= bound_upper:
+            return plot_range
+
+        lower = max(lower, bound_lower)
+        upper = min(upper, bound_upper)
+        if lower >= upper:
+            return plot_range
+
+        if bins is None:
+            bins = int(np.clip(np.sqrt(finite_values.size), 10, 80))
+        bins = max(1, int(bins))
+        epsilon = max((bound_upper - bound_lower) * 1e-12, np.finfo(float).eps)
+
+        for _ in range(max(0, int(max_steps)) + 1):
+            lower_fraction, upper_fraction, _ = self._histogram_edge_peak_fractions(
+                sample_values,
+                [lower, upper],
+                bins,
+                weights=weights,
+            )
+            if not np.isfinite(lower_fraction) or not np.isfinite(upper_fraction):
+                return [float(lower), float(upper)]
+
+            needs_lower = lower_fraction >= max_edge_peak_fraction
+            needs_upper = upper_fraction >= max_edge_peak_fraction
+            if not needs_lower and not needs_upper:
+                return [float(lower), float(upper)]
+
+            width = upper - lower
+            if not np.isfinite(width) or width <= 0:
+                return [float(lower), float(upper)]
+
+            new_lower = lower
+            new_upper = upper
+            if needs_lower and lower > bound_lower + epsilon:
+                new_lower = max(bound_lower, lower - width)
+            if needs_upper and upper < bound_upper - epsilon:
+                new_upper = min(bound_upper, upper + width)
+
+            if new_lower == lower and new_upper == upper:
+                return [float(lower), float(upper)]
+
+            lower, upper = new_lower, new_upper
+
+        return [float(lower), float(upper)]
 
     def _get_triangle_plot_samples(self):
         if self.ns_type == 'ultranest':
@@ -1053,7 +1217,14 @@ class lc_fitter(object):
         diagnostics['q95'] = float(q95)
         return diagnostics
 
-    def _get_triangle_plot_display_spec(self, sampled_keys, sample_parameters, sample_errors, sample_points):
+    def _get_triangle_plot_display_spec(
+        self,
+        sampled_keys,
+        sample_parameters,
+        sample_errors,
+        sample_points,
+        sample_weights=None,
+    ):
         if 'b' in sampled_keys:
             key = 'b'
             label = r'$\Delta b$'
@@ -1075,6 +1246,15 @@ class lc_fitter(object):
             [plot_lower, plot_upper],
             sample_points[:, geometry_index],
             center,
+        )
+        plot_bins = int(max(1, np.sqrt(sample_points.shape[0])))
+        plot_lower, plot_upper = self._expand_plot_range_for_histogram_edge_dropoff(
+            key,
+            [plot_lower, plot_upper],
+            sample_points[:, geometry_index],
+            center,
+            bins=plot_bins,
+            weights=sample_weights,
         )
         max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
         if not np.isfinite(max_distance) or max_distance <= 0:
@@ -1227,7 +1407,13 @@ class lc_fitter(object):
         sample_parameters = getattr(self, 'sample_parameters', self.parameters)
         sample_errors = getattr(self, 'sample_errors', self.errors)
         sample_points, sample_logl, sample_weights = self._get_triangle_plot_samples()
-        display_spec = self._get_triangle_plot_display_spec(sampled_keys, sample_parameters, sample_errors, sample_points)
+        display_spec = self._get_triangle_plot_display_spec(
+            sampled_keys,
+            sample_parameters,
+            sample_errors,
+            sample_points,
+            sample_weights=sample_weights,
+        )
         geometry_overlay = self._get_triangle_plot_geometry_overlay(display_spec, sample_points)
         geometry_summary = self._get_triangle_plot_geometry_summary(sampled_keys, sample_points)
 
@@ -1290,6 +1476,14 @@ class lc_fitter(object):
                     plot_range,
                     sample_points[:, i],
                     center,
+                )
+                plot_range = self._expand_plot_range_for_histogram_edge_dropoff(
+                    key,
+                    plot_range,
+                    sample_points[:, i],
+                    center,
+                    bins=plot_bins,
+                    weights=sample_weights,
                 )
             title_center = center
             if display_points.ndim == 2 and i < display_points.shape[1]:
@@ -1385,6 +1579,8 @@ class lc_fitter(object):
         ax.plot(curves['centers'], curves['right_curve'], color=branch_right_color, linestyle='--',
                 linewidth=0.75, alpha=0.75, zorder=3)
         ax.set_title(title, **title_kwargs)
+        if 'fontsize' in title_kwargs:
+            ax.title.set_fontsize(title_kwargs['fontsize'])
         ax.set_xlim(hist_range)
 
         max_y = max(

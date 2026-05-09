@@ -496,6 +496,148 @@ def test_ars_posterior_retry_expands_bounds_when_upper_edge_is_truncated(monkeyp
     assert fit.ars_posterior_refit_bounds == pytest.approx([12.60, 16.30])
 
 
+def test_impact_parameter_posterior_retry_expands_inclination_bounds(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+    diagnostics_sequence = [
+        {
+            "rprs": {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]},
+            "b": {"clipped": True, "edge": "upper", "mode": 1.6, "std": 0.18, "bounds": [0.7, 2.5]},
+        },
+        {
+            "rprs": {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]},
+            "b": {"clipped": False, "edge": None, "mode": 1.6, "std": 0.12, "bounds": [0.7, 2.5]},
+        },
+    ]
+
+    def make_fit(diagnostics):
+        fit = types.SimpleNamespace(
+            sampled_keys=["rprs", "b", "tmid"],
+            sample_bounds={"rprs": [0.0, 0.25], "b": [0.0, 2.5], "tmid": [-0.01, 0.01]},
+            parameters={
+                "rprs": diagnostics["rprs"]["mode"],
+                "ars": 10.0,
+                "tmid": 0.0,
+                "inc": 80.5,
+                "a2": 0.0,
+            },
+        )
+
+        def get_parameter_posterior_recenter_diagnostics(key):
+            return dict(diagnostics[key])
+
+        fit.get_parameter_posterior_recenter_diagnostics = get_parameter_posterior_recenter_diagnostics
+        return fit
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        call_index = len(captured["calls"])
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+            "use_impactparameter": use_impactparameter_rather_than_inclination_to_fit,
+        })
+        return make_fit(diagnostics_sequence[call_index])
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 85.0, "a2": 0.0},
+        {"rprs": [0.0, 0.25], "tmid": [-0.01, 0.01], "inc": [80.0, 90.0], "a2": [-3.0, 3.0]},
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][0]["bounds"]["inc"] == pytest.approx([80.0, 90.0])
+    assert captured["calls"][1]["bounds"]["inc"][0] == pytest.approx(np.degrees(np.arccos(0.25)))
+    assert captured["calls"][1]["bounds"]["inc"][1] == pytest.approx(90.0)
+    assert captured["calls"][1]["prior"]["inc"] == pytest.approx(80.5)
+    assert fit.b_posterior_refit_applied is True
+    assert fit.b_posterior_refit_count == 1
+    assert fit.b_posterior_refit_edge == "upper"
+    assert fit.b_posterior_refit_bounds == pytest.approx([np.degrees(np.arccos(0.25)), 90.0])
+
+
+def test_impact_parameter_posterior_retry_expands_toward_face_on_boundary(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+    diagnostics_sequence = [
+        {
+            "rprs": {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]},
+            "b": {"clipped": True, "edge": "lower", "mode": 0.55, "std": 0.10, "bounds": [0.0, 1.0]},
+        },
+        {
+            "rprs": {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]},
+            "b": {"clipped": False, "edge": None, "mode": 0.55, "std": 0.08, "bounds": [0.0, 1.0]},
+        },
+    ]
+
+    def make_fit(diagnostics):
+        fit = types.SimpleNamespace(
+            sampled_keys=["rprs", "b", "tmid"],
+            sample_bounds={"rprs": [0.0, 0.25], "b": [0.0, 1.0], "tmid": [-0.01, 0.01]},
+            parameters={"rprs": 0.1, "ars": 10.0, "tmid": 0.0, "inc": 86.0, "a2": 0.0},
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: dict(diagnostics[key])
+        return fit
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        call_index = len(captured["calls"])
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+        })
+        return make_fit(diagnostics_sequence[call_index])
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 84.0, "a2": 0.0},
+        {"rprs": [0.0, 0.25], "tmid": [-0.01, 0.01], "inc": [80.0, 87.0], "a2": [-3.0, 3.0]},
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][1]["bounds"]["inc"] == pytest.approx([80.0, 90.0])
+    assert fit.b_posterior_refit_applied is True
+    assert fit.b_posterior_refit_edge == "lower"
+
+
 def test_run_nested_lightcurve_fit_passes_duration_prior_when_available(monkeypatch):
     import exotic.exotic as exotic_module
 

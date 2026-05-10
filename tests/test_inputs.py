@@ -158,6 +158,21 @@ def test_comp_params_defaults_ultranest_live_points_to_200(tmp_path):
     assert inputs.info_dict["ultranest_min_num_live_points"] == 200
 
 
+def test_comp_params_defaults_sparse_posterior_live_point_retry_to_yes(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_sparse_posterior_live_point_retry"] == "y"
+
+
 def test_comp_params_defaults_exit_at_first_qc_pass_solution_to_yes(tmp_path):
     init_data = {
         "user_info": {},
@@ -441,6 +456,21 @@ def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ultranest_min_num_live_points"] == 275
+
+
+def test_comp_params_reads_sparse_posterior_live_point_retry_off_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_sparse_posterior_live_point_retry": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_sparse_posterior_live_point_retry"] == "n"
 
 
 def test_comp_params_reads_exit_at_first_qc_pass_solution_from_optional_info(tmp_path):

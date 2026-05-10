@@ -89,6 +89,9 @@ from exotic.exotic import (  # noqa: E402
     RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
     RPRS_SEARCH_BOUND_MAX,
     RPRS_SEARCH_BOUND_MIN,
+    SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+    evaluate_sparse_posterior_sample_support,
+    extend_sparse_posterior_live_points_if_needed,
     build_single_transit_duration_prior,
     build_initial_rprs_bounds,
     run_nested_lightcurve_fit_with_rprs_posterior_retry,
@@ -575,6 +578,53 @@ def test_impact_parameter_posterior_retry_expands_inclination_bounds(monkeypatch
     assert fit.b_posterior_refit_bounds == pytest.approx([np.degrees(np.arccos(0.25)), 90.0])
 
 
+def test_impact_parameter_retry_is_skipped_when_b_is_sampled_directly(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+    diagnostics = {
+        "rprs": {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]},
+        "b": {"clipped": True, "edge": "upper", "mode": 1.1, "std": 0.04, "bounds": [0.0, 1.12]},
+    }
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        captured["calls"].append({"prior": dict(call_prior), "bounds": dict(call_bounds)})
+        fit = types.SimpleNamespace(
+            sampled_keys=["rprs", "b", "tmid"],
+            sample_bounds={"rprs": [0.0, 0.25], "b": [0.0, 1.12], "tmid": [-0.01, 0.01]},
+            impact_parameter_sampled_directly=True,
+            parameters={"rprs": 0.1, "ars": 10.0, "tmid": 0.0, "inc": 83.5, "a2": 0.0},
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: dict(diagnostics[key])
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 85.0, "a2": 0.0},
+        {"rprs": [0.0, 0.25], "tmid": [-0.01, 0.01], "inc": [80.0, 90.0], "a2": [-3.0, 3.0]},
+    )
+
+    assert len(captured["calls"]) == 1
+    assert fit.b_posterior_refit_applied is False
+    assert fit.b_posterior_refit_count == 0
+
+
 def test_impact_parameter_posterior_retry_expands_toward_face_on_boundary(monkeypatch):
     import exotic.exotic as exotic_module
 
@@ -694,3 +744,106 @@ def test_run_nested_lightcurve_fit_passes_duration_prior_when_available(monkeypa
     assert captured["duration_prior"] == duration_prior
     assert fit.duration_prior_applied is True
     assert "expected duration=" in fit.duration_prior_note
+
+
+def test_sparse_posterior_metric_flags_under_sampled_key_parameters():
+    fit = types.SimpleNamespace()
+    fit.get_parameter_posterior_samples = lambda key: np.linspace(0.0, 1.0, 100)
+
+    diagnostics = evaluate_sparse_posterior_sample_support(
+        fit,
+        base_live_points=200,
+    )
+
+    assert diagnostics["sparse"] is True
+    assert diagnostics["minimum_effective_samples"] == 600
+    assert diagnostics["parameters"]["rprs"]["effective_sample_count"] == pytest.approx(100)
+    assert "rprs" in diagnostics["reason"]
+
+
+def test_sparse_posterior_extension_continues_existing_ultranest_sampler(monkeypatch):
+    monkeypatch.setenv("EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS", "200")
+
+    class SparseFit:
+        def __init__(self):
+            self.samples = {
+                "rprs": np.linspace(0.09, 0.11, 100),
+                "tmid": np.linspace(-0.001, 0.001, 100),
+                "ars": np.linspace(9.5, 10.5, 100),
+            }
+            self.max_ncalls = 1000
+            self.extension_calls = []
+            self.cleared = False
+
+        def get_parameter_posterior_samples(self, key):
+            return self.samples[key]
+
+        def extend_ultranest_fit(self, min_num_live_points=None, max_ncalls=None):
+            self.extension_calls.append({
+                "min_num_live_points": min_num_live_points,
+                "max_ncalls": max_ncalls,
+            })
+            self.samples = {
+                "rprs": np.linspace(0.09, 0.11, 1000),
+                "tmid": np.linspace(-0.001, 0.001, 1000),
+                "ars": np.linspace(9.5, 10.5, 1000),
+            }
+            return True
+
+        def clear_ultranest_resume_state(self):
+            self.cleared = True
+
+    fit = SparseFit()
+    returned = extend_sparse_posterior_live_points_if_needed(
+        fit,
+        enabled=True,
+        extension_factor=SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+    )
+
+    assert returned is fit
+    assert fit.extension_calls == [{
+        "min_num_live_points": 1200,
+        "max_ncalls": 6000,
+    }]
+    assert fit.sparse_posterior_live_point_extension_applied is True
+    assert "200->1200" in fit.sparse_posterior_live_point_extension_note
+    assert fit.cleared is True
+
+
+def test_run_nested_lightcurve_fit_can_retain_sampler_for_final_extension(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {}
+    diagnostics = {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+        keep_ultranest_sampler=False,
+    ):
+        captured["keep_ultranest_sampler"] = keep_ultranest_sampler
+        fit = types.SimpleNamespace(parameters={"rprs": 0.1, "ars": 15.0, "tmid": 0.0, "inc": 89.0, "a2": 0.0})
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: dict(diagnostics)
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 15.0, "inc": 89.0, "a2": 0.0},
+        {"rprs": [0.0, 0.25], "ars": [14.5, 15.5], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]},
+        keep_ultranest_sampler=True,
+    )
+
+    assert captured["keep_ultranest_sampler"] is True

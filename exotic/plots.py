@@ -1,5 +1,6 @@
 from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormalize
 from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
+import inspect
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -602,7 +603,17 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
 
 # Plotting Final Lightcurve
 def plot_final_lightcurve(fit, high_res, targ_name, save, date):
-    f, (ax_lc, ax_res) = fit.plot_bestfit()
+    plot_kwargs = {}
+    try:
+        plot_parameters = inspect.signature(fit.plot_bestfit).parameters
+    except (TypeError, ValueError):
+        plot_parameters = {}
+    if 'show_flux_baseline_label' in plot_parameters:
+        plot_kwargs['show_flux_baseline_label'] = False
+    if 'show_model_uncertainty' in plot_parameters:
+        plot_kwargs['show_model_uncertainty'] = True
+
+    f, (ax_lc, ax_res) = fit.plot_bestfit(**plot_kwargs)
 
     ax_lc.set_title(targ_name)
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):

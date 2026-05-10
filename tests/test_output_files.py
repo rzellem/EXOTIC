@@ -250,6 +250,27 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
 
 
+def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+        publish_to_root=True,
+    )
+
+    temp_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    root_file = tmp_path / "FinalParams_HAT-P-32 b_2020-01-01.json"
+
+    assert temp_file.exists()
+    assert root_file.exists()
+    assert root_file.read_text(encoding="utf-8") == temp_file.read_text(encoding="utf-8")
+
+
 def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
     fit = DummyFit()
     (tmp_path / "temp").mkdir()

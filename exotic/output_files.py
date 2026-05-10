@@ -1,4 +1,5 @@
 from json import dump, dumps
+import shutil
 from numpy import mean, std
 from pathlib import Path
 import numpy as np
@@ -824,7 +825,8 @@ class OutputFiles:
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
-                               min_annul=None, adaptive_summary=None, photometry_info=None):
+                               min_annul=None, adaptive_summary=None, photometry_info=None,
+                               publish_to_root=False):
         params_file = self.dir / "temp" / safe_output_filename(
             "FinalParams",
             self.p_dict['pName'],
@@ -870,6 +872,19 @@ class OutputFiles:
         impact_text = format_parameter_with_error(impact_parameter, impact_error)
         if impact_text is not None:
             params_num["Impact Parameter (b)"] = impact_text
+        if getattr(self.fit, 'ns_type', None) is not None:
+            params_num["Fit parameter point estimate"] = (
+                "Best-fit likelihood point; uncertainties are posterior spread."
+            )
+        prefit_refinement_note = getattr(self.fit, 'prefit_refinement_note', None)
+        if prefit_refinement_note:
+            params_num["Prefit refinement note"] = str(prefit_refinement_note)
+        oot_baseline_note = getattr(self.fit, 'oot_baseline_detrending_note', None)
+        if oot_baseline_note:
+            params_num["Out-of-transit baseline detrending note"] = str(oot_baseline_note)
+        sparse_posterior_note = getattr(self.fit, 'sparse_posterior_live_point_extension_note', None)
+        if sparse_posterior_note:
+            params_num["Sparse posterior live-point extension note"] = str(sparse_posterior_note)
         if np.isfinite(qc_residual_scatter):
             params_num["Residual scatter around full model fit"] = f"{qc_residual_scatter * 100.0:.4f} %"
         params_num.update(format_fit_quality_final_params(fit_quality))
@@ -998,6 +1013,11 @@ class OutputFiles:
 
         with params_file.open('w') as f:
             dump(final_params, f, indent=4)
+        if publish_to_root:
+            root_params_file = self.dir / params_file.name
+            if root_params_file != params_file:
+                root_params_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(params_file, root_params_file)
 
     def aavso(self, comp_star, airmasses, ld0, ld1, ld2, ld3, epw_md5,
               photometry_info=None, astrometry_info=None, frame_filtering_info=None,

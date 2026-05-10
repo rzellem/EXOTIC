@@ -195,8 +195,9 @@ def test_save_final_triangle_plot_regenerates_even_when_selected_candidate_artif
         source_dir=source_dir,
     )
 
-    assert output_path == final_dir / "temp" / source_plot.name
+    assert output_path == final_dir / f"FinalTriangle_{planet_name}_{observation_date}.png"
     assert output_path.read_bytes() == b"regenerated-final"
+    assert (final_dir / "temp" / f"Triangle_{planet_name}_{observation_date}.png").read_bytes() == b"regenerated-final"
     assert fit.called is True
 
 
@@ -247,6 +248,40 @@ def test_save_final_triangle_plot_regenerates_when_selected_artifact_missing(tmp
 
     assert fit.called is True
     assert output_path.read_bytes() == b"regenerated"
+    assert output_path.parent == tmp_path / "final"
+    assert output_path.name == "FinalTriangle_TOI-1728 b_2024-12-14.png"
+    assert (
+        tmp_path
+        / "final"
+        / "temp"
+        / "Triangle_TOI-1728 b_2024-12-14.png"
+    ).read_bytes() == b"regenerated"
+
+
+def test_save_final_triangle_plot_labels_selected_candidate_when_supported(tmp_path):
+    class DummyFigure:
+        def savefig(self, path):
+            Path(path).write_bytes(b"regenerated")
+
+    class DummyFit:
+        def __init__(self):
+            self.plot_title = None
+
+        def plot_triangle(self, plot_title=None):
+            self.plot_title = plot_title
+            return DummyFigure()
+
+    fit = DummyFit()
+    output_path = save_final_triangle_plot(
+        fit,
+        tmp_path / "final",
+        "TOI-1728 b",
+        "2024-12-14",
+        source_dir=tmp_path / "comp4",
+    )
+
+    assert output_path.read_bytes() == b"regenerated"
+    assert fit.plot_title == "Final selected fit (comparison candidate #4)"
 
 
 def test_update_coordinates_handles_non_numeric_proper_motion_values():

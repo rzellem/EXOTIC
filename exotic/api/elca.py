@@ -44,7 +44,7 @@ import copy
 from contextlib import redirect_stderr, redirect_stdout
 import faulthandler
 import io
-from itertools import cycle
+from itertools import cycle, product
 import os
 import sys
 import bottleneck as bn
@@ -75,6 +75,9 @@ BAD_LOG_LIKELIHOOD = -1.0e100
 TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX = 0.50
 TRIANGLE_PLOT_EDGE_MIN_SAMPLE_COUNT = 30
 TRIANGLE_PLOT_EDGE_EXPANSION_STEPS = 8
+TRANSIT_MODEL_UNCERTAINTY_KEYS = (
+    'rprs', 'tmid', 'inc', 'ars', 'per', 'ecc', 'omega', 'u0', 'u1', 'u2', 'u3',
+)
 
 def _pylightcurve_import_watchdog_seconds():
     try:
@@ -162,6 +165,17 @@ def inclination_from_impact_parameter(values, impact_parameter):
         scale = np.where(np.isclose(scale, 0.0), np.finfo(float).eps, scale)
     cosi = np.clip(np.asarray(impact_parameter, dtype=float) / scale, -1.0, 1.0)
     return np.rad2deg(np.arccos(cosi))
+
+
+def grazing_impact_parameter(values):
+    try:
+        rprs = float(values['rprs'])
+    except (KeyError, TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(rprs) or rprs < 0:
+        return np.nan
+    return 1.0 + rprs
 
 
 def transit_duration(values):
@@ -435,6 +449,7 @@ class lc_fitter(object):
         verbose=True,
         use_impactparameter_rather_than_inclination_to_fit=True,
         duration_prior=None,
+        keep_ultranest_sampler=False,
     ):
         self.time = time
         self.data = data
@@ -450,9 +465,12 @@ class lc_fitter(object):
         self.neighbors = neighbors
         self.use_impactparameter_rather_than_inclination_to_fit = use_impactparameter_rather_than_inclination_to_fit
         self.duration_prior = copy.deepcopy(duration_prior) if isinstance(duration_prior, dict) else None
+        self.keep_ultranest_sampler = bool(keep_ultranest_sampler)
+        self._ultranest_resume_context = None
         self.results = None
         self.sampled_keys = list(bounds.keys())
         self.sample_bounds = copy.deepcopy(bounds)
+        self.impact_parameter_sampled_directly = False
         self.sample_parameters = {}
         self.sample_errors = {}
         self.sample_quantiles = {}
@@ -523,6 +541,94 @@ class lc_fitter(object):
             reference=self._get_airmass_reference(),
         )
 
+    def _get_perturbed_transit_parameter_value(self, key, value):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return np.nan
+
+        if key in ('rprs', 'ars', 'per'):
+            return max(value, np.finfo(float).eps)
+        if key == 'ecc':
+            return float(np.clip(value, 0.0, 0.999999))
+        if key == 'inc':
+            return float(np.clip(value, 0.0, 180.0))
+        return value
+
+    def transit_model_uncertainty(self, times=None, sigma=1.0):
+        if times is None:
+            times = getattr(self, 'time_upsample', self.time)
+        times = np.asarray(times, dtype=float)
+        if times.size == 0:
+            return None
+
+        try:
+            model = transit(times, self.parameters)
+        except Exception:
+            return None
+
+        sigma = float(sigma)
+        variance = np.zeros_like(model, dtype=float)
+        for key in TRANSIT_MODEL_UNCERTAINTY_KEYS:
+            if key not in self.parameters:
+                continue
+            error = self.errors.get(key)
+            try:
+                center = float(self.parameters[key])
+                error = float(error)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(center) or not np.isfinite(error) or error <= 0:
+                continue
+
+            lower_value = self._get_perturbed_transit_parameter_value(key, center - error)
+            upper_value = self._get_perturbed_transit_parameter_value(key, center + error)
+            if (
+                not np.isfinite(lower_value)
+                or not np.isfinite(upper_value)
+                or np.isclose(lower_value, upper_value)
+            ):
+                continue
+
+            lower_parameters = copy.deepcopy(self.parameters)
+            upper_parameters = copy.deepcopy(self.parameters)
+            lower_parameters[key] = lower_value
+            upper_parameters[key] = upper_value
+            try:
+                lower_model = transit(times, lower_parameters)
+                upper_model = transit(times, upper_parameters)
+            except Exception:
+                continue
+
+            derivative = (upper_model - lower_model) / (upper_value - lower_value)
+            contribution = derivative * error * sigma
+            finite = np.isfinite(contribution)
+            variance[finite] += contribution[finite] ** 2
+
+        model_uncertainty = np.sqrt(variance)
+        if not np.any(np.isfinite(model_uncertainty) & (model_uncertainty > 0)):
+            return None
+        return model - model_uncertainty, model + model_uncertainty
+
+    def _plot_transit_model_uncertainty(self, ax, x_values, times, sort_index, label=None):
+        envelope = self.transit_model_uncertainty(times)
+        if envelope is None:
+            return None
+
+        lower, upper = envelope
+        x_values = np.asarray(x_values, dtype=float)
+        sort_index = np.asarray(sort_index, dtype=int)
+        return ax.fill_between(
+            x_values[sort_index],
+            np.asarray(lower, dtype=float)[sort_index],
+            np.asarray(upper, dtype=float)[sort_index],
+            color='red',
+            alpha=0.16,
+            linewidth=0,
+            zorder=2.5,
+            label=label,
+        )
+
     def _uses_internal_impact_parameter(self):
         return (
             self.use_impactparameter_rather_than_inclination_to_fit
@@ -537,6 +643,59 @@ class lc_fitter(object):
             return bound_keys
         return ['b' if key == 'inc' else key for key in bound_keys]
 
+    def _get_impact_parameter_scale_upper_bound(self, values):
+        values = copy.deepcopy(values)
+        scale_keys = ('ars', 'ecc', 'omega')
+        endpoint_sets = []
+        for key in scale_keys:
+            if key in self.bounds:
+                endpoints = np.asarray(self.bounds[key], dtype=float).reshape(-1)[:2]
+            else:
+                endpoints = np.asarray([values.get(key, 0.0)], dtype=float)
+            finite_endpoints = [float(value) for value in endpoints if np.isfinite(value)]
+            if not finite_endpoints:
+                return np.nan
+            endpoint_sets.append((key, finite_endpoints))
+
+        scales = []
+        for candidate_values in product(*[endpoints for _, endpoints in endpoint_sets]):
+            candidate = copy.deepcopy(values)
+            for key, value in zip([key for key, _ in endpoint_sets], candidate_values):
+                candidate[key] = value
+            try:
+                scale = float(impact_parameter_scale(candidate))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if np.isfinite(scale) and scale > 0:
+                scales.append(scale)
+
+        return float(max(scales)) if scales else np.nan
+
+    def _get_impact_parameter_sampling_bounds(self, values=None, use_search_bounds=False):
+        values = copy.deepcopy(self.prior if values is None else values)
+        if use_search_bounds and 'rprs' in self.bounds:
+            rprs_bounds = np.asarray(self.bounds['rprs'], dtype=float).reshape(-1)[:2]
+            finite_rprs = rprs_bounds[np.isfinite(rprs_bounds) & (rprs_bounds >= 0)]
+            if finite_rprs.size > 0:
+                values['rprs'] = float(np.max(finite_rprs))
+
+        grazing_upper = grazing_impact_parameter(values)
+        if use_search_bounds:
+            scale_upper = self._get_impact_parameter_scale_upper_bound(values)
+        else:
+            try:
+                scale_upper = float(impact_parameter_scale(values))
+            except (KeyError, TypeError, ValueError):
+                scale_upper = np.nan
+
+        upper_candidates = [
+            float(value)
+            for value in (grazing_upper, scale_upper)
+            if np.isfinite(value) and value > 0
+        ]
+        upper = min(upper_candidates) if upper_candidates else 1.0
+        return [0.0, float(max(0.0, upper))]
+
     def _get_sample_bounds(self, bound_keys=None, values=None):
         bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
         sampled_keys = self._get_sampled_keys(bound_keys)
@@ -544,28 +703,10 @@ class lc_fitter(object):
         sample_bounds = {}
         for key, sampled_key in zip(bound_keys, sampled_keys):
             if key == 'inc' and sampled_key == 'b':
-                inc_lower, inc_upper = self.bounds[key]
-                if 'ars' in self.bounds:
-                    ars_lower, ars_upper = self.bounds['ars']
-                    b_corners = []
-                    for ars_value in (ars_lower, ars_upper):
-                        corner_values = copy.deepcopy(values)
-                        corner_values['ars'] = float(ars_value)
-                        b_corners.extend(
-                            np.asarray(
-                                impact_parameter_from_inclination(
-                                    corner_values,
-                                    np.array([inc_lower, inc_upper], dtype=float),
-                                ),
-                                dtype=float,
-                            ).reshape(-1).tolist()
-                        )
-                    lower = float(np.min(b_corners))
-                    upper = float(np.max(b_corners))
-                else:
-                    lower = float(np.min(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
-                    upper = float(np.max(impact_parameter_from_inclination(values, np.array([inc_lower, inc_upper]))))
-                sample_bounds[sampled_key] = [lower, upper]
+                sample_bounds[sampled_key] = self._get_impact_parameter_sampling_bounds(
+                    values,
+                    use_search_bounds=True,
+                )
             else:
                 sample_bounds[sampled_key] = list(self.bounds[key])
         return sample_bounds
@@ -590,8 +731,8 @@ class lc_fitter(object):
 
         for i, key in enumerate(bound_keys):
             if key == 'inc' and self._uses_internal_impact_parameter():
-                inc = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars_array[i]
-                sample_point[i] = impact_parameter_from_inclination(physical, inc)
+                b_lower, b_upper = self._get_impact_parameter_sampling_bounds(physical)
+                sample_point[i] = b_lower + (b_upper - b_lower) * upars_array[i]
             else:
                 sample_point[i] = physical[key]
 
@@ -739,7 +880,7 @@ class lc_fitter(object):
         plot_range,
         sample_values,
         center,
-        required_visible_fraction=0.95,
+        required_visible_fraction=1.0,
     ):
         sample_values = np.asarray(sample_values, dtype=float)
         finite_values = sample_values[np.isfinite(sample_values)]
@@ -752,9 +893,8 @@ class lc_fitter(object):
         if visible_fraction >= required_visible_fraction:
             return plot_range
 
-        q_lower, q_upper = np.nanpercentile(finite_values, [0.5, 99.5])
-        new_lower = min(float(q_lower), float(center))
-        new_upper = max(float(q_upper), float(center))
+        new_lower = min(float(np.nanmin(finite_values)), float(center))
+        new_upper = max(float(np.nanmax(finite_values)), float(center))
         padding = 0.05 * (new_upper - new_lower)
         if not np.isfinite(padding) or padding <= 0:
             padding = max(abs(float(center)) * 1e-6, 1e-6)
@@ -930,6 +1070,81 @@ class lc_fitter(object):
 
         return [float(lower), float(upper)]
 
+    def _get_mirrored_geometry_sample_cloud_range(self, sample_values, center, percentile_padding=0.5):
+        sample_values = np.asarray(sample_values, dtype=float)
+        finite_values = sample_values[np.isfinite(sample_values)]
+        if finite_values.size < 2:
+            return None
+
+        try:
+            center = float(center)
+        except (TypeError, ValueError):
+            center = np.nan
+        if not np.isfinite(center):
+            return None
+
+        percentile_padding = float(percentile_padding)
+        percentile_padding = min(max(percentile_padding, 0.0), 49.0)
+        q_lower, q_upper = np.nanpercentile(
+            finite_values,
+            [percentile_padding, 100.0 - percentile_padding],
+        )
+        plot_lower = min(float(q_lower), center)
+        plot_upper = max(float(q_upper), center)
+        width = plot_upper - plot_lower
+        if not np.isfinite(width) or width <= 0:
+            return None
+
+        padding = 0.05 * width
+        plot_lower -= padding
+        plot_upper += padding
+        max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
+        if not np.isfinite(max_distance) or max_distance <= 0:
+            return None
+        return [-max_distance, max_distance]
+
+    def _get_mirrored_geometry_full_range(
+        self,
+        key,
+        sample_values,
+        center,
+        sample_weights=None,
+    ):
+        try:
+            center = float(center)
+        except (TypeError, ValueError):
+            center = np.nan
+        if not np.isfinite(center):
+            return None
+
+        plot_lower, plot_upper = self._get_plot_range(key)
+        plot_lower, plot_upper = self._expand_plot_range_for_sample_cloud(
+            key,
+            [plot_lower, plot_upper],
+            sample_values,
+            center,
+            required_visible_fraction=1.0,
+        )
+        plot_bins = int(max(1, np.sqrt(np.asarray(sample_values).size)))
+        plot_lower, plot_upper = self._expand_plot_range_for_histogram_edge_dropoff(
+            key,
+            [plot_lower, plot_upper],
+            sample_values,
+            center,
+            bins=plot_bins,
+            weights=sample_weights,
+        )
+
+        max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
+        if not np.isfinite(max_distance) or max_distance <= 0:
+            finite_offsets = np.asarray(sample_values, dtype=float) - center
+            finite_offsets = finite_offsets[np.isfinite(finite_offsets)]
+            if finite_offsets.size > 0:
+                max_distance = float(np.nanmax(np.abs(finite_offsets)))
+        if not np.isfinite(max_distance) or max_distance <= 0:
+            max_distance = max(abs(center) * 1e-6, 1e-6)
+        return [-max_distance, max_distance]
+
     def _get_triangle_plot_samples(self):
         if self.ns_type == 'ultranest':
             weighted_samples = self.results['weighted_samples']
@@ -1035,11 +1250,20 @@ class lc_fitter(object):
         bin_width = float(edges[1] - edges[0]) if edges.size > 1 else np.nan
         return mode, bin_width
 
-    def _get_triangle_plot_title_center(self, samples, plot_range, fallback_center, bins, weights=None):
-        mode, _ = self._estimate_histogram_mode(samples, bounds=plot_range, bins=bins, weights=weights)
-        if np.isfinite(mode):
-            return float(mode)
-        return fallback_center
+    def _format_triangle_plot_parameter_title(self, value, error):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return "n/a"
+        try:
+            error = float(error)
+        except (TypeError, ValueError):
+            error = np.nan
+        if not np.isfinite(value):
+            return "n/a"
+        if not np.isfinite(error) or error < 0:
+            return str(round_to_2(value))
+        return f"{round_to_2(value, error)} +/- {round_to_2(error)}"
 
     def get_parameter_posterior_recenter_diagnostics(self, key, sigma_scale=5.0, bins=None):
         diagnostics = {
@@ -1227,53 +1451,215 @@ class lc_fitter(object):
     ):
         if 'b' in sampled_keys:
             key = 'b'
-            label = r'$\Delta b$'
+            label = r'Impact parameter $b$'
+            mirror = False
         elif 'inc' in sampled_keys:
             key = 'inc'
             label = r'$\Delta i$'
+            mirror = True
         else:
             return None
 
         geometry_index = sampled_keys.index(key)
         center = float(sample_parameters.get(key, self.parameters.get(key, 0.0)))
-        magnitude_samples = np.abs(np.asarray(sample_points[:, geometry_index], dtype=float) - center)
+        sample_values = np.asarray(sample_points[:, geometry_index], dtype=float)
+        magnitude_samples = np.abs(sample_values - center)
         error = float(sample_errors.get(key, np.nanstd(magnitude_samples)))
         if not np.isfinite(error) or error <= 0:
             error = float(np.nanstd(magnitude_samples))
-        plot_lower, plot_upper = self._get_plot_range(key)
-        plot_lower, plot_upper = self._expand_plot_range_for_sample_cloud(
-            key,
-            [plot_lower, plot_upper],
-            sample_points[:, geometry_index],
-            center,
-        )
-        plot_bins = int(max(1, np.sqrt(sample_points.shape[0])))
-        plot_lower, plot_upper = self._expand_plot_range_for_histogram_edge_dropoff(
-            key,
-            [plot_lower, plot_upper],
-            sample_points[:, geometry_index],
-            center,
-            bins=plot_bins,
-            weights=sample_weights,
-        )
-        max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
-        if not np.isfinite(max_distance) or max_distance <= 0:
-            max_distance = float(np.nanmax(magnitude_samples))
-        if not np.isfinite(max_distance) or max_distance <= 0:
-            max_distance = max(abs(center) * 1e-6, 1e-6)
+
+        if mirror:
+            display_range = self._get_mirrored_geometry_full_range(
+                key,
+                sample_values,
+                center,
+                sample_weights=sample_weights,
+            )
+        else:
+            display_range = None
+
+        if display_range is None:
+            plot_lower, plot_upper = self._get_plot_range(key)
+            plot_lower, plot_upper = self._expand_plot_range_for_sample_cloud(
+                key,
+                [plot_lower, plot_upper],
+                sample_values,
+                center,
+            )
+            plot_bins = int(max(1, np.sqrt(sample_points.shape[0])))
+            plot_lower, plot_upper = self._expand_plot_range_for_histogram_edge_dropoff(
+                key,
+                [plot_lower, plot_upper],
+                sample_values,
+                center,
+                bins=plot_bins,
+                weights=sample_weights,
+            )
+            if mirror:
+                max_distance = float(np.nanmax(np.abs([plot_lower - center, plot_upper - center])))
+                if not np.isfinite(max_distance) or max_distance <= 0:
+                    max_distance = float(np.nanmax(magnitude_samples))
+                if not np.isfinite(max_distance) or max_distance <= 0:
+                    max_distance = max(abs(center) * 1e-6, 1e-6)
+                display_range = [-max_distance, max_distance]
+            else:
+                display_range = [float(plot_lower), float(plot_upper)]
         return {
             'key': key,
             'index': geometry_index,
             'label': label,
+            'mirror': mirror,
             'center': center,
-            'mask_center': 0.0,
+            'mask_center': 0.0 if mirror else center,
             'mask_error': error,
             'magnitude_samples': magnitude_samples,
-            'range': [-max_distance, max_distance],
+            'range': display_range,
+            'truth': 0.0 if mirror else center,
+            'reference_lines': self._get_triangle_plot_geometry_reference_lines(
+                key,
+                center,
+                sample_parameters,
+            ),
         }
+
+    def _get_triangle_plot_geometry_reference_lines(self, key, center, sample_parameters):
+        if key != 'b':
+            return []
+
+        try:
+            center = float(center)
+        except (TypeError, ValueError):
+            center = np.nan
+        if not np.isfinite(center):
+            return []
+
+        rprs = sample_parameters.get('rprs')
+        if rprs is None:
+            rprs = getattr(self, 'parameters', {}).get(
+                'rprs',
+                getattr(self, 'prior', {}).get('rprs', np.nan),
+            )
+        try:
+            rprs = float(rprs)
+        except (TypeError, ValueError):
+            rprs = np.nan
+
+        reference_lines = [
+            {
+                'value': 1.0,
+                'color': '#707070',
+                'linestyle': ':',
+                'linewidth': 0.9,
+                'alpha': 0.9,
+            },
+        ]
+        if np.isfinite(rprs) and rprs >= 0:
+            reference_lines.append(
+                {
+                    'value': 1.0 + rprs,
+                    'color': '#a35d00',
+                    'linestyle': '-.',
+                    'linewidth': 0.9,
+                    'alpha': 0.9,
+                }
+            )
+        return reference_lines
+
+    def _get_triangle_plot_geometry_reference_offsets(self, display_spec):
+        reference_lines = display_spec.get('reference_lines', []) if isinstance(display_spec, dict) else []
+        if not reference_lines:
+            return []
+
+        try:
+            center = float(display_spec['center'])
+        except (KeyError, TypeError, ValueError):
+            return []
+        if not np.isfinite(center):
+            return []
+
+        offsets = []
+        for reference in reference_lines:
+            try:
+                value = float(reference['value'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not np.isfinite(value):
+                continue
+
+            distance = abs(value - center)
+            if not np.isfinite(distance):
+                continue
+            reference_offsets = [0.0] if distance <= np.finfo(float).eps else [-distance, distance]
+            for offset in reference_offsets:
+                offsets.append({
+                    'offset': float(offset),
+                    'color': reference.get('color', '#707070'),
+                    'linestyle': reference.get('linestyle', ':'),
+                    'linewidth': reference.get('linewidth', 0.9),
+                    'alpha': reference.get('alpha', 0.9),
+                })
+        return offsets
+
+    def _draw_triangle_plot_geometry_reference_lines(self, ax, display_spec, axis='x', limits=None):
+        if ax is None:
+            return
+
+        if limits is None:
+            limits = ax.get_xlim() if axis == 'x' else ax.get_ylim()
+        lower, upper = np.sort(np.asarray(limits, dtype=float).reshape(-1)[:2])
+        if not display_spec.get('mirror', True):
+            for reference in display_spec.get('reference_lines', []):
+                try:
+                    value = float(reference['value'])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not np.isfinite(value) or value < lower or value > upper:
+                    continue
+                line_kwargs = {
+                    'color': reference.get('color', '#707070'),
+                    'linestyle': reference.get('linestyle', ':'),
+                    'linewidth': reference.get('linewidth', 0.9),
+                    'alpha': reference.get('alpha', 0.9),
+                    'zorder': 2,
+                }
+                if axis == 'y':
+                    ax.axhline(value, **line_kwargs)
+                else:
+                    ax.axvline(value, **line_kwargs)
+            return
+
+        if lower <= 0.0 <= upper:
+            center_kwargs = {
+                'color': '#4682b4',
+                'linestyle': '--',
+                'linewidth': 0.9,
+                'alpha': 0.85,
+                'zorder': 2,
+            }
+            if axis == 'y':
+                ax.axhline(0.0, **center_kwargs)
+            else:
+                ax.axvline(0.0, **center_kwargs)
+        for reference in self._get_triangle_plot_geometry_reference_offsets(display_spec):
+            offset = reference['offset']
+            if offset < lower or offset > upper:
+                continue
+            line_kwargs = {
+                'color': reference['color'],
+                'linestyle': reference['linestyle'],
+                'linewidth': reference['linewidth'],
+                'alpha': reference['alpha'],
+                'zorder': 2,
+            }
+            if axis == 'y':
+                ax.axhline(offset, **line_kwargs)
+            else:
+                ax.axvline(offset, **line_kwargs)
 
     def _get_triangle_plot_geometry_overlay(self, display_spec, sample_points):
         if display_spec is None:
+            return None
+        if not display_spec.get('mirror', True):
             return None
 
         geometry_index = display_spec['index']
@@ -1300,7 +1686,7 @@ class lc_fitter(object):
             return f"n/a{suffix}"
         if error is None or not np.isfinite(error) or error < 0:
             return f"{round_to_2(value)}{suffix}"
-        return f"{round_to_2(value, error)} +- {round_to_2(error)}{suffix}"
+        return f"{round_to_2(value, error)} +/- {round_to_2(error)}{suffix}"
 
     def _get_triangle_plot_geometry_summary(self, sampled_keys, sample_points):
         bound_keys = list(self.bounds.keys())
@@ -1422,7 +1808,7 @@ class lc_fitter(object):
         display_weights = None if sample_weights is None else np.array(sample_weights, copy=True)
         mask_values = np.array(sample_points, copy=True)
 
-        if display_spec is not None:
+        if display_spec is not None and display_spec.get('mirror', True):
             geometry_index = display_spec['index']
             positive_points = np.array(sample_points, copy=True)
             negative_points = np.array(sample_points, copy=True)
@@ -1464,6 +1850,7 @@ class lc_fitter(object):
         ranges = []
         mask_centers = []
         mask_errors = []
+        truths = []
 
         for i, key in enumerate(sampled_keys):
             center = sample_parameters.get(key, self.parameters.get(key, 0.0))
@@ -1485,16 +1872,8 @@ class lc_fitter(object):
                     bins=plot_bins,
                     weights=sample_weights,
                 )
-            title_center = center
-            if display_points.ndim == 2 and i < display_points.shape[1]:
-                title_center = self._get_triangle_plot_title_center(
-                    display_points[:, i],
-                    plot_range,
-                    center,
-                    plot_bins,
-                    weights=None if display_weights is None else display_weights,
-                )
-            title = f"{title_center:.5f} +- {error:.5f}"
+            title = self._format_triangle_plot_parameter_title(center, error)
+            truth = center
 
             if display_spec is not None and key == display_spec['key']:
                 label = display_spec['label']
@@ -1502,12 +1881,18 @@ class lc_fitter(object):
                 plot_range = display_spec['range']
                 center = display_spec['mask_center']
                 error = display_spec['mask_error']
+                truth = display_spec['truth']
 
             labels.append(label)
             titles.append(title)
             ranges.append(plot_range)
             mask_centers.append(center)
             mask_errors.append(error)
+            try:
+                truth = float(truth)
+            except (TypeError, ValueError):
+                truth = np.nan
+            truths.append(truth if np.isfinite(truth) else None)
 
         return {
             'sampled_keys': sampled_keys,
@@ -1523,6 +1908,7 @@ class lc_fitter(object):
             'ranges': ranges,
             'mask_centers': mask_centers,
             'mask_errors': mask_errors,
+            'truths': truths,
         }
 
     def _triangle_contour_levels(self, chi2, mask1, mask2, mask3):
@@ -1550,8 +1936,7 @@ class lc_fitter(object):
             return
 
         display_spec = payload.get('display_spec')
-        geometry_overlay = payload.get('geometry_overlay')
-        if display_spec is None or geometry_overlay is None:
+        if display_spec is None:
             return
 
         sampled_keys = payload['sampled_keys']
@@ -1559,6 +1944,23 @@ class lc_fitter(object):
             return
 
         axes = np.array(fig.axes).reshape((len(sampled_keys), len(sampled_keys)))
+        if not display_spec.get('mirror', True):
+            geometry_index = display_spec['index']
+            for row in range(len(sampled_keys)):
+                for col in range(len(sampled_keys)):
+                    panel = axes[row, col]
+                    if row == geometry_index and col == geometry_index:
+                        self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='x')
+                    elif col == geometry_index and row > col:
+                        self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='x')
+                    elif row == geometry_index and col < row:
+                        self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='y')
+            return
+
+        geometry_overlay = payload.get('geometry_overlay')
+        if geometry_overlay is None:
+            return
+
         geometry_index = geometry_overlay['index']
         ax = axes[geometry_index, geometry_index]
         hist_range = np.sort(payload['ranges'][geometry_index])
@@ -1578,6 +1980,12 @@ class lc_fitter(object):
                 linewidth=0.75, alpha=0.75, zorder=3)
         ax.plot(curves['centers'], curves['right_curve'], color=branch_right_color, linestyle='--',
                 linewidth=0.75, alpha=0.75, zorder=3)
+        self._draw_triangle_plot_geometry_reference_lines(
+            ax,
+            display_spec,
+            axis='x',
+            limits=hist_range,
+        )
         ax.set_title(title, **title_kwargs)
         if 'fontsize' in title_kwargs:
             ax.title.set_fontsize(title_kwargs['fontsize'])
@@ -1596,6 +2004,16 @@ class lc_fitter(object):
         else:
             ax.set_xlabel(x_label, **label_kwargs)
 
+        for row in range(len(sampled_keys)):
+            for col in range(len(sampled_keys)):
+                if row == geometry_index and col == geometry_index:
+                    continue
+                panel = axes[row, col]
+                if col == geometry_index and row > col:
+                    self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='x')
+                if row == geometry_index and col < row:
+                    self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='y')
+
     def _adjust_triangle_plot_layout(self, fig):
         if not hasattr(fig, 'subplots_adjust'):
             return
@@ -1604,10 +2022,10 @@ class lc_fitter(object):
             return
 
         fig.subplots_adjust(
-            left=subplotpars.left,
-            bottom=max(subplotpars.bottom, 0.10),
-            right=min(subplotpars.right, 0.95),
-            top=min(subplotpars.top, 0.955),
+            left=max(subplotpars.left, 0.08),
+            bottom=max(subplotpars.bottom, 0.12),
+            right=min(subplotpars.right, 0.97),
+            top=min(subplotpars.top, 0.94),
             wspace=subplotpars.wspace,
             hspace=subplotpars.hspace,
         )
@@ -1752,12 +2170,91 @@ class lc_fitter(object):
         self.duration_measured = tdur
         self.duration_expected = newdur
 
+    def _finalize_ultranest_fit_results(self, bound_keys, sampled_keys, physical_from_sample_point):
+        self.sample_parameters = {}
+        self.sample_errors = {}
+        self.sample_quantiles = {}
+        self.errors = {}
+        self.quantiles = {}
+        self.parameters = copy.deepcopy(self.prior)
+
+        ml_point = self.results['maximum_likelihood']['point']
+        self.sample_bounds = self._get_sample_bounds(bound_keys, physical_from_sample_point(ml_point))
+        self.ultranest_error_fallbacks = {}
+
+        for i, key in enumerate(sampled_keys):
+            self.sample_parameters[key] = ml_point[i]
+            reported_error = self.results['posterior']['stdev'][i]
+            reported_quantiles = [
+                self.results['posterior']['errlo'][i],
+                self.results['posterior']['errup'][i]]
+            if self._ultranest_error_needs_sample_fallback(i, ml_point[i], reported_error):
+                fallback = self._loglike_neighborhood_uncertainty(i, ml_point[i])
+            else:
+                fallback = None
+            if fallback is not None:
+                self.sample_errors[key] = fallback['error']
+                self.sample_quantiles[key] = fallback['quantiles']
+                self.ultranest_error_fallbacks[key] = fallback
+            else:
+                self.sample_errors[key] = reported_error
+                self.sample_quantiles[key] = reported_quantiles
+
+        physical_ml = physical_from_sample_point(ml_point)
+        self.parameters.update(physical_ml)
+
+        for bound_key, sampled_key in zip(bound_keys, sampled_keys):
+            if bound_key == 'inc' and sampled_key == 'b':
+                continue
+            self.errors[bound_key] = self.sample_errors[sampled_key]
+            self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
+
+        if 'inc' in bound_keys and 'b' in sampled_keys:
+            inc_samples = np.array([
+                physical_from_sample_point(point)['inc']
+                for point in self.results['weighted_samples']['points']
+            ])
+            center, std, quantiles = self._summarize_derived_parameter(inc_samples, physical_ml['inc'])
+            self.parameters['inc'] = center
+            self.errors['inc'] = std
+            self.quantiles['inc'] = quantiles
+
+    def extend_ultranest_fit(self, min_num_live_points=None, max_ncalls=None):
+        context = getattr(self, '_ultranest_resume_context', None)
+        if getattr(self, 'ns_type', None) != 'ultranest' or not isinstance(context, dict):
+            return False
+
+        sampler = context.get('sampler')
+        if sampler is None:
+            return False
+
+        run_kwargs = {"max_ncalls": int(max_ncalls if max_ncalls is not None else self.max_ncalls)}
+        if min_num_live_points is not None:
+            run_kwargs["min_num_live_points"] = int(min_num_live_points)
+
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs=run_kwargs,
+            verbose=self.verbose,
+        )
+        self._finalize_ultranest_fit_results(
+            context['bound_keys'],
+            context['sampled_keys'],
+            context['physical_from_sample_point'],
+        )
+        self.create_fit_variables()
+        return True
+
+    def clear_ultranest_resume_state(self):
+        self._ultranest_resume_context = None
+
     def fit_nested(self):
         bound_keys = list(self.bounds.keys())
         sampled_keys = self._get_sampled_keys(bound_keys)
         self._validate_flux_baseline_keys()
         self.sampled_keys = list(sampled_keys)
         self.sample_bounds = self._get_sample_bounds(bound_keys, self.prior)
+        self.impact_parameter_sampled_directly = self._uses_internal_impact_parameter()
 
         if len(set(self.sampled_keys)) != len(self.sampled_keys):
             raise ValueError("Free-parameter labels must be unique after internal parameter transforms.")
@@ -1839,46 +2336,16 @@ class lc_fitter(object):
                 verbose=self.verbose,
             )
 
-            ml_point = self.results['maximum_likelihood']['point']
-            self.sample_bounds = self._get_sample_bounds(bound_keys, physical_from_sample_point(ml_point))
-            self.ultranest_error_fallbacks = {}
-
-            for i, key in enumerate(sampled_keys):
-                self.sample_parameters[key] = ml_point[i]
-                reported_error = self.results['posterior']['stdev'][i]
-                reported_quantiles = [
-                    self.results['posterior']['errlo'][i],
-                    self.results['posterior']['errup'][i]]
-                if self._ultranest_error_needs_sample_fallback(i, ml_point[i], reported_error):
-                    fallback = self._loglike_neighborhood_uncertainty(i, ml_point[i])
-                else:
-                    fallback = None
-                if fallback is not None:
-                    self.sample_errors[key] = fallback['error']
-                    self.sample_quantiles[key] = fallback['quantiles']
-                    self.ultranest_error_fallbacks[key] = fallback
-                else:
-                    self.sample_errors[key] = reported_error
-                    self.sample_quantiles[key] = reported_quantiles
-
-            physical_ml = physical_from_sample_point(ml_point)
-            self.parameters.update(physical_ml)
-
-            for bound_key, sampled_key in zip(bound_keys, sampled_keys):
-                if bound_key == 'inc' and sampled_key == 'b':
-                    continue
-                self.errors[bound_key] = self.sample_errors[sampled_key]
-                self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
-
-            if 'inc' in bound_keys and 'b' in sampled_keys:
-                inc_samples = np.array([
-                    physical_from_sample_point(point)['inc']
-                    for point in self.results['weighted_samples']['points']
-                ])
-                center, std, quantiles = self._summarize_derived_parameter(inc_samples, physical_ml['inc'])
-                self.parameters['inc'] = center
-                self.errors['inc'] = std
-                self.quantiles['inc'] = quantiles
+            if self.keep_ultranest_sampler:
+                self._ultranest_resume_context = {
+                    'sampler': test,
+                    'bound_keys': list(bound_keys),
+                    'sampled_keys': list(sampled_keys),
+                    'physical_from_sample_point': physical_from_sample_point,
+                }
+            else:
+                self._ultranest_resume_context = None
+            self._finalize_ultranest_fit_results(bound_keys, sampled_keys, physical_from_sample_point)
         except NameError:
             self.ns_type = 'dynesty'
             dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(sampled_keys),
@@ -1994,7 +2461,15 @@ class lc_fitter(object):
         # final model
         self.create_fit_variables()
 
-    def plot_bestfit(self, title="", bin_dt=30. / (60 * 24), zoom=False, phase=True):
+    def plot_bestfit(
+        self,
+        title="",
+        bin_dt=30. / (60 * 24),
+        zoom=False,
+        phase=True,
+        show_flux_baseline_label=True,
+        show_model_uncertainty=False,
+    ):
         f = plt.figure(figsize=(9, 6))
         f.subplots_adjust(top=0.92, bottom=0.09, left=0.14, right=0.98, hspace=0)
         ax_lc = plt.subplot2grid((4, 5), (0, 0), colspan=5, rowspan=3)
@@ -2018,7 +2493,7 @@ class lc_fitter(object):
         )
 
         lclabel = lclabel1 + "\n" + lclabel2
-        if 'a0' in self.parameters:
+        if show_flux_baseline_label and 'a0' in self.parameters:
             lclabel3 = r"$a_0$ = %s $\pm$ %s" % (
                 str(round_to_2(self.parameters['a0'], self.errors.get('a0', 0))),
                 str(round_to_2(self.errors.get('a0', 0)))
@@ -2051,6 +2526,14 @@ class lc_fitter(object):
                             marker='s')
             # axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
             sii = np.argsort(self.phase_upsample)
+            if show_model_uncertainty:
+                self._plot_transit_model_uncertainty(
+                    axs[0],
+                    self.phase_upsample,
+                    self.time_upsample,
+                    sii,
+                    label=r'1-$\sigma$ model uncertainty',
+                )
             axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
             axs[0].set_xlabel("Phase ", fontsize=14)
@@ -2066,6 +2549,14 @@ class lc_fitter(object):
             si = np.argsort(self.time)
             sii = np.argsort(self.time_upsample)
             axs[0].errorbar(bt, bf, yerr=bs, alpha=1, zorder=2, color='blue', ls='none', marker='s')
+            if show_model_uncertainty:
+                self._plot_transit_model_uncertainty(
+                    axs[0],
+                    self.time_upsample,
+                    self.time_upsample,
+                    sii,
+                    label=r'1-$\sigma$ model uncertainty',
+                )
             axs[0].plot(self.time_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.time_upsample), max(self.time_upsample)])
             axs[0].set_xlabel("Time [day]", fontsize=14)
@@ -2077,9 +2568,11 @@ class lc_fitter(object):
         axs[1].grid(True, ls='--', axis='y')
         return f, axs
 
-    def plot_triangle(self):
+    def plot_triangle(self, plot_title=None):
         payload = self._get_triangle_plot_payload()
         chi2 = payload['display_logl'] * -2
+        parameter_count = max(1, len(payload['sampled_keys']))
+        fig_size = max(9.0, 2.35 * parameter_count)
         mask1 = np.ones(len(chi2), dtype=bool)
         mask2 = np.ones(len(chi2), dtype=bool)
         mask3 = np.ones(len(chi2), dtype=bool)
@@ -2107,33 +2600,42 @@ class lc_fitter(object):
 
         label_kwargs = {
             'labelpad': 10,
+            'fontsize': 10,
         }
         title_kwargs = {
             'loc': 'left',
             'pad': 4,
+            'fontsize': 11,
         }
 
         fig = corner(payload['display_points'],
                      labels=payload['labels'],
                      bins=int(np.sqrt(payload['display_points'].shape[0])),
                      range=payload['ranges'],
-                     weights=payload['display_weights'],
-                     plot_contours=True,
-                     levels=self._triangle_contour_levels(chi2, mask1, mask2, mask3),
-                     plot_density=False,
-                     titles=payload['titles'],
-                     data_kwargs={
-                         'c': chi2,
-                         'vmin': np.percentile(chi2[mask3], 1),
-                         'vmax': np.percentile(chi2[mask3], 95),
-                         'cmap': 'viridis'
-                     },
-                     label_kwargs=label_kwargs,
-                     title_kwargs=title_kwargs,
-                     hist_kwargs={
-                         'color': 'black',
-                     }
-                     )
+                      weights=payload['display_weights'],
+                      plot_contours=True,
+                      levels=self._triangle_contour_levels(chi2, mask1, mask2, mask3),
+                      plot_density=False,
+                      titles=payload['titles'],
+                      truths=payload['truths'],
+                      data_kwargs={
+                          'c': chi2,
+                          'vmin': np.percentile(chi2[mask3], 1),
+                          'vmax': np.percentile(chi2[mask3], 95),
+                          'cmap': 'viridis',
+                          's': 1.6,
+                          'alpha': 0.38,
+                      },
+                      label_kwargs=label_kwargs,
+                      title_kwargs=title_kwargs,
+                      hist_kwargs={
+                          'color': 'black',
+                      }
+                      )
+        if hasattr(fig, 'set_size_inches'):
+            fig.set_size_inches(fig_size, fig_size, forward=True)
+        if plot_title and hasattr(fig, 'suptitle'):
+            fig.suptitle(plot_title, fontsize=13, y=0.99)
         self._adjust_triangle_plot_layout(fig)
         self._overlay_triangle_plot_geometry_histograms(
             fig,

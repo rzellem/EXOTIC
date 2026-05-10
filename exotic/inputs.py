@@ -224,6 +224,7 @@ class Inputs:
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,
+            'use_sparse_posterior_live_point_retry': 'y',
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -506,6 +507,12 @@ class Inputs:
                 'ultranest_min_num_live_points',
                 'ultranest_min_live_points',
                 'min_num_live_points',
+            ),
+            'use_sparse_posterior_live_point_retry': (
+                'use_sparse_posterior_live_point_retry',
+                'Use Sparse Posterior Live-Point Retry? (y/n)',
+                'Use Sparse Posterior Live Point Retry? (y/n)',
+                'Sparse Posterior Live-Point Retry? (y/n)',
             ),
             'bad_wcs_threshold_percent': (
                 'bad_wcs_threshold_percent',

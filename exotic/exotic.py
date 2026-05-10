@@ -60,6 +60,7 @@ import argparse
 import copy
 import faulthandler
 from functools import lru_cache
+import inspect
 import json
 import hashlib
 import os
@@ -225,6 +226,13 @@ OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
+SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT = True
+SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV = "EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY"
+SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT = 5
+SPARSE_POSTERIOR_RETRY_PARAMETER_KEYS = ('rprs', 'tmid', 'ars')
+SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_FLOOR = 500
+SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_LIVE_POINT = 3.0
+SPARSE_POSTERIOR_MIN_OCCUPIED_BINS = 8
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
 RPRS_SEARCH_BOUND_MAX = 1.0
@@ -1582,6 +1590,13 @@ def triangle_plot_output_path(save_dir, planet_name, observation_date):
     )
 
 
+def final_triangle_plot_output_path(save_dir, planet_name, observation_date):
+    return (
+        Path(save_dir)
+        / safe_output_filename("FinalTriangle", planet_name, filename_date_token(observation_date), extension="png")
+    )
+
+
 def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observation_date, comp_index):
     return (
         Path(save_dir)
@@ -1595,12 +1610,60 @@ def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observ
     )
 
 
-def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, source_dir=None):
-    output_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def comparison_candidate_label_from_output_dir(output_dir):
+    if output_dir is None:
+        return None
 
-    fig = fit.plot_triangle()
+    for part in reversed(Path(output_dir).parts):
+        match = re.fullmatch(r"comp(\d+)", str(part), re.IGNORECASE)
+        if match:
+            return f"comparison candidate #{int(match.group(1))}"
+    return None
+
+
+def _plot_triangle_for_output(fit, plot_title=None):
+    plotter = getattr(fit, 'plot_triangle', None)
+    if not callable(plotter):
+        return None
+
+    if plot_title:
+        try:
+            signature = inspect.signature(plotter)
+            accepts_plot_title = (
+                'plot_title' in signature.parameters
+                or any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+            )
+        except (TypeError, ValueError):
+            accepts_plot_title = False
+
+        if accepts_plot_title:
+            return plotter(plot_title=plot_title)
+
+    return plotter()
+
+
+def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, source_dir=None):
+    output_path = final_triangle_plot_output_path(save_dir, planet_name, observation_date)
+    compatibility_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    compatibility_path.parent.mkdir(parents=True, exist_ok=True)
+
+    source_label = comparison_candidate_label_from_output_dir(source_dir)
+    plot_title = "Final selected fit"
+    if source_label:
+        plot_title = f"{plot_title} ({source_label})"
+    fig = _plot_triangle_for_output(fit, plot_title=plot_title)
+    if fig is None:
+        return None
     fig.savefig(output_path)
+    if compatibility_path != output_path:
+        try:
+            shutil.copy2(output_path, compatibility_path)
+        except Exception:
+            fig.savefig(compatibility_path)
     try:
         plt.close(fig)
     except TypeError:
@@ -2032,18 +2095,21 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
                 exc,
             ))
 
-    triangle_plotter = getattr(final_fit, 'plot_triangle', None)
-    if callable(triangle_plotter):
+    if callable(getattr(final_fit, 'plot_triangle', None)):
         try:
-            fig = triangle_plotter()
+            fig = _plot_triangle_for_output(
+                final_fit,
+                plot_title=f"Comparison candidate #{int(comp_index) + 1} fit",
+            )
             triangle_plot_path = comparison_candidate_triangle_plot_output_path(
                 candidate_dir,
                 p_dict['pName'],
                 observation_date,
                 comp_index,
             )
-            fig.savefig(triangle_plot_path)
-            plt.close(fig)
+            if fig is not None:
+                fig.savefig(triangle_plot_path)
+                plt.close(fig)
         except Exception as exc:
             archive_errors.append(archive_exception_payload(
                 "Could not save the triangle plot",
@@ -2303,6 +2369,340 @@ def annotate_parameter_posterior_refit(fit, parameter_key, applied, note=None, h
         setattr(fit, f"{attr_prefix}_std", None)
         setattr(fit, f"{attr_prefix}_original_bounds", None)
         setattr(fit, f"{attr_prefix}_bounds", None)
+
+
+def annotate_sparse_posterior_live_point_extension(
+    fit,
+    enabled,
+    applied,
+    note=None,
+    diagnostics=None,
+    post_extension_diagnostics=None,
+    base_live_points=None,
+    target_live_points=None,
+    extension_factor=SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+):
+    if fit is None:
+        return
+
+    fit.sparse_posterior_live_point_extension_enabled = bool(enabled)
+    fit.sparse_posterior_live_point_extension_applied = bool(applied)
+    fit.sparse_posterior_live_point_extension_note = note
+    fit.sparse_posterior_live_point_extension_diagnostics = diagnostics
+    fit.sparse_posterior_live_point_extension_post_diagnostics = post_extension_diagnostics
+    fit.sparse_posterior_live_point_extension_base_live_points = base_live_points
+    fit.sparse_posterior_live_point_extension_target_live_points = target_live_points
+    fit.sparse_posterior_live_point_extension_factor = extension_factor
+
+
+def clear_fit_ultranest_resume_state(fit):
+    clear_resume_state = getattr(fit, 'clear_ultranest_resume_state', None)
+    if callable(clear_resume_state):
+        clear_resume_state()
+
+
+def callable_accepts_keyword(callable_obj, keyword):
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return False
+
+    if keyword in signature.parameters:
+        return True
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def get_configured_ultranest_min_num_live_points():
+    return parse_ultranest_min_num_live_points(
+        os.environ.get(
+            ULTRANEST_MIN_NUM_LIVE_POINTS_ENV,
+            ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT,
+        )
+    )
+
+
+def _effective_sample_count(weights, fallback_count):
+    if weights is None:
+        return float(fallback_count)
+
+    weights = np.asarray(weights, dtype=float)
+    finite_weights = weights[np.isfinite(weights) & (weights > 0)]
+    if finite_weights.size == 0:
+        return float(fallback_count)
+
+    weight_sum = float(np.sum(finite_weights))
+    weight_square_sum = float(np.sum(finite_weights ** 2))
+    if not np.isfinite(weight_sum) or not np.isfinite(weight_square_sum) or weight_square_sum <= 0:
+        return float(fallback_count)
+    return float((weight_sum ** 2) / weight_square_sum)
+
+
+def _fit_posterior_sample_matrix(fit, parameter_keys):
+    parameter_keys = list(parameter_keys)
+    if fit is None or not parameter_keys:
+        return np.empty((0, 0), dtype=float), None
+
+    sample_points = None
+    sample_weights = None
+    try:
+        sample_points, _, sample_weights = fit._get_triangle_plot_samples()
+    except Exception:
+        sample_points = None
+
+    if sample_points is not None:
+        sample_points = np.asarray(sample_points, dtype=float)
+        if sample_points.ndim == 2 and sample_points.shape[0] > 0:
+            sampled_keys = list(getattr(fit, 'sampled_keys', []))
+            bounds = getattr(fit, 'bounds', {})
+            bound_keys = list(bounds.keys()) if isinstance(bounds, dict) else []
+            physical_getter = getattr(fit, '_physical_values_from_sample_point', None)
+            columns = []
+            for key in parameter_keys:
+                if key in sampled_keys:
+                    key_index = sampled_keys.index(key)
+                    if key_index >= sample_points.shape[1]:
+                        return np.empty((0, len(parameter_keys)), dtype=float), None
+                    columns.append(np.asarray(sample_points[:, key_index], dtype=float))
+                elif callable(physical_getter) and bound_keys:
+                    columns.append(np.asarray([
+                        physical_getter(point, bound_keys, sampled_keys).get(key, np.nan)
+                        for point in sample_points
+                    ], dtype=float))
+                else:
+                    break
+            else:
+                weights = None
+                if sample_weights is not None:
+                    sample_weights = np.asarray(sample_weights, dtype=float)
+                    if sample_weights.ndim == 1 and sample_weights.shape[0] == sample_points.shape[0]:
+                        weights = sample_weights
+                return np.column_stack(columns), weights
+
+    sample_getter = getattr(fit, 'get_parameter_posterior_samples', None)
+    if not callable(sample_getter):
+        return np.empty((0, len(parameter_keys)), dtype=float), None
+
+    columns = []
+    min_size = None
+    for key in parameter_keys:
+        values = np.asarray(sample_getter(key), dtype=float).reshape(-1)
+        columns.append(values)
+        min_size = values.size if min_size is None else min(min_size, values.size)
+
+    if min_size is None or min_size == 0:
+        return np.empty((0, len(parameter_keys)), dtype=float), None
+
+    return np.column_stack([values[:min_size] for values in columns]), None
+
+
+def evaluate_sparse_posterior_sample_support(
+    fit,
+    parameter_keys=SPARSE_POSTERIOR_RETRY_PARAMETER_KEYS,
+    base_live_points=None,
+    minimum_effective_samples=None,
+    minimum_occupied_bins=SPARSE_POSTERIOR_MIN_OCCUPIED_BINS,
+):
+    if base_live_points is None:
+        base_live_points = get_configured_ultranest_min_num_live_points()
+
+    if minimum_effective_samples is None:
+        minimum_effective_samples = max(
+            SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_FLOOR,
+            int(np.ceil(SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_LIVE_POINT * float(base_live_points))),
+        )
+    minimum_effective_samples = int(max(1, minimum_effective_samples))
+    minimum_occupied_bins = int(max(1, minimum_occupied_bins))
+
+    sample_matrix, sample_weights = _fit_posterior_sample_matrix(fit, parameter_keys)
+    diagnostics = {
+        'sparse': False,
+        'reason': None,
+        'parameter_keys': list(parameter_keys),
+        'base_live_points': int(base_live_points),
+        'minimum_effective_samples': minimum_effective_samples,
+        'minimum_occupied_bins': minimum_occupied_bins,
+        'parameters': {},
+    }
+
+    if sample_matrix.size == 0 or sample_matrix.shape[0] == 0:
+        diagnostics['sparse'] = True
+        diagnostics['reason'] = "posterior samples are unavailable for Rp/R*, Tmid, and a/Rs."
+        return diagnostics
+
+    sparse_reasons = []
+    for column_index, key in enumerate(parameter_keys):
+        if column_index >= sample_matrix.shape[1]:
+            sample_values = np.array([], dtype=float)
+        else:
+            sample_values = np.asarray(sample_matrix[:, column_index], dtype=float)
+        finite_mask = np.isfinite(sample_values)
+        finite_values = sample_values[finite_mask]
+        parameter_weights = sample_weights[finite_mask] if sample_weights is not None else None
+        sample_count = int(finite_values.size)
+        effective_count = _effective_sample_count(parameter_weights, sample_count)
+
+        occupied_bins = 0
+        central_count = 0
+        if sample_count >= 2:
+            q05, q95 = np.nanpercentile(finite_values, [5, 95])
+            central_mask = (finite_values >= q05) & (finite_values <= q95)
+            central_values = finite_values[central_mask]
+            central_count = int(central_values.size)
+            if np.isfinite(q05) and np.isfinite(q95) and q05 < q95 and central_count > 0:
+                bin_count = int(np.clip(np.sqrt(sample_count), 10, 40))
+                hist_counts, _ = np.histogram(central_values, bins=bin_count, range=(q05, q95))
+                occupied_bins = int(np.count_nonzero(hist_counts > 0))
+
+        parameter_diagnostic = {
+            'sample_count': sample_count,
+            'effective_sample_count': float(effective_count),
+            'central_sample_count': central_count,
+            'occupied_bins': occupied_bins,
+            'sparse': False,
+            'reason': None,
+        }
+
+        if effective_count < minimum_effective_samples:
+            parameter_diagnostic['sparse'] = True
+            parameter_diagnostic['reason'] = (
+                f"effective samples {effective_count:.0f} < {minimum_effective_samples}"
+            )
+        elif occupied_bins and occupied_bins < minimum_occupied_bins:
+            parameter_diagnostic['sparse'] = True
+            parameter_diagnostic['reason'] = (
+                f"central posterior occupies {occupied_bins} histogram bins < {minimum_occupied_bins}"
+            )
+
+        if parameter_diagnostic['sparse']:
+            sparse_reasons.append(f"{key}: {parameter_diagnostic['reason']}")
+        diagnostics['parameters'][key] = parameter_diagnostic
+
+    if sparse_reasons:
+        diagnostics['sparse'] = True
+        diagnostics['reason'] = "; ".join(sparse_reasons)
+    else:
+        diagnostics['reason'] = "posterior sample support is sufficient for Rp/R*, Tmid, and a/Rs."
+
+    return diagnostics
+
+
+def sparse_posterior_diagnostics_summary(diagnostics):
+    if not isinstance(diagnostics, dict):
+        return "posterior sample support diagnostics are unavailable"
+    reason = diagnostics.get('reason')
+    if reason:
+        return str(reason)
+    return "posterior sample support diagnostics are unavailable"
+
+
+def extend_sparse_posterior_live_points_if_needed(
+    fit,
+    enabled=None,
+    extension_factor=SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+):
+    if enabled is None:
+        enabled = should_use_sparse_posterior_live_point_retry(
+            os.environ.get(
+                SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV,
+                SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
+            )
+        )
+
+    if not enabled:
+        annotate_sparse_posterior_live_point_extension(fit, False, False)
+        clear_fit_ultranest_resume_state(fit)
+        return fit
+
+    base_live_points = get_configured_ultranest_min_num_live_points()
+    diagnostics = evaluate_sparse_posterior_sample_support(fit, base_live_points=base_live_points)
+    if not diagnostics.get('sparse'):
+        annotate_sparse_posterior_live_point_extension(
+            fit,
+            True,
+            False,
+            note=f"Not needed; {sparse_posterior_diagnostics_summary(diagnostics)}",
+            diagnostics=diagnostics,
+            base_live_points=base_live_points,
+            extension_factor=extension_factor,
+        )
+        clear_fit_ultranest_resume_state(fit)
+        return fit
+
+    extender = getattr(fit, 'extend_ultranest_fit', None)
+    if not callable(extender):
+        note = (
+            "Skipped; sparse posterior support was detected, but the UltraNest sampler state "
+            "is unavailable for an additive extension."
+        )
+        log_info(f"Warning: {note}", warn=True)
+        annotate_sparse_posterior_live_point_extension(
+            fit,
+            True,
+            False,
+            note=note,
+            diagnostics=diagnostics,
+            base_live_points=base_live_points,
+            extension_factor=extension_factor,
+        )
+        clear_fit_ultranest_resume_state(fit)
+        return fit
+
+    extension_factor = int(max(1, extension_factor))
+    target_live_points = int(max(
+        base_live_points + extension_factor * base_live_points,
+        base_live_points + 1,
+    ))
+    try:
+        current_max_ncalls = int(float(getattr(fit, 'max_ncalls', 2e5)))
+    except (TypeError, ValueError):
+        current_max_ncalls = int(2e5)
+    target_max_ncalls = int(max(current_max_ncalls, current_max_ncalls * (extension_factor + 1)))
+    log_info(
+        "Posterior samples for Rp/R*, Tmid, and a/Rs are sparse "
+        f"({sparse_posterior_diagnostics_summary(diagnostics)}); continuing UltraNest "
+        f"from {base_live_points} to {target_live_points} minimum live points."
+    )
+    applied = bool(extender(min_num_live_points=target_live_points, max_ncalls=target_max_ncalls))
+    post_diagnostics = evaluate_sparse_posterior_sample_support(fit, base_live_points=base_live_points)
+
+    if applied and post_diagnostics.get('sparse'):
+        note = (
+            f"Applied additive sparse-posterior UltraNest extension "
+            f"({base_live_points}->{target_live_points} minimum live points), but "
+            f"{sparse_posterior_diagnostics_summary(post_diagnostics)}"
+        )
+        log_info(
+            "Warning: sparse posterior support remains after the additive UltraNest extension; "
+            "please inspect the triangle plot carefully.",
+            warn=True,
+        )
+    elif applied:
+        note = (
+            f"Applied additive sparse-posterior UltraNest extension "
+            f"({base_live_points}->{target_live_points} minimum live points)."
+        )
+    else:
+        note = (
+            "Skipped; sparse posterior support was detected, but UltraNest did not continue "
+            "from the retained sampler state."
+        )
+
+    annotate_sparse_posterior_live_point_extension(
+        fit,
+        True,
+        applied,
+        note=note,
+        diagnostics=diagnostics,
+        post_extension_diagnostics=post_diagnostics,
+        base_live_points=base_live_points,
+        target_live_points=target_live_points,
+        extension_factor=extension_factor,
+    )
+    clear_fit_ultranest_resume_state(fit)
+    return fit
 
 
 def build_initial_rprs_bounds(
@@ -2710,9 +3110,12 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     duration_prior=None,
     max_ars_retries=ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
     max_impact_parameter_retries=IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT,
+    keep_ultranest_sampler=False,
 ):
     def impact_parameter_retry_available(fit, local_bounds):
         if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
+            return False
+        if getattr(fit, 'impact_parameter_sampled_directly', False):
             return False
         sampled_keys = getattr(fit, 'sampled_keys', []) or []
         sample_bounds = getattr(fit, 'sample_bounds', {})
@@ -2814,6 +3217,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         }
         if isinstance(duration_prior, dict) and duration_prior.get('applied'):
             fit_kwargs['duration_prior'] = duration_prior
+        if keep_ultranest_sampler and callable_accepts_keyword(lc_fitter, 'keep_ultranest_sampler'):
+            fit_kwargs['keep_ultranest_sampler'] = True
         fit = lc_fitter(
             times,
             flux_values,
@@ -3350,6 +3755,34 @@ def should_fit_lightcurve_to_every_comparison_candidate(config_value):
     log_info("Warning: Invalid 'fit_lightcurve_to_every_comparison_candidate' value; defaulting to disabled.",
              warn=True)
     return False
+
+
+def should_use_sparse_posterior_live_point_retry(config_value):
+    if config_value is None:
+        return SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'use_sparse_posterior_live_point_retry' value; "
+        "defaulting to enabled.",
+        warn=True,
+    )
+    return SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT
+
+
+def configure_sparse_posterior_live_point_retry(config_value):
+    enabled = should_use_sparse_posterior_live_point_retry(config_value)
+    os.environ[SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV] = "1" if enabled else "0"
+    return enabled
 
 
 def should_pick_comparison_by_eebls_snr(config_value):
@@ -5209,6 +5642,12 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
 ):
     if duration_prior is None and expected_planet_dict is not None:
         duration_prior = build_single_transit_duration_prior(expected_planet_dict)
+    keep_ultranest_for_sparse_extension = should_use_sparse_posterior_live_point_retry(
+        os.environ.get(
+            SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV,
+            SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
+        )
+    )
 
     fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         times,
@@ -5220,6 +5659,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         jd_times=jd_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         duration_prior=duration_prior,
+        keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
     )
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -5269,6 +5709,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             jd_times=working_jd_times,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
+            keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
         )
         fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -5302,6 +5743,11 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             note="Disabled; using the direct nested-sampling fit.",
         )
         annotate_transit_detection_qc(fit)
+        fit = extend_sparse_posterior_live_points_if_needed(
+            fit,
+            enabled=keep_ultranest_for_sparse_extension,
+        )
+        annotate_transit_detection_qc(fit)
         return fit, working_flux, working_unc
 
     detrend_result = detrend_flux_on_out_of_transit_baseline(
@@ -5320,6 +5766,11 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             note=note,
             pre_points=detrend_result.get('pre_points', 0),
             post_points=detrend_result.get('post_points', 0),
+        )
+        annotate_transit_detection_qc(fit)
+        fit = extend_sparse_posterior_live_points_if_needed(
+            fit,
+            enabled=keep_ultranest_for_sparse_extension,
         )
         annotate_transit_detection_qc(fit)
         return fit, working_flux, working_unc
@@ -5350,6 +5801,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         jd_times=working_jd_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         duration_prior=duration_prior,
+        keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -5380,6 +5832,11 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         intercept=detrend_result['intercept'],
         pre_points=detrend_result['pre_points'],
         post_points=detrend_result['post_points'],
+    )
+    annotate_transit_detection_qc(refit)
+    refit = extend_sparse_posterior_live_points_if_needed(
+        refit,
+        enabled=keep_ultranest_for_sparse_extension,
     )
     annotate_transit_detection_qc(refit)
     return refit, detrend_result['flux'], detrend_result['unc']
@@ -11139,6 +11596,14 @@ def summarize_lightcurve_fit_assessment(fit):
         'b_posterior_refit_applied': bool(getattr(fit, 'b_posterior_refit_applied', False)),
         'b_posterior_refit_count': b_retry_count,
         'b_posterior_refit_note': getattr(fit, 'b_posterior_refit_note', None),
+        'sparse_posterior_live_point_extension_applied': bool(
+            getattr(fit, 'sparse_posterior_live_point_extension_applied', False)
+        ),
+        'sparse_posterior_live_point_extension_note': getattr(
+            fit,
+            'sparse_posterior_live_point_extension_note',
+            None,
+        ),
         'prefit_refinement_applied': bool(getattr(fit, 'prefit_refinement_applied', False)),
         'prefit_refinement_note': getattr(fit, 'prefit_refinement_note', None),
         'oot_baseline_detrending_applied': bool(getattr(fit, 'oot_baseline_detrending_applied', False)),
@@ -11185,12 +11650,18 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
     prefit_status = "applied" if assessment['prefit_refinement_applied'] else "not applied"
     oot_status = "applied" if assessment['oot_baseline_detrending_applied'] else "not applied"
     duration_prior_status = "applied" if assessment['duration_prior_applied'] else "not applied"
+    sparse_extension_status = (
+        "applied"
+        if assessment['sparse_posterior_live_point_extension_applied']
+        else "not applied"
+    )
 
     log_info(
         f"{indent}fit assessment: fit_method={assessment['fit_method']}, "
         f"duration_prior={duration_prior_status}, "
         f"Rp/R* posterior retry={rprs_retry_status}, "
         f"impact parameter posterior retry={b_retry_status}, "
+        f"sparse posterior extension={sparse_extension_status}, "
         f"prefit_refinement={prefit_status}, "
         f"oot_baseline_detrending={oot_status}"
     )
@@ -11200,6 +11671,11 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         log_info(f"{indent}Rp/R* posterior retry note: {assessment['rprs_posterior_refit_note']}")
     if assessment.get('b_posterior_refit_note'):
         log_info(f"{indent}Impact parameter posterior retry note: {assessment['b_posterior_refit_note']}")
+    if assessment.get('sparse_posterior_live_point_extension_note'):
+        log_info(
+            f"{indent}Sparse posterior live-point extension note: "
+            f"{assessment['sparse_posterior_live_point_extension_note']}"
+        )
     if assessment.get('prefit_refinement_note'):
         log_info(f"{indent}Prefit refinement note: {assessment['prefit_refinement_note']}")
     if assessment.get('oot_baseline_detrending_note'):
@@ -13272,6 +13748,18 @@ def _main_impl():
             )
         )
         log_info(f"UltraNest minimum live points: {ultranest_min_num_live_points}.")
+        use_sparse_posterior_live_point_retry = configure_sparse_posterior_live_point_retry(
+            exotic_infoDict.get(
+                'use_sparse_posterior_live_point_retry',
+                SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
+            )
+        )
+        if use_sparse_posterior_live_point_retry:
+            log_info(
+                "Sparse posterior live-point extension enabled: final settled fits can continue "
+                f"UltraNest with {SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x additional "
+                "minimum live points when Rp/R*, Tmid, or a/Rs are under-sampled."
+            )
         log_ultranest_mpi_status()
 
         # Make a temp directory of helpful files
@@ -15209,9 +15697,14 @@ def _main_impl():
                                                     min_aper=np.round(display_aperture, 2),
                                                     min_annul=np.round(display_annulus, 2),
                                                     adaptive_summary=photometry_info.get('adaptive_summary'),
-                                                    photometry_info=photometry_info)
+                                                    photometry_info=photometry_info,
+                                                    publish_to_root=True)
             else:
-                output_files.final_planetary_params(phot_opt=False, vsp_params=vsp_params)
+                output_files.final_planetary_params(
+                    phot_opt=False,
+                    vsp_params=vsp_params,
+                    publish_to_root=True,
+                )
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:

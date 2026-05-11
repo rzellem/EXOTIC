@@ -230,9 +230,11 @@ SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT = True
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV = "EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY"
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT = 5
 SPARSE_POSTERIOR_RETRY_PARAMETER_KEYS = ('rprs', 'tmid', 'ars')
-SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_FLOOR = 500
-SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_LIVE_POINT = 3.0
+SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_FLOOR = 1000
+SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_LIVE_POINT = 5.0
 SPARSE_POSTERIOR_MIN_OCCUPIED_BINS = 8
+SPARSE_POSTERIOR_MIN_OCCUPIED_BIN_FRACTION = 0.65
+SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_OCCUPIED_BIN = 25.0
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
 RPRS_SEARCH_BOUND_MAX = 1.0
@@ -355,6 +357,30 @@ def annotate_out_of_transit_baseline_detrending(
     fit.oot_baseline_intercept = intercept
     fit.oot_baseline_pre_points = int(pre_points) if pre_points is not None else 0
     fit.oot_baseline_post_points = int(post_points) if post_points is not None else 0
+
+
+def annotate_out_of_transit_baseline_parameter_fit(
+    fit,
+    applied,
+    note=None,
+    pre_points=0,
+    post_points=0,
+    a0=None,
+    a0_error=None,
+    a2=None,
+    a2_error=None,
+):
+    if fit is None:
+        return
+
+    fit.oot_baseline_parameter_fit_applied = bool(applied)
+    fit.oot_baseline_parameter_fit_note = note
+    fit.oot_baseline_parameter_fit_pre_points = int(pre_points) if pre_points is not None else 0
+    fit.oot_baseline_parameter_fit_post_points = int(post_points) if post_points is not None else 0
+    fit.oot_baseline_parameter_fit_a0 = a0
+    fit.oot_baseline_parameter_fit_a0_error = a0_error
+    fit.oot_baseline_parameter_fit_a2 = a2
+    fit.oot_baseline_parameter_fit_a2_error = a2_error
 
 
 def annotate_final_fit_prefit_refinement(
@@ -1597,6 +1623,13 @@ def final_triangle_plot_output_path(save_dir, planet_name, observation_date):
     )
 
 
+def zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date):
+    return (
+        Path(save_dir)
+        / safe_output_filename("ZoomedTrianglePlot", planet_name, filename_date_token(observation_date), extension="png")
+    )
+
+
 def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observation_date, comp_index):
     return (
         Path(save_dir)
@@ -1621,34 +1654,38 @@ def comparison_candidate_label_from_output_dir(output_dir):
     return None
 
 
-def _plot_triangle_for_output(fit, plot_title=None):
+def _plot_triangle_for_output(fit, plot_title=None, required_keywords=(), **plot_kwargs):
     plotter = getattr(fit, 'plot_triangle', None)
     if not callable(plotter):
         return None
 
-    if plot_title:
-        try:
-            signature = inspect.signature(plotter)
-            accepts_plot_title = (
-                'plot_title' in signature.parameters
-                or any(
-                    parameter.kind == inspect.Parameter.VAR_KEYWORD
-                    for parameter in signature.parameters.values()
-                )
-            )
-        except (TypeError, ValueError):
-            accepts_plot_title = False
+    supported_kwargs = {}
+    for keyword in required_keywords:
+        if not callable_accepts_keyword(plotter, keyword):
+            return None
 
-        if accepts_plot_title:
-            return plotter(plot_title=plot_title)
+    if plot_title and callable_accepts_keyword(plotter, 'plot_title'):
+        supported_kwargs['plot_title'] = plot_title
+    for keyword, value in plot_kwargs.items():
+        if callable_accepts_keyword(plotter, keyword):
+            supported_kwargs[keyword] = value
 
-    return plotter()
+    return plotter(**supported_kwargs)
+
+
+def _close_plot_figure(fig):
+    try:
+        plt.close(fig)
+    except TypeError:
+        pass
 
 
 def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, source_dir=None):
     output_path = final_triangle_plot_output_path(save_dir, planet_name, observation_date)
+    zoomed_output_path = zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date)
     compatibility_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    zoomed_output_path.parent.mkdir(parents=True, exist_ok=True)
     compatibility_path.parent.mkdir(parents=True, exist_ok=True)
 
     source_label = comparison_candidate_label_from_output_dir(source_dir)
@@ -1664,10 +1701,27 @@ def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, sourc
             shutil.copy2(output_path, compatibility_path)
         except Exception:
             fig.savefig(compatibility_path)
+    _close_plot_figure(fig)
+
+    zoomed_fig = None
     try:
-        plt.close(fig)
-    except TypeError:
-        pass
+        zoomed_title = f"{plot_title} (5-sigma zoom)"
+        zoomed_fig = _plot_triangle_for_output(
+            fit,
+            plot_title=zoomed_title,
+            required_keywords=('zoom_sigma',),
+            zoom_sigma=5.0,
+        )
+        if zoomed_fig is not None:
+            zoomed_fig.savefig(zoomed_output_path)
+    except Exception as exc:
+        try:
+            log_info(f"Warning: Could not save zoomed final triangle plot: {exc}", warn=True)
+        except Exception:
+            pass
+    finally:
+        if zoomed_fig is not None:
+            _close_plot_figure(zoomed_fig)
     return output_path
 
 
@@ -1994,6 +2048,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         expected_planet_dict=p_dict,
         expected_tmid_search_summary=tmid_search_summary,
         eebls_search_summary=eebls_search_summary,
+        extend_sparse_posterior_live_points=False,
+        keep_ultranest_sampler_for_deferred_extension=True,
     )
     if final_fit is None:
         result['failure_reason'] = "the full comparison-candidate reduction did not converge."
@@ -2080,7 +2136,10 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
     plotter = getattr(final_fit, 'plot_bestfit', None)
     if callable(plotter):
         try:
-            fig, _ = plotter()
+            plot_kwargs = {}
+            if callable_accepts_keyword(plotter, 'show_flux_baseline_label'):
+                plot_kwargs['show_flux_baseline_label'] = False
+            fig, _ = plotter(**plot_kwargs)
             bestfit_plot_path = temp_dir / safe_output_filename(
                 "BestFit",
                 p_dict['pName'],
@@ -2223,7 +2282,10 @@ def archive_failed_comparison_fit(save_dir, planet_name, observation_date, attem
         plotter = getattr(fit, 'plot_bestfit', None)
         if callable(plotter):
             try:
-                fig, _ = plotter()
+                plot_kwargs = {}
+                if callable_accepts_keyword(plotter, 'show_flux_baseline_label'):
+                    plot_kwargs['show_flux_baseline_label'] = False
+                fig, _ = plotter(**plot_kwargs)
                 bestfit_plot_path = temp_dir / safe_output_filename(
                     "BestFit",
                     planet_name,
@@ -2504,6 +2566,8 @@ def evaluate_sparse_posterior_sample_support(
     base_live_points=None,
     minimum_effective_samples=None,
     minimum_occupied_bins=SPARSE_POSTERIOR_MIN_OCCUPIED_BINS,
+    minimum_occupied_bin_fraction=SPARSE_POSTERIOR_MIN_OCCUPIED_BIN_FRACTION,
+    minimum_effective_samples_per_occupied_bin=SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_OCCUPIED_BIN,
 ):
     if base_live_points is None:
         base_live_points = get_configured_ultranest_min_num_live_points()
@@ -2515,6 +2579,10 @@ def evaluate_sparse_posterior_sample_support(
         )
     minimum_effective_samples = int(max(1, minimum_effective_samples))
     minimum_occupied_bins = int(max(1, minimum_occupied_bins))
+    minimum_occupied_bin_fraction = float(np.clip(minimum_occupied_bin_fraction, 0.0, 1.0))
+    minimum_effective_samples_per_occupied_bin = float(
+        max(0.0, minimum_effective_samples_per_occupied_bin)
+    )
 
     sample_matrix, sample_weights = _fit_posterior_sample_matrix(fit, parameter_keys)
     diagnostics = {
@@ -2524,6 +2592,8 @@ def evaluate_sparse_posterior_sample_support(
         'base_live_points': int(base_live_points),
         'minimum_effective_samples': minimum_effective_samples,
         'minimum_occupied_bins': minimum_occupied_bins,
+        'minimum_occupied_bin_fraction': minimum_occupied_bin_fraction,
+        'minimum_effective_samples_per_occupied_bin': minimum_effective_samples_per_occupied_bin,
         'parameters': {},
     }
 
@@ -2546,6 +2616,9 @@ def evaluate_sparse_posterior_sample_support(
 
         occupied_bins = 0
         central_count = 0
+        bin_count = 0
+        occupied_bin_fraction = 0.0
+        effective_samples_per_occupied_bin = 0.0
         if sample_count >= 2:
             q05, q95 = np.nanpercentile(finite_values, [5, 95])
             central_mask = (finite_values >= q05) & (finite_values <= q95)
@@ -2555,12 +2628,22 @@ def evaluate_sparse_posterior_sample_support(
                 bin_count = int(np.clip(np.sqrt(sample_count), 10, 40))
                 hist_counts, _ = np.histogram(central_values, bins=bin_count, range=(q05, q95))
                 occupied_bins = int(np.count_nonzero(hist_counts > 0))
+                occupied_bin_fraction = (
+                    float(occupied_bins) / float(bin_count)
+                    if bin_count > 0
+                    else 0.0
+                )
+                if occupied_bins > 0:
+                    effective_samples_per_occupied_bin = float(effective_count) / float(occupied_bins)
 
         parameter_diagnostic = {
             'sample_count': sample_count,
             'effective_sample_count': float(effective_count),
             'central_sample_count': central_count,
+            'central_bin_count': bin_count,
             'occupied_bins': occupied_bins,
+            'occupied_bin_fraction': occupied_bin_fraction,
+            'effective_samples_per_occupied_bin': effective_samples_per_occupied_bin,
             'sparse': False,
             'reason': None,
         }
@@ -2574,6 +2657,22 @@ def evaluate_sparse_posterior_sample_support(
             parameter_diagnostic['sparse'] = True
             parameter_diagnostic['reason'] = (
                 f"central posterior occupies {occupied_bins} histogram bins < {minimum_occupied_bins}"
+            )
+        elif bin_count and occupied_bin_fraction < minimum_occupied_bin_fraction:
+            parameter_diagnostic['sparse'] = True
+            parameter_diagnostic['reason'] = (
+                f"central posterior occupies {occupied_bin_fraction:.2f} of histogram bins "
+                f"< {minimum_occupied_bin_fraction:.2f}"
+            )
+        elif (
+            occupied_bins
+            and minimum_effective_samples_per_occupied_bin > 0
+            and effective_samples_per_occupied_bin < minimum_effective_samples_per_occupied_bin
+        ):
+            parameter_diagnostic['sparse'] = True
+            parameter_diagnostic['reason'] = (
+                f"effective samples per occupied bin {effective_samples_per_occupied_bin:.1f} "
+                f"< {minimum_effective_samples_per_occupied_bin:.1f}"
             )
 
         if parameter_diagnostic['sparse']:
@@ -2602,6 +2701,8 @@ def extend_sparse_posterior_live_points_if_needed(
     fit,
     enabled=None,
     extension_factor=SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+    require_sparse=True,
+    extension_label="sparse-posterior",
 ):
     if enabled is None:
         enabled = should_use_sparse_posterior_live_point_retry(
@@ -2619,23 +2720,24 @@ def extend_sparse_posterior_live_points_if_needed(
     base_live_points = get_configured_ultranest_min_num_live_points()
     diagnostics = evaluate_sparse_posterior_sample_support(fit, base_live_points=base_live_points)
     if not diagnostics.get('sparse'):
-        annotate_sparse_posterior_live_point_extension(
-            fit,
-            True,
-            False,
-            note=f"Not needed; {sparse_posterior_diagnostics_summary(diagnostics)}",
-            diagnostics=diagnostics,
-            base_live_points=base_live_points,
-            extension_factor=extension_factor,
-        )
-        clear_fit_ultranest_resume_state(fit)
-        return fit
+        if require_sparse:
+            annotate_sparse_posterior_live_point_extension(
+                fit,
+                True,
+                False,
+                note=f"Not needed; {sparse_posterior_diagnostics_summary(diagnostics)}",
+                diagnostics=diagnostics,
+                base_live_points=base_live_points,
+                extension_factor=extension_factor,
+            )
+            clear_fit_ultranest_resume_state(fit)
+            return fit
 
     extender = getattr(fit, 'extend_ultranest_fit', None)
     if not callable(extender):
         note = (
-            "Skipped; sparse posterior support was detected, but the UltraNest sampler state "
-            "is unavailable for an additive extension."
+            "Skipped; the retained UltraNest sampler state is unavailable for an additive "
+            f"{extension_label} live-point extension."
         )
         log_info(f"Warning: {note}", warn=True)
         annotate_sparse_posterior_live_point_extension(
@@ -2660,17 +2762,25 @@ def extend_sparse_posterior_live_points_if_needed(
     except (TypeError, ValueError):
         current_max_ncalls = int(2e5)
     target_max_ncalls = int(max(current_max_ncalls, current_max_ncalls * (extension_factor + 1)))
-    log_info(
-        "Posterior samples for Rp/R*, Tmid, and a/Rs are sparse "
-        f"({sparse_posterior_diagnostics_summary(diagnostics)}); continuing UltraNest "
-        f"from {base_live_points} to {target_live_points} minimum live points."
-    )
+    if diagnostics.get('sparse'):
+        log_info(
+            "Posterior samples for Rp/R*, Tmid, and a/Rs are sparse "
+            f"({sparse_posterior_diagnostics_summary(diagnostics)}); continuing UltraNest "
+            f"from {base_live_points} to {target_live_points} minimum live points "
+            "using the retained final-pass sampler bounds."
+        )
+    else:
+        log_info(
+            f"Continuing the {extension_label} UltraNest fit from {base_live_points} "
+            f"to {target_live_points} minimum live points using the retained final-pass "
+            f"sampler bounds ({sparse_posterior_diagnostics_summary(diagnostics)})."
+        )
     applied = bool(extender(min_num_live_points=target_live_points, max_ncalls=target_max_ncalls))
     post_diagnostics = evaluate_sparse_posterior_sample_support(fit, base_live_points=base_live_points)
 
     if applied and post_diagnostics.get('sparse'):
         note = (
-            f"Applied additive sparse-posterior UltraNest extension "
+            f"Applied additive {extension_label} UltraNest extension "
             f"({base_live_points}->{target_live_points} minimum live points), but "
             f"{sparse_posterior_diagnostics_summary(post_diagnostics)}"
         )
@@ -2681,12 +2791,12 @@ def extend_sparse_posterior_live_points_if_needed(
         )
     elif applied:
         note = (
-            f"Applied additive sparse-posterior UltraNest extension "
+            f"Applied additive {extension_label} UltraNest extension "
             f"({base_live_points}->{target_live_points} minimum live points)."
         )
     else:
         note = (
-            "Skipped; sparse posterior support was detected, but UltraNest did not continue "
+            f"Skipped; UltraNest did not continue the additive {extension_label} extension "
             "from the retained sampler state."
         )
 
@@ -2703,6 +2813,16 @@ def extend_sparse_posterior_live_points_if_needed(
     )
     clear_fit_ultranest_resume_state(fit)
     return fit
+
+
+def extend_selected_comparison_live_points_if_needed(fit, enabled=None):
+    return extend_sparse_posterior_live_points_if_needed(
+        fit,
+        enabled=enabled,
+        extension_factor=SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+        require_sparse=False,
+        extension_label="selected comparison-star final",
+    )
 
 
 def build_initial_rprs_bounds(
@@ -3111,6 +3231,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     max_ars_retries=ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
     max_impact_parameter_retries=IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT,
     keep_ultranest_sampler=False,
+    baseline_fit_mask=None,
+    fixed_parameter_errors=None,
 ):
     def impact_parameter_retry_available(fit, local_bounds):
         if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
@@ -3219,6 +3341,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fit_kwargs['duration_prior'] = duration_prior
         if keep_ultranest_sampler and callable_accepts_keyword(lc_fitter, 'keep_ultranest_sampler'):
             fit_kwargs['keep_ultranest_sampler'] = True
+        if baseline_fit_mask is not None and callable_accepts_keyword(lc_fitter, 'baseline_fit_mask'):
+            fit_kwargs['baseline_fit_mask'] = baseline_fit_mask
+        if fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
+            fit_kwargs['fixed_parameter_errors'] = fixed_parameter_errors
         fit = lc_fitter(
             times,
             flux_values,
@@ -5176,6 +5302,208 @@ def prepare_final_fit_lightcurve_series(
     }
 
 
+def fit_airmass_baseline_parameters_on_out_of_transit(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    fit,
+    prior=None,
+    bounds=None,
+    depth_fraction=OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION,
+):
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    prior = {} if prior is None else dict(prior)
+    bounds = {} if bounds is None else dict(bounds)
+
+    base_result = {
+        'applied': False,
+        'note': 'out-of-transit baseline parameter fitting did not run.',
+        'oot_mask': None,
+        'pre_points': 0,
+        'post_points': 0,
+        'a0': np.nan,
+        'a0_error': np.nan,
+        'a2': prior.get('a2', 0.0),
+        'a2_error': np.nan,
+        'used_prior_ephemeris': False,
+    }
+
+    if not (times.shape == flux_values.shape == flux_errors.shape == airmass.shape):
+        base_result['note'] = 'light-curve arrays could not be aligned for out-of-transit baseline fitting.'
+        return base_result
+
+    coverage_summary = summarize_initial_fit_transit_coverage(
+        times,
+        fit,
+        flux_values=flux_values,
+        flux_errors=flux_errors,
+        depth_fraction=depth_fraction,
+    )
+    if not coverage_summary.get('valid') and prior:
+        prior_coverage = summarize_prior_transit_coverage(
+            times,
+            prior,
+            flux_values=flux_values,
+            flux_errors=flux_errors,
+        )
+        if prior_coverage.get('valid'):
+            coverage_summary = prior_coverage
+            base_result['used_prior_ephemeris'] = True
+
+    if not coverage_summary.get('valid'):
+        base_result['note'] = coverage_summary.get(
+            'note',
+            'could not isolate out-of-transit points for baseline parameter fitting.',
+        )
+        return base_result
+
+    oot_mask = np.asarray(coverage_summary.get('oot_mask'), dtype=bool)
+    finite_mask = (
+        oot_mask
+        & np.isfinite(times)
+        & np.isfinite(flux_values)
+        & (flux_values > 0)
+        & np.isfinite(flux_errors)
+        & (flux_errors > 0)
+        & np.isfinite(airmass)
+    )
+    point_count = int(np.count_nonzero(finite_mask))
+    fit_a2 = 'a2' in bounds
+    min_points = 3 if fit_a2 else 2
+    base_result['pre_points'] = coverage_summary.get('pre_points', 0)
+    base_result['post_points'] = coverage_summary.get('post_points', 0)
+
+    if point_count < min_points:
+        base_result['note'] = (
+            f"only {point_count} finite out-of-transit point(s) were available; "
+            f"need at least {min_points} to fit baseline parameters."
+        )
+        return base_result
+
+    reference_airmass = transit_qc_airmass_reference(airmass)
+    x = airmass[finite_mask] - reference_airmass
+    y = flux_values[finite_mask]
+    yerr = flux_errors[finite_mask]
+
+    a0_bounds = bounds.get('a0') or bounds.get('a1') or [0.5, 1.5]
+    try:
+        a0_lower, a0_upper = np.asarray(a0_bounds, dtype=float).reshape(-1)[:2]
+    except (TypeError, ValueError, IndexError):
+        a0_lower, a0_upper = 0.5, 1.5
+    if not np.isfinite(a0_lower) or a0_lower <= 0:
+        a0_lower = max(np.nanmedian(y) * 0.5, np.finfo(float).eps)
+    if not np.isfinite(a0_upper) or a0_upper <= a0_lower:
+        a0_upper = max(np.nanmedian(y) * 1.5, a0_lower * 1.01)
+
+    if fit_a2:
+        try:
+            a2_lower, a2_upper = np.asarray(bounds.get('a2'), dtype=float).reshape(-1)[:2]
+        except (TypeError, ValueError, IndexError):
+            a2_lower, a2_upper = -3.0, 3.0
+        if not np.isfinite(a2_lower) or not np.isfinite(a2_upper) or a2_lower >= a2_upper:
+            a2_lower, a2_upper = -3.0, 3.0
+    else:
+        a2_lower = a2_upper = float(prior.get('a2', 0.0) or 0.0)
+
+    initial_a0 = float(np.clip(np.nanmedian(y), a0_lower, a0_upper))
+    initial_a2 = float(prior.get('a2', 0.0) or 0.0)
+    if fit_a2:
+        initial_a2 = float(np.clip(initial_a2, a2_lower, a2_upper))
+
+    if fit_a2:
+        initial = np.array([np.log(initial_a0), initial_a2], dtype=float)
+        lower_bounds = np.array([np.log(a0_lower), a2_lower], dtype=float)
+        upper_bounds = np.array([np.log(a0_upper), a2_upper], dtype=float)
+    else:
+        initial = np.array([np.log(initial_a0)], dtype=float)
+        lower_bounds = np.array([np.log(a0_lower)], dtype=float)
+        upper_bounds = np.array([np.log(a0_upper)], dtype=float)
+
+    def residuals(params):
+        log_a0 = params[0]
+        a2_value = params[1] if fit_a2 else initial_a2
+        model = np.exp(log_a0) * np.exp(a2_value * x)
+        return (y - model) / yerr
+
+    try:
+        result = least_squares(
+            residuals,
+            x0=initial,
+            bounds=(lower_bounds, upper_bounds),
+            jac='3-point',
+            loss='linear',
+        )
+    except (ValueError, np.linalg.LinAlgError):
+        base_result['note'] = 'weighted out-of-transit baseline parameter fit failed.'
+        return base_result
+
+    if not getattr(result, 'success', False) or not np.all(np.isfinite(result.x)):
+        base_result['note'] = 'weighted out-of-transit baseline parameter fit did not converge.'
+        return base_result
+
+    log_a0 = float(result.x[0])
+    a0 = float(np.exp(log_a0))
+    a2 = float(result.x[1] if fit_a2 else initial_a2)
+    jacobian = np.asarray(result.jac, dtype=float)
+    residual_vector = np.asarray(result.fun, dtype=float)
+    dof = max(1, residual_vector.size - result.x.size)
+    reduced_chi2 = np.sum(residual_vector ** 2) / dof
+    covariance = None
+    if jacobian.ndim == 2 and jacobian.shape[0] >= jacobian.shape[1]:
+        try:
+            covariance = np.linalg.pinv(jacobian.T @ jacobian)
+            covariance *= max(float(reduced_chi2), 1.0)
+        except np.linalg.LinAlgError:
+            covariance = None
+
+    if covariance is not None and covariance.shape[0] >= 1:
+        log_a0_error = float(np.sqrt(max(covariance[0, 0], 0.0)))
+        a0_error = abs(a0) * log_a0_error
+    else:
+        a0_error = np.nan
+    if covariance is not None and fit_a2 and covariance.shape[0] >= 2:
+        a2_error = float(np.sqrt(max(covariance[1, 1], 0.0)))
+    else:
+        a2_error = 0.0 if not fit_a2 else np.nan
+
+    if not np.isfinite(a0_error) or a0_error <= 0:
+        a0_error = float(np.nanmedian(yerr))
+    if fit_a2 and (not np.isfinite(a2_error) or a2_error <= 0):
+        airmass_span_value = np.nanmax(x) - np.nanmin(x)
+        if np.isfinite(airmass_span_value) and airmass_span_value > 0:
+            a2_error = float(np.nanmedian(yerr / np.maximum(y, np.finfo(float).eps)) / airmass_span_value)
+        else:
+            a2_error = 0.0
+
+    side_note = (
+        f"{coverage_summary.get('pre_points', 0)} pre-ingress and "
+        f"{coverage_summary.get('post_points', 0)} post-egress out-of-transit point(s)"
+    )
+    if base_result['used_prior_ephemeris']:
+        side_note += " from the ephemeris-centered transit window"
+
+    return {
+        'applied': True,
+        'note': (
+            "Fitted a0"
+            + (" and a2" if fit_a2 else "")
+            + f" using only {side_note}; these baseline terms are fixed/profiled in the final transit fit."
+        ),
+        'oot_mask': finite_mask,
+        'pre_points': coverage_summary.get('pre_points', 0),
+        'post_points': coverage_summary.get('post_points', 0),
+        'a0': a0,
+        'a0_error': float(a0_error),
+        'a2': a2,
+        'a2_error': float(a2_error),
+        'used_prior_ephemeris': base_result['used_prior_ephemeris'],
+    }
+
+
 def detrend_flux_on_out_of_transit_baseline(
     times,
     flux_values,
@@ -5639,13 +5967,22 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     expected_tmid_search_summary=None,
     eebls_search_summary=None,
     duration_prior=None,
+    extend_sparse_posterior_live_points=True,
+    keep_ultranest_sampler_for_deferred_extension=False,
 ):
     if duration_prior is None and expected_planet_dict is not None:
         duration_prior = build_single_transit_duration_prior(expected_planet_dict)
-    keep_ultranest_for_sparse_extension = should_use_sparse_posterior_live_point_retry(
+    sparse_posterior_live_point_extension_enabled = should_use_sparse_posterior_live_point_retry(
         os.environ.get(
             SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV,
             SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
+        )
+    )
+    keep_ultranest_for_sparse_extension = (
+        sparse_posterior_live_point_extension_enabled
+        and (
+            extend_sparse_posterior_live_points
+            or keep_ultranest_sampler_for_deferred_extension
         )
     )
 
@@ -5736,17 +6073,117 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         refined_tmid_bounds=prefit_plan.get('refined_tmid_bounds'),
     )
 
+    if detrend_on_outoftransit_baseline:
+        baseline_parameter_result = fit_airmass_baseline_parameters_on_out_of_transit(
+            working_times,
+            working_flux,
+            working_unc,
+            working_airmass,
+            fit,
+            prior=working_prior,
+            bounds=working_bounds,
+        )
+    else:
+        baseline_parameter_result = {
+            'applied': False,
+            'note': 'Disabled with out-of-transit baseline detrending.',
+            'pre_points': 0,
+            'post_points': 0,
+        }
+    baseline_fit_mask = None
+    baseline_fixed_errors = {}
+    baseline_constrained_prior = dict(working_prior)
+    baseline_constrained_bounds = clone_lightcurve_bounds(working_bounds)
+    if baseline_parameter_result.get('applied'):
+        log_info("Prepared out-of-transit airmass/baseline parameter constraints for the final transit refit.")
+        log_info(baseline_parameter_result['note'])
+        baseline_fit_mask = np.asarray(baseline_parameter_result['oot_mask'], dtype=bool)
+        baseline_fixed_errors = {
+            'a2': baseline_parameter_result.get('a2_error', 0.0),
+        }
+        baseline_constrained_prior['a0'] = baseline_parameter_result['a0']
+        baseline_constrained_prior['a1'] = baseline_parameter_result['a0']
+        baseline_constrained_prior['a2'] = baseline_parameter_result['a2']
+        for key in ('rprs', 'ars', 'tmid', 'inc'):
+            if key in baseline_constrained_prior and key in getattr(fit, 'parameters', {}):
+                baseline_constrained_prior[key] = fit.parameters[key]
+        baseline_constrained_bounds.pop('a0', None)
+        baseline_constrained_bounds.pop('a1', None)
+        baseline_constrained_bounds.pop('a2', None)
+    else:
+        annotate_out_of_transit_baseline_parameter_fit(
+            fit,
+            False,
+            note=baseline_parameter_result.get('note'),
+            pre_points=baseline_parameter_result.get('pre_points', 0),
+            post_points=baseline_parameter_result.get('post_points', 0),
+        )
+
+    def run_oot_baseline_parameter_refit_if_needed(current_fit):
+        if not baseline_parameter_result.get('applied'):
+            return current_fit
+
+        refit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+            working_times,
+            working_flux,
+            working_unc,
+            working_airmass,
+            baseline_constrained_prior,
+            baseline_constrained_bounds,
+            jd_times=working_jd_times,
+            use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+            duration_prior=duration_prior,
+            keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
+            baseline_fit_mask=baseline_fit_mask,
+            fixed_parameter_errors=baseline_fixed_errors,
+        )
+        refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
+        annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
+        annotate_transit_qc_fit_context(
+            refit,
+            planet_dict=expected_planet_dict,
+            tmid_search_summary=expected_tmid_search_summary,
+            eebls_search_summary=eebls_search_summary,
+        )
+        annotate_final_fit_prefit_refinement(
+            refit,
+            prefit_plan.get('applied', False),
+            note=prefit_plan.get('note'),
+            baseline_duration_multiplier=baseline_duration_multiplier,
+            duration=prefit_plan.get('duration'),
+            original_point_count=prefit_plan.get('original_point_count'),
+            refined_point_count=prefit_plan.get('refined_point_count'),
+            trimmed_pre_points=prefit_plan.get('trimmed_pre_points', 0),
+            trimmed_post_points=prefit_plan.get('trimmed_post_points', 0),
+            original_tmid_bounds=prefit_plan.get('original_tmid_bounds'),
+            refined_tmid_bounds=prefit_plan.get('refined_tmid_bounds'),
+        )
+        annotate_out_of_transit_baseline_parameter_fit(
+            refit,
+            True,
+            note=baseline_parameter_result.get('note'),
+            pre_points=baseline_parameter_result.get('pre_points', 0),
+            post_points=baseline_parameter_result.get('post_points', 0),
+            a0=baseline_parameter_result.get('a0'),
+            a0_error=baseline_parameter_result.get('a0_error'),
+            a2=baseline_parameter_result.get('a2'),
+            a2_error=baseline_parameter_result.get('a2_error'),
+        )
+        return refit
+
     if not detrend_on_outoftransit_baseline:
+        fit = run_oot_baseline_parameter_refit_if_needed(fit)
         annotate_out_of_transit_baseline_detrending(
             fit,
             False,
             note="Disabled; using the direct nested-sampling fit.",
         )
         annotate_transit_detection_qc(fit)
-        fit = extend_sparse_posterior_live_points_if_needed(
-            fit,
-            enabled=keep_ultranest_for_sparse_extension,
-        )
+        if extend_sparse_posterior_live_points:
+            fit = extend_sparse_posterior_live_points_if_needed(
+                fit,
+                enabled=sparse_posterior_live_point_extension_enabled,
+            )
         annotate_transit_detection_qc(fit)
         return fit, working_flux, working_unc
 
@@ -5760,6 +6197,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     if not detrend_result.get('applied'):
         note = f"Skipped; {detrend_result.get('note', 'unable to fit an out-of-transit baseline.')}"
         log_info(f"Optional out-of-transit baseline detrending skipped: {detrend_result.get('note', 'unknown reason')}")
+        fit = run_oot_baseline_parameter_refit_if_needed(fit)
         annotate_out_of_transit_baseline_detrending(
             fit,
             False,
@@ -5768,10 +6206,11 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             post_points=detrend_result.get('post_points', 0),
         )
         annotate_transit_detection_qc(fit)
-        fit = extend_sparse_posterior_live_points_if_needed(
-            fit,
-            enabled=keep_ultranest_for_sparse_extension,
-        )
+        if extend_sparse_posterior_live_points:
+            fit = extend_sparse_posterior_live_points_if_needed(
+                fit,
+                enabled=sparse_posterior_live_point_extension_enabled,
+            )
         annotate_transit_detection_qc(fit)
         return fit, working_flux, working_unc
 
@@ -5790,6 +6229,13 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         detrend_result['flux'],
         disable_vertical_flux_normalization,
     )
+    if baseline_parameter_result.get('applied'):
+        refit_prior['a0'] = baseline_parameter_result['a0']
+        refit_prior['a1'] = baseline_parameter_result['a0']
+        refit_prior['a2'] = baseline_parameter_result['a2']
+        refit_bounds.pop('a0', None)
+        refit_bounds.pop('a1', None)
+        refit_bounds.pop('a2', None)
 
     refit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         working_times,
@@ -5802,6 +6248,8 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         duration_prior=duration_prior,
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
+        baseline_fit_mask=baseline_fit_mask,
+        fixed_parameter_errors=baseline_fixed_errors,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -5833,11 +6281,23 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         pre_points=detrend_result['pre_points'],
         post_points=detrend_result['post_points'],
     )
-    annotate_transit_detection_qc(refit)
-    refit = extend_sparse_posterior_live_points_if_needed(
+    annotate_out_of_transit_baseline_parameter_fit(
         refit,
-        enabled=keep_ultranest_for_sparse_extension,
+        bool(baseline_parameter_result.get('applied')),
+        note=baseline_parameter_result.get('note'),
+        pre_points=baseline_parameter_result.get('pre_points', 0),
+        post_points=baseline_parameter_result.get('post_points', 0),
+        a0=baseline_parameter_result.get('a0'),
+        a0_error=baseline_parameter_result.get('a0_error'),
+        a2=baseline_parameter_result.get('a2'),
+        a2_error=baseline_parameter_result.get('a2_error'),
     )
+    annotate_transit_detection_qc(refit)
+    if extend_sparse_posterior_live_points:
+        refit = extend_sparse_posterior_live_points_if_needed(
+            refit,
+            enabled=sparse_posterior_live_point_extension_enabled,
+        )
     annotate_transit_detection_qc(refit)
     return refit, detrend_result['flux'], detrend_result['unc']
 
@@ -11606,6 +12066,10 @@ def summarize_lightcurve_fit_assessment(fit):
         ),
         'prefit_refinement_applied': bool(getattr(fit, 'prefit_refinement_applied', False)),
         'prefit_refinement_note': getattr(fit, 'prefit_refinement_note', None),
+        'oot_baseline_parameter_fit_applied': bool(
+            getattr(fit, 'oot_baseline_parameter_fit_applied', False)
+        ),
+        'oot_baseline_parameter_fit_note': getattr(fit, 'oot_baseline_parameter_fit_note', None),
         'oot_baseline_detrending_applied': bool(getattr(fit, 'oot_baseline_detrending_applied', False)),
         'oot_baseline_detrending_note': getattr(fit, 'oot_baseline_detrending_note', None),
         'airmass_fit_skipped': bool(getattr(fit, 'airmass_fit_skipped', False)),
@@ -11648,6 +12112,7 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
             "applied"
         )
     prefit_status = "applied" if assessment['prefit_refinement_applied'] else "not applied"
+    oot_parameter_status = "applied" if assessment['oot_baseline_parameter_fit_applied'] else "not applied"
     oot_status = "applied" if assessment['oot_baseline_detrending_applied'] else "not applied"
     duration_prior_status = "applied" if assessment['duration_prior_applied'] else "not applied"
     sparse_extension_status = (
@@ -11663,6 +12128,7 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         f"impact parameter posterior retry={b_retry_status}, "
         f"sparse posterior extension={sparse_extension_status}, "
         f"prefit_refinement={prefit_status}, "
+        f"oot_baseline_parameter_fit={oot_parameter_status}, "
         f"oot_baseline_detrending={oot_status}"
     )
     if assessment.get('duration_prior_note'):
@@ -11678,6 +12144,8 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         )
     if assessment.get('prefit_refinement_note'):
         log_info(f"{indent}Prefit refinement note: {assessment['prefit_refinement_note']}")
+    if assessment.get('oot_baseline_parameter_fit_note'):
+        log_info(f"{indent}OOT baseline parameter-fit note: {assessment['oot_baseline_parameter_fit_note']}")
     if assessment.get('oot_baseline_detrending_note'):
         log_info(f"{indent}OOT baseline detrending note: {assessment['oot_baseline_detrending_note']}")
     if assessment.get('airmass_correction_note'):
@@ -13508,6 +13976,57 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         f"{format_transit_delta_bic(selected_transit_delta_bic)}"
                     )
 
+        selected_fit = selected_result.get('fit')
+        if selected_fit is not None:
+            selected_result['fit'] = extend_selected_comparison_live_points_if_needed(selected_fit)
+            selected_result['full_reduction_fit'] = selected_result['fit']
+            if getattr(selected_result['fit'], 'sparse_posterior_live_point_extension_applied', False):
+                annotate_transit_detection_qc(selected_result['fit'])
+                selected_result['eebls_snr'] = extract_lightcurve_fit_eebls_snr(selected_result['fit'])
+                selected_result['transit_delta_bic'] = extract_lightcurve_fit_transit_delta_bic(selected_result['fit'])
+                selected_result['residual_scatter'] = extract_lightcurve_fit_residual_scatter(selected_result['fit'])
+                selected_result['ktmf_metric'] = extract_lightcurve_fit_ktmf_metric(selected_result['fit'])
+                selected_result['ktmf_contributions'] = extract_lightcurve_fit_ktmf_contributions(selected_result['fit'])
+                selected_result['parameter_summary'] = summarize_lightcurve_fit_parameters(selected_result['fit'])
+                selected_result['transit_qc_status'] = getattr(selected_result['fit'], 'transit_qc_status', None)
+                selected_result['transit_qc_summary'] = getattr(selected_result['fit'], 'transit_qc_summary', None)
+                data_highres, duration_samples = estimate_transit_duration_samples_from_fit(selected_result['fit'])
+                selected_result['data_highres'] = data_highres
+                selected_result['duration_samples'] = duration_samples
+                if save_dir is not None:
+                    final_output_dir = save_comparison_candidate_full_reduction_outputs(
+                        save_dir,
+                        None,
+                        selected_result['fit'],
+                        p_dict,
+                        observation_date,
+                        selected_result['comp_index'],
+                        comp_coords=selected_result.get('position'),
+                        min_aperture=(0 if comparison_calibration['method'] == 'psf' else comparison_calibration.get('aper')),
+                        min_annulus=comparison_calibration.get('annulus'),
+                        adaptive_summary=adaptive_summary,
+                        method_label=comparison_calibration.get('method_label'),
+                        selection_summary={
+                            'ktmf_metric': selected_result.get('ktmf_metric', np.nan),
+                            'transit_delta_bic': selected_result.get('transit_delta_bic', np.nan),
+                            'eebls_snr': selected_result.get('eebls_snr', np.nan),
+                            'transit_qc_status': selected_result.get('transit_qc_status'),
+                            'transit_qc_summary': selected_result.get('transit_qc_summary'),
+                        },
+                        duration_samples=selected_result.get('duration_samples'),
+                        data_highres=selected_result.get('data_highres'),
+                    )
+                    if final_output_dir is not None:
+                        selected_result['final_output_dir'] = str(final_output_dir)
+
+    for attempt in attempts:
+        if selected_result is not None and attempt is selected_result:
+            continue
+        clear_fit_ultranest_resume_state(attempt.get('fit'))
+        full_reduction_fit = attempt.get('full_reduction_fit')
+        if full_reduction_fit is not attempt.get('fit'):
+            clear_fit_ultranest_resume_state(full_reduction_fit)
+
     return {
         'ranked_summaries': ranked_summaries,
         'attempts': attempts,
@@ -13756,9 +14275,10 @@ def _main_impl():
         )
         if use_sparse_posterior_live_point_retry:
             log_info(
-                "Sparse posterior live-point extension enabled: final settled fits can continue "
-                f"UltraNest with {SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x additional "
-                "minimum live points when Rp/R*, Tmid, or a/Rs are under-sampled."
+                "Selected comparison-star live-point extension enabled: comparison candidates "
+                "are ranked at the configured UltraNest live-point count, then the chosen final "
+                f"comparison fit continues with {SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x "
+                "additional minimum live points using its retained final-pass bounds."
             )
         log_ultranest_mpi_status()
 
@@ -15546,6 +16066,12 @@ def _main_impl():
                 expected_tmid_search_summary=ephemeris_tmid_search_summary,
                 eebls_search_summary=eebls_tmid_search_summary,
             )
+        if (
+            reuse_selected_final_model
+            and getattr(myfit, 'sparse_posterior_live_point_extension_note', None) is None
+        ):
+            myfit = extend_selected_comparison_live_points_if_needed(myfit)
+            annotate_transit_detection_qc(myfit)
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
 

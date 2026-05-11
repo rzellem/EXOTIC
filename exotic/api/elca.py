@@ -45,6 +45,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import faulthandler
 import io
 from itertools import cycle, product
+import math
 import os
 import sys
 import bottleneck as bn
@@ -75,9 +76,14 @@ BAD_LOG_LIKELIHOOD = -1.0e100
 TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX = 0.50
 TRIANGLE_PLOT_EDGE_MIN_SAMPLE_COUNT = 30
 TRIANGLE_PLOT_EDGE_EXPANSION_STEPS = 8
+TRIANGLE_PLOT_FALLBACK_EXPANSION_BOUNDS = {
+    'rprs': (0.0, 1.0),
+}
 TRANSIT_MODEL_UNCERTAINTY_KEYS = (
     'rprs', 'tmid', 'inc', 'ars', 'per', 'ecc', 'omega', 'u0', 'u1', 'u2', 'u3',
 )
+BASELINE_MODEL_UNCERTAINTY_KEYS = ('a0', 'a1', 'a2')
+MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT = 2000
 
 def _pylightcurve_import_watchdog_seconds():
     try:
@@ -289,10 +295,22 @@ def airmass_trend_grid(a2_values, airmass, reference=None):
     return np.exp(np.outer(np.asarray(a2_values, dtype=float), centered))
 
 
-def solve_flux_baseline(model, data, dataerr=None):
+def normalized_optional_fit_mask(mask, shape):
+    if mask is None:
+        return None
+    fit_mask = np.asarray(mask, dtype=bool)
+    if fit_mask.shape != tuple(shape):
+        return None
+    if not np.any(fit_mask):
+        return None
+    return fit_mask
+
+
+def solve_flux_baseline(model, data, dataerr=None, mask=None):
     model = np.asarray(model, dtype=float)
     data = np.asarray(data, dtype=float)
     weights = np.ones(model.shape, dtype=float)
+    fit_mask = normalized_optional_fit_mask(mask, model.shape)
 
     if dataerr is not None:
         dataerr = np.asarray(dataerr, dtype=float)
@@ -301,6 +319,8 @@ def solve_flux_baseline(model, data, dataerr=None):
         weights[valid_err] = 1.0 / (dataerr[valid_err] ** 2)
 
     mask = np.isfinite(model) & np.isfinite(data) & (model != 0)
+    if fit_mask is not None:
+        mask &= fit_mask
     if dataerr is not None:
         mask &= np.isfinite(weights) & (weights > 0)
 
@@ -324,12 +344,15 @@ def solve_flux_baseline(model, data, dataerr=None):
     return baseline if np.isfinite(baseline) else fallback_flux_baseline()
 
 
-def solve_flux_baseline_uncertainty(model, dataerr):
+def solve_flux_baseline_uncertainty(model, dataerr, mask=None):
     if dataerr is None:
         return 0.0
     model = np.asarray(model, dtype=float)
     dataerr = np.asarray(dataerr, dtype=float)
+    fit_mask = normalized_optional_fit_mask(mask, model.shape)
     mask = np.isfinite(model) & np.isfinite(dataerr) & (dataerr > 0)
+    if fit_mask is not None:
+        mask &= fit_mask
     if not np.any(mask):
         return 0.0
     denom = np.sum((model[mask] / dataerr[mask]) ** 2)
@@ -338,12 +361,13 @@ def solve_flux_baseline_uncertainty(model, dataerr):
     return (1.0 / denom) ** 0.5
 
 
-def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
+def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000, mask=None):
     n = int(n)
     a2 = np.random.normal(m_a2, sig_a2, n)
     reference = get_airmass_reference(airmass)
     model = transit * airmass_trend_grid(a2, airmass, reference=reference)
     weights = np.ones(transit.shape[0], dtype=float)
+    fit_mask = normalized_optional_fit_mask(mask, transit.shape)
 
     if dataerr is not None:
         dataerr = np.asarray(dataerr, dtype=float)
@@ -351,7 +375,9 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
         valid_err = np.isfinite(dataerr) & (dataerr > 0)
         weights[valid_err] = 1.0 / (dataerr[valid_err] ** 2)
 
-    mask = np.isfinite(data) & np.isfinite(transit)
+    mask = np.isfinite(data) & np.isfinite(transit) & np.isfinite(airmass)
+    if fit_mask is not None:
+        mask &= fit_mask
     if dataerr is not None:
         mask &= np.isfinite(weights) & (weights > 0)
 
@@ -368,8 +394,8 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
 
     if not np.any(valid):
         best_model = transit * airmass_trend(m_a2, airmass, reference=reference)
-        baseline = solve_flux_baseline(best_model, data, dataerr)
-        return baseline, solve_flux_baseline_uncertainty(best_model, dataerr)
+        baseline = solve_flux_baseline(best_model, data, dataerr, mask=fit_mask)
+        return baseline, solve_flux_baseline_uncertainty(best_model, dataerr, mask=fit_mask)
 
     baselines = numer[valid] / denom[valid]
     baseline = float(np.nanmean(baselines))
@@ -377,7 +403,7 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000):
 
     if baseline_unc == 0.0:
         best_model = transit * airmass_trend(m_a2, airmass, reference=reference)
-        baseline_unc = solve_flux_baseline_uncertainty(best_model, dataerr)
+        baseline_unc = solve_flux_baseline_uncertainty(best_model, dataerr, mask=fit_mask)
 
     return baseline, baseline_unc
 
@@ -450,6 +476,8 @@ class lc_fitter(object):
         use_impactparameter_rather_than_inclination_to_fit=True,
         duration_prior=None,
         keep_ultranest_sampler=False,
+        baseline_fit_mask=None,
+        fixed_parameter_errors=None,
     ):
         self.time = time
         self.data = data
@@ -466,6 +494,12 @@ class lc_fitter(object):
         self.use_impactparameter_rather_than_inclination_to_fit = use_impactparameter_rather_than_inclination_to_fit
         self.duration_prior = copy.deepcopy(duration_prior) if isinstance(duration_prior, dict) else None
         self.keep_ultranest_sampler = bool(keep_ultranest_sampler)
+        self.baseline_fit_mask = self._coerce_baseline_fit_mask(baseline_fit_mask)
+        self.fixed_parameter_errors = (
+            copy.deepcopy(fixed_parameter_errors)
+            if isinstance(fixed_parameter_errors, dict)
+            else {}
+        )
         self._ultranest_resume_context = None
         self.results = None
         self.sampled_keys = list(bounds.keys())
@@ -508,6 +542,38 @@ class lc_fitter(object):
         self.parameters['a1'] = value
         self.errors['a1'] = error
 
+    def _coerce_baseline_fit_mask(self, baseline_fit_mask):
+        fit_mask = normalized_optional_fit_mask(baseline_fit_mask, np.asarray(self.time).shape)
+        if fit_mask is None:
+            return None
+        return fit_mask
+
+    def _get_baseline_fit_mask(self):
+        return getattr(self, 'baseline_fit_mask', None)
+
+    def _apply_fixed_parameter_errors(self):
+        fixed_errors = getattr(self, 'fixed_parameter_errors', None)
+        if not isinstance(fixed_errors, dict):
+            return
+        if not hasattr(self, 'parameters') or not isinstance(self.parameters, dict):
+            return
+        if not hasattr(self, 'errors') or not isinstance(self.errors, dict):
+            self.errors = {}
+        if not hasattr(self, 'quantiles') or not isinstance(self.quantiles, dict):
+            self.quantiles = {}
+
+        for key, error in fixed_errors.items():
+            if key not in self.parameters or key in self.errors:
+                continue
+            try:
+                error = float(error)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(error) or error < 0:
+                continue
+            self.errors[key] = error
+            self.quantiles[key] = [-error, error]
+
     def _get_airmass_reference(self):
         return getattr(self, 'airmass_reference', get_airmass_reference(self.airmass))
 
@@ -541,19 +607,185 @@ class lc_fitter(object):
             reference=self._get_airmass_reference(),
         )
 
+    def _build_systematics_model_at(self, values, times=None):
+        if times is None:
+            return self._build_systematics_model(values)
+
+        times = np.asarray(times, dtype=float)
+        if np.ndim(self.airmass) == 2:
+            return np.full(times.shape, get_flux_baseline(values), dtype=float)
+
+        source_times = np.asarray(self.time, dtype=float)
+        source_airmass = np.asarray(self.airmass, dtype=float)
+        finite = np.isfinite(source_times) & np.isfinite(source_airmass)
+        if times.shape == source_times.shape and np.allclose(times, source_times, rtol=0.0, atol=0.0):
+            airmass_values = source_airmass
+        elif np.count_nonzero(finite) >= 2:
+            order = np.argsort(source_times[finite])
+            airmass_values = np.interp(
+                times,
+                source_times[finite][order],
+                source_airmass[finite][order],
+                left=source_airmass[finite][order][0],
+                right=source_airmass[finite][order][-1],
+            )
+        elif np.count_nonzero(finite) == 1:
+            airmass_values = np.full(times.shape, source_airmass[finite][0], dtype=float)
+        else:
+            airmass_values = np.zeros(times.shape, dtype=float)
+
+        return get_flux_baseline(values) * airmass_trend(
+            values.get('a2', 0),
+            airmass_values,
+            reference=self._get_airmass_reference(),
+        )
+
     def _get_perturbed_transit_parameter_value(self, key, value):
         try:
             value = float(value)
         except (TypeError, ValueError):
             return np.nan
 
-        if key in ('rprs', 'ars', 'per'):
+        if key in ('rprs', 'ars', 'per', 'a0', 'a1'):
             return max(value, np.finfo(float).eps)
         if key == 'ecc':
             return float(np.clip(value, 0.0, 0.999999))
         if key == 'inc':
             return float(np.clip(value, 0.0, 180.0))
         return value
+
+    def _normalized_model_for_plot_times(self, times, values):
+        model = np.asarray(transit(times, values), dtype=float)
+        if np.ndim(self.airmass) == 2:
+            return model
+
+        try:
+            sample_systematics = self._build_systematics_model_at(values, times)
+            best_systematics = self._build_systematics_model_at(self.parameters, times)
+        except Exception:
+            return model
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            normalized_model = model * sample_systematics / best_systematics
+        if normalized_model.shape != model.shape or not np.any(np.isfinite(normalized_model)):
+            return model
+        return normalized_model
+
+    def _posterior_model_uncertainty(self, times, sigma=1.0):
+        if getattr(self, 'results', None) is None:
+            return None
+
+        try:
+            sample_points, sample_logl, sample_weights = self._get_triangle_plot_samples()
+        except Exception:
+            return None
+
+        sample_points = np.asarray(sample_points, dtype=float)
+        if sample_points.ndim != 2 or sample_points.shape[0] < 2:
+            return None
+
+        finite_rows = np.all(np.isfinite(sample_points), axis=1)
+        if sample_logl is not None:
+            sample_logl = np.asarray(sample_logl, dtype=float)
+            if sample_logl.shape[0] == sample_points.shape[0]:
+                finite_rows &= np.isfinite(sample_logl)
+
+        if np.count_nonzero(finite_rows) < 2:
+            return None
+
+        row_indices = np.flatnonzero(finite_rows)
+        if row_indices.size > MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT:
+            if sample_weights is not None:
+                weights_array = np.asarray(sample_weights, dtype=float)
+                if weights_array.shape[0] == sample_points.shape[0]:
+                    row_weights = np.where(np.isfinite(weights_array[row_indices]), weights_array[row_indices], 0.0)
+                    order = np.argsort(row_weights)[-MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT:]
+                    row_indices = row_indices[np.sort(order)]
+                else:
+                    row_indices = row_indices[
+                        np.linspace(0, row_indices.size - 1, MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT).astype(int)
+                    ]
+            else:
+                row_indices = row_indices[
+                    np.linspace(0, row_indices.size - 1, MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT).astype(int)
+                ]
+
+        selected_points = sample_points[row_indices]
+        selected_weights = None
+        if sample_weights is not None:
+            weights_array = np.asarray(sample_weights, dtype=float)
+            if weights_array.shape[0] == sample_points.shape[0]:
+                selected_weights = weights_array[row_indices]
+                selected_weights = np.where(np.isfinite(selected_weights) & (selected_weights >= 0), selected_weights, 0.0)
+                if np.sum(selected_weights) <= 0:
+                    selected_weights = None
+
+        bound_keys = list(self.bounds.keys())
+        sampled_keys = getattr(self, 'sampled_keys', None)
+        if sampled_keys is None:
+            sampled_keys = self._get_sampled_keys(bound_keys)
+        models = []
+        for point in selected_points:
+            try:
+                values = copy.deepcopy(self.parameters)
+                values.update(self._physical_values_from_sample_point(point, bound_keys, sampled_keys))
+                model = self._normalized_model_for_plot_times(times, values)
+            except Exception:
+                continue
+            if model.shape == times.shape and np.all(np.isfinite(model)):
+                models.append(model)
+
+        if len(models) < 2:
+            return None
+
+        model_grid = np.asarray(models, dtype=float)
+        if selected_weights is not None and selected_weights.shape[0] != model_grid.shape[0]:
+            selected_weights = None
+
+        try:
+            sigma = float(sigma)
+        except (TypeError, ValueError):
+            sigma = 1.0
+        if not np.isfinite(sigma) or sigma <= 0:
+            sigma = 1.0
+        coverage = math.erf(sigma / np.sqrt(2.0))
+        q_lower = 0.5 * (1.0 - coverage)
+        q_upper = 1.0 - q_lower
+
+        if selected_weights is None:
+            lower, median, upper = np.nanpercentile(
+                model_grid,
+                [100.0 * q_lower, 50.0, 100.0 * q_upper],
+                axis=0,
+            )
+        else:
+            lower = np.array([
+                self._weighted_quantiles(model_grid[:, i], [q_lower], weights=selected_weights)[0]
+                for i in range(model_grid.shape[1])
+            ])
+            median = np.array([
+                self._weighted_quantiles(model_grid[:, i], [0.5], weights=selected_weights)[0]
+                for i in range(model_grid.shape[1])
+            ])
+            upper = np.array([
+                self._weighted_quantiles(model_grid[:, i], [q_upper], weights=selected_weights)[0]
+                for i in range(model_grid.shape[1])
+            ])
+
+        try:
+            best_model = self._normalized_model_for_plot_times(times, self.parameters)
+        except Exception:
+            best_model = median
+
+        lower_width = median - lower
+        upper_width = upper - median
+        lower = best_model - np.maximum(lower_width, 0.0)
+        upper = best_model + np.maximum(upper_width, 0.0)
+
+        finite = np.isfinite(lower) & np.isfinite(upper) & (lower <= upper)
+        if not np.any(finite):
+            return None
+        return lower, upper
 
     def transit_model_uncertainty(self, times=None, sigma=1.0):
         if times is None:
@@ -563,13 +795,23 @@ class lc_fitter(object):
             return None
 
         try:
-            model = transit(times, self.parameters)
+            model = self._normalized_model_for_plot_times(times, self.parameters)
         except Exception:
             return None
 
+        posterior_envelope = self._posterior_model_uncertainty(times, sigma=sigma)
+        if posterior_envelope is not None:
+            return posterior_envelope
+
         sigma = float(sigma)
         variance = np.zeros_like(model, dtype=float)
-        for key in TRANSIT_MODEL_UNCERTAINTY_KEYS:
+        uncertainty_keys = list(TRANSIT_MODEL_UNCERTAINTY_KEYS)
+        for key in BASELINE_MODEL_UNCERTAINTY_KEYS:
+            if key == 'a1' and 'a0' in self.parameters:
+                continue
+            uncertainty_keys.append(key)
+
+        for key in uncertainty_keys:
             if key not in self.parameters:
                 continue
             error = self.errors.get(key)
@@ -595,8 +837,8 @@ class lc_fitter(object):
             lower_parameters[key] = lower_value
             upper_parameters[key] = upper_value
             try:
-                lower_model = transit(times, lower_parameters)
-                upper_model = transit(times, upper_parameters)
+                lower_model = self._normalized_model_for_plot_times(times, lower_parameters)
+                upper_model = self._normalized_model_for_plot_times(times, upper_parameters)
             except Exception:
                 continue
 
@@ -618,16 +860,38 @@ class lc_fitter(object):
         lower, upper = envelope
         x_values = np.asarray(x_values, dtype=float)
         sort_index = np.asarray(sort_index, dtype=int)
-        return ax.fill_between(
-            x_values[sort_index],
-            np.asarray(lower, dtype=float)[sort_index],
-            np.asarray(upper, dtype=float)[sort_index],
+        x_sorted = x_values[sort_index]
+        lower_sorted = np.asarray(lower, dtype=float)[sort_index]
+        upper_sorted = np.asarray(upper, dtype=float)[sort_index]
+        band = ax.fill_between(
+            x_sorted,
+            lower_sorted,
+            upper_sorted,
             color='red',
             alpha=0.16,
             linewidth=0,
             zorder=2.5,
             label=label,
         )
+        ax.plot(
+            x_sorted,
+            lower_sorted,
+            color='red',
+            linestyle='--',
+            linewidth=0.9,
+            alpha=0.72,
+            zorder=3.4,
+        )
+        ax.plot(
+            x_sorted,
+            upper_sorted,
+            color='red',
+            linestyle='--',
+            linewidth=0.9,
+            alpha=0.72,
+            zorder=3.4,
+        )
+        return band
 
     def _uses_internal_impact_parameter(self):
         return (
@@ -972,7 +1236,25 @@ class lc_fitter(object):
                 bound_upper = np.nan
 
             if np.isfinite(bound_lower) and np.isfinite(bound_upper) and bound_lower < bound_upper:
+                fallback_bounds = TRIANGLE_PLOT_FALLBACK_EXPANSION_BOUNDS.get(key)
+                if fallback_bounds is not None:
+                    fallback_lower, fallback_upper = fallback_bounds
+                    if (
+                        np.isfinite(fallback_lower)
+                        and np.isfinite(fallback_upper)
+                        and fallback_lower < fallback_upper
+                    ):
+                        return [
+                            float(min(bound_lower, fallback_lower)),
+                            float(max(bound_upper, fallback_upper)),
+                        ]
                 return [bound_lower, bound_upper]
+
+        fallback_bounds = TRIANGLE_PLOT_FALLBACK_EXPANSION_BOUNDS.get(key)
+        if fallback_bounds is not None:
+            fallback_lower, fallback_upper = fallback_bounds
+            if np.isfinite(fallback_lower) and np.isfinite(fallback_upper) and fallback_lower < fallback_upper:
+                return [float(fallback_lower), float(fallback_upper)]
 
         sample_values = np.asarray(sample_values, dtype=float)
         finite_values = sample_values[np.isfinite(sample_values)]
@@ -1264,6 +1546,128 @@ class lc_fitter(object):
         if not np.isfinite(error) or error < 0:
             return str(round_to_2(value))
         return f"{round_to_2(value, error)} +/- {round_to_2(error)}"
+
+    def _weighted_quantiles(self, values, quantiles, weights=None):
+        values = np.asarray(values, dtype=float)
+        quantiles = np.asarray(quantiles, dtype=float)
+        finite_mask = np.isfinite(values)
+
+        finite_weights = None
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+            if weights.shape == values.shape:
+                finite_mask &= np.isfinite(weights) & (weights >= 0)
+                finite_weights = weights[finite_mask]
+                if finite_weights.size == 0 or np.sum(finite_weights) <= 0:
+                    finite_weights = None
+
+        finite_values = values[finite_mask]
+        if finite_values.size == 0:
+            return np.full(quantiles.shape, np.nan, dtype=float)
+        if finite_weights is None:
+            return np.nanpercentile(finite_values, 100.0 * quantiles)
+
+        order = np.argsort(finite_values)
+        sorted_values = finite_values[order]
+        sorted_weights = finite_weights[order]
+        cumulative = np.cumsum(sorted_weights)
+        total = cumulative[-1]
+        if not np.isfinite(total) or total <= 0:
+            return np.nanpercentile(finite_values, 100.0 * quantiles)
+
+        cumulative = (cumulative - 0.5 * sorted_weights) / total
+        cumulative = np.clip(cumulative, 0.0, 1.0)
+        return np.interp(quantiles, cumulative, sorted_values)
+
+    def _triangle_plot_display_estimate(
+        self,
+        sample_values,
+        fallback_center,
+        fallback_error,
+        plot_range=None,
+        weights=None,
+        min_informative_peak_ratio=1.5,
+    ):
+        sample_values = np.asarray(sample_values, dtype=float)
+        finite_mask = np.isfinite(sample_values)
+        finite_weights = None
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+            if weights.shape == sample_values.shape:
+                finite_mask &= np.isfinite(weights) & (weights >= 0)
+                finite_weights = weights[finite_mask]
+                if finite_weights.size == 0 or np.sum(finite_weights) <= 0:
+                    finite_weights = None
+
+        finite_values = sample_values[finite_mask]
+        if finite_values.size < 2:
+            return fallback_center, fallback_error
+
+        q16, q50, q84 = self._weighted_quantiles(
+            sample_values,
+            [0.158655, 0.5, 0.841345],
+            weights=weights,
+        )
+        estimate = q50
+        if plot_range is None:
+            bounds = [float(np.nanmin(finite_values)), float(np.nanmax(finite_values))]
+        else:
+            try:
+                bounds = [float(value) for value in np.asarray(plot_range, dtype=float).reshape(-1)[:2]]
+            except (TypeError, ValueError, IndexError):
+                bounds = [float(np.nanmin(finite_values)), float(np.nanmax(finite_values))]
+
+        if np.all(np.isfinite(bounds)) and bounds[0] < bounds[1]:
+            bins = int(np.clip(np.sqrt(finite_values.size), 10, 80))
+            counts, edges = np.histogram(
+                finite_values,
+                bins=max(1, bins),
+                range=bounds,
+                weights=finite_weights,
+            )
+            positive_counts = counts[counts > 0]
+            if positive_counts.size > 0:
+                peak = float(np.nanmax(positive_counts))
+                typical = float(np.nanmedian(positive_counts))
+                total = float(np.nansum(positive_counts))
+                if (
+                    np.isfinite(peak)
+                    and np.isfinite(typical)
+                    and np.isfinite(total)
+                    and total > 0
+                    and typical > 0
+                    and peak >= min_informative_peak_ratio * typical
+                    and peak >= 0.05 * total
+                ):
+                    mode_index = int(np.argmax(counts))
+                    estimate = float(0.5 * (edges[mode_index] + edges[mode_index + 1]))
+
+        try:
+            fallback_center = float(fallback_center)
+        except (TypeError, ValueError):
+            fallback_center = np.nan
+        if not np.isfinite(estimate):
+            estimate = fallback_center
+
+        spread_candidates = [
+            abs(float(q84) - float(estimate)) if np.isfinite(q84) and np.isfinite(estimate) else np.nan,
+            abs(float(estimate) - float(q16)) if np.isfinite(q16) and np.isfinite(estimate) else np.nan,
+            0.5 * abs(float(q84) - float(q16)) if np.isfinite(q16) and np.isfinite(q84) else np.nan,
+        ]
+        try:
+            fallback_error = float(fallback_error)
+        except (TypeError, ValueError):
+            fallback_error = np.nan
+
+        finite_spreads = [value for value in spread_candidates if np.isfinite(value) and value >= 0]
+        if finite_spreads and max(finite_spreads) > 0:
+            error = float(max(finite_spreads))
+        elif np.isfinite(fallback_error) and fallback_error > 0:
+            error = fallback_error
+        else:
+            error = np.nan
+
+        return float(estimate), error
 
     def get_parameter_posterior_recenter_diagnostics(self, key, sigma_scale=5.0, bins=None):
         diagnostics = {
@@ -1872,6 +2276,13 @@ class lc_fitter(object):
                     bins=plot_bins,
                     weights=sample_weights,
                 )
+                center, error = self._triangle_plot_display_estimate(
+                    sample_points[:, i],
+                    center,
+                    error,
+                    plot_range=plot_range,
+                    weights=sample_weights,
+                )
             title = self._format_triangle_plot_parameter_title(center, error)
             truth = center
 
@@ -1910,6 +2321,57 @@ class lc_fitter(object):
             'mask_errors': mask_errors,
             'truths': truths,
         }
+
+    def _triangle_plot_sigma_window_ranges(self, payload, sigma):
+        try:
+            sigma = float(sigma)
+        except (TypeError, ValueError):
+            return payload['ranges']
+        if not np.isfinite(sigma) or sigma <= 0:
+            return payload['ranges']
+
+        zoomed_ranges = []
+        display_points = np.asarray(payload.get('display_points', []), dtype=float)
+        for i, plot_range in enumerate(payload['ranges']):
+            try:
+                range_lower, range_upper = [
+                    float(value) for value in np.asarray(plot_range, dtype=float).reshape(-1)[:2]
+                ]
+            except (TypeError, ValueError, IndexError):
+                zoomed_ranges.append(plot_range)
+                continue
+
+            if not np.isfinite(range_lower) or not np.isfinite(range_upper) or range_lower >= range_upper:
+                zoomed_ranges.append(plot_range)
+                continue
+
+            try:
+                center = float(payload['mask_centers'][i])
+                error = float(payload['mask_errors'][i])
+            except (TypeError, ValueError, IndexError):
+                zoomed_ranges.append(plot_range)
+                continue
+
+            if not np.isfinite(center) or not np.isfinite(error) or error <= 0:
+                zoomed_ranges.append(plot_range)
+                continue
+
+            lower = max(range_lower, center - sigma * error)
+            upper = min(range_upper, center + sigma * error)
+            if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+                zoomed_ranges.append(plot_range)
+                continue
+
+            if display_points.ndim == 2 and i < display_points.shape[1]:
+                values = display_points[:, i]
+                finite_values = values[np.isfinite(values)]
+                if finite_values.size and not np.any((finite_values >= lower) & (finite_values <= upper)):
+                    zoomed_ranges.append(plot_range)
+                    continue
+
+            zoomed_ranges.append([float(lower), float(upper)])
+
+        return zoomed_ranges
 
     def _triangle_contour_levels(self, chi2, mask1, mask2, mask3):
         raw_levels = np.array([
@@ -2061,7 +2523,12 @@ class lc_fitter(object):
             if self._has_free_flux_baseline():
                 model *= get_flux_baseline(self.prior)
             else:
-                model *= solve_flux_baseline(model, self.data, self.dataerr)
+                model *= solve_flux_baseline(
+                    model,
+                    self.data,
+                    self.dataerr,
+                    mask=self._get_baseline_fit_mask(),
+                )
             return ((self.data - model) / self.dataerr) ** 2
 
         try:
@@ -2107,6 +2574,7 @@ class lc_fitter(object):
 
     def create_fit_variables(self):
         self.transit = transit(self.time, self.parameters)
+        self._apply_fixed_parameter_errors()
         self._update_plot_geometry()
         if np.ndim(self.airmass) != 2:
             if self._has_free_flux_baseline():
@@ -2120,6 +2588,7 @@ class lc_fitter(object):
                     self.airmass,
                     self.data,
                     self.dataerr,
+                    mask=self._get_baseline_fit_mask(),
                 )
             else:
                 systematics = self.transit * airmass_trend(
@@ -2127,8 +2596,23 @@ class lc_fitter(object):
                     self.airmass,
                     reference=self._get_airmass_reference(),
                 )
-                flux_scale = solve_flux_baseline(systematics, self.data, self.dataerr)
-                flux_scale_err = self.errors.get('a0', self.errors.get('a1', solve_flux_baseline_uncertainty(systematics, self.dataerr)))
+                flux_scale = solve_flux_baseline(
+                    systematics,
+                    self.data,
+                    self.dataerr,
+                    mask=self._get_baseline_fit_mask(),
+                )
+                flux_scale_err = self.errors.get(
+                    'a0',
+                    self.errors.get(
+                        'a1',
+                        solve_flux_baseline_uncertainty(
+                            systematics,
+                            self.dataerr,
+                            mask=self._get_baseline_fit_mask(),
+                        ),
+                    ),
+                )
             self._set_flux_baseline(flux_scale, flux_scale_err)
         if np.ndim(self.airmass) == 2:
             detrended = self.data / self.transit
@@ -2218,6 +2702,7 @@ class lc_fitter(object):
             self.parameters['inc'] = center
             self.errors['inc'] = std
             self.quantiles['inc'] = quantiles
+        self._apply_fixed_parameter_errors()
 
     def extend_ultranest_fit(self, min_num_live_points=None, max_ncalls=None):
         context = getattr(self, '_ultranest_resume_context', None)
@@ -2298,7 +2783,12 @@ class lc_fitter(object):
                 if self._has_free_flux_baseline():
                     model *= get_flux_baseline(physical)
                 else:
-                    model *= solve_flux_baseline(model, self.data, self.dataerr)
+                    model *= solve_flux_baseline(
+                        model,
+                        self.data,
+                        self.dataerr,
+                        mask=self._get_baseline_fit_mask(),
+                    )
             except Exception:
                 return BAD_LOG_LIKELIHOOD
 
@@ -2410,6 +2900,7 @@ class lc_fitter(object):
                         self.airmass,
                         self.data,
                         self.dataerr,
+                        mask=self._get_baseline_fit_mask(),
                     )[0]
                 test_values['a0'] = flux_scale
                 test_values['a1'] = flux_scale
@@ -2568,8 +3059,12 @@ class lc_fitter(object):
         axs[1].grid(True, ls='--', axis='y')
         return f, axs
 
-    def plot_triangle(self, plot_title=None):
+    def plot_triangle(self, plot_title=None, zoom_sigma=None):
         payload = self._get_triangle_plot_payload()
+        if zoom_sigma is not None:
+            payload = dict(payload)
+            payload['ranges'] = self._triangle_plot_sigma_window_ranges(payload, zoom_sigma)
+
         chi2 = payload['display_logl'] * -2
         parameter_count = max(1, len(payload['sampled_keys']))
         fig_size = max(9.0, 2.35 * parameter_count)

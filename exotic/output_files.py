@@ -879,6 +879,9 @@ class OutputFiles:
         prefit_refinement_note = getattr(self.fit, 'prefit_refinement_note', None)
         if prefit_refinement_note:
             params_num["Prefit refinement note"] = str(prefit_refinement_note)
+        oot_baseline_parameter_note = getattr(self.fit, 'oot_baseline_parameter_fit_note', None)
+        if oot_baseline_parameter_note:
+            params_num["Out-of-transit baseline parameter-fit note"] = str(oot_baseline_parameter_note)
         oot_baseline_note = getattr(self.fit, 'oot_baseline_detrending_note', None)
         if oot_baseline_note:
             params_num["Out-of-transit baseline detrending note"] = str(oot_baseline_note)

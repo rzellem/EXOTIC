@@ -45,6 +45,14 @@ ULTRANEST_WORKER_ENV_KEYS = (
     "NEXTASTRO_EXOTIC_ULTRANEST_WORKERS",
 )
 ULTRANEST_WORKER_BACKEND_ENV = "EXOTIC_ULTRANEST_WORKER_BACKEND"
+BYTES_PER_GIB = 1024 ** 3
+MIN_AUTO_POINTS_PER_WORKER = 8
+MEDIUM_AUTO_POINTS_PER_WORKER = 16
+HIGH_AUTO_POINTS_PER_WORKER = 24
+MAX_AUTO_POINTS_PER_WORKER = 32
+AUTO_POINTS_PER_WORKER_MULTIPLIER = 2
+AUTO_DRAW_RAM_FRACTION = 0.005
+MIN_AUTO_DRAW_RAM_BUDGET_BYTES = 64 * 1024 ** 2
 _PROCESS_LOGLIKE = None
 _TK_CLEANUP_CLASSES = ("Image", "Variable")
 
@@ -159,6 +167,120 @@ def _configured_ultranest_worker_backend():
     return "none"
 
 
+def _system_total_memory_bytes():
+    if hasattr(os, "sysconf"):
+        try:
+            page_size = int(os.sysconf("SC_PAGE_SIZE"))
+            page_count = int(os.sysconf("SC_PHYS_PAGES"))
+            if page_size > 0 and page_count > 0:
+                return page_size * page_count
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            memory_status = MEMORYSTATUSEX()
+            memory_status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory_status)):
+                return int(memory_status.ullTotalPhys)
+        except Exception:
+            pass
+
+    return None
+
+
+def _auto_points_per_worker(cpu_count, total_memory_bytes):
+    if total_memory_bytes is None:
+        return MEDIUM_AUTO_POINTS_PER_WORKER * AUTO_POINTS_PER_WORKER_MULTIPLIER
+
+    ram_per_cpu_gib = total_memory_bytes / max(int(cpu_count or 1), 1) / BYTES_PER_GIB
+    if ram_per_cpu_gib >= 2.0:
+        return MAX_AUTO_POINTS_PER_WORKER * AUTO_POINTS_PER_WORKER_MULTIPLIER
+    if ram_per_cpu_gib >= 1.0:
+        return HIGH_AUTO_POINTS_PER_WORKER * AUTO_POINTS_PER_WORKER_MULTIPLIER
+    if ram_per_cpu_gib >= 0.5:
+        return MEDIUM_AUTO_POINTS_PER_WORKER * AUTO_POINTS_PER_WORKER_MULTIPLIER
+    return MIN_AUTO_POINTS_PER_WORKER * AUTO_POINTS_PER_WORKER_MULTIPLIER
+
+
+def _estimate_ultranest_draw_point_bytes(sampler):
+    x_dim = _coerce_positive_int(getattr(sampler, "x_dim", None), default=None)
+    num_params = _coerce_positive_int(getattr(sampler, "num_params", None), default=None)
+    coordinate_count = 16
+    if x_dim is not None and num_params is not None:
+        coordinate_count = max(16, 3 + x_dim + num_params)
+
+    return max(1024, coordinate_count * np.dtype(float).itemsize * 16)
+
+
+def _apply_auto_ultranest_draw_sizes(sampler, worker_count):
+    worker_count = max(int(worker_count or 1), 1)
+    if worker_count <= 1 or getattr(sampler, "draw_multiple", True) is False:
+        return None
+
+    current_min = _coerce_positive_int(getattr(sampler, "ndraw_min", None), default=None)
+    current_max = _coerce_positive_int(getattr(sampler, "ndraw_max", None), default=None)
+    if current_min is None and current_max is None:
+        return None
+    if current_min is None:
+        current_min = 128
+    if current_max is None:
+        current_max = max(current_min, 65536)
+    if current_max < current_min:
+        current_max = current_min
+
+    total_memory_bytes = _system_total_memory_bytes()
+    cpu_count = _available_cpu_count()
+    points_per_worker = _auto_points_per_worker(cpu_count, total_memory_bytes)
+    target_min = max(current_min, worker_count * points_per_worker)
+    memory_limited_max = current_max
+
+    if total_memory_bytes is not None:
+        memory_budget = max(
+            int(total_memory_bytes * AUTO_DRAW_RAM_FRACTION),
+            MIN_AUTO_DRAW_RAM_BUDGET_BYTES,
+        )
+        point_bytes = _estimate_ultranest_draw_point_bytes(sampler)
+        memory_limited_max = max(current_min, min(current_max, memory_budget // point_bytes))
+        target_min = min(target_min, memory_limited_max)
+
+    target_min = int(max(current_min, min(current_max, target_min)))
+    target_max = int(max(target_min, min(current_max, memory_limited_max)))
+    if target_min == current_min and target_max == current_max:
+        return None
+
+    sampler.ndraw_min = target_min
+    sampler.ndraw_max = target_max
+
+    ram_gib = None
+    if total_memory_bytes is not None:
+        ram_gib = total_memory_bytes / BYTES_PER_GIB
+
+    return {
+        "ndraw_min": target_min,
+        "ndraw_max": target_max,
+        "workers": worker_count,
+        "cpu_count": cpu_count,
+        "ram_gib": ram_gib,
+        "points_per_worker": points_per_worker,
+    }
+
+
 def _process_loglike_chunk(chunk):
     if _PROCESS_LOGLIKE is None:
         raise RuntimeError("UltraNest process worker was not initialized.")
@@ -222,7 +344,7 @@ def _parallel_vectorized_loglike(sampler, workers=None):
 
     original_loglike = getattr(sampler, "loglike", None)
     if worker_count <= 1 or backend == "none" or not callable(original_loglike):
-        yield 1, "single"
+        yield 1, "single", None
         return
 
     pool = None
@@ -230,7 +352,7 @@ def _parallel_vectorized_loglike(sampler, workers=None):
     process_pool_guard = None
     if backend == "process":
         if not sys.platform.startswith("linux") or _is_colab_runtime():
-            yield 1, "single"
+            yield 1, "single", None
             return
         global _PROCESS_LOGLIKE
         process_pool_guard = suppress_tk_cleanup_during_process_pool()
@@ -246,7 +368,7 @@ def _parallel_vectorized_loglike(sampler, workers=None):
     elif backend == "thread":
         executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="exotic-ultranest")
     else:
-        yield 1, "single"
+        yield 1, "single", None
         return
 
     def parallel_loglike(params):
@@ -263,8 +385,9 @@ def _parallel_vectorized_loglike(sampler, workers=None):
         return np.concatenate([np.atleast_1d(result) for result in results])
 
     sampler.loglike = parallel_loglike
+    draw_sizes = _apply_auto_ultranest_draw_sizes(sampler, worker_count)
     try:
-        yield worker_count, backend
+        yield worker_count, backend, draw_sizes
     finally:
         sampler.loglike = original_loglike
         if pool is not None:
@@ -512,7 +635,19 @@ def run_reactive_sampler(
     mode = "silent" if is_mpi_worker_process() else _progress_mode(verbose=verbose, stream=stream)
     output_stream = stream if stream is not None else sys.stdout
 
-    with _parallel_vectorized_loglike(sampler) as (worker_count, worker_backend):
+    with _parallel_vectorized_loglike(sampler) as (worker_count, worker_backend, draw_sizes):
+        if draw_sizes is not None and mode != "silent":
+            memory_label = "unknown RAM"
+            if draw_sizes["ram_gib"] is not None:
+                memory_label = f"{draw_sizes['ram_gib']:.1f} GiB RAM"
+            print(
+                "[ultranest] Auto proposal draw sizes: "
+                f"ndraw_min={draw_sizes['ndraw_min']}, ndraw_max={draw_sizes['ndraw_max']} "
+                f"({draw_sizes['workers']} workers, {draw_sizes['points_per_worker']} points/worker, "
+                f"{memory_label}).",
+                file=output_stream,
+                flush=True,
+            )
         if worker_count > 1 and mode != "silent":
             worker_label = "processes" if worker_backend == "process" else "threads"
             print(

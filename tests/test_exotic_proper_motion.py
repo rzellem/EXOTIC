@@ -161,6 +161,7 @@ from exotic.exotic import (
     should_use_fast_target_centroid,
     should_use_deviation_from_expected_transit_in_qc,
     update_coordinates_with_proper_motion,
+    zoomed_final_triangle_plot_output_path,
 )
 
 
@@ -222,6 +223,55 @@ def test_comparison_candidate_triangle_plot_uses_date_only_from_timestamp(tmp_pa
     )
 
     assert output_path.name == "Comp7_Triangle_XO-1-b_2026-05-06.png"
+
+
+def test_zoomed_final_triangle_plot_uses_named_artifact(tmp_path):
+    output_path = zoomed_final_triangle_plot_output_path(
+        tmp_path / "final",
+        "XO-1/b",
+        "2026-05-06T19:51:13.964-0700",
+    )
+
+    assert output_path == tmp_path / "final" / "ZoomedTrianglePlot_XO-1-b_2026-05-06.png"
+
+
+def test_save_final_triangle_plot_creates_zoomed_companion_when_supported(tmp_path):
+    class DummyFigure:
+        def __init__(self, content):
+            self.content = content
+
+        def savefig(self, path):
+            Path(path).write_bytes(self.content)
+
+    class DummyFit:
+        def __init__(self):
+            self.calls = []
+
+        def plot_triangle(self, plot_title=None, zoom_sigma=None):
+            self.calls.append({"plot_title": plot_title, "zoom_sigma": zoom_sigma})
+            content = b"zoomed" if zoom_sigma == 5.0 else b"full"
+            return DummyFigure(content)
+
+    fit = DummyFit()
+    output_path = save_final_triangle_plot(
+        fit,
+        tmp_path / "final",
+        "TOI-1728 b",
+        "2024-12-14",
+        source_dir=tmp_path / "comp4",
+    )
+
+    zoomed_output_path = zoomed_final_triangle_plot_output_path(
+        tmp_path / "final",
+        "TOI-1728 b",
+        "2024-12-14",
+    )
+    assert output_path.read_bytes() == b"full"
+    assert zoomed_output_path.read_bytes() == b"zoomed"
+    assert fit.calls == [
+        {"plot_title": "Final selected fit (comparison candidate #4)", "zoom_sigma": None},
+        {"plot_title": "Final selected fit (comparison candidate #4) (5-sigma zoom)", "zoom_sigma": 5.0},
+    ]
 
 
 def test_save_final_triangle_plot_regenerates_when_selected_artifact_missing(tmp_path):
@@ -1785,6 +1835,80 @@ def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened
     assert fit.oot_baseline_post_points == 3
 
 
+def test_fit_final_lightcurve_uses_oot_baseline_parameter_refit_when_linear_detrend_skips(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    times = np.array([-0.03, -0.02, -0.01, 0.00, 0.01, 0.02, 0.03])
+    transit_profile = np.array([0.99, 0.99, 0.99, 0.99, 1.0, 1.0, 1.0])
+    airmass = np.linspace(1.0, 1.6, times.size)
+    flux = np.exp(0.2 * (airmass - np.mean(airmass))) * transit_profile
+    fluxerr = np.full_like(times, 0.01)
+    prior = {"rprs": 0.1, "tmid": -0.01, "inc": 89.0, "a2": 0.0}
+    bounds = {
+        "rprs": [0.0, 0.2],
+        "tmid": [-0.03, 0.01],
+        "inc": [84.0, 90.0],
+        "a0": [0.95, 1.05],
+        "a2": [-3.0, 3.0],
+    }
+    captured = {"calls": []}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        baseline_fit_mask=None,
+        fixed_parameter_errors=None,
+    ):
+        captured["calls"].append({
+            "bounds": dict(call_bounds),
+            "baseline_fit_mask": None if baseline_fit_mask is None else np.asarray(baseline_fit_mask, dtype=bool),
+            "fixed_parameter_errors": dict(fixed_parameter_errors or {}),
+            "prior": dict(call_prior),
+        })
+        return types.SimpleNamespace(
+            transit=transit_profile.copy(),
+            parameters={
+                "tmid": -0.01,
+                "rprs": 0.1,
+                "inc": 89.0,
+                "a2": call_prior.get("a2", 0.0),
+                "a0": call_prior.get("a0", 1.0),
+                "a1": call_prior.get("a0", 1.0),
+            },
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a2": 0.01, "a0": 0.001, "a1": 0.001},
+            data=np.array(call_flux, dtype=float),
+            residuals=np.zeros_like(call_flux, dtype=float),
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit, _, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        detrend_on_outoftransit_baseline=True,
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][0]["baseline_fit_mask"] is None
+    assert captured["calls"][1]["baseline_fit_mask"].tolist() == [False, False, False, False, True, True, True]
+    assert "a0" not in captured["calls"][1]["bounds"]
+    assert "a2" not in captured["calls"][1]["bounds"]
+    assert "a2" in captured["calls"][1]["fixed_parameter_errors"]
+    assert fit.oot_baseline_parameter_fit_applied is True
+    assert fit.oot_baseline_detrending_applied is False
+
+
 def test_phase_bin_sigma_clip_flags_local_phase_outlier():
     phase_centers = np.linspace(-0.045, 0.045, 10)
     phase = np.concatenate([center + np.linspace(-1e-4, 1e-4, 5) for center in phase_centers])
@@ -3087,6 +3211,144 @@ def test_fit_ranked_comparison_calibration_candidates_selects_highest_ktmf_succe
     assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.70)
     assert "highest KTMF" in result["selected_result"]["selection_reason"]
     assert result["attempts"][0]["selection_reason"].startswith("not selected: KTMF")
+
+
+def test_fit_ranked_comparison_calibration_candidates_extends_only_selected_final_fit(monkeypatch):
+    monkeypatch.setenv("EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS", "200")
+    monkeypatch.setenv("EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY", "1")
+
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    created_fits = {}
+
+    class RetainedSamplerFit:
+        def __init__(self, comp_marker, ktmf_metric):
+            self.comp_marker = comp_marker
+            self.extension_calls = []
+            self.cleared = False
+            self.max_ncalls = 1000
+            self.time = np.linspace(0.0, 0.05, 6)
+            self.data = np.ones(6, dtype=float)
+            self.residuals = np.full(6, 0.01, dtype=float)
+            self.parameters = {
+                "tmid": 0.5,
+                "rprs": 0.1,
+                "inc": 89.0,
+                "ars": 10.0,
+                "a0": 1.0,
+                "a2": 0.0,
+            }
+            self.errors = {
+                "tmid": 0.001,
+                "rprs": 0.001,
+                "inc": 0.1,
+                "ars": 0.1,
+                "a0": 0.01,
+                "a2": 0.01,
+            }
+            self.bounds = {
+                "rprs": [0.08, 0.12],
+                "tmid": [0.49, 0.51],
+                "ars": [9.0, 11.0],
+                "inc": [85.0, 90.0],
+                "a2": [-3.0, 3.0],
+            }
+            self.transit_qc_delta_bic = 12.0 + comp_marker / 100.0
+            self.transit_qc_ktmf_metric = ktmf_metric
+
+        def get_parameter_posterior_samples(self, key):
+            ranges = {
+                "rprs": (0.09, 0.11),
+                "tmid": (0.499, 0.501),
+                "ars": (9.5, 10.5),
+            }
+            low, high = ranges[key]
+            return np.linspace(low, high, 1500)
+
+        def extend_ultranest_fit(self, min_num_live_points=None, max_ncalls=None):
+            self.extension_calls.append({
+                "min_num_live_points": min_num_live_points,
+                "max_ncalls": max_ncalls,
+                "bounds": self.bounds.copy(),
+            })
+            return True
+
+        def clear_ultranest_resume_state(self):
+            self.cleared = True
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        comp_marker = int(np.nanmedian(cflux))
+        ktmf_map = {50: 2.40, 40: 4.70, 30: 3.90}
+        fit = RetainedSamplerFit(comp_marker, ktmf_map[comp_marker])
+        created_fits[comp_marker] = fit
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+        "comp2": np.full((6, 1, 1), 40.0, dtype=float),
+        "comp3": np.full((6, 1, 1), 30.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {"label": "Comp 1", "aggregate_score": 0.01, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "aggregate_score": 0.02, "coverage_rejected": False, "comp_index": 1},
+            {"label": "Comp 3", "aggregate_score": 0.03, "coverage_rejected": False, "comp_index": 2},
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+    )
+
+    assert result["selected_result"]["comp_index"] == 1
+    assert created_fits[40].extension_calls == [{
+        "min_num_live_points": 1200,
+        "max_ncalls": 6000,
+        "bounds": created_fits[40].bounds,
+    }]
+    assert created_fits[50].extension_calls == []
+    assert created_fits[30].extension_calls == []
+    assert created_fits[40].cleared is True
+    assert created_fits[50].cleared is True
+    assert created_fits[30].cleared is True
+    assert "selected comparison-star final" in created_fits[40].sparse_posterior_live_point_extension_note
 
 
 def test_fit_ranked_comparison_calibration_candidates_stops_at_first_qc_pass_by_default(monkeypatch):

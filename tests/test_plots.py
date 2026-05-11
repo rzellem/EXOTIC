@@ -177,14 +177,23 @@ def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
 
 def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
     class DummyCandidateFit:
-        def plot_bestfit(self, phase=False):
+        def __init__(self):
+            self.kwargs = None
+
+        def plot_bestfit(self, phase=False, show_flux_baseline_label=True):
+            self.kwargs = {
+                "phase": phase,
+                "show_flux_baseline_label": show_flux_baseline_label,
+            }
             fig, axes = plt.subplots(2, 1)
             return fig, axes
+    selected_fit = DummyCandidateFit()
+    other_fit = DummyCandidateFit()
 
     plot_comp_star_candidate_lightcurve_fits(
         candidate_fit_summaries=[
-            {"label": "Comp 1", "selected": True, "fit": DummyCandidateFit(), "res_std": 0.0012},
-            {"label": "Comp 2", "selected": False, "fit": DummyCandidateFit(), "res_std": 0.0025},
+            {"label": "Comp 1", "selected": True, "fit": selected_fit, "res_std": 0.0012},
+            {"label": "Comp 2", "selected": False, "fit": other_fit, "res_std": 0.0025},
             {"label": "Comp 3", "selected": False, "fit": None, "res_std": np.inf},
         ],
         targ_name="Target",
@@ -193,6 +202,8 @@ def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
         method_label="Aperture photometry (aper=5.00px, annulus=12.00px)",
     )
 
+    assert selected_fit.kwargs == {"phase": False, "show_flux_baseline_label": False}
+    assert other_fit.kwargs == {"phase": False, "show_flux_baseline_label": False}
     assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.png").exists()
     assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.pdf").exists()
     assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.png").exists()

@@ -160,6 +160,69 @@ def test_run_reactive_sampler_uses_env_live_point_override(monkeypatch):
     assert sampler.kwargs["min_num_live_points"] == 320
 
 
+def test_run_reactive_sampler_auto_scales_draw_size_by_workers_and_ram(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "72")
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKER_BACKEND", "thread")
+    monkeypatch.setattr(ultranest_utils, "_available_cpu_count", lambda: 72)
+    monkeypatch.setattr(ultranest_utils, "_system_total_memory_bytes", lambda: 128 * 1024 ** 3)
+
+    class FakeSampler:
+        def __init__(self):
+            self.ndraw_min = 128
+            self.ndraw_max = 65536
+            self.draw_multiple = True
+            self.x_dim = 6
+            self.num_params = 6
+            self.loglike = lambda params: np.zeros(np.asarray(params).shape[0])
+            self.kwargs = None
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "ok"}
+
+    sampler = FakeSampler()
+    run_reactive_sampler(sampler, verbose=False)
+
+    assert sampler.ndraw_min == (
+        72
+        * ultranest_utils.HIGH_AUTO_POINTS_PER_WORKER
+        * ultranest_utils.AUTO_POINTS_PER_WORKER_MULTIPLIER
+    )
+    assert sampler.ndraw_max == 65536
+
+
+def test_run_reactive_sampler_auto_uses_smaller_chunks_when_ram_per_cpu_is_low(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKERS", "72")
+    monkeypatch.setenv("EXOTIC_ULTRANEST_WORKER_BACKEND", "thread")
+    monkeypatch.setattr(ultranest_utils, "_available_cpu_count", lambda: 72)
+    monkeypatch.setattr(ultranest_utils, "_system_total_memory_bytes", lambda: 16 * 1024 ** 3)
+
+    class FakeSampler:
+        def __init__(self):
+            self.ndraw_min = 128
+            self.ndraw_max = 65536
+            self.draw_multiple = True
+            self.x_dim = 6
+            self.num_params = 6
+            self.loglike = lambda params: np.zeros(np.asarray(params).shape[0])
+            self.kwargs = None
+
+        def run(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "ok"}
+
+    sampler = FakeSampler()
+    run_reactive_sampler(sampler, verbose=False)
+
+    assert sampler.ndraw_min == (
+        72
+        * ultranest_utils.MIN_AUTO_POINTS_PER_WORKER
+        * ultranest_utils.AUTO_POINTS_PER_WORKER_MULTIPLIER
+    )
+
+
 def test_configured_ultranest_workers_defaults_to_available_cpu_count(monkeypatch):
     _reset_ultranest_env(monkeypatch)
     monkeypatch.setattr(ultranest_utils.os, "process_cpu_count", lambda: 12, raising=False)

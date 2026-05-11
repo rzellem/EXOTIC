@@ -756,7 +756,7 @@ def test_sparse_posterior_metric_flags_under_sampled_key_parameters():
     )
 
     assert diagnostics["sparse"] is True
-    assert diagnostics["minimum_effective_samples"] == 600
+    assert diagnostics["minimum_effective_samples"] == 1000
     assert diagnostics["parameters"]["rprs"]["effective_sample_count"] == pytest.approx(100)
     assert "rprs" in diagnostics["reason"]
 

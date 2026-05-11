@@ -322,7 +322,11 @@ def plot_comp_star_candidate_lightcurve_fits(candidate_fit_summaries, targ_name,
         if fit is None:
             continue
 
-        fig, (ax_lc, ax_res) = fit.plot_bestfit(phase=False)
+        fig, (ax_lc, ax_res) = _plot_bestfit_for_lightcurve_png(
+            fit,
+            phase=False,
+            show_flux_baseline_label=False,
+        )
         selected_text = " selected" if summary.get('selected') else ""
         res_std = summary.get('res_std', np.nan)
         res_std_text = "n/a" if not np.isfinite(res_std) else f"{res_std * 100.0:.3f}%"
@@ -345,6 +349,29 @@ def plot_comp_star_candidate_lightcurve_fits(candidate_fit_summaries, targ_name,
             extension="pdf",
         ), bbox_inches="tight")
         plt.close(fig)
+
+
+def _callable_accepts_keyword(callable_object, keyword):
+    try:
+        signature = inspect.signature(callable_object)
+    except (TypeError, ValueError):
+        return False
+    if keyword in signature.parameters:
+        return True
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _plot_bestfit_for_lightcurve_png(fit, **requested_kwargs):
+    plotter = fit.plot_bestfit
+    plot_kwargs = {
+        key: value
+        for key, value in requested_kwargs.items()
+        if _callable_accepts_keyword(plotter, key)
+    }
+    return plotter(**plot_kwargs)
 
 
 def _draw_comp_star_calibration_axis(axis, times, summary, colors):
@@ -603,17 +630,11 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
 
 # Plotting Final Lightcurve
 def plot_final_lightcurve(fit, high_res, targ_name, save, date):
-    plot_kwargs = {}
-    try:
-        plot_parameters = inspect.signature(fit.plot_bestfit).parameters
-    except (TypeError, ValueError):
-        plot_parameters = {}
-    if 'show_flux_baseline_label' in plot_parameters:
-        plot_kwargs['show_flux_baseline_label'] = False
-    if 'show_model_uncertainty' in plot_parameters:
-        plot_kwargs['show_model_uncertainty'] = True
-
-    f, (ax_lc, ax_res) = fit.plot_bestfit(**plot_kwargs)
+    f, (ax_lc, ax_res) = _plot_bestfit_for_lightcurve_png(
+        fit,
+        show_flux_baseline_label=False,
+        show_model_uncertainty=True,
+    )
 
     ax_lc.set_title(targ_name)
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):

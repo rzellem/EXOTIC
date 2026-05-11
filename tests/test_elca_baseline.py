@@ -214,6 +214,38 @@ def test_lc_fitter_auto_solves_mean_airmass_normalization(monkeypatch, tmp_path)
     assert fit.parameters["a1"] == pytest.approx(true_a0, abs=1e-4)
 
 
+def test_create_fit_variables_solves_baseline_from_out_of_transit_mask(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 301)
+    dataerr = np.full_like(time, 1e-3)
+    airmass = np.zeros_like(time)
+    transit_model = elca.transit(time, prior)
+    data = 1.02 * transit_model
+    in_transit = np.abs(time - prior["tmid"]) < 0.012
+    data[in_transit] *= 0.90
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.data = data
+    fit.dataerr = dataerr
+    fit.airmass = airmass
+    fit.airmass_reference = elca.get_airmass_reference(airmass)
+    fit.prior = prior.copy()
+    fit.bounds = {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005]}
+    fit.mode = "ns"
+    fit.parameters = prior.copy()
+    fit.errors = {"rprs": 0.0, "tmid": 0.0, "a2": 0.0}
+    fit.quantiles = {}
+    fit.baseline_fit_mask = ~in_transit
+    fit.fixed_parameter_errors = {}
+
+    fit.create_fit_variables()
+
+    assert fit.parameters["a0"] == pytest.approx(1.02, abs=1e-5)
+    assert fit.parameters["a1"] == pytest.approx(1.02, abs=1e-5)
+
+
 def test_lc_fitter_rejects_redundant_a0_and_a1_bounds(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -366,11 +398,78 @@ def test_plot_bestfit_can_draw_transit_model_uncertainty_band(monkeypatch, tmp_p
 
     fig, axes = fit.plot_bestfit(show_model_uncertainty=True)
     labels = [artist.get_label() for artist in axes[0].collections]
+    uncertainty_line_count = sum(1 for line in axes[0].lines if line.get_linestyle() == "--")
 
     assert envelope is not None
     assert np.nanmax(envelope[1] - envelope[0]) > 0
     assert r'1-$\sigma$ model uncertainty' in labels
+    assert uncertainty_line_count >= 2
     plt.close(fig)
+
+
+def test_transit_model_uncertainty_includes_baseline_terms(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.data = elca.transit(time, prior)
+    fit.dataerr = np.full_like(time, 1e-3)
+    fit.airmass = np.linspace(1.0, 1.5, time.size)
+    fit.airmass_reference = elca.get_airmass_reference(fit.airmass)
+    fit.prior = prior.copy()
+    fit.bounds = {}
+    fit.mode = "ns"
+    fit.parameters = prior.copy()
+    fit.parameters["a0"] = 1.0
+    fit.parameters["a1"] = 1.0
+    fit.parameters["a2"] = 0.1
+    fit.errors = {"a0": 0.01, "a1": 0.01, "a2": 0.05}
+    fit.quantiles = {}
+    fit.results = None
+
+    envelope = fit.transit_model_uncertainty(time)
+
+    assert envelope is not None
+    assert np.nanmax(envelope[1] - envelope[0]) > 0
+
+
+def test_posterior_model_uncertainty_recenters_on_best_fit_model(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.data = elca.transit(time, prior)
+    fit.dataerr = np.full_like(time, 1e-3)
+    fit.airmass = np.zeros_like(time)
+    fit.airmass_reference = elca.get_airmass_reference(fit.airmass)
+    fit.prior = prior.copy()
+    fit.bounds = {"a0": [0.99, 1.03]}
+    fit.sampled_keys = ["a0"]
+    fit.sample_bounds = {"a0": [0.99, 1.03]}
+    fit.mode = "ns"
+    fit.ns_type = "ultranest"
+    fit.parameters = prior.copy()
+    fit.parameters["a0"] = 1.0
+    fit.parameters["a1"] = 1.0
+    fit.errors = {"a0": 0.002}
+    fit.quantiles = {}
+    fit.results = {
+        "weighted_samples": {
+            "points": np.linspace(1.008, 1.012, 41)[:, None],
+            "logl": np.zeros(41, dtype=float),
+            "weights": np.ones(41, dtype=float),
+        }
+    }
+
+    lower, upper = fit.transit_model_uncertainty(time)
+    center = 0.5 * (lower + upper)
+
+    np.testing.assert_allclose(center, elca.transit(time, fit.parameters), atol=5e-5)
+    assert np.nanmedian(center[:3]) < 1.001
 
 
 def test_glc_plot_bestfit_median_limits_use_full_phase_span(monkeypatch, tmp_path):
@@ -1080,6 +1179,76 @@ def test_triangle_contour_levels_drop_duplicate_chi2_percentiles(monkeypatch, tm
     assert levels == [pytest.approx(42.0)]
 
 
+def test_triangle_plot_sigma_window_ranges_clip_to_solved_point_uncertainties(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    payload = {
+        "ranges": [[0.0, 1.0], [0.0, 1.2], [0.95, 1.05]],
+        "mask_centers": [0.20, 0.80, 1.0],
+        "mask_errors": [0.02, 0.05, 0.001],
+        "display_points": np.array(
+            [
+                [0.18, 0.75, 0.999],
+                [0.20, 0.80, 1.000],
+                [0.22, 0.85, 1.001],
+            ]
+        ),
+    }
+
+    ranges = fit._triangle_plot_sigma_window_ranges(payload, sigma=5.0)
+
+    assert ranges[0] == pytest.approx([0.10, 0.30])
+    assert ranges[1] == pytest.approx([0.55, 1.05])
+    assert ranges[2] == pytest.approx([0.995, 1.005])
+
+
+def test_plot_triangle_accepts_zoom_sigma(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    captured = {}
+
+    def fake_corner(*args, **kwargs):
+        captured["range"] = kwargs["range"]
+        return "figure"
+
+    monkeypatch.setattr(elca, "corner", fake_corner)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 1.0],
+        "inc": [84.0, 90.0],
+    }
+    fit.sample_bounds = {
+        "rprs": [0.0, 1.0],
+        "b": [0.0, 1.2],
+    }
+    fit.sampled_keys = ["rprs", "b"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.20, "inc": 86.0}
+    fit.errors = {"rprs": 0.02, "inc": 0.5}
+    fit.sample_parameters = {"rprs": 0.20, "b": 0.80}
+    fit.sample_errors = {"rprs": 0.02, "b": 0.05}
+    points = np.column_stack([
+        np.linspace(0.18, 0.22, 40),
+        np.linspace(0.75, 0.85, 40),
+    ])
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+        },
+        "samples": points.copy(),
+    }
+
+    fig = fit.plot_triangle(zoom_sigma=5.0)
+
+    assert fig == "figure"
+    assert captured["range"][0][0] > 0.0
+    assert captured["range"][0][1] < 1.0
+    assert captured["range"][1][0] > 0.0
+    assert captured["range"][1][1] < 1.2
+
+
 def test_triangle_payload_expands_degenerate_error_ranges_to_sample_cloud(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)
@@ -1118,7 +1287,7 @@ def test_triangle_payload_expands_degenerate_error_ranges_to_sample_cloud(monkey
     assert payload["ranges"][1][1] >= 0.0038
 
 
-def test_triangle_payload_titles_match_reported_parameters(monkeypatch, tmp_path):
+def test_triangle_payload_titles_follow_weighted_posterior_display_estimate(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)
 
@@ -1154,8 +1323,8 @@ def test_triangle_payload_titles_match_reported_parameters(monkeypatch, tmp_path
 
     payload = fit._get_triangle_plot_payload()
 
-    assert payload["titles"][0] == "0.338 +/- 0.091"
-    assert payload["truths"][0] == pytest.approx(0.33796)
+    assert payload["titles"][0] == "0.119 +/- 0.0089"
+    assert payload["truths"][0] == pytest.approx(0.1186, abs=5e-4)
     np.testing.assert_allclose(payload["display_weights"], weights)
 
 
@@ -1202,7 +1371,7 @@ def test_plot_triangle_passes_ultranest_weights_to_visible_histograms(monkeypatc
 
     assert fig == "figure"
     np.testing.assert_allclose(captured["weights"], weights)
-    np.testing.assert_allclose(captured["truths"], [0.1, 1.0])
+    np.testing.assert_allclose(captured["truths"], [0.1018961, 1.00037922], rtol=1e-6)
     assert captured["data_kwargs"]["s"] == pytest.approx(1.6)
     assert captured["data_kwargs"]["alpha"] == pytest.approx(0.38)
 
@@ -1285,6 +1454,48 @@ def test_triangle_payload_uses_tested_rprs_range_when_posterior_is_narrow(monkey
     assert rprs_range == pytest.approx([0.0, 0.2])
     assert lower_fraction < elca.TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX
     assert upper_fraction < elca.TRIANGLE_PLOT_EDGE_PEAK_FRACTION_MAX
+
+
+def test_triangle_payload_expands_rprs_lower_edge_past_narrow_recorded_sample_bounds(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+
+    fit.ns_type = "ultranest"
+    fit.bounds = {
+        "rprs": [0.0, 0.36],
+        "a0": [0.95, 1.05],
+    }
+    fit.sample_bounds = {
+        "rprs": [0.104, 0.184],
+        "a0": [0.95, 1.05],
+    }
+    fit.sampled_keys = ["rprs", "a0"]
+    fit.prior = make_prior()
+    fit.parameters = {"rprs": 0.144, "a0": 1.0}
+    fit.errors = {"rprs": 0.008, "a0": 0.001}
+    fit.sample_parameters = dict(fit.parameters)
+    fit.sample_errors = dict(fit.errors)
+    rprs_samples = np.concatenate([
+        np.linspace(0.104, 0.120, 80),
+        np.linspace(0.120, 0.180, 20),
+    ])
+    points = np.column_stack([
+        rprs_samples,
+        np.linspace(0.998, 1.002, rprs_samples.size),
+    ])
+    fit.results = {
+        "weighted_samples": {
+            "points": points,
+            "logl": np.linspace(-4.0, -1.0, points.shape[0]),
+        },
+        "samples": points.copy(),
+    }
+
+    payload = fit._get_triangle_plot_payload()
+
+    assert payload["ranges"][0][0] < 0.08
+    assert payload["truths"][0] < 0.13
+    assert not payload["titles"][0].startswith("0.144")
 
 
 def test_triangle_payload_keeps_direct_impact_parameter_full_sample_range(monkeypatch, tmp_path):

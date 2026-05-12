@@ -478,6 +478,8 @@ class lc_fitter(object):
         keep_ultranest_sampler=False,
         baseline_fit_mask=None,
         fixed_parameter_errors=None,
+        fixed_flux_baseline=False,
+        ultranest_min_num_live_points=None,
     ):
         self.time = time
         self.data = data
@@ -500,6 +502,8 @@ class lc_fitter(object):
             if isinstance(fixed_parameter_errors, dict)
             else {}
         )
+        self.fixed_flux_baseline = bool(fixed_flux_baseline)
+        self.ultranest_min_num_live_points = ultranest_min_num_live_points
         self._ultranest_resume_context = None
         self.results = None
         self.sampled_keys = list(bounds.keys())
@@ -535,6 +539,9 @@ class lc_fitter(object):
 
     def _has_free_flux_baseline(self):
         return has_explicit_flux_baseline(self.bounds)
+
+    def _uses_fixed_flux_baseline(self):
+        return bool(getattr(self, 'fixed_flux_baseline', False))
 
     def _set_flux_baseline(self, value, error=0.0):
         self.parameters['a0'] = value
@@ -2522,6 +2529,8 @@ class lc_fitter(object):
             )
             if self._has_free_flux_baseline():
                 model *= get_flux_baseline(self.prior)
+            elif self._uses_fixed_flux_baseline():
+                model *= get_flux_baseline(self.prior)
             else:
                 model *= solve_flux_baseline(
                     model,
@@ -2580,6 +2589,12 @@ class lc_fitter(object):
             if self._has_free_flux_baseline():
                 flux_scale = get_flux_baseline(self.parameters)
                 flux_scale_err = self.errors.get('a0', self.errors.get('a1', 0.0))
+            elif self._uses_fixed_flux_baseline():
+                flux_scale = get_flux_baseline(self.parameters)
+                flux_scale_err = self.errors.get(
+                    'a0',
+                    self.errors.get('a1', self.fixed_parameter_errors.get('a0', 0.0)),
+                )
             elif self.mode == "ns":
                 flux_scale, flux_scale_err = mc_a1(
                     self.parameters.get('a2', 0),
@@ -2782,6 +2797,8 @@ class lc_fitter(object):
                 )
                 if self._has_free_flux_baseline():
                     model *= get_flux_baseline(physical)
+                elif self._uses_fixed_flux_baseline():
+                    model *= get_flux_baseline(physical)
                 else:
                     model *= solve_flux_baseline(
                         model,
@@ -2820,9 +2837,13 @@ class lc_fitter(object):
             self.ns_type = 'ultranest'
             test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)
 
+            run_kwargs = {"max_ncalls": int(self.max_ncalls)}
+            if self.ultranest_min_num_live_points is not None:
+                run_kwargs["min_num_live_points"] = int(self.ultranest_min_num_live_points)
+
             self.results = run_reactive_sampler(
                 test,
-                run_kwargs={"max_ncalls": int(self.max_ncalls)},
+                run_kwargs=run_kwargs,
                 verbose=self.verbose,
             )
 
@@ -2891,6 +2912,8 @@ class lc_fitter(object):
                 test_values = physical_from_sample_point(tests[i])
                 lightcurve = transit(self.time, test_values)
                 if self._has_free_flux_baseline():
+                    flux_scale = get_flux_baseline(test_values)
+                elif self._uses_fixed_flux_baseline():
                     flux_scale = get_flux_baseline(test_values)
                 else:
                     flux_scale = mc_a1(

@@ -458,6 +458,21 @@ def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
     assert inputs.info_dict["ultranest_min_num_live_points"] == 275
 
 
+def test_comp_params_reads_fast_ultranest_before_final_run_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"run fast ultranest before final run": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["run_fast_ultranest_before_final_run"] == "n"
+
+
 def test_comp_params_reads_sparse_posterior_live_point_retry_off_from_optional_info(tmp_path):
     init_data = {
         "user_info": {},

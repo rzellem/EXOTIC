@@ -508,6 +508,11 @@ class Inputs:
                 'ultranest_min_live_points',
                 'min_num_live_points',
             ),
+            'run_fast_ultranest_before_final_run': (
+                'run fast ultranest before final run',
+                'Run Fast UltraNest Before Final Run? (y/n)',
+                'run_fast_ultranest_before_final_run',
+            ),
             'use_sparse_posterior_live_point_retry': (
                 'use_sparse_posterior_live_point_retry',
                 'Use Sparse Posterior Live-Point Retry? (y/n)',

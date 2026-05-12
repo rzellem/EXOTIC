@@ -226,6 +226,9 @@ OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
+FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT = True
+FAST_ULTRANEST_MAX_BINNED_POINTS = 20
+FAST_ULTRANEST_MIN_POINTS_TO_BIN = 60
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT = True
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV = "EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY"
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT = 5
@@ -1834,7 +1837,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
                                                  use_eebls_to_initialize_tmid_and_bounds=True,
                                                  plot_time_range=None,
                                                  baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
-                                                 adaptive_summary=None):
+                                                 adaptive_summary=None,
+                                                 run_fast_ultranest_before_final_run=FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT):
     result = {
         'applied': False,
         'fit': None,
@@ -1990,6 +1994,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     )
     if not skip_final_airmass_fit:
         bounds['a2'] = [-3, 3]
+    ensure_pre_final_ultranest_baseline_bounds(prior, bounds, good_flux, fit_a2=True)
 
     debug_phase_clip_keep_mask = None
     prefit = lc_fitter(
@@ -2029,14 +2034,49 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_comp_flux = good_comp_flux[~phase_clip_mask]
             source_indices = source_indices[~phase_clip_mask]
 
-    final_fit, good_flux, good_unc = fit_final_lightcurve_with_oot_baseline_detrending(
-        good_times,
-        good_flux,
-        good_unc,
-        good_airmass,
-        prior,
-        bounds,
-        jd_times=good_jd_times,
+    full_good_times = np.asarray(good_times, dtype=float)
+    full_good_flux = np.asarray(good_flux, dtype=float)
+    full_good_unc = np.asarray(good_unc, dtype=float)
+    full_good_airmass = np.asarray(good_airmass, dtype=float)
+    full_good_jd_times = np.asarray(good_jd_times, dtype=float)
+    full_good_target_flux = np.asarray(good_target_flux, dtype=float)
+    full_good_comp_flux = np.asarray(good_comp_flux, dtype=float)
+    full_source_indices = np.asarray(source_indices, dtype=int)
+
+    fast_binning = {'applied': False, 'note': None}
+    fit_times = full_good_times
+    fit_flux = full_good_flux
+    fit_unc = full_good_unc
+    fit_airmass = full_good_airmass
+    fit_jd_times = full_good_jd_times
+    if run_fast_ultranest_before_final_run:
+        fast_binning = build_fast_ultranest_lightcurve_series(
+            full_good_times,
+            full_good_flux,
+            full_good_unc,
+            full_good_airmass,
+            jd_times=full_good_jd_times,
+        )
+        if fast_binning.get('applied'):
+            log_info(fast_binning['note'])
+            fit_times = fast_binning['time']
+            fit_flux = fast_binning['flux']
+            fit_unc = fast_binning['unc']
+            fit_airmass = fast_binning['airmass']
+            fit_jd_times = fast_binning['jd_times']
+
+    fit_prior = dict(prior)
+    fit_bounds = clone_lightcurve_bounds(bounds)
+    ensure_pre_final_ultranest_baseline_bounds(fit_prior, fit_bounds, fit_flux, fit_a2=True)
+
+    final_fit, fitted_flux, fitted_unc = fit_final_lightcurve_with_oot_baseline_detrending(
+        fit_times,
+        fit_flux,
+        fit_unc,
+        fit_airmass,
+        fit_prior,
+        fit_bounds,
+        jd_times=fit_jd_times,
         skip_airmass_fit=skip_final_airmass_fit,
         airmass_skip_note=airmass_skip_note,
         disable_vertical_flux_normalization=disable_vertical_flux_normalization,
@@ -2049,14 +2089,16 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         expected_tmid_search_summary=tmid_search_summary,
         eebls_search_summary=eebls_search_summary,
         extend_sparse_posterior_live_points=False,
-        keep_ultranest_sampler_for_deferred_extension=True,
+        keep_ultranest_sampler_for_deferred_extension=not bool(fast_binning.get('applied')),
+        fix_baseline_terms_for_final=not bool(fast_binning.get('applied')),
     )
+    annotate_fast_ultranest_binning(final_fit, fast_binning)
     if final_fit is None:
         result['failure_reason'] = "the full comparison-candidate reduction did not converge."
         return result
 
     final_fit_times = np.asarray(getattr(final_fit, 'time', good_times), dtype=float)
-    if (
+    if not fast_binning.get('applied') and (
         final_fit_times.shape != good_times.shape
         or not np.allclose(final_fit_times, good_times, rtol=1e-10, atol=1e-10)
     ):
@@ -2084,20 +2126,248 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     result.update({
         'applied': True,
         'fit': final_fit,
-        'good_times': np.asarray(good_times, dtype=float),
-        'good_flux': np.asarray(good_flux, dtype=float),
-        'good_unc': np.asarray(good_unc, dtype=float),
-        'good_airmass': np.asarray(good_airmass, dtype=float),
-        'good_jd_times': np.asarray(good_jd_times, dtype=float),
-        'good_target_flux': np.asarray(good_target_flux, dtype=float),
-        'good_comp_flux': np.asarray(good_comp_flux, dtype=float),
-        'source_indices': np.asarray(source_indices, dtype=int),
+        'good_times': full_good_times if fast_binning.get('applied') else np.asarray(good_times, dtype=float),
+        'good_flux': full_good_flux if fast_binning.get('applied') else np.asarray(good_flux, dtype=float),
+        'good_unc': full_good_unc if fast_binning.get('applied') else np.asarray(good_unc, dtype=float),
+        'good_airmass': full_good_airmass if fast_binning.get('applied') else np.asarray(good_airmass, dtype=float),
+        'good_jd_times': full_good_jd_times if fast_binning.get('applied') else np.asarray(good_jd_times, dtype=float),
+        'good_target_flux': full_good_target_flux if fast_binning.get('applied') else np.asarray(good_target_flux, dtype=float),
+        'good_comp_flux': full_good_comp_flux if fast_binning.get('applied') else np.asarray(good_comp_flux, dtype=float),
+        'source_indices': full_source_indices if fast_binning.get('applied') else np.asarray(source_indices, dtype=int),
+        'fast_ultranest_binning': fast_binning,
+        'fast_fit_good_times': np.asarray(fit_times, dtype=float),
+        'fast_fit_good_flux': np.asarray(fitted_flux, dtype=float),
+        'fast_fit_good_unc': np.asarray(fitted_unc, dtype=float),
+        'fast_fit_good_airmass': np.asarray(fit_airmass, dtype=float),
+        'fast_fit_good_jd_times': None if fit_jd_times is None else np.asarray(fit_jd_times, dtype=float),
+        'fast_fit_prior': fit_prior,
+        'fast_fit_bounds': fit_bounds,
+        'skip_airmass_fit': skip_final_airmass_fit,
+        'airmass_skip_note': airmass_skip_note,
         'data_highres': data_highres,
         'duration_samples': duration_samples,
         'failure_reason': None,
         'note': 'completed the full comparison-candidate reduction directly from the raw target/reference light curve.',
     })
     return result
+
+
+def selected_final_live_point_target(enabled=None):
+    if enabled is None:
+        enabled = should_use_sparse_posterior_live_point_retry(
+            os.environ.get(
+                SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV,
+                SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
+            )
+        )
+    base_live_points = get_configured_ultranest_min_num_live_points()
+    if not enabled:
+        return base_live_points, None
+    extension_factor = int(max(1, SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT))
+    target_live_points = int(max(
+        base_live_points + extension_factor * base_live_points,
+        base_live_points + 1,
+    ))
+    return base_live_points, target_live_points
+
+
+def baseline_fixed_errors_from_fit(fit):
+    errors = getattr(fit, 'errors', {}) if fit is not None else {}
+    fixed_errors = {}
+    if isinstance(errors, dict):
+        for key in ('a0', 'a1', 'a2'):
+            value = errors.get(key)
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and value >= 0:
+                fixed_errors[key] = value
+    if 'a0' in fixed_errors and 'a1' not in fixed_errors:
+        fixed_errors['a1'] = fixed_errors['a0']
+    return fixed_errors
+
+
+def build_full_resolution_final_prior_from_previous_fit(previous_fit, p_dict):
+    previous_parameters = getattr(previous_fit, 'parameters', {})
+    if not isinstance(previous_parameters, dict):
+        previous_parameters = {}
+
+    prior = {
+        'rprs': p_dict.get('rprs', previous_parameters.get('rprs')),
+        'ars': p_dict.get('aRs', previous_parameters.get('ars')),
+        'per': p_dict.get('pPer', previous_parameters.get('per')),
+        'inc': p_dict.get('inc', previous_parameters.get('inc')),
+        'u0': previous_parameters.get('u0', 0.0),
+        'u1': previous_parameters.get('u1', 0.0),
+        'u2': previous_parameters.get('u2', 0.0),
+        'u3': previous_parameters.get('u3', 0.0),
+        'ecc': p_dict.get('ecc', previous_parameters.get('ecc', 0.0)),
+        'omega': p_dict.get('omega', previous_parameters.get('omega', 0.0)),
+        'tmid': p_dict.get('midT', previous_parameters.get('tmid')),
+        'a2': previous_parameters.get('a2', 0.0),
+        'a0': previous_parameters.get('a0', previous_parameters.get('a1', 1.0)),
+    }
+    prior['a1'] = previous_parameters.get('a1', prior['a0'])
+    prior.update(previous_parameters)
+    if 'a0' not in prior and 'a1' in prior:
+        prior['a0'] = prior['a1']
+    if 'a1' not in prior and 'a0' in prior:
+        prior['a1'] = prior['a0']
+    return prior
+
+
+def refit_selected_fast_comparison_on_full_lightcurve(
+    selected_result,
+    p_dict,
+    skip_airmass_fit=False,
+    airmass_skip_note=None,
+    detrend_on_outoftransit_baseline=True,
+    use_impactparameter_rather_than_inclination_to_fit=True,
+    plot_time_range=None,
+    duration_prior=None,
+    sparse_live_point_extension_enabled=None,
+):
+    previous_fit = selected_result.get('fit') if isinstance(selected_result, dict) else None
+    if previous_fit is None or not getattr(previous_fit, 'fast_ultranest_binning_applied', False):
+        return None
+
+    times = np.asarray(selected_result.get('good_times'), dtype=float)
+    flux_values = np.asarray(selected_result.get('good_flux'), dtype=float)
+    flux_errors = np.asarray(selected_result.get('good_unc'), dtype=float)
+    airmass = np.asarray(selected_result.get('good_airmass'), dtype=float)
+    jd_times = selected_result.get('good_jd_times')
+    jd_times = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    if not (times.shape == flux_values.shape == flux_errors.shape == airmass.shape):
+        log_info(
+            "Warning: Could not run the full-resolution selected comparison-star final fit "
+            "because the saved fast-fit light-curve arrays were not aligned.",
+            warn=True,
+        )
+        return None
+    if jd_times is not None and jd_times.shape != times.shape:
+        jd_times = None
+
+    prior = build_full_resolution_final_prior_from_previous_fit(previous_fit, p_dict)
+    fallback_bounds = selected_result.get('fast_fit_bounds')
+    if not isinstance(fallback_bounds, dict):
+        fallback_bounds = getattr(previous_fit, 'bounds', {})
+    bounds = get_posterior_refit_final_bounds(previous_fit, fallback_bounds)
+    bounds = clone_lightcurve_bounds(bounds)
+    for key in ('a0', 'a1', 'a2'):
+        bounds.pop(key, None)
+
+    for key in ('rprs', 'tmid', 'ars', 'inc'):
+        if key not in bounds:
+            if key == 'rprs':
+                bounds[key] = build_initial_rprs_bounds(prior.get('rprs', p_dict.get('rprs', 0.1)))
+            elif key == 'tmid':
+                tmid = prior.get('tmid', p_dict.get('midT', np.nan))
+                tmid_unc = p_dict.get('midTUnc', 0.01)
+                try:
+                    half_width = max(float(tmid_unc) * 3.0, np.finfo(float).eps)
+                except (TypeError, ValueError):
+                    half_width = 0.01
+                bounds[key] = [float(tmid) - half_width, float(tmid) + half_width]
+            elif key == 'ars':
+                bounds[key] = build_initial_ars_bounds(prior.get('ars', p_dict.get('aRs')), p_dict.get('aRsUnc'))
+            elif key == 'inc':
+                inc = float(prior.get('inc', p_dict.get('inc', 89.0)))
+                bounds[key] = [inc - 5.0, min(90.0, inc + 5.0)]
+
+    fit_flux = flux_values
+    fit_unc = flux_errors
+    detrend_result = {'applied': False, 'note': 'Disabled; using the full-resolution light curve directly.'}
+    if detrend_on_outoftransit_baseline:
+        detrend_result = detrend_flux_on_out_of_transit_baseline(
+            times,
+            flux_values,
+            flux_errors,
+            previous_fit,
+            prior=prior,
+        )
+        if detrend_result.get('applied'):
+            fit_flux = np.asarray(detrend_result['flux'], dtype=float)
+            fit_unc = np.asarray(detrend_result['unc'], dtype=float)
+
+    fixed_errors = baseline_fixed_errors_from_fit(previous_fit)
+    base_live_points, target_live_points = selected_final_live_point_target(
+        sparse_live_point_extension_enabled,
+    )
+    min_live_points = target_live_points if target_live_points is not None else base_live_points
+
+    log_info(
+        "Running the selected comparison-star final UltraNest fit on the full-resolution light curve "
+        f"with fixed a0/a2 from the previous fast UltraNest fit at {min_live_points} minimum live points."
+    )
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        times,
+        fit_flux,
+        fit_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=jd_times,
+        use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        duration_prior=duration_prior,
+        keep_ultranest_sampler=False,
+        fixed_parameter_errors=fixed_errors,
+        fixed_flux_baseline=True,
+        ultranest_min_num_live_points=min_live_points,
+    )
+    fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
+    annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
+    annotate_out_of_transit_baseline_parameter_fit(
+        fit,
+        True,
+        note="Used a0 and a2 from the previous fast UltraNest fit for the full-resolution final run.",
+        pre_points=0,
+        post_points=0,
+        a0=prior.get('a0'),
+        a0_error=fixed_errors.get('a0'),
+        a2=prior.get('a2'),
+        a2_error=fixed_errors.get('a2'),
+    )
+    annotate_out_of_transit_baseline_detrending(
+        fit,
+        bool(detrend_result.get('applied')),
+        note=detrend_result.get('note'),
+        slope=detrend_result.get('slope'),
+        intercept=detrend_result.get('intercept'),
+        pre_points=detrend_result.get('pre_points', 0),
+        post_points=detrend_result.get('post_points', 0),
+    )
+    annotate_fast_ultranest_binning(
+        fit,
+        {
+            'applied': False,
+            'original_point_count': int(times.shape[0]),
+            'binned_point_count': int(times.shape[0]),
+            'note': 'Full-resolution selected comparison-star final run; fast binning was not applied.',
+        },
+    )
+    if target_live_points is not None:
+        diagnostics = evaluate_sparse_posterior_sample_support(fit, base_live_points=base_live_points)
+        annotate_sparse_posterior_live_point_extension(
+            fit,
+            True,
+            True,
+            note=(
+                "Applied full-resolution selected comparison-star final UltraNest run "
+                f"({base_live_points}->{target_live_points} minimum live points) using fixed a0/a2 "
+                "from the previous fast UltraNest fit."
+            ),
+            diagnostics=diagnostics,
+            post_extension_diagnostics=diagnostics,
+            base_live_points=base_live_points,
+            target_live_points=target_live_points,
+            extension_factor=SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+        )
+    else:
+        annotate_sparse_posterior_live_point_extension(fit, False, False)
+    annotate_transit_detection_qc(fit)
+    clear_fit_ultranest_resume_state(fit)
+    return fit, fit_flux, fit_unc
 
 
 def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, final_fit,
@@ -3233,6 +3503,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     keep_ultranest_sampler=False,
     baseline_fit_mask=None,
     fixed_parameter_errors=None,
+    fixed_flux_baseline=False,
+    ultranest_min_num_live_points=None,
 ):
     def impact_parameter_retry_available(fit, local_bounds):
         if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
@@ -3345,6 +3617,13 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fit_kwargs['baseline_fit_mask'] = baseline_fit_mask
         if fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
             fit_kwargs['fixed_parameter_errors'] = fixed_parameter_errors
+        if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
+            fit_kwargs['fixed_flux_baseline'] = True
+        if (
+            ultranest_min_num_live_points is not None
+            and callable_accepts_keyword(lc_fitter, 'ultranest_min_num_live_points')
+        ):
+            fit_kwargs['ultranest_min_num_live_points'] = ultranest_min_num_live_points
         fit = lc_fitter(
             times,
             flux_values,
@@ -3903,6 +4182,28 @@ def should_use_sparse_posterior_live_point_retry(config_value):
         warn=True,
     )
     return SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT
+
+
+def should_run_fast_ultranest_before_final_run(config_value):
+    if config_value is None:
+        return FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'run fast ultranest before final run' value; "
+        "defaulting to enabled.",
+        warn=True,
+    )
+    return FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT
 
 
 def configure_sparse_posterior_live_point_retry(config_value):
@@ -4972,6 +5273,181 @@ def apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled
             bounds['a0'] = [lower, upper]
 
 
+def ensure_pre_final_ultranest_baseline_bounds(prior, bounds, flux_values, fit_a2=True):
+    finite_flux = np.asarray(flux_values, dtype=float)
+    finite_flux = finite_flux[np.isfinite(finite_flux) & (finite_flux > 0)]
+    baseline_guess = prior.get('a0', prior.get('a1', np.nan))
+    try:
+        baseline_guess = float(baseline_guess)
+    except (TypeError, ValueError):
+        baseline_guess = np.nan
+    if not np.isfinite(baseline_guess) or baseline_guess <= 0:
+        baseline_guess = 1.0 if finite_flux.size == 0 else float(np.nanmedian(finite_flux))
+    if not np.isfinite(baseline_guess) or baseline_guess <= 0:
+        baseline_guess = 1.0
+
+    prior['a0'] = baseline_guess
+    prior['a1'] = baseline_guess
+    if 'a0' not in bounds and 'a1' not in bounds:
+        if 0.95 <= baseline_guess <= 1.05:
+            bounds['a0'] = [0.95, 1.05]
+        else:
+            lower = max(np.finfo(float).eps, baseline_guess * 0.75)
+            upper = baseline_guess * 1.25
+            bounds['a0'] = [lower, upper]
+
+    if fit_a2:
+        prior['a2'] = prior.get('a2', 0.0)
+        if 'a2' not in bounds:
+            bounds['a2'] = list(TRANSIT_QC_DEFAULT_A2_BOUNDS)
+
+
+def _weighted_mean_with_fallback(values, weights=None):
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return np.nan
+
+    if weights is not None:
+        weights = np.asarray(weights, dtype=float)
+        valid_weights = finite & np.isfinite(weights) & (weights > 0)
+        if np.any(valid_weights):
+            return float(np.sum(values[valid_weights] * weights[valid_weights]) / np.sum(weights[valid_weights]))
+
+    return float(np.nanmean(values[finite]))
+
+
+def build_fast_ultranest_lightcurve_series(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    jd_times=None,
+    max_points=FAST_ULTRANEST_MAX_BINNED_POINTS,
+    min_points_to_bin=FAST_ULTRANEST_MIN_POINTS_TO_BIN,
+):
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    jd_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+
+    base_result = {
+        'applied': False,
+        'note': None,
+        'time': times,
+        'flux': flux_values,
+        'unc': flux_errors,
+        'airmass': airmass,
+        'jd_times': jd_array,
+        'original_point_count': int(times.shape[0]),
+        'binned_point_count': int(times.shape[0]),
+        'bin_indices': None,
+    }
+
+    if not (times.shape == flux_values.shape == flux_errors.shape == airmass.shape):
+        base_result['note'] = 'Skipped; light-curve arrays were not aligned for fast UltraNest binning.'
+        return base_result
+    if jd_array is not None and jd_array.shape != times.shape:
+        base_result['note'] = 'Skipped; JD timestamps were not aligned for fast UltraNest binning.'
+        return base_result
+
+    point_count = int(times.shape[0])
+    if point_count <= int(min_points_to_bin):
+        base_result['note'] = (
+            f"Skipped; {point_count} point(s) did not exceed the fast UltraNest "
+            f"binning threshold of {int(min_points_to_bin)}."
+        )
+        return base_result
+
+    max_points = int(max(1, max_points))
+    target_points = min(max_points, point_count)
+    valid = (
+        np.isfinite(times)
+        & np.isfinite(flux_values)
+        & np.isfinite(flux_errors)
+        & (flux_errors > 0)
+        & np.isfinite(airmass)
+    )
+    if jd_array is not None:
+        valid &= np.isfinite(jd_array)
+    if np.count_nonzero(valid) <= target_points:
+        base_result['note'] = 'Skipped; too few finite points remained for fast UltraNest binning.'
+        return base_result
+
+    ordered_indices = np.flatnonzero(valid)[np.argsort(times[valid])]
+    chunks = [chunk for chunk in np.array_split(ordered_indices, target_points) if chunk.size > 0]
+    if len(chunks) >= point_count or not chunks:
+        base_result['note'] = 'Skipped; fast UltraNest binning would not reduce the light curve.'
+        return base_result
+
+    binned_time = []
+    binned_flux = []
+    binned_unc = []
+    binned_airmass = []
+    binned_jd = [] if jd_array is not None else None
+    for chunk in chunks:
+        chunk_unc = flux_errors[chunk]
+        weights = np.zeros(chunk_unc.shape, dtype=float)
+        valid_unc = np.isfinite(chunk_unc) & (chunk_unc > 0)
+        weights[valid_unc] = 1.0 / (chunk_unc[valid_unc] ** 2)
+        binned_time.append(_weighted_mean_with_fallback(times[chunk], weights))
+        binned_flux.append(_weighted_mean_with_fallback(flux_values[chunk], weights))
+        if np.any(weights > 0):
+            binned_unc.append(float(np.sqrt(1.0 / np.sum(weights[weights > 0]))))
+        else:
+            scatter = float(np.nanstd(flux_values[chunk]))
+            binned_unc.append(scatter / np.sqrt(max(chunk.size, 1)) if np.isfinite(scatter) else np.nan)
+        binned_airmass.append(_weighted_mean_with_fallback(airmass[chunk], weights))
+        if jd_array is not None:
+            binned_jd.append(_weighted_mean_with_fallback(jd_array[chunk], weights))
+
+    binned_time = np.asarray(binned_time, dtype=float)
+    binned_flux = np.asarray(binned_flux, dtype=float)
+    binned_unc = np.asarray(binned_unc, dtype=float)
+    binned_airmass = np.asarray(binned_airmass, dtype=float)
+    finite_binned = (
+        np.isfinite(binned_time)
+        & np.isfinite(binned_flux)
+        & np.isfinite(binned_unc)
+        & (binned_unc > 0)
+        & np.isfinite(binned_airmass)
+    )
+    if binned_jd is not None:
+        binned_jd = np.asarray(binned_jd, dtype=float)
+        finite_binned &= np.isfinite(binned_jd)
+
+    if np.count_nonzero(finite_binned) < LIGHTCURVE_MIN_VALID_POINTS:
+        base_result['note'] = 'Skipped; fast UltraNest binning produced too few finite bins.'
+        return base_result
+
+    result = dict(base_result)
+    result.update({
+        'applied': True,
+        'time': binned_time[finite_binned],
+        'flux': binned_flux[finite_binned],
+        'unc': binned_unc[finite_binned],
+        'airmass': binned_airmass[finite_binned],
+        'jd_times': None if binned_jd is None else binned_jd[finite_binned],
+        'binned_point_count': int(np.count_nonzero(finite_binned)),
+        'bin_indices': [chunk.tolist() for i, chunk in enumerate(chunks) if finite_binned[i]],
+        'note': (
+            f"Using fast UltraNest binning for pre-final runs: "
+            f"{point_count} point(s) -> {int(np.count_nonzero(finite_binned))} binned point(s)."
+        ),
+    })
+    return result
+
+
+def annotate_fast_ultranest_binning(fit, binning_result):
+    if fit is None or not isinstance(binning_result, dict):
+        return
+    fit.fast_ultranest_binning_applied = bool(binning_result.get('applied', False))
+    fit.fast_ultranest_original_point_count = int(binning_result.get('original_point_count', 0))
+    fit.fast_ultranest_binned_point_count = int(binning_result.get('binned_point_count', 0))
+    fit.fast_ultranest_binning_note = binning_result.get('note')
+
+
 def summarize_initial_fit_transit_coverage(
     times,
     fit,
@@ -5969,6 +6445,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     duration_prior=None,
     extend_sparse_posterior_live_points=True,
     keep_ultranest_sampler_for_deferred_extension=False,
+    fix_baseline_terms_for_final=True,
 ):
     if duration_prior is None and expected_planet_dict is not None:
         duration_prior = build_single_transit_duration_prior(expected_planet_dict)
@@ -6090,6 +6567,13 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             'pre_points': 0,
             'post_points': 0,
         }
+    if baseline_parameter_result.get('applied') and not fix_baseline_terms_for_final:
+        baseline_parameter_result = {
+            'applied': False,
+            'note': 'Deferred; pre-final UltraNest runs keep a0 and a2 as simultaneous fitted parameters.',
+            'pre_points': baseline_parameter_result.get('pre_points', 0),
+            'post_points': baseline_parameter_result.get('post_points', 0),
+        }
     baseline_fit_mask = None
     baseline_fixed_errors = {}
     baseline_constrained_prior = dict(working_prior)
@@ -6136,6 +6620,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
             baseline_fit_mask=baseline_fit_mask,
             fixed_parameter_errors=baseline_fixed_errors,
+            fixed_flux_baseline=True,
         )
         refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -6250,6 +6735,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
         baseline_fit_mask=baseline_fit_mask,
         fixed_parameter_errors=baseline_fixed_errors,
+        fixed_flux_baseline=bool(baseline_parameter_result.get('applied')),
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -13619,6 +14105,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  adaptive_aperture_values=None,
                                                  adaptive_annulus_values=None,
                                                  fallback_sigma=np.nan,
+                                                 run_fast_ultranest_before_final_run=
+                                                 FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
                                                  save_dir=None,
                                                  planet_name=None,
                                                  observation_date=None):
@@ -13720,6 +14208,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             plot_time_range=plot_time_range,
             baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
             adaptive_summary=adaptive_summary,
+            run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
         )
         fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
         tflux_fit = final_reduction.get('good_target_flux')
@@ -13798,6 +14287,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'final_output_dir': None,
             'full_reduction_applied': final_reduction.get('applied', False),
             'full_reduction_note': final_reduction.get('note'),
+            'fast_ultranest_binning': final_reduction.get('fast_ultranest_binning'),
+            'skip_airmass_fit': final_reduction.get('skip_airmass_fit', False),
+            'airmass_skip_note': final_reduction.get('airmass_skip_note'),
         }
         if final_reduction.get('applied') and selection_fit is not None and save_dir is not None:
             final_output_dir = save_comparison_candidate_full_reduction_outputs(
@@ -13978,9 +14470,31 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
 
         selected_fit = selected_result.get('fit')
         if selected_fit is not None:
-            selected_result['fit'] = extend_selected_comparison_live_points_if_needed(selected_fit)
+            full_resolution_refit_applied = False
+            full_resolution_refit = refit_selected_fast_comparison_on_full_lightcurve(
+                selected_result,
+                p_dict,
+                skip_airmass_fit=bool(selected_result.get('skip_airmass_fit', False)),
+                airmass_skip_note=selected_result.get('airmass_skip_note'),
+                detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+                use_impactparameter_rather_than_inclination_to_fit=
+                use_impactparameter_rather_than_inclination_to_fit,
+                plot_time_range=plot_time_range,
+                duration_prior=build_single_transit_duration_prior(p_dict),
+            )
+            if full_resolution_refit is not None:
+                full_resolution_refit_applied = True
+                selected_result['fit'], selected_result['good_flux'], selected_result['good_unc'] = full_resolution_refit
+                selected_result['full_reduction_note'] = (
+                    "selected candidate rerun on the full-resolution light curve after fast UltraNest search."
+                )
+            else:
+                selected_result['fit'] = extend_selected_comparison_live_points_if_needed(selected_fit)
             selected_result['full_reduction_fit'] = selected_result['fit']
-            if getattr(selected_result['fit'], 'sparse_posterior_live_point_extension_applied', False):
+            if (
+                full_resolution_refit_applied
+                or getattr(selected_result['fit'], 'sparse_posterior_live_point_extension_applied', False)
+            ):
                 annotate_transit_detection_qc(selected_result['fit'])
                 selected_result['eebls_snr'] = extract_lightcurve_fit_eebls_snr(selected_result['fit'])
                 selected_result['transit_delta_bic'] = extract_lightcurve_fit_transit_delta_bic(selected_result['fit'])
@@ -14260,6 +14774,12 @@ def _main_impl():
                 exotic_infoDict.get('use_impactparameter_rather_than_inclination_to_fit', 'y')
             )
         )
+        run_fast_ultranest_before_final_run = should_run_fast_ultranest_before_final_run(
+            exotic_infoDict.get(
+                'run_fast_ultranest_before_final_run',
+                FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
+            )
+        )
         ultranest_min_num_live_points = configure_ultranest_min_num_live_points(
             exotic_infoDict.get(
                 'ultranest_min_num_live_points',
@@ -14267,6 +14787,14 @@ def _main_impl():
             )
         )
         log_info(f"UltraNest minimum live points: {ultranest_min_num_live_points}.")
+        if run_fast_ultranest_before_final_run:
+            log_info(
+                "Fast pre-final UltraNest enabled: comparison-candidate UltraNest search runs "
+                f"with at most {FAST_ULTRANEST_MAX_BINNED_POINTS} binned light-curve point(s) "
+                f"when more than {FAST_ULTRANEST_MIN_POINTS_TO_BIN} points are available."
+            )
+        else:
+            log_info("Fast pre-final UltraNest disabled per optional_info setting.")
         use_sparse_posterior_live_point_retry = configure_sparse_posterior_live_point_retry(
             exotic_infoDict.get(
                 'use_sparse_posterior_live_point_retry',
@@ -14274,12 +14802,20 @@ def _main_impl():
             )
         )
         if use_sparse_posterior_live_point_retry:
-            log_info(
-                "Selected comparison-star live-point extension enabled: comparison candidates "
-                "are ranked at the configured UltraNest live-point count, then the chosen final "
-                f"comparison fit continues with {SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x "
-                "additional minimum live points using its retained final-pass bounds."
-            )
+            if run_fast_ultranest_before_final_run:
+                log_info(
+                    "Selected comparison-star live-point extension enabled: comparison candidates "
+                    "are ranked with fast pre-final UltraNest fits, then the chosen final comparison "
+                    "fit reruns on the full-resolution light curve with "
+                    f"{SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x additional minimum live points."
+                )
+            else:
+                log_info(
+                    "Selected comparison-star live-point extension enabled: comparison candidates "
+                    "are ranked at the configured UltraNest live-point count, then the chosen final "
+                    f"comparison fit continues with {SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x "
+                    "additional minimum live points using its retained final-pass bounds."
+                )
         log_ultranest_mpi_status()
 
         # Make a temp directory of helpful files
@@ -15287,6 +15823,7 @@ def _main_impl():
                     adaptive_aperture_values=aperture_values,
                     adaptive_annulus_values=annulus_values,
                     fallback_sigma=sigma_display,
+                    run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
                     save_dir=exotic_infoDict['save'],
                     planet_name=pDict['pName'],
                     observation_date=exotic_infoDict['date'],

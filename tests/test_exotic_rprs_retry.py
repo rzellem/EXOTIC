@@ -90,8 +90,12 @@ from exotic.exotic import (  # noqa: E402
     RPRS_SEARCH_BOUND_MAX,
     RPRS_SEARCH_BOUND_MIN,
     SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+    build_fast_ultranest_lightcurve_series,
     evaluate_sparse_posterior_sample_support,
     extend_sparse_posterior_live_points_if_needed,
+    finalize_comparison_candidate_full_reduction,
+    refit_selected_fast_comparison_on_full_lightcurve,
+    should_run_fast_ultranest_before_final_run,
     build_single_transit_duration_prior,
     build_initial_rprs_bounds,
     run_nested_lightcurve_fit_with_rprs_posterior_retry,
@@ -106,6 +110,225 @@ def test_build_initial_rprs_bounds_allows_zero_depth_search_box():
         INITIAL_RPRS_BOUND_UPPER_SCALE * 0.1,
     ])
     assert INITIAL_RPRS_BOUND_LOWER_SCALE == pytest.approx(0.0)
+
+
+def test_fast_ultranest_option_defaults_enabled_and_parses_false_values():
+    assert should_run_fast_ultranest_before_final_run(None) is True
+    assert should_run_fast_ultranest_before_final_run("n") is False
+    assert should_run_fast_ultranest_before_final_run(False) is False
+
+
+def test_fast_ultranest_binning_reduces_large_light_curve_to_twenty_points():
+    times = np.linspace(0.0, 1.0, 80)
+    flux = 1.0 + 0.01 * np.sin(np.linspace(0.0, 2.0 * np.pi, 80))
+    unc = np.full(80, 0.01)
+    airmass = np.linspace(1.0, 1.5, 80)
+
+    result = build_fast_ultranest_lightcurve_series(times, flux, unc, airmass)
+
+    assert result["applied"] is True
+    assert result["original_point_count"] == 80
+    assert result["binned_point_count"] <= 20
+    assert result["time"].shape == result["flux"].shape == result["unc"].shape == result["airmass"].shape
+
+
+def test_fast_ultranest_binning_skips_short_light_curve():
+    times = np.linspace(0.0, 1.0, 60)
+    result = build_fast_ultranest_lightcurve_series(
+        times,
+        np.ones(60),
+        np.full(60, 0.01),
+        np.linspace(1.0, 1.2, 60),
+    )
+
+    assert result["applied"] is False
+    assert result["binned_point_count"] == 60
+
+
+def test_finalize_comparison_candidate_runs_pre_final_ultranest_on_binned_series(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {}
+
+    def fake_fit_final(
+        times,
+        flux_values,
+        flux_errors,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        **kwargs,
+    ):
+        captured["point_count"] = len(times)
+        captured["bounds"] = dict(bounds)
+        captured["fix_baseline_terms_for_final"] = kwargs.get("fix_baseline_terms_for_final")
+        fit = types.SimpleNamespace(
+            time=np.asarray(times, dtype=float),
+            data=np.asarray(flux_values, dtype=float),
+            dataerr=np.asarray(flux_errors, dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            parameters={
+                **dict(prior),
+                "tmid": 0.5,
+                "rprs": 0.1,
+                "ars": 10.0,
+                "inc": 89.0,
+                "a0": 1.0,
+                "a1": 1.0,
+                "a2": 0.02,
+            },
+            errors={"tmid": 0.001, "rprs": 0.001, "ars": 0.1, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit=np.ones(len(times), dtype=float),
+            residuals=np.zeros(len(times), dtype=float),
+            duration_measured=0.04,
+            duration_expected=0.04,
+        )
+        return fit, np.asarray(flux_values, dtype=float), np.asarray(flux_errors, dtype=float)
+
+    monkeypatch.setattr(exotic_module, "fit_final_lightcurve_with_oot_baseline_detrending", fake_fit_final)
+
+    times = np.linspace(0.0, 1.0, 80)
+    target_flux = 100.0 * (1.0 + 0.002 * np.sin(np.linspace(0.0, 2.0 * np.pi, 80)))
+    result = finalize_comparison_candidate_full_reduction(
+        times,
+        target_flux,
+        np.full(80, 100.0),
+        np.linspace(1.0, 1.3, 80),
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={
+            "pName": "Test b",
+            "midT": 0.5,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "pPerUnc": 0.001,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "aRsUnc": 0.1,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        jd_times=2460000.0 + times,
+        run_fast_ultranest_before_final_run=True,
+    )
+
+    assert result["applied"] is True
+    assert captured["point_count"] <= 20
+    assert captured["fix_baseline_terms_for_final"] is False
+    assert "a0" in captured["bounds"]
+    assert "a2" in captured["bounds"]
+    assert len(result["good_times"]) == result["fast_ultranest_binning"]["original_point_count"]
+    assert len(result["good_times"]) > 60
+    assert result["fast_ultranest_binning"]["applied"] is True
+    assert result["fit"].fast_ultranest_binning_applied is True
+
+
+def test_selected_fast_candidate_final_refit_uses_full_series_and_fixed_baseline(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setenv("EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS", "200")
+    monkeypatch.setenv("EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY", "1")
+    captured = {}
+
+    def fake_run_nested(
+        times,
+        flux_values,
+        flux_errors,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        **kwargs,
+    ):
+        captured["point_count"] = len(times)
+        captured["prior"] = dict(prior)
+        captured["bounds"] = dict(bounds)
+        captured["fixed_parameter_errors"] = dict(kwargs.get("fixed_parameter_errors", {}))
+        captured["fixed_flux_baseline"] = kwargs.get("fixed_flux_baseline")
+        captured["ultranest_min_num_live_points"] = kwargs.get("ultranest_min_num_live_points")
+        fit = types.SimpleNamespace(
+            time=np.asarray(times, dtype=float),
+            data=np.asarray(flux_values, dtype=float),
+            dataerr=np.asarray(flux_errors, dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            parameters=dict(prior),
+            errors=dict(kwargs.get("fixed_parameter_errors", {})),
+            residuals=np.zeros(len(times), dtype=float),
+            transit=np.ones(len(times), dtype=float),
+            duration_measured=0.04,
+            duration_expected=0.04,
+            transit_qc={"status": "pass", "summary": "ok"},
+            transit_qc_status="pass",
+        )
+        fit.get_parameter_posterior_samples = lambda key: np.linspace(0.0, 1.0, 1500)
+        return fit
+
+    monkeypatch.setattr(exotic_module, "run_nested_lightcurve_fit_with_rprs_posterior_retry", fake_run_nested)
+
+    previous_fit = types.SimpleNamespace(
+        fast_ultranest_binning_applied=True,
+        parameters={
+            "rprs": 0.1,
+            "ars": 10.0,
+            "per": 1.0,
+            "tmid": 0.5,
+            "inc": 89.0,
+            "u0": 0.1,
+            "u1": 0.1,
+            "u2": 0.1,
+            "u3": 0.1,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.03,
+            "a1": 1.03,
+            "a2": 0.12,
+        },
+        errors={"a0": 0.02, "a1": 0.02, "a2": 0.03, "rprs": 0.001, "tmid": 0.001, "ars": 0.1},
+        bounds={
+            "rprs": [0.05, 0.15],
+            "tmid": [0.49, 0.51],
+            "ars": [9.0, 11.0],
+            "inc": [85.0, 90.0],
+            "a0": [0.95, 1.05],
+            "a2": [-3.0, 3.0],
+        },
+    )
+    times = np.linspace(0.0, 1.0, 80)
+    selected_result = {
+        "fit": previous_fit,
+        "good_times": times,
+        "good_flux": np.ones(80),
+        "good_unc": np.full(80, 0.01),
+        "good_airmass": np.linspace(1.0, 1.3, 80),
+        "good_jd_times": 2460000.0 + times,
+    }
+
+    returned = refit_selected_fast_comparison_on_full_lightcurve(
+        selected_result,
+        {
+            "midT": 0.5,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        detrend_on_outoftransit_baseline=False,
+    )
+
+    assert returned is not None
+    assert captured["point_count"] == 80
+    assert captured["fixed_flux_baseline"] is True
+    assert captured["ultranest_min_num_live_points"] == 1200
+    assert captured["prior"]["a0"] == pytest.approx(1.03)
+    assert captured["prior"]["a2"] == pytest.approx(0.12)
+    assert captured["fixed_parameter_errors"]["a0"] == pytest.approx(0.02)
+    assert captured["fixed_parameter_errors"]["a2"] == pytest.approx(0.03)
+    assert "a0" not in captured["bounds"]
+    assert "a2" not in captured["bounds"]
 
 
 def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):

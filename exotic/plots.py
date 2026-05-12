@@ -634,6 +634,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
         fit,
         show_flux_baseline_label=False,
         show_model_uncertainty=True,
+        show_baseline_uncertainty=True,
     )
 
     ax_lc.set_title(targ_name)

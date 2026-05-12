@@ -144,6 +144,56 @@ def test_build_persistent_bad_pixel_map_thresholds_recurrence_and_saves_outputs(
     assert not mask_image[6, 5]
 
 
+def test_build_persistent_bad_pixel_map_can_scan_with_multiprocessing(tmp_path, monkeypatch):
+    paths = []
+    for frame_index in range(10):
+        frame = np.full((9, 9), 100.0, dtype=float)
+        if frame_index < 4:
+            frame[2, 3] = 4000.0
+        path = tmp_path / f"frame_{frame_index}.fits"
+        fits.writeto(path, frame, overwrite=True)
+        paths.append(path)
+
+    captured = {}
+
+    class FakeFuture:
+        def __init__(self, value):
+            self._value = value
+
+        def result(self):
+            return self._value
+
+    class FakeExecutor:
+        def __init__(self, max_workers, initializer=None, initargs=()):
+            captured["max_workers"] = max_workers
+            if initializer is not None:
+                initializer(*initargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def submit(self, fn, task):
+            return FakeFuture(fn(task))
+
+    monkeypatch.setattr(exotic_module, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(exotic_module, "as_completed", lambda futures: futures)
+
+    reference = exotic_module.build_persistent_bad_pixel_map(
+        paths,
+        exotic_module.load_image_data,
+        save_directory=tmp_path,
+        max_processes=2,
+    )
+
+    assert captured["max_workers"] == 2
+    assert reference is not None
+    assert reference["required_count"] == 4
+    assert reference["mask"][2, 3]
+
+
 def test_repair_bad_pixels_in_frame_replaces_known_bad_pixel_with_neighbor_median():
     image = np.arange(25, dtype=float).reshape(5, 5)
     image[2, 2] = 9999.0

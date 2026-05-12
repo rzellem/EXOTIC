@@ -211,17 +211,19 @@ def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
     assert not (tmp_path / "temp" / "CompStarLightCurveFit_Comp3_Target_2026-03-09.png").exists()
 
 
-def test_plot_final_lightcurve_requests_uncertainty_band_without_baseline_label(tmp_path):
+def test_plot_final_lightcurve_requests_uncertainty_bands_without_baseline_label(tmp_path):
     class DummyFinalFit:
         def __init__(self):
             self.kwargs = None
             self.phase_upsample = np.linspace(-0.05, 0.05, 5)
             self.transit_upsample = np.ones(5)
 
-        def plot_bestfit(self, show_flux_baseline_label=True, show_model_uncertainty=False):
+        def plot_bestfit(self, show_flux_baseline_label=True, show_model_uncertainty=False,
+                         show_baseline_uncertainty=False):
             self.kwargs = {
                 "show_flux_baseline_label": show_flux_baseline_label,
                 "show_model_uncertainty": show_model_uncertainty,
+                "show_baseline_uncertainty": show_baseline_uncertainty,
             }
             fig, axes = plt.subplots(2, 1)
             return fig, axes
@@ -239,6 +241,7 @@ def test_plot_final_lightcurve_requests_uncertainty_band_without_baseline_label(
     assert fit.kwargs == {
         "show_flux_baseline_label": False,
         "show_model_uncertainty": True,
+        "show_baseline_uncertainty": True,
     }
     assert (tmp_path / "FinalLightCurve_Target_2026-03-09.png").exists()
     assert (tmp_path / "FinalLightCurve_Target_2026-03-09.pdf").exists()

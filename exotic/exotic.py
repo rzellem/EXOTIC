@@ -281,6 +281,7 @@ BAD_PIXEL_OUTLIER_SIGMA = 8.0
 BAD_PIXEL_GLOBAL_SIGMA = 3.0
 BAD_PIXEL_ISOLATION_SIGMA = 5.0
 BAD_PIXEL_ISOLATION_RATIO = 2.0
+MAX_MULTIPROCESS_BAD_PIXEL_WORKERS = 8
 BAD_PIXEL_COUNTS_FILENAME = "BadPixelDetectionCounts.fits"
 BAD_PIXEL_MASK_FILENAME = "BadPixelMask.fits"
 BAD_PIXEL_NEIGHBOR_FOOTPRINT = np.array(
@@ -4466,6 +4467,37 @@ def should_detect_bad_pixels_before_photometry(config_value):
         warn=True,
     )
     return True
+
+
+def get_multiprocess_bad_pixel_precheck_processes(config_value):
+    if config_value is None:
+        return None
+    if isinstance(config_value, bool):
+        if not config_value:
+            return None
+        return os.cpu_count() or 1
+    if isinstance(config_value, (int, float)):
+        if np.isfinite(config_value) and int(config_value) > 0:
+            return int(config_value)
+        return None
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('', 'n', 'no', 'false', '0', 'off'):
+            return None
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return os.cpu_count() or 1
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            parsed = np.nan
+        if np.isfinite(parsed) and int(parsed) > 0:
+            return int(parsed)
+
+    log_info(
+        "Warning: Invalid 'multiprocess_bad_pixel_precheck' value; keeping bad-pixel precheck multiprocessing disabled.",
+        warn=True,
+    )
+    return None
 
 
 def is_adaptive_aperture_mode_enabled(config_value):
@@ -9304,17 +9336,107 @@ def detect_frame_bad_pixels(image_data,
     )
 
 
-def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None,
-                                   minimum_fraction=BAD_PIXEL_DETECTION_FRACTION,
-                                   minimum_frames=BAD_PIXEL_PRECHECK_MIN_FRAMES):
-    inputfiles = list(inputfiles)
-    total_files = len(inputfiles)
-    if total_files < minimum_frames:
-        log_info(
-            f"Bad-pixel precheck skipped: only {total_files} frame(s); need at least {minimum_frames} frames.",
-        )
-        return None
+_BAD_PIXEL_PRECHECK_POOL_CONTEXT = {}
 
+
+def _bad_pixel_precheck_pool_initializer(generalDark, generalBias, generalFlat,
+                                         demosaic_fmt, demosaic_out, demosaic_mult):
+    global _BAD_PIXEL_PRECHECK_POOL_CONTEXT
+    suppress_inherited_tk_cleanup_in_worker()
+    _BAD_PIXEL_PRECHECK_POOL_CONTEXT = {
+        'generalDark': generalDark,
+        'generalBias': generalBias,
+        'generalFlat': generalFlat,
+        'demosaic_fmt': demosaic_fmt,
+        'demosaic_out': demosaic_out,
+        'demosaic_mult': demosaic_mult,
+    }
+
+
+def _load_bad_pixel_precheck_worker_frame(file_name):
+    context = _BAD_PIXEL_PRECHECK_POOL_CONTEXT
+    hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+    extension = 0
+    image_header = hdul[extension].header
+    while image_header["NAXIS"] == 0:
+        extension += 1
+        image_header = hdul[extension].header
+
+    image_data = hdul[extension].data
+    hdul.close()
+
+    image_data = apply_cals(
+        image_data,
+        context.get('generalDark'),
+        context.get('generalBias'),
+        context.get('generalFlat'),
+        1,
+    )
+    image_data = demosaic_img(
+        image_data,
+        context.get('demosaic_fmt'),
+        context.get('demosaic_out'),
+        context.get('demosaic_mult'),
+        1,
+    )
+    return image_data
+
+
+def _bad_pixel_precheck_task(task):
+    index, file_name = task
+    try:
+        frame_data = _load_bad_pixel_precheck_worker_frame(file_name)
+    except Exception as exc:
+        return {
+            'index': index,
+            'file_name': file_name,
+            'usable': False,
+            'error': str(exc),
+        }
+
+    frame_mask = detect_frame_bad_pixels(frame_data)
+    if frame_mask.ndim != 2:
+        return {
+            'index': index,
+            'file_name': file_name,
+            'usable': False,
+            'not_2d': True,
+        }
+
+    return {
+        'index': index,
+        'file_name': file_name,
+        'usable': True,
+        'mask': frame_mask,
+    }
+
+
+def _merge_bad_pixel_precheck_mask(detection_counts, frame_mask, file_name):
+    frame_mask = np.asarray(frame_mask, dtype=bool)
+    if frame_mask.ndim != 2:
+        log_info(
+            f"Warning: skipping bad-pixel precheck for {_display_filename(file_name)} because the frame is not 2-D.",
+            warn=True,
+        )
+        return detection_counts, False
+
+    if detection_counts is None:
+        detection_counts = np.zeros(frame_mask.shape, dtype=np.uint32)
+    elif detection_counts.shape != frame_mask.shape:
+        log_info(
+            "Warning: skipping bad-pixel precheck for "
+            f"{_display_filename(file_name)} because its shape {frame_mask.shape} does not match "
+            f"the reference frame shape {detection_counts.shape}.",
+            warn=True,
+        )
+        return detection_counts, False
+
+    detection_counts += frame_mask.astype(np.uint32)
+    return detection_counts, True
+
+
+def _scan_bad_pixel_precheck_frames_serial(inputfiles, frame_loader):
+    total_files = len(inputfiles)
     detection_counts = None
     scanned_files = 0
 
@@ -9330,30 +9452,116 @@ def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None
             continue
 
         frame_mask = detect_frame_bad_pixels(frame_data)
-        if frame_mask.ndim != 2:
-            log_info(
-                f"Warning: skipping bad-pixel precheck for {_display_filename(file_name)} because the frame is not 2-D.",
-                warn=True,
-            )
-            continue
-
-        if detection_counts is None:
-            detection_counts = np.zeros(frame_mask.shape, dtype=np.uint32)
-        elif detection_counts.shape != frame_mask.shape:
-            log_info(
-                "Warning: skipping bad-pixel precheck for "
-                f"{_display_filename(file_name)} because its shape {frame_mask.shape} does not match "
-                f"the reference frame shape {detection_counts.shape}.",
-                warn=True,
-            )
-            continue
-
-        detection_counts += frame_mask.astype(np.uint32)
-        scanned_files += 1
+        detection_counts, usable = _merge_bad_pixel_precheck_mask(detection_counts, frame_mask, file_name)
+        if usable:
+            scanned_files += 1
 
         completed = index + 1
         if completed == total_files or completed % BAD_PIXEL_PROGRESS_LOG_INTERVAL == 0:
             log_info(f"Bad-pixel precheck progress: {completed}/{total_files}")
+
+    return detection_counts, scanned_files
+
+
+def _scan_bad_pixel_precheck_frames_multiprocess(inputfiles, max_processes,
+                                                 generalDark=None, generalBias=None, generalFlat=None,
+                                                 demosaic_fmt=None, demosaic_out=None, demosaic_mult=None):
+    total_files = len(inputfiles)
+    max_workers = min(max_processes, os.cpu_count() or 1, total_files, MAX_MULTIPROCESS_BAD_PIXEL_WORKERS)
+    detection_counts = None
+    scanned_files = 0
+
+    log_info(
+        "Using multiprocessing for bad-pixel precheck "
+        f"with {max_workers} worker(s) across {total_files} image(s)."
+    )
+
+    tasks = [(index, str(file_name)) for index, file_name in enumerate(inputfiles)]
+    with suppress_tk_cleanup_during_process_pool():
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_bad_pixel_precheck_pool_initializer,
+            initargs=(
+                generalDark,
+                generalBias,
+                generalFlat,
+                demosaic_fmt,
+                demosaic_out,
+                demosaic_mult,
+            ),
+        ) as executor:
+            futures = [executor.submit(_bad_pixel_precheck_task, task) for task in tasks]
+            completed = 0
+            for future in as_completed(futures):
+                result = future.result()
+                file_name = result.get('file_name')
+                if result.get('usable'):
+                    detection_counts, usable = _merge_bad_pixel_precheck_mask(
+                        detection_counts,
+                        result.get('mask'),
+                        file_name,
+                    )
+                    if usable:
+                        scanned_files += 1
+                elif result.get('not_2d'):
+                    log_info(
+                        f"Warning: skipping bad-pixel precheck for {_display_filename(file_name)} "
+                        "because the frame is not 2-D.",
+                        warn=True,
+                    )
+                else:
+                    log_info(
+                        f"Warning: skipping bad-pixel precheck for {_display_filename(file_name)} "
+                        f"({result.get('error')}).",
+                        warn=True,
+                    )
+
+                completed += 1
+                if completed == total_files or completed % BAD_PIXEL_PROGRESS_LOG_INTERVAL == 0:
+                    log_info(f"Bad-pixel precheck progress: {completed}/{total_files}")
+
+    return detection_counts, scanned_files
+
+
+def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None,
+                                   minimum_fraction=BAD_PIXEL_DETECTION_FRACTION,
+                                   minimum_frames=BAD_PIXEL_PRECHECK_MIN_FRAMES,
+                                   max_processes=None, generalDark=None, generalBias=None,
+                                   generalFlat=None, demosaic_fmt=None, demosaic_out=None,
+                                   demosaic_mult=None):
+    inputfiles = list(inputfiles)
+    total_files = len(inputfiles)
+    if total_files < minimum_frames:
+        log_info(
+            f"Bad-pixel precheck skipped: only {total_files} frame(s); need at least {minimum_frames} frames.",
+        )
+        return None
+
+    try:
+        max_processes = int(max_processes) if max_processes is not None else None
+    except (TypeError, ValueError):
+        max_processes = None
+
+    if max_processes is not None and max_processes > 1 and total_files > 1:
+        try:
+            detection_counts, scanned_files = _scan_bad_pixel_precheck_frames_multiprocess(
+                inputfiles,
+                max_processes,
+                generalDark=generalDark,
+                generalBias=generalBias,
+                generalFlat=generalFlat,
+                demosaic_fmt=demosaic_fmt,
+                demosaic_out=demosaic_out,
+                demosaic_mult=demosaic_mult,
+            )
+        except Exception as exc:
+            log_info(
+                f"Warning: bad-pixel precheck multiprocessing failed ({exc}); falling back to serial scanning.",
+                warn=True,
+            )
+            detection_counts, scanned_files = _scan_bad_pixel_precheck_frames_serial(inputfiles, frame_loader)
+    else:
+        detection_counts, scanned_files = _scan_bad_pixel_precheck_frames_serial(inputfiles, frame_loader)
 
     if detection_counts is None or scanned_files < minimum_frames:
         log_info(
@@ -10971,6 +11179,9 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
         info_dict.get('detect_bad_pixels_before_photometry', 'y')
     )
+    multiprocess_bad_pixel_precheck = get_multiprocess_bad_pixel_precheck_processes(
+        info_dict.get('multiprocess_bad_pixel_precheck', 'n')
+    )
 
     plateStatus.initializeFilenames(info_dict['images'])
     inputfiles = corruption_check(info_dict['images'])
@@ -11036,6 +11247,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
             inputfiles,
             load_image_data,
             save_directory=info_dict['save'],
+            max_processes=multiprocess_bad_pixel_precheck,
         )
     else:
         log_info("Bad-pixel precheck disabled per optional_info setting.")
@@ -14963,6 +15175,9 @@ def _main_impl():
             detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
                 exotic_infoDict.get('detect_bad_pixels_before_photometry', 'y')
             )
+            multiprocess_bad_pixel_precheck = get_multiprocess_bad_pixel_precheck_processes(
+                exotic_infoDict.get('multiprocess_bad_pixel_precheck', 'n')
+            )
             inputfiles, wcs_keep_mask, dropped_wcs_files = filter_sparse_missing_wcs_frames(
                 inputfiles,
                 ignore_header_wcs=ignore_header_wcs,
@@ -15031,6 +15246,13 @@ def _main_impl():
                         demosaic_mult,
                     ),
                     save_directory=exotic_infoDict['save'],
+                    max_processes=multiprocess_bad_pixel_precheck,
+                    generalDark=generalDark,
+                    generalBias=generalBias,
+                    generalFlat=generalFlat,
+                    demosaic_fmt=demosaic_fmt,
+                    demosaic_out=demosaic_out,
+                    demosaic_mult=demosaic_mult,
                 )
             else:
                 log_info("Bad-pixel precheck disabled per optional_info setting.")

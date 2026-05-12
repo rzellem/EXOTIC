@@ -435,6 +435,59 @@ def test_transit_model_uncertainty_includes_baseline_terms(monkeypatch, tmp_path
     assert np.nanmax(envelope[1] - envelope[0]) > 0
 
 
+def test_baseline_model_uncertainty_is_centered_on_unity_and_includes_a2(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.airmass = np.linspace(1.0, 2.0, time.size)
+    fit.airmass_reference = elca.get_airmass_reference(fit.airmass)
+    fit.parameters = prior.copy()
+    fit.parameters["a0"] = 1.0
+    fit.parameters["a1"] = 1.0
+    fit.parameters["a2"] = 0.1
+    fit.errors = {"a0": 0.01, "a1": 0.01, "a2": 0.05}
+
+    lower, upper = fit.baseline_model_uncertainty(time)
+    width = upper - lower
+
+    np.testing.assert_allclose(0.5 * (lower + upper), np.ones_like(time), atol=1e-12)
+    assert np.nanmin(lower) < 1.0
+    assert np.nanmax(upper) > 1.0
+    assert width[0] > width[len(width) // 2]
+
+
+def test_plot_bestfit_can_draw_baseline_uncertainty_band(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+    airmass = np.linspace(1.0, 2.0, time.size)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+    fit.parameters["a2"] = 0.1
+    fit.errors["a0"] = 0.01
+    fit.errors["a2"] = 0.05
+
+    fig, axes = fit.plot_bestfit(show_baseline_uncertainty=True)
+    labels = [artist.get_label() for artist in axes[0].collections]
+
+    assert r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty' in labels
+    plt.close(fig)
+
+
 def test_posterior_model_uncertainty_recenters_on_best_fit_model(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()

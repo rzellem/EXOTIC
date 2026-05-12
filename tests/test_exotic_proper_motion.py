@@ -121,6 +121,7 @@ from exotic.exotic import (
     fit_lightcurve_to_every_comparison_candidate,
     fit_ranked_comparison_calibration_candidates,
     get_final_fit_baseline_duration_multiplier,
+    get_multiprocess_bad_pixel_precheck_processes,
     estimate_ephemeris_tmid_and_bounds,
     estimate_tmid_and_bounds_with_eebls,
     is_adaptive_aperture_mode_enabled,
@@ -787,6 +788,15 @@ def test_should_detect_bad_pixels_before_photometry_parses_values():
     assert should_detect_bad_pixels_before_photometry(None) is True
     assert should_detect_bad_pixels_before_photometry("y") is True
     assert should_detect_bad_pixels_before_photometry("n") is False
+
+
+def test_get_multiprocess_bad_pixel_precheck_processes_parses_values():
+    assert get_multiprocess_bad_pixel_precheck_processes(None) is None
+    assert get_multiprocess_bad_pixel_precheck_processes("n") is None
+    assert get_multiprocess_bad_pixel_precheck_processes("0") is None
+    assert get_multiprocess_bad_pixel_precheck_processes("y") >= 1
+    assert get_multiprocess_bad_pixel_precheck_processes("3") == 3
+    assert get_multiprocess_bad_pixel_precheck_processes(2) == 2
 
 
 def test_is_out_of_transit_baseline_detrending_enabled_parses_values():

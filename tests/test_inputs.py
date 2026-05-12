@@ -218,6 +218,21 @@ def test_comp_params_defaults_detect_bad_pixels_before_photometry_to_yes(tmp_pat
     assert inputs.info_dict["detect_bad_pixels_before_photometry"] == "y"
 
 
+def test_comp_params_defaults_multiprocess_bad_pixel_precheck_to_no(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["multiprocess_bad_pixel_precheck"] == "n"
+
+
 def test_comp_params_defaults_detrend_on_outoftransit_baseline_to_true(tmp_path):
     init_data = {
         "user_info": {},
@@ -531,6 +546,21 @@ def test_comp_params_reads_detect_bad_pixels_before_photometry_from_optional_inf
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["detect_bad_pixels_before_photometry"] == "n"
+
+
+def test_comp_params_reads_multiprocess_bad_pixel_precheck_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"multiprocess_bad_pixel_precheck": "y"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["multiprocess_bad_pixel_precheck"] == "y"
 
 
 def test_comp_params_reads_detrend_on_outoftransit_baseline_from_optional_info(tmp_path):

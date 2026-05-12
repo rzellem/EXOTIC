@@ -217,6 +217,7 @@ class Inputs:
             'assess_all_comparisons_before_selecting_best': 'y',
             'exit_at_first_qc_pass_solution': 'y',
             'detect_bad_pixels_before_photometry': 'y',
+            'multiprocess_bad_pixel_precheck': 'n',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
             'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0,
@@ -436,6 +437,11 @@ class Inputs:
             'detect_bad_pixels_before_photometry': (
                 'detect_bad_pixels_before_photometry',
                 'Detect Bad Pixels Before Photometry? (y/n)',
+            ),
+            'multiprocess_bad_pixel_precheck': (
+                'multiprocess_bad_pixel_precheck',
+                'Multiprocess Bad-Pixel Precheck? (y/n or process count)',
+                'Multiprocess Bad Pixel Precheck? (y/n or process count)',
             ),
             'detrend_on_outoftransit_baseline': (
                 'detrend_on_outoftransit_baseline',

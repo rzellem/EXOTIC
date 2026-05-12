@@ -859,6 +859,78 @@ class lc_fitter(object):
             return None
         return model - model_uncertainty, model + model_uncertainty
 
+    def baseline_model_uncertainty(self, times=None, sigma=1.0):
+        if times is None:
+            times = getattr(self, 'time_upsample', self.time)
+        times = np.asarray(times, dtype=float)
+        if times.size == 0 or np.ndim(getattr(self, 'airmass', np.array([]))) == 2:
+            return None
+
+        try:
+            best_systematics = self._build_systematics_model_at(self.parameters, times)
+        except Exception:
+            return None
+
+        if (
+            np.asarray(best_systematics).shape != times.shape
+            or not np.any(np.isfinite(best_systematics))
+        ):
+            return None
+
+        try:
+            sigma = float(sigma)
+        except (TypeError, ValueError):
+            sigma = 1.0
+        if not np.isfinite(sigma) or sigma <= 0:
+            sigma = 1.0
+
+        variance = np.zeros_like(times, dtype=float)
+        for key in ('a0', 'a1', 'a2'):
+            if key == 'a1' and 'a0' in self.parameters:
+                continue
+            if key not in self.parameters:
+                continue
+            error = self.errors.get(key)
+            try:
+                center = float(self.parameters[key])
+                error = float(error)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(center) or not np.isfinite(error) or error <= 0:
+                continue
+
+            lower_value = self._get_perturbed_transit_parameter_value(key, center - error)
+            upper_value = self._get_perturbed_transit_parameter_value(key, center + error)
+            if (
+                not np.isfinite(lower_value)
+                or not np.isfinite(upper_value)
+                or np.isclose(lower_value, upper_value)
+            ):
+                continue
+
+            lower_parameters = copy.deepcopy(self.parameters)
+            upper_parameters = copy.deepcopy(self.parameters)
+            lower_parameters[key] = lower_value
+            upper_parameters[key] = upper_value
+            try:
+                lower_systematics = self._build_systematics_model_at(lower_parameters, times)
+                upper_systematics = self._build_systematics_model_at(upper_parameters, times)
+            except Exception:
+                continue
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                lower_ratio = lower_systematics / best_systematics
+                upper_ratio = upper_systematics / best_systematics
+            derivative = (upper_ratio - lower_ratio) / (upper_value - lower_value)
+            contribution = derivative * error * sigma
+            finite = np.isfinite(contribution)
+            variance[finite] += contribution[finite] ** 2
+
+        baseline_uncertainty = np.sqrt(variance)
+        if not np.any(np.isfinite(baseline_uncertainty) & (baseline_uncertainty > 0)):
+            return None
+        return 1.0 - baseline_uncertainty, 1.0 + baseline_uncertainty
+
     def _plot_transit_model_uncertainty(self, ax, x_values, times, sort_index, label=None):
         envelope = self.transit_model_uncertainty(times)
         if envelope is None:
@@ -899,6 +971,28 @@ class lc_fitter(object):
             zorder=3.4,
         )
         return band
+
+    def _plot_baseline_model_uncertainty(self, ax, x_values, times, sort_index, label=None):
+        envelope = self.baseline_model_uncertainty(times)
+        if envelope is None:
+            return None
+
+        lower, upper = envelope
+        x_values = np.asarray(x_values, dtype=float)
+        sort_index = np.asarray(sort_index, dtype=int)
+        x_sorted = x_values[sort_index]
+        lower_sorted = np.asarray(lower, dtype=float)[sort_index]
+        upper_sorted = np.asarray(upper, dtype=float)[sort_index]
+        return ax.fill_between(
+            x_sorted,
+            lower_sorted,
+            upper_sorted,
+            color='gold',
+            alpha=0.28,
+            linewidth=0,
+            zorder=1.7,
+            label=label,
+        )
 
     def _uses_internal_impact_parameter(self):
         return (
@@ -2983,6 +3077,7 @@ class lc_fitter(object):
         phase=True,
         show_flux_baseline_label=True,
         show_model_uncertainty=False,
+        show_baseline_uncertainty=False,
     ):
         f = plt.figure(figsize=(9, 6))
         f.subplots_adjust(top=0.92, bottom=0.09, left=0.14, right=0.98, hspace=0)
@@ -3040,6 +3135,14 @@ class lc_fitter(object):
                             marker='s')
             # axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
             sii = np.argsort(self.phase_upsample)
+            if show_baseline_uncertainty:
+                self._plot_baseline_model_uncertainty(
+                    axs[0],
+                    self.phase_upsample,
+                    self.time_upsample,
+                    sii,
+                    label=r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty',
+                )
             if show_model_uncertainty:
                 self._plot_transit_model_uncertainty(
                     axs[0],
@@ -3063,6 +3166,14 @@ class lc_fitter(object):
             si = np.argsort(self.time)
             sii = np.argsort(self.time_upsample)
             axs[0].errorbar(bt, bf, yerr=bs, alpha=1, zorder=2, color='blue', ls='none', marker='s')
+            if show_baseline_uncertainty:
+                self._plot_baseline_model_uncertainty(
+                    axs[0],
+                    self.time_upsample,
+                    self.time_upsample,
+                    sii,
+                    label=r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty',
+                )
             if show_model_uncertainty:
                 self._plot_transit_model_uncertainty(
                     axs[0],

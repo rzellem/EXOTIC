@@ -5,7 +5,6 @@ barycorrpy~=0.4.4
 bottleneck~=1.4.2
 colour_demosaicing==0.2.6
 colour-science>=0.4.4,<0.4.7
-dynesty~=1.2.3;platform_system=='Windows'
 holoviews~=1.19.1
 importlib-metadata>=3.6;python_version<='3.7'
 imreg_dft~=2.0.0
@@ -30,5 +29,5 @@ tifffile<2026.4.11
 statsmodels~=0.14.4
 tenacity~=9.0
 mpi4py>=4.0;platform_system=='Linux'
-ultranest==4.5.0;platform_system!='Windows'
+ultranest==4.5.0
 zstandard~=0.23.0

@@ -47,13 +47,7 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
-try:
-    from ultranest import ReactiveNestedSampler
-except ImportError:
-    import dynesty
-    import dynesty.plotting
-    from dynesty.utils import resample_equal
-    from scipy.stats import gaussian_kde
+from ultranest import ReactiveNestedSampler
 
 try:
     from elca import glc_fitter, lc_fitter

@@ -109,6 +109,7 @@ from exotic.exotic import (
     comparison_candidate_fit_selection_reason,
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
+    configure_windows_multiprocessing_main_spec,
     deduplicate_comparison_star_coords,
     diagnose_lightcurve_fit_inputs,
     detrend_flux_on_out_of_transit_baseline,
@@ -878,6 +879,95 @@ def test_validate_ultranest_mpi_runtime_rejects_whole_program_mpi(monkeypatch):
 
     with pytest.raises(RuntimeError, match="duplicates the full reduction"):
         exotic_module.validate_ultranest_mpi_runtime()
+
+
+def test_configure_windows_multiprocessing_main_spec_retargets_console_launcher(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    fake_main = types.SimpleNamespace(
+        __spec__=types.SimpleNamespace(name="exotic"),
+        __file__=r"C:\Python312\Scripts\exotic.exe",
+        __package__="",
+    )
+    spawn_executables = []
+
+    monkeypatch.setattr(exotic_module.sys, "platform", "win32")
+    monkeypatch.setattr(exotic_module.sys, "_base_executable", r"C:\Python312\python.exe", raising=False)
+    monkeypatch.setattr(exotic_module.sys, "executable", r"C:\Python312\Scripts\exotic.exe")
+    monkeypatch.setattr(exotic_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(exotic_module.multiprocessing, "set_executable", spawn_executables.append)
+    monkeypatch.setitem(sys.modules, "__main__", fake_main)
+
+    assert configure_windows_multiprocessing_main_spec() is True
+    assert fake_main.__spec__ is None
+    assert fake_main.__file__ is None
+    assert fake_main.__package__ is None
+    assert spawn_executables == [r"C:\Python312\python.exe"]
+    assert exotic_module.sys.frozen is False
+
+
+def test_configure_windows_multiprocessing_main_spec_skips_non_windows(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    fake_main = types.SimpleNamespace(__spec__=types.SimpleNamespace(name="exotic"), __file__="exotic.exe")
+
+    monkeypatch.setattr(exotic_module.sys, "platform", "linux")
+    monkeypatch.setitem(sys.modules, "__main__", fake_main)
+
+    assert configure_windows_multiprocessing_main_spec() is False
+    assert fake_main.__spec__.name == "exotic"
+
+
+def test_configure_windows_multiprocessing_main_spec_preserves_regular_script(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    fake_spec = types.SimpleNamespace(name="run_exotic")
+    fake_main = types.SimpleNamespace(
+        __spec__=fake_spec,
+        __file__=r"C:\work\run_exotic.py",
+        __package__="",
+    )
+
+    monkeypatch.setattr(exotic_module.sys, "platform", "win32")
+    monkeypatch.setattr(exotic_module.sys, "_base_executable", r"C:\Python312\python.exe", raising=False)
+    monkeypatch.setattr(exotic_module.sys, "executable", r"C:\Python312\python.exe")
+    monkeypatch.setattr(exotic_module.multiprocessing, "set_executable", lambda _path: None)
+    monkeypatch.setitem(sys.modules, "__main__", fake_main)
+
+    assert configure_windows_multiprocessing_main_spec() is True
+    assert fake_main.__spec__ is fake_spec
+    assert fake_main.__file__ == r"C:\work\run_exotic.py"
+
+
+def test_windows_python_spawn_executable_falls_back_to_exec_prefix(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module.sys, "_base_executable", r"C:\Python312\Scripts\exotic.exe", raising=False)
+    monkeypatch.setattr(exotic_module.sys, "executable", r"C:\Python312\Scripts\exotic.exe")
+    monkeypatch.setattr(exotic_module.sys, "exec_prefix", r"C:\Python312")
+    monkeypatch.setattr(exotic_module.sys, "base_exec_prefix", r"C:\Python312", raising=False)
+
+    assert exotic_module._windows_python_spawn_executable() == r"C:\Python312\python.exe"
+
+
+def test_process_pool_executor_uses_threads_on_windows(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {}
+
+    class FakeThreadPoolExecutor:
+        def __init__(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(exotic_module.sys, "platform", "win32")
+    monkeypatch.setattr(exotic_module, "ThreadPoolExecutor", FakeThreadPoolExecutor)
+
+    executor = exotic_module.ProcessPoolExecutor(max_workers=3, initializer=lambda: None)
+
+    assert isinstance(executor, FakeThreadPoolExecutor)
+    assert captured["kwargs"]["max_workers"] == 3
+    assert "initializer" in captured["kwargs"]
 
 
 def test_build_time_rejection_diagnostic_groups_contiguous_ranges():

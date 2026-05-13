@@ -54,13 +54,7 @@ import numpy as np
 from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
-try:
-    from ultranest import ReactiveNestedSampler
-except ImportError:
-    import dynesty
-    import dynesty.plotting
-    from dynesty.utils import resample_equal
-    from scipy.stats import gaussian_kde
+from ultranest import ReactiveNestedSampler
 
 try:
     from plotting import corner
@@ -1539,11 +1533,7 @@ class lc_fitter(object):
             )
             return points, logl, weights
 
-        points = np.asarray(self.results.samples, dtype=float)
-        weights = np.exp(self.results.logwt - self.results.logz[-1])
-        index_samples = resample_equal(np.arange(points.shape[0], dtype=float)[:, None], weights)
-        index_samples = np.clip(np.rint(index_samples[:, 0]).astype(int), 0, points.shape[0] - 1)
-        return points[index_samples], np.asarray(self.results.logl, dtype=float)[index_samples], None
+        raise RuntimeError("Triangle plots require an UltraNest nested-sampling result.")
 
     def _get_triangle_plot_sample_weights(self, weights, sample_count):
         if weights is None:
@@ -2927,133 +2917,29 @@ class lc_fitter(object):
             # transform unit cube to prior volume
             return self._sample_point_from_unit_cube(upars, bound_keys)
 
-        try:
-            self.ns_type = 'ultranest'
-            test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)
+        self.ns_type = 'ultranest'
+        test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)
 
-            run_kwargs = {"max_ncalls": int(self.max_ncalls)}
-            if self.ultranest_min_num_live_points is not None:
-                run_kwargs["min_num_live_points"] = int(self.ultranest_min_num_live_points)
+        run_kwargs = {"max_ncalls": int(self.max_ncalls)}
+        if self.ultranest_min_num_live_points is not None:
+            run_kwargs["min_num_live_points"] = int(self.ultranest_min_num_live_points)
 
-            self.results = run_reactive_sampler(
-                test,
-                run_kwargs=run_kwargs,
-                verbose=self.verbose,
-            )
+        self.results = run_reactive_sampler(
+            test,
+            run_kwargs=run_kwargs,
+            verbose=self.verbose,
+        )
 
-            if self.keep_ultranest_sampler:
-                self._ultranest_resume_context = {
-                    'sampler': test,
-                    'bound_keys': list(bound_keys),
-                    'sampled_keys': list(sampled_keys),
-                    'physical_from_sample_point': physical_from_sample_point,
-                }
-            else:
-                self._ultranest_resume_context = None
-            self._finalize_ultranest_fit_results(bound_keys, sampled_keys, physical_from_sample_point)
-        except NameError:
-            self.ns_type = 'dynesty'
-            dsampler = dynesty.DynamicNestedSampler(loglike, prior_transform, ndim=len(sampled_keys),
-                                                    bound='multi', sample='unif')
-            dsampler.run_nested(maxcall=int(1e5), dlogz_init=0.05,
-                                maxbatch=10, nlive_batch=100, print_progress=self.verbose)
-            self.results = dsampler.results
-
-            tests = [np.zeros(len(sampled_keys), dtype=float) for _ in range(5)]
-
-            # Derive kernel density estimate for best fit
-            weights = np.exp(self.results.logwt - self.results.logz[-1])
-            samples = self.results['samples']
-            logvol = self.results['logvol']
-            wt_kde = gaussian_kde(resample_equal(-logvol, weights))  # KDE
-            logvol_grid = np.linspace(logvol[0], logvol[-1], 1000)  # resample
-            wt_grid = wt_kde.pdf(-logvol_grid)  # evaluate KDE PDF
-            self.weights = np.interp(-logvol, -logvol_grid, wt_grid)  # interpolate
-
-            # errors + final values
-            mean, cov = dynesty.utils.mean_and_cov(self.results.samples, weights)
-            mean2, cov2 = dynesty.utils.mean_and_cov(self.results.samples, self.weights)
-            for i in range(len(sampled_keys)):
-                self.sample_errors[sampled_keys[i]] = cov[i, i] ** 0.5
-                tests[0][i] = mean[i]
-                tests[1][i] = mean2[i]
-
-                counts, bins = np.histogram(samples[:, i], bins=100, weights=weights)
-                mi = np.argmax(counts)
-                tests[4][i] = bins[mi] + 0.5 * np.mean(np.diff(bins))
-
-                # finds median and +- 2sigma, will vary from mode if non-gaussian
-                self.sample_quantiles[sampled_keys[i]] = dynesty.utils.quantile(
-                    self.results.samples[:, i],
-                    [0.025, 0.5, 0.975],
-                    weights=weights,
-                )
-                tests[2][i] = self.sample_quantiles[sampled_keys[i]][1]
-
-            # find minimum near weighted mean
-            mask = (samples[:, 0] < mean[0] + 2 * self.sample_errors[sampled_keys[0]]) & (
-                    samples[:, 0] > mean[0] - 2 * self.sample_errors[sampled_keys[0]])
-            bi = np.argmin(self.weights[mask])
-
-            for i in range(len(sampled_keys)):
-                tests[3][i] = samples[mask][bi, i]
-                # tests[4][freekeys[i]] = np.average(samples[mask][:, i], weights=self.weights[mask], axis=0)
-
-            # find best fit from chi2 minimization
-            chis = []
-            physical_tests = []
-            for i in range(len(tests)):
-                test_values = physical_from_sample_point(tests[i])
-                lightcurve = transit(self.time, test_values)
-                if self._has_free_flux_baseline():
-                    flux_scale = get_flux_baseline(test_values)
-                elif self._uses_fixed_flux_baseline():
-                    flux_scale = get_flux_baseline(test_values)
-                else:
-                    flux_scale = mc_a1(
-                        test_values.get('a2', 0),
-                        self.errors.get('a2', 1e-6),
-                        lightcurve,
-                        self.airmass,
-                        self.data,
-                        self.dataerr,
-                        mask=self._get_baseline_fit_mask(),
-                    )[0]
-                test_values['a0'] = flux_scale
-                test_values['a1'] = flux_scale
-                airmass = flux_scale * airmass_trend(
-                    test_values.get('a2', 0),
-                    self.airmass,
-                    reference=self._get_airmass_reference(),
-                )
-                residuals = self.data - (lightcurve * airmass)
-                chis.append(np.sum(residuals ** 2))
-                physical_tests.append(test_values)
-
-            mi = np.argmin(chis)
-            self.parameters = copy.deepcopy(physical_tests[mi])
-            self.sample_bounds = self._get_sample_bounds(bound_keys, self.parameters)
-            self.sample_parameters = {key: tests[mi][i] for i, key in enumerate(sampled_keys)}
-
-            for bound_key, sampled_key in zip(bound_keys, sampled_keys):
-                if bound_key == 'inc' and sampled_key == 'b':
-                    continue
-                self.errors[bound_key] = self.sample_errors[sampled_key]
-                self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
-
-            if 'inc' in bound_keys and 'b' in sampled_keys:
-                inc_samples = np.array([
-                    physical_from_sample_point(point)['inc']
-                    for point in samples
-                ])
-                center, std, quantiles = self._summarize_derived_parameter(inc_samples, self.parameters['inc'])
-                self.parameters['inc'] = center
-                self.errors['inc'] = std
-                self.quantiles['inc'] = quantiles
-            else:
-                for key in sampled_keys:
-                    self.sample_errors.setdefault(key, 0.0)
-                    self.sample_quantiles.setdefault(key, [0, 0, 0])
+        if self.keep_ultranest_sampler:
+            self._ultranest_resume_context = {
+                'sampler': test,
+                'bound_keys': list(bound_keys),
+                'sampled_keys': list(sampled_keys),
+                'physical_from_sample_point': physical_from_sample_point,
+            }
+        else:
+            self._ultranest_resume_context = None
+        self._finalize_ultranest_fit_results(bound_keys, sampled_keys, physical_from_sample_point)
 
         if not self.sample_parameters:
             self.sample_parameters = {

@@ -63,12 +63,13 @@ from functools import lru_cache
 import inspect
 import json
 import hashlib
+import multiprocessing
 import os
 import shutil
 import sys
 import threading
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor as _ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from time import sleep, perf_counter
 # Image alignment import
 import astroalign as aa
@@ -4388,6 +4389,57 @@ def validate_ultranest_mpi_runtime():
     if int(status.get("rank") or 0) == 0:
         log_info(f"Error: {message}", error=True)
     raise RuntimeError(message)
+
+
+def configure_windows_multiprocessing_main_spec():
+    if sys.platform != "win32":
+        return False
+
+    configured = False
+    spawn_executable = _windows_python_spawn_executable()
+    if spawn_executable:
+        multiprocessing.set_executable(spawn_executable)
+        if getattr(sys, "frozen", False):
+            sys.frozen = False
+        configured = True
+
+    main_module = sys.modules.get("__main__")
+    if main_module is None:
+        return configured
+
+    main_file = getattr(main_module, "__file__", None)
+    if not main_file or os.path.basename(os.fspath(main_file)).lower() not in {"exotic.exe", "exotic-script.py"}:
+        return configured
+
+    if getattr(main_module, "__spec__", None) is not None:
+        main_module.__spec__ = None
+    main_module.__file__ = None
+    if getattr(main_module, "__package__", None) is not None:
+        main_module.__package__ = None
+
+    return True
+
+
+def ProcessPoolExecutor(*args, **kwargs):
+    if sys.platform == "win32":
+        return ThreadPoolExecutor(*args, **kwargs)
+    return _ProcessPoolExecutor(*args, **kwargs)
+
+
+def _windows_python_spawn_executable():
+    candidates = [
+        getattr(sys, "_base_executable", None),
+        sys.executable,
+        os.path.join(sys.exec_prefix, "python.exe"),
+        os.path.join(getattr(sys, "base_exec_prefix", sys.exec_prefix), "python.exe"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        executable = os.fspath(candidate)
+        if os.path.basename(executable).lower() in {"python.exe", "pythonw.exe"}:
+            return executable
+    return None
 
 
 def should_use_psf_photometry(config_value):
@@ -9744,6 +9796,7 @@ class _ParallelPlateStatusRecorder:
         self.warnings.append(('alignment_error', -1, np.nan, np.nan))
 
 
+_PLATE_STATUS_SWAP_LOCK = threading.RLock()
 _ALIGNMENT_POOL_CONTEXT = {}
 
 
@@ -9905,32 +9958,33 @@ def build_multiprocess_pointing_precheck_transforms(inputfiles, max_processes, r
 def _fit_alignment_candidate_psfs(image_data, predicted_coords, target_fast_centroid, frame_fast_centroid):
     global plateStatus
     predicted_coords = np.asarray(predicted_coords, dtype=float)
-    original_plate_status = plateStatus
-    recorder = _ParallelPlateStatusRecorder()
-    plateStatus = recorder
-    try:
-        psf_rows = {
-            'target': fit_centroid_or_warn_out_of_frame(
-                image_data,
-                choose_centroid_seed_position(predicted_coords[0], None),
-                0,
-                fast_mode=target_fast_centroid,
-            )
-        }
-        for comp_idx in range(max(0, predicted_coords.shape[0] - 1)):
-            psf_rows[f"comp{comp_idx + 1}"] = fit_centroid_or_warn_out_of_frame(
-                image_data,
-                choose_centroid_seed_position(predicted_coords[comp_idx + 1], None),
-                comp_idx + 1,
-                fast_mode=frame_fast_centroid,
-            )
-        return {
-            'coords': predicted_coords,
-            'psf_rows': psf_rows,
-            'warnings': list(recorder.warnings),
-        }
-    finally:
-        plateStatus = original_plate_status
+    with _PLATE_STATUS_SWAP_LOCK:
+        original_plate_status = plateStatus
+        recorder = _ParallelPlateStatusRecorder()
+        plateStatus = recorder
+        try:
+            psf_rows = {
+                'target': fit_centroid_or_warn_out_of_frame(
+                    image_data,
+                    choose_centroid_seed_position(predicted_coords[0], None),
+                    0,
+                    fast_mode=target_fast_centroid,
+                )
+            }
+            for comp_idx in range(max(0, predicted_coords.shape[0] - 1)):
+                psf_rows[f"comp{comp_idx + 1}"] = fit_centroid_or_warn_out_of_frame(
+                    image_data,
+                    choose_centroid_seed_position(predicted_coords[comp_idx + 1], None),
+                    comp_idx + 1,
+                    fast_mode=frame_fast_centroid,
+                )
+            return {
+                'coords': predicted_coords,
+                'psf_rows': psf_rows,
+                'warnings': list(recorder.warnings),
+            }
+        finally:
+            plateStatus = original_plate_status
 
 
 def _parallel_alignment_task(task):
@@ -14825,6 +14879,7 @@ def _main_impl():
         raise ValueError("--multiprocess-transformations requires an integer greater than 0.")
     if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits < 1:
         raise ValueError("--multiprocess-lightcurve-fits requires an integer greater than 0.")
+    configure_windows_multiprocessing_main_spec()
     validate_ultranest_mpi_runtime()
 
     log.debug("*************************")

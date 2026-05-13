@@ -2,6 +2,8 @@ import io
 import sys
 import types
 import importlib.util
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -745,6 +747,44 @@ def test_parallel_alignment_task_uses_precomputed_fallback_transform(monkeypatch
     ))
 
     assert np.allclose(result["fallback"]["coords"], [[6.0, 1.0], [8.0, 3.0]])
+
+
+def test_fit_alignment_candidate_psfs_serializes_plate_status_swap(monkeypatch):
+    sentinel_status = types.SimpleNamespace(name="original-plate-status")
+    started = threading.Event()
+
+    def fake_fit_centroid(_data, pos, starIndex, **_kwargs):
+        started.set()
+        return np.array([float(starIndex), float(pos[0]), float(pos[1])], dtype=float)
+
+    monkeypatch.setattr(exotic_module, "plateStatus", sentinel_status)
+    monkeypatch.setattr(exotic_module, "fit_centroid_or_warn_out_of_frame", fake_fit_centroid)
+
+    lock = exotic_module._PLATE_STATUS_SWAP_LOCK
+    lock.acquire()
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = None
+    try:
+        future = executor.submit(
+            exotic_module._fit_alignment_candidate_psfs,
+            np.ones((5, 5), dtype=float),
+            np.array([[1.0, 1.0], [2.0, 2.0]], dtype=float),
+            False,
+            False,
+        )
+        assert not started.wait(0.2)
+    finally:
+        lock.release()
+
+    try:
+        result = future.result(timeout=2)
+    finally:
+        executor.shutdown(wait=True)
+
+    assert started.wait(0.2)
+    assert result["psf_rows"]["target"].tolist() == [0.0, 1.0, 1.0]
+    assert result["psf_rows"]["comp1"].tolist() == [1.0, 2.0, 2.0]
+    assert exotic_module.plateStatus is sentinel_status
 
 
 def test_filter_sparse_missing_wcs_frames_drops_files_below_three_percent(monkeypatch):

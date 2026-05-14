@@ -527,11 +527,20 @@ def plot_variable_residuals(save):
 
 
 def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
+    if not vsp_params:
+        return
+
     for vsp_p in vsp_params:
         plt.errorbar(vsp_p['time'], vsp_p['mag'], yerr=vsp_p['mag_err'], color="tomato", fmt='.')
 
-    plt.title(f"{s_name} (Label: {vsp_auid_comp})")
-    plt.ylabel("Vmag")
+    first_param = vsp_params[0]
+    band = first_param.get('mag_band') or 'V'
+    if first_param.get('is_aavso_vsp', True):
+        title = f"{s_name} (Label: {vsp_auid_comp})"
+    else:
+        title = f"{s_name} (Calib: {vsp_auid_comp})"
+    plt.title(title)
+    plt.ylabel(f"{band}mag")
     plt.xlabel("Time [JD]")
     plt.savefig(Path(save) / "temp" / f"Stellar_Variability.png")
     plt.close()

@@ -5,6 +5,7 @@ import types
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import numpy as np
 import pytest
 
@@ -398,12 +399,50 @@ def test_plot_bestfit_can_draw_transit_model_uncertainty_band(monkeypatch, tmp_p
 
     fig, axes = fit.plot_bestfit(show_model_uncertainty=True)
     labels = [artist.get_label() for artist in axes[0].collections]
+    legend_text = "\n".join(text.get_text() for text in axes[0].get_legend().get_texts())
     uncertainty_line_count = sum(1 for line in axes[0].lines if line.get_linestyle() == "--")
 
     assert envelope is not None
     assert np.nanmax(envelope[1] - envelope[0]) > 0
-    assert r'1-$\sigma$ model uncertainty' in labels
+    assert "_nolegend_" in labels
+    assert r'1-$\sigma$ model uncertainty' not in legend_text
     assert uncertainty_line_count >= 2
+    plt.close(fig)
+
+
+def test_plot_bestfit_draws_unbinned_points_black_with_grey_errorbars(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+    captured_errorbars = []
+
+    original_errorbar = Axes.errorbar
+
+    def spy_errorbar(self, *args, **kwargs):
+        captured_errorbars.append(kwargs.copy())
+        return original_errorbar(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+
+    fig, _ = fit.plot_bestfit()
+
+    assert captured_errorbars[0]["color"] == "black"
+    assert captured_errorbars[0]["ecolor"] == "0.72"
+    assert captured_errorbars[0]["alpha"] == 1.0
     plt.close(fig)
 
 
@@ -483,8 +522,10 @@ def test_plot_bestfit_can_draw_baseline_uncertainty_band(monkeypatch, tmp_path):
 
     fig, axes = fit.plot_bestfit(show_baseline_uncertainty=True)
     labels = [artist.get_label() for artist in axes[0].collections]
+    legend_text = "\n".join(text.get_text() for text in axes[0].get_legend().get_texts())
 
-    assert r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty' in labels
+    assert "_nolegend_" in labels
+    assert r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty' not in legend_text
     plt.close(fig)
 
 
@@ -873,6 +914,50 @@ def test_nested_fit_replaces_degenerate_ultranest_errors_from_loglike_neighborho
     assert fit.errors["tmid"] > 1e-4
     assert set(fit.ultranest_error_fallbacks) == {"rprs", "tmid"}
     assert fit.ultranest_error_fallbacks["rprs"]["sample_count"] == 8
+
+
+def test_nested_fit_replaces_prior_width_like_error_with_local_likelihood_width(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = make_prior()
+    fit.bounds = {"rprs": [0.0, 0.3]}
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.fixed_parameter_errors = {}
+
+    center = 0.152
+    broad_points = np.linspace(0.0, 0.3, 40)
+    local_points = center + np.linspace(-0.006, 0.006, 17)
+    points = np.concatenate([broad_points, local_points])[:, None]
+    broad_logl = np.full(broad_points.shape, -100.0)
+    local_logl = -0.5 * ((local_points - center) / 0.0038) ** 2
+    logl = np.concatenate([broad_logl, local_logl])
+    fit.results = {
+        "maximum_likelihood": {"point": np.array([center])},
+        "posterior": {
+            "stdev": np.array([0.082]),
+            "errlo": np.array([-0.082]),
+            "errup": np.array([0.082]),
+        },
+        "weighted_samples": {
+            "points": points,
+            "logl": logl,
+        },
+        "samples": points.copy(),
+    }
+
+    fit._finalize_ultranest_fit_results(
+        ["rprs"],
+        ["rprs"],
+        lambda point: {"rprs": float(point[0])},
+    )
+
+    fallback = fit.ultranest_error_fallbacks["rprs"]
+    assert fit.errors["rprs"] < 0.01
+    assert fit.errors["rprs"] == pytest.approx(fallback["error"])
+    assert fallback["reported_error"] == pytest.approx(0.082)
+    assert fallback["reason"] == "posterior_summary_inflated_relative_to_local_fit"
+    assert fallback["delta_chi2"] <= 1.0
 
 
 def test_nested_fit_duration_prior_penalizes_wrong_transit_length(monkeypatch, tmp_path):

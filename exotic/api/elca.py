@@ -78,6 +78,8 @@ TRANSIT_MODEL_UNCERTAINTY_KEYS = (
 )
 BASELINE_MODEL_UNCERTAINTY_KEYS = ('a0', 'a1', 'a2')
 MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT = 2000
+ULTRANEST_INFLATED_ERROR_REPLACEMENT_FACTOR = 3.0
+ULTRANEST_LOCAL_UNCERTAINTY_MAX_DELTA_CHI2 = 9.0
 
 def _pylightcurve_import_watchdog_seconds():
     try:
@@ -1206,6 +1208,29 @@ class lc_fitter(object):
 
         absolute_floor = max(abs(float(center)) * 1e-12, np.finfo(float).eps)
         return reported_error <= absolute_floor or reported_error < sample_scale * 1e-6
+
+    def _ultranest_error_is_inflated_relative_to_local_fit(self, reported_error, local_uncertainty):
+        if not isinstance(local_uncertainty, dict):
+            return False
+
+        try:
+            reported_error = float(reported_error)
+            local_error = float(local_uncertainty.get('error', np.nan))
+            delta_chi2 = float(local_uncertainty.get('delta_chi2', np.inf))
+        except (TypeError, ValueError):
+            return False
+
+        if (
+            not np.isfinite(reported_error)
+            or reported_error <= 0
+            or not np.isfinite(local_error)
+            or local_error <= 0
+        ):
+            return False
+        if not np.isfinite(delta_chi2) or delta_chi2 > ULTRANEST_LOCAL_UNCERTAINTY_MAX_DELTA_CHI2:
+            return False
+
+        return reported_error > local_error * ULTRANEST_INFLATED_ERROR_REPLACEMENT_FACTOR
 
     def _get_plot_range(self, key):
         sample_parameters = getattr(self, 'sample_parameters', {})
@@ -2773,8 +2798,15 @@ class lc_fitter(object):
                 self.results['posterior']['errup'][i]]
             if self._ultranest_error_needs_sample_fallback(i, ml_point[i], reported_error):
                 fallback = self._loglike_neighborhood_uncertainty(i, ml_point[i])
+                if fallback is not None:
+                    fallback['reason'] = 'degenerate_posterior_summary'
             else:
                 fallback = None
+                local_uncertainty = self._loglike_neighborhood_uncertainty(i, ml_point[i])
+                if self._ultranest_error_is_inflated_relative_to_local_fit(reported_error, local_uncertainty):
+                    fallback = local_uncertainty
+                    fallback['reported_error'] = float(reported_error)
+                    fallback['reason'] = 'posterior_summary_inflated_relative_to_local_fit'
             if fallback is not None:
                 self.sample_errors[key] = fallback['error']
                 self.sample_quantiles[key] = fallback['quantiles']
@@ -3000,16 +3032,18 @@ class lc_fitter(object):
         else:
             if phase:
                 axs[0].errorbar(self.phase, self.detrended, yerr=np.std(self.residuals) / np.median(self.data),
-                                ls='none', marker='.', color='black', zorder=1, alpha=0.2)
+                                ls='none', marker='.', color='black', ecolor='0.72',
+                                elinewidth=1.0, zorder=1, alpha=1.0)
             else:
                 axs[0].errorbar(self.time, self.detrended, yerr=np.std(self.residuals) / np.median(self.data),
-                                ls='none', marker='.', color='black', zorder=1, alpha=0.2)
+                                ls='none', marker='.', color='black', ecolor='0.72',
+                                elinewidth=1.0, zorder=1, alpha=1.0)
 
         if phase:
             si = np.argsort(self.phase)
             bt2, br2, _ = time_bin(self.phase[si] * self.parameters['per'],
                                    self.residuals[si] / np.median(self.data) * 1e2, bin_dt)
-            axs[1].plot(self.phase, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=0.2,
+            axs[1].plot(self.phase, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=1.0,
                         label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals / np.median(self.data) * 1e2)))
             axs[1].plot(bt2 / self.parameters['per'], br2, 'bs', alpha=1, zorder=2)
             axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
@@ -3027,7 +3061,7 @@ class lc_fitter(object):
                     self.phase_upsample,
                     self.time_upsample,
                     sii,
-                    label=r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty',
+                    label='_nolegend_',
                 )
             if show_model_uncertainty:
                 self._plot_transit_model_uncertainty(
@@ -3035,14 +3069,14 @@ class lc_fitter(object):
                     self.phase_upsample,
                     self.time_upsample,
                     sii,
-                    label=r'1-$\sigma$ model uncertainty',
+                    label='_nolegend_',
                 )
             axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
             axs[0].set_xlabel("Phase ", fontsize=14)
         else:
             bt, br, _ = time_bin(self.time, self.residuals / np.median(self.data) * 1e2, bin_dt)
-            axs[1].plot(self.time, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=0.2,
+            axs[1].plot(self.time, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=1.0,
                         label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals / np.median(self.data) * 1e2)))
             axs[1].plot(bt, br, 'bs', alpha=1, zorder=2, label=r'$\sigma$ = {:.2f} %'.format(np.std(br)))
             axs[1].set_xlim([min(self.time_upsample), max(self.time_upsample)])
@@ -3058,7 +3092,7 @@ class lc_fitter(object):
                     self.time_upsample,
                     self.time_upsample,
                     sii,
-                    label=r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty',
+                    label='_nolegend_',
                 )
             if show_model_uncertainty:
                 self._plot_transit_model_uncertainty(
@@ -3066,7 +3100,7 @@ class lc_fitter(object):
                     self.time_upsample,
                     self.time_upsample,
                     sii,
-                    label=r'1-$\sigma$ model uncertainty',
+                    label='_nolegend_',
                 )
             axs[0].plot(self.time_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.time_upsample), max(self.time_upsample)])

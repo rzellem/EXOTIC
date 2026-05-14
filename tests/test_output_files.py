@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from exotic.output_files import OutputFiles, fit_impact_parameter_value_error, save_comp_star_calibration_summary
+from exotic.output_files import AIDOutputFiles, OutputFiles, fit_impact_parameter_value_error, save_comp_star_calibration_summary
 
 
 class DummyFit:
@@ -157,6 +157,56 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
     assert "#GAIAPMDEC=" not in output_text
 
 
+def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
+    fit = DummyFit()
+    p_dict = {
+        "pName": "HAT-P-32 b",
+        "sName": "HAT-P-32",
+    }
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "aavso_num": "RTZ",
+        "camera": "CCD",
+        "filter": "V",
+        "lat": "+32.41638889",
+        "long": "-110.73444444",
+        "elev": 2616,
+    }
+    vsp_params = [{
+        "time": 2450000.12345,
+        "mag": 12.34,
+        "mag_err": 0.05,
+        "airmass": 1.234,
+        "cname": "RA=10.1000000 Dec=-20.2000000",
+        "cmag": 12.1,
+        "cmag_err": 0.03,
+        "pos": [493, 202],
+        "comp_ra": 10.1,
+        "comp_dec": -20.2,
+        "catalog_ra": 10.10001,
+        "catalog_dec": -20.20001,
+        "catalog_source": "NextAstro photometry catalog",
+        "is_aavso_vsp": False,
+        "mag_band": "V",
+        "source_id": 12345,
+        "separation_arcsec": 0.2,
+    }]
+
+    AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
+
+    output_text = (tmp_path / "AID_AAVSO_HAT-P-32_2020-01-01.txt").read_text(encoding="utf-8")
+    metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
+
+    assert metadata["source"] == "NextAstro photometry catalog"
+    assert metadata["is_aavso_vsp"] is False
+    assert metadata["comparison_ra_deg"] == pytest.approx(10.1)
+    assert metadata["comparison_dec_deg"] == pytest.approx(-20.2)
+    assert metadata["apparent_magnitude"] == pytest.approx(12.1)
+    assert metadata["apparent_magnitude_error"] == pytest.approx(0.03)
+    assert "HAT-P-32,2450000.12345" in output_text
+
+
 def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
     summary_path = save_comp_star_calibration_summary(
         tmp_path,
@@ -221,6 +271,39 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
     assert "Airmass correction" in output_text
     assert "no airmass correction applied" in output_text
     assert "Airmass coefficient 1 (a1)" not in output_text
+
+
+def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+    vsp_params = [{
+        "cname": "RA=10.1000000 Dec=-20.2000000",
+        "cmag": 12.345,
+        "cmag_err": 0.067,
+        "pos": [493, 202],
+        "comp_ra": 10.1,
+        "comp_dec": -20.2,
+        "catalog_source": "NextAstro photometry catalog",
+        "is_aavso_vsp": False,
+        "mag_band": "V",
+    }]
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=vsp_params,
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    reference = final_params["Variable Reference Star"]
+    assert "NextAstro photometry catalog" in reference
+    assert "RA=10.1000000" in reference
+    assert "Dec=-20.2000000" in reference
+    assert "V=12.34500 +/- 0.06700" in reference
 
 
 def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclination(tmp_path):

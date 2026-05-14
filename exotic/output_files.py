@@ -84,6 +84,57 @@ def aavso_json_safe(value):
     return value
 
 
+def format_optional_float(value, digits=7):
+    value = finite_float(value)
+    if np.isfinite(value):
+        return f"{value:.{digits}f}"
+    return "na"
+
+
+def stellar_variability_reference_summary(vsp_param):
+    if not vsp_param:
+        return "na"
+
+    cname = vsp_param.get('cname', 'na')
+    cmag = finite_float(vsp_param.get('cmag'))
+    cmag_err = finite_float(vsp_param.get('cmag_err'))
+    band = vsp_param.get('mag_band') or 'V'
+    if vsp_param.get('is_aavso_vsp', True):
+        return f"AAVSO Label: {cname}, Position: {vsp_param.get('pos')}"
+
+    source = vsp_param.get('catalog_source') or 'NextAstro photometry catalog'
+    comp_ra = format_optional_float(vsp_param.get('comp_ra'))
+    comp_dec = format_optional_float(vsp_param.get('comp_dec'))
+    if np.isfinite(cmag) and np.isfinite(cmag_err):
+        mag_text = f"{band}={cmag:.5f} +/- {cmag_err:.5f}"
+    elif np.isfinite(cmag):
+        mag_text = f"{band}={cmag:.5f}"
+    else:
+        mag_text = f"{band}=na"
+    return f"{source}: RA={comp_ra}, Dec={comp_dec}, {mag_text}"
+
+
+def aid_comparison_metadata(vsp_param):
+    if not vsp_param:
+        return {}
+    return aavso_json_safe({
+        'source': vsp_param.get('catalog_source', 'AAVSO VSP'),
+        'is_aavso_vsp': bool(vsp_param.get('is_aavso_vsp', True)),
+        'comparison_name': vsp_param.get('cname'),
+        'comparison_position_pixels': vsp_param.get('pos'),
+        'comparison_ra_deg': vsp_param.get('comp_ra'),
+        'comparison_dec_deg': vsp_param.get('comp_dec'),
+        'catalog_ra_deg': vsp_param.get('catalog_ra'),
+        'catalog_dec_deg': vsp_param.get('catalog_dec'),
+        'catalog_source_id': vsp_param.get('source_id'),
+        'catalog_id': vsp_param.get('catalog_id'),
+        'catalog_match_separation_arcsec': vsp_param.get('separation_arcsec'),
+        'magnitude_band': vsp_param.get('mag_band'),
+        'apparent_magnitude': vsp_param.get('cmag'),
+        'apparent_magnitude_error': vsp_param.get('cmag_err'),
+    })
+
+
 def prune_aavso_metadata(value):
     if isinstance(value, dict):
         pruned = {}
@@ -982,8 +1033,7 @@ class OutputFiles:
                 params_num["Transit QC notes"] = " ".join(str(note) for note in qc_notes)
 
         if vsp_params:
-            params_num["Variable Reference Star"] = f"AAVSO Label: {vsp_params[0]['cname']}, " + \
-                                                    f"Position: {vsp_params[0]['pos']}"
+            params_num["Variable Reference Star"] = stellar_variability_reference_summary(vsp_params[0])
 
         if phot_opt:
             phot_ext = {"Best Comparison Star": f"#{comp_star} - {comp_coords}" if min_aper >= 0 else str(comp_star)}
@@ -1143,6 +1193,10 @@ class AIDOutputFiles:
         self.vsp_params = vsp_params
 
     def aavso(self):
+        first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
+        comparison_metadata = aid_comparison_metadata(first_vsp_param)
+        variable_name = self.auid or self.p_dict.get('sName') or self.p_dict.get('pName')
+
         params_file = self.dir / safe_output_filename(
             "AID_AAVSO",
             self.p_dict['sName'],
@@ -1167,12 +1221,15 @@ class AIDOutputFiles:
                 "Space Telescope Science Institute.\n"
                 "# Use of this data is governed by the AAVSO Data Usage Guidelines: "
                 "aavso.org/data-usage-guidelines\n")
+            if comparison_metadata:
+                f.write(f"#COMPARISON-CATALOG-XC={dumps(comparison_metadata, sort_keys=True)}\n")
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:
-                f.write(f"{self.auid},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
-                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na," 
-                        f"{round(vsp_p['airmass'], 7)},na,{self.chart_id},na\n")
+                chart_id = self.chart_id or vsp_p.get('chart_id') or 'na'
+                f.write(f"{variable_name},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
+                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na,"
+                        f"{round(vsp_p['airmass'], 7)},na,{chart_id},na\n")
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

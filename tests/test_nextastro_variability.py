@@ -201,6 +201,128 @@ def test_nextastro_variability_caps_retry_attempts_at_five(monkeypatch):
     assert excinfo.value.last_attempt.attempt_number == 5
 
 
+def test_nextastro_photometry_catalog_match_prefers_requested_filter():
+    catalog = {
+        'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag', 'g', 'dg'],
+        'count': 2,
+        'row_format': 'objects',
+        'rows': [
+            {
+                'id': 1,
+                'source_id': 111,
+                'ra': 10.0001,
+                'dec': 20.0001,
+                'Vmag': None,
+                'err_Vmag': None,
+                'g': 12.1,
+                'dg': 0.02,
+            },
+            {
+                'id': 2,
+                'source_id': 222,
+                'ra': 10.0002,
+                'dec': 20.0002,
+                'Vmag': 12.3,
+                'err_Vmag': 0.04,
+                'g': 12.0,
+                'dg': 0.02,
+            },
+        ],
+    }
+
+    match = exotic_module.nextastro_photometry_catalog_match(catalog, 10.0, 20.0, 'CV')
+
+    assert match['source_id'] == 222
+    assert match['mag'] == pytest.approx(12.3)
+    assert match['error'] == pytest.approx(0.04)
+    assert match['mag_band'] == 'V'
+    assert match['separation_arcsec'] > 0
+
+
+def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
+    catalog = {
+        'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
+        'count': 1,
+        'row_format': 'objects',
+        'rows': [
+            {
+                'id': 9,
+                'source_id': 12345,
+                'ra': 10.00001,
+                'dec': -20.00001,
+                'Vmag': 11.2,
+                'err_Vmag': 0.03,
+            }
+        ],
+    }
+
+    calibration_stars = exotic_module.merge_nextastro_calibration_stars(
+        comp_stars=[[100, 200]],
+        comp_ra_dec=[(10.0, -20.0)],
+        obs_filter='V',
+        existing_comp_stars={},
+        field_catalog=catalog,
+    )
+
+    assert list(calibration_stars) == ['NextAstro-12345']
+    calibration = calibration_stars['NextAstro-12345']
+    assert calibration['is_aavso_vsp'] is False
+    assert calibration['catalog_source'] == 'NextAstro photometry catalog'
+    assert calibration['ra'] == pytest.approx(10.0)
+    assert calibration['dec'] == pytest.approx(-20.0)
+    assert calibration['mag'] == pytest.approx(11.2)
+    assert calibration['error'] == pytest.approx(0.03)
+
+
+def test_build_stellar_variability_params_records_nextastro_reference(monkeypatch, tmp_path):
+    captured = {}
+
+    class DummyFit:
+        data = np.array([1.0, 1.02, 0.98], dtype=float)
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.array([1.1, 1.2, 1.3], dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    def fake_plot(params, save, s_name, label):
+        captured['params'] = params
+        captured['label'] = label
+
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', fake_plot)
+
+    calibration_star = {
+        'mag': 12.0,
+        'error': 0.05,
+        'ra': 10.1,
+        'dec': -20.2,
+        'catalog_ra': 10.10001,
+        'catalog_dec': -20.20001,
+        'catalog_source': 'NextAstro photometry catalog',
+        'is_aavso_vsp': False,
+        'mag_band': 'V',
+        'source_id': 123,
+        'separation_arcsec': 0.2,
+    }
+
+    params = exotic_module.build_stellar_variability_params_from_fit(
+        DummyFit(),
+        calibration_star,
+        [100, 200],
+        'NextAstro-123',
+        tmp_path,
+        'Host Star',
+    )
+
+    assert captured['label'] == 'RA=10.1000000 Dec=-20.2000000'
+    assert len(params) == 3
+    assert params[0]['catalog_source'] == 'NextAstro photometry catalog'
+    assert params[0]['is_aavso_vsp'] is False
+    assert params[0]['comp_ra'] == pytest.approx(10.1)
+    assert params[0]['comp_dec'] == pytest.approx(-20.2)
+    assert params[0]['cmag'] == pytest.approx(12.0)
+    assert params[0]['cmag_err'] == pytest.approx(0.05)
+
+
 def test_check_for_variable_stars_uses_nextastro_flags_to_filter(monkeypatch):
     logged = []
 

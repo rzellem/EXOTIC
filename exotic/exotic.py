@@ -275,6 +275,14 @@ TIME_REJECTION_GROUP_GAP_CADENCE_MULTIPLIER = 2.5
 NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS = 5
 NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS = 10
 NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+NEXTASTRO_PHOTOMETRY_API_URL = 'https://photometry.nextastro.org'
+NEXTASTRO_PHOTOMETRY_COLUMNS = (
+    'id', 'source_id', 'ra', 'dec',
+    'Bmag', 'err_Bmag', 'Vmag', 'err_Vmag',
+    'umag', 'err_umag', 'g', 'dg', 'r', 'dr', 'i', 'di', 'z', 'dz',
+)
+NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
+NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 30.0
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
 BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
@@ -8889,6 +8897,329 @@ def nextastro_variability_test(comp_ra_dec):
     return variability_flags
 
 
+def _finite_float(value, default=None):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if np.isfinite(parsed) else default
+
+
+def normalize_nextastro_filter_key(obs_filter):
+    return re.sub(r"[^a-z0-9]", "", str(obs_filter or "").lower())
+
+
+def nextastro_photometry_band_candidates(obs_filter):
+    filter_key = normalize_nextastro_filter_key(obs_filter)
+    direct_map = {
+        'u': [('umag', 'err_umag', 'u')],
+        'johnsonu': [('umag', 'err_umag', 'u')],
+        'su': [('umag', 'err_umag', 'u')],
+        'up': [('umag', 'err_umag', 'u')],
+        'b': [('Bmag', 'err_Bmag', 'B')],
+        'johnsonb': [('Bmag', 'err_Bmag', 'B')],
+        'photographicb': [('Bmag', 'err_Bmag', 'B')],
+        'bb': [('Bmag', 'err_Bmag', 'B')],
+        'pb': [('Bmag', 'err_Bmag', 'B')],
+        'v': [('Vmag', 'err_Vmag', 'V')],
+        'johnsonv': [('Vmag', 'err_Vmag', 'V')],
+        'bv': [('Vmag', 'err_Vmag', 'V')],
+        'cv': [('Vmag', 'err_Vmag', 'V')],
+        'clearv': [('Vmag', 'err_Vmag', 'V')],
+        'clearunfilteredreducedtovsequence': [('Vmag', 'err_Vmag', 'V')],
+        'mobscv': [('Vmag', 'err_Vmag', 'V')],
+        'c': [('Vmag', 'err_Vmag', 'V')],
+        'clear': [('Vmag', 'err_Vmag', 'V')],
+        'lum': [('Vmag', 'err_Vmag', 'V')],
+        'luminance': [('Vmag', 'err_Vmag', 'V')],
+        'sg': [('g', 'dg', 'g')],
+        'sloang': [('g', 'dg', 'g')],
+        'sdssg': [('g', 'dg', 'g')],
+        'photographicg': [('g', 'dg', 'g')],
+        'gp': [('g', 'dg', 'g')],
+        'g': [('g', 'dg', 'g')],
+        'pg': [('g', 'dg', 'g')],
+        'tg': [('g', 'dg', 'g')],
+        'sr': [('r', 'dr', 'r')],
+        'sloanr': [('r', 'dr', 'r')],
+        'sdssr': [('r', 'dr', 'r')],
+        'johnsonr': [('r', 'dr', 'r')],
+        'cousinsr': [('r', 'dr', 'r')],
+        'clearunfilteredreducedtorsequence': [('r', 'dr', 'r')],
+        'photographicr': [('r', 'dr', 'r')],
+        'rp': [('r', 'dr', 'r')],
+        'r': [('r', 'dr', 'r')],
+        'rc': [('r', 'dr', 'r')],
+        'rj': [('r', 'dr', 'r')],
+        'pr': [('r', 'dr', 'r')],
+        'tr': [('r', 'dr', 'r')],
+        'cr': [('r', 'dr', 'r')],
+        'si': [('i', 'di', 'i')],
+        'sloani': [('i', 'di', 'i')],
+        'sdssi': [('i', 'di', 'i')],
+        'johnsoni': [('i', 'di', 'i')],
+        'cousinsi': [('i', 'di', 'i')],
+        'ip': [('i', 'di', 'i')],
+        'i': [('i', 'di', 'i')],
+        'ic': [('i', 'di', 'i')],
+        'ij': [('i', 'di', 'i')],
+        'sz': [('z', 'dz', 'z')],
+        'sloanz': [('z', 'dz', 'z')],
+        'sdssz': [('z', 'dz', 'z')],
+        'panstarrszshort': [('z', 'dz', 'z')],
+        'zp': [('z', 'dz', 'z')],
+        'z': [('z', 'dz', 'z')],
+        'zs': [('z', 'dz', 'z')],
+    }
+
+    fallback = [
+        ('Vmag', 'err_Vmag', 'V'),
+        ('g', 'dg', 'g'),
+        ('r', 'dr', 'r'),
+        ('i', 'di', 'i'),
+        ('Bmag', 'err_Bmag', 'B'),
+        ('z', 'dz', 'z'),
+        ('umag', 'err_umag', 'u'),
+    ]
+    candidates = list(direct_map.get(filter_key, []))
+    candidates.extend(candidate for candidate in fallback if candidate not in candidates)
+    return candidates
+
+
+def nextastro_catalog_rows(catalog_response):
+    if not isinstance(catalog_response, dict):
+        return []
+    rows = catalog_response.get('rows', [])
+    if not isinstance(rows, list):
+        return []
+    columns = catalog_response.get('columns', [])
+    if catalog_response.get('row_format') == 'arrays':
+        return [
+            {column: row[index] if index < len(row) else None for index, column in enumerate(columns)}
+            for row in rows
+            if isinstance(row, list)
+        ]
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def row_nextastro_magnitude(row, band_candidates):
+    for priority, (mag_column, error_column, band_label) in enumerate(band_candidates):
+        magnitude = _finite_float(row.get(mag_column))
+        magnitude_error = _finite_float(row.get(error_column))
+        if magnitude is None or magnitude_error is None:
+            continue
+        return {
+            'priority': priority,
+            'mag': magnitude,
+            'error': abs(magnitude_error),
+            'mag_band': band_label,
+            'mag_column': mag_column,
+            'mag_error_column': error_column,
+        }
+    return None
+
+
+def sky_separation_arcsec(ra_a, dec_a, ra_b, dec_b):
+    first = SkyCoord(float(ra_a) * u.deg, float(dec_a) * u.deg, frame='fk5')
+    second = SkyCoord(float(ra_b) * u.deg, float(dec_b) * u.deg, frame='fk5')
+    return float(first.separation(second).arcsec)
+
+
+def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
+                                       max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    band_candidates = nextastro_photometry_band_candidates(obs_filter)
+    matches = []
+    for row in nextastro_catalog_rows(catalog_response):
+        row_ra = _finite_float(row.get('ra'))
+        row_dec = _finite_float(row.get('dec'))
+        if row_ra is None or row_dec is None:
+            continue
+        magnitude = row_nextastro_magnitude(row, band_candidates)
+        if magnitude is None:
+            continue
+        separation = sky_separation_arcsec(ra, dec, row_ra, row_dec)
+        if separation > max_separation_arcsec:
+            continue
+        matches.append({
+            **magnitude,
+            'catalog_ra': row_ra,
+            'catalog_dec': row_dec,
+            'source_id': row.get('source_id'),
+            'id': row.get('id'),
+            'separation_arcsec': separation,
+        })
+
+    if not matches:
+        return None
+    matches.sort(key=lambda match: (match['priority'], match['separation_arcsec']))
+    return matches[0]
+
+
+@retry(
+    stop=stop_after_attempt(NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS),
+    wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
+    retry=retry_if_exception(should_retry_nextastro_variability_error),
+)
+def nextastro_photometry_cone_query(ra, dec, radius_arcsec, columns=None):
+    api_url = f'{NEXTASTRO_PHOTOMETRY_API_URL}/cone_query'
+    payload = {
+        'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
+        'ra': float(ra),
+        'dec': float(dec),
+        'radius_arcsec': float(radius_arcsec),
+    }
+    log_info(f"NextAstro photometry catalog request JSON: {json.dumps(payload)}")
+    result = requests.post(api_url, json=payload, timeout=30)
+    if result.status_code != 200:
+        raise RuntimeError(f"NextAstro photometry catalog returned HTTP {result.status_code}.")
+
+    body = result.json()
+    if not isinstance(body, dict) or not isinstance(body.get('rows'), list):
+        raise RuntimeError("NextAstro photometry catalog returned an unexpected response format.")
+    log_info(
+        "NextAstro photometry catalog response JSON: "
+        f"{json.dumps({'count': body.get('count'), 'columns': body.get('columns')})}"
+    )
+    return body
+
+
+def nextastro_photometry_catalog_for_wcs(wcs_file, axis, img_scale, obs_filter):
+    if not wcs_file or img_scale is None:
+        return None
+    image_width, image_height = float(axis[0]), float(axis[1])
+    if not (np.isfinite(image_width) and np.isfinite(image_height) and np.isfinite(float(img_scale))):
+        return None
+
+    wcs_hdr = search_wcs(wcs_file)
+    center_ra, center_dec = wcs_hdr.pixel_to_world_values(image_width / 2.0, image_height / 2.0)
+    radius_arcsec = 0.5 * float(img_scale) * float(np.hypot(image_width, image_height))
+    radius_arcsec += NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC
+    log_info(
+        "\nQuerying NextAstro photometry catalog for the full reduced field "
+        f"(radius={radius_arcsec:.1f} arcsec)."
+    )
+    return nextastro_photometry_cone_query(center_ra, center_dec, radius_arcsec)
+
+
+def nextastro_photometry_for_coordinate(ra, dec, obs_filter,
+                                        radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    catalog_response = nextastro_photometry_cone_query(ra, dec, radius_arcsec)
+    return nextastro_photometry_catalog_match(
+        catalog_response,
+        ra,
+        dec,
+        obs_filter,
+        max_separation_arcsec=radius_arcsec,
+    )
+
+
+def nextastro_calibration_label(match):
+    source_id = match.get('source_id') or match.get('id')
+    if source_id not in (None, ''):
+        return f"NextAstro-{source_id}"
+    return f"RA{match['ra']:.6f}_DEC{match['dec']:.6f}"
+
+
+def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, existing_comp_stars=None,
+                                      field_catalog=None):
+    calibration_stars = dict(existing_comp_stars or {})
+    existing_positions = {
+        tuple(value.get('pos', []))
+        for value in calibration_stars.values()
+        if isinstance(value, dict)
+    }
+
+    added_count = 0
+    for index, (comp_pos, comp_radec) in enumerate(zip(comp_stars, comp_ra_dec)):
+        if tuple(comp_pos) in existing_positions:
+            continue
+        comp_ra = _finite_float(comp_radec[0])
+        comp_dec = _finite_float(comp_radec[1])
+        if comp_ra is None or comp_dec is None:
+            continue
+
+        match = None
+        if field_catalog is not None:
+            match = nextastro_photometry_catalog_match(field_catalog, comp_ra, comp_dec, obs_filter)
+        if match is None:
+            try:
+                match = nextastro_photometry_for_coordinate(comp_ra, comp_dec, obs_filter)
+            except Exception as exc:
+                log_info(
+                    f"Warning: NextAstro photometry catalog lookup failed for comparison star #{index + 1} "
+                    f"({describe_retry_exception(exc)}).",
+                    warn=True,
+                )
+                continue
+        if match is None:
+            log_info(
+                f"Warning: NextAstro photometry catalog did not find a usable magnitude for "
+                f"comparison star #{index + 1}.",
+                warn=True,
+            )
+            continue
+
+        match.update({
+            'ra': comp_ra,
+            'dec': comp_dec,
+            'pos': list(comp_pos),
+            'catalog_source': 'NextAstro photometry catalog',
+            'is_aavso_vsp': False,
+        })
+        label = nextastro_calibration_label(match)
+        unique_label = label
+        duplicate_index = 2
+        while unique_label in calibration_stars:
+            unique_label = f"{label}-{duplicate_index}"
+            duplicate_index += 1
+        calibration_stars[unique_label] = match
+        existing_positions.add(tuple(comp_pos))
+        added_count += 1
+        log_info(
+            f"NextAstro photometry calibration for comparison star #{index + 1}: "
+            f"{match['mag_band']}={match['mag']:.5f} +/- {match['error']:.5f}, "
+            f"RA={comp_ra:.7f}, Dec={comp_dec:.7f}, "
+            f"catalog separation={match['separation_arcsec']:.2f} arcsec."
+        )
+
+    if added_count:
+        log_info(f"Added {added_count} NextAstro photometry catalog comparison star calibration(s).")
+    return calibration_stars
+
+
+def nextastro_prereduced_calibration_star(phot_comp_star, obs_filter):
+    if not isinstance(phot_comp_star, dict):
+        return None, None
+
+    comp_ra = _finite_float(phot_comp_star.get('ra'))
+    comp_dec = _finite_float(phot_comp_star.get('dec'))
+    if comp_ra is None or comp_dec is None:
+        return None, None
+
+    match = nextastro_photometry_for_coordinate(comp_ra, comp_dec, obs_filter)
+    if match is None:
+        return None, None
+
+    match.update({
+        'ra': comp_ra,
+        'dec': comp_dec,
+        'pos': [
+            phot_comp_star.get('x', ''),
+            phot_comp_star.get('y', ''),
+        ],
+        'catalog_source': 'NextAstro photometry catalog',
+        'is_aavso_vsp': False,
+    })
+    label = nextastro_calibration_label(match)
+    log_info(
+        "NextAstro photometry calibration for pre-reduced comparison star: "
+        f"{match['mag_band']}={match['mag']:.5f} +/- {match['error']:.5f}, "
+        f"RA={comp_ra:.7f}, Dec={comp_dec:.7f}, "
+        f"catalog separation={match['separation_arcsec']:.2f} arcsec."
+    )
+    return label, match
+
+
 def check_for_variable_stars(ra_wcs, dec_wcs, comp_stars, use_nextastro_variability_server=False):
     if use_nextastro_variability_server and comp_stars:
         try:
@@ -9013,7 +9344,14 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
                     vsp_comp_stars_info[star['auid']] = {
                         'pos': vsp_star,
                         'mag': star_info['mag'],
-                        'error': star_info['error']
+                        'error': star_info['error'],
+                        'ra': ra_deg,
+                        'dec': dec_deg,
+                        'catalog_ra': ra_deg,
+                        'catalog_dec': dec_deg,
+                        'mag_band': obs_filter,
+                        'catalog_source': 'AAVSO VSP',
+                        'is_aavso_vsp': True,
                     }
 
                     if not exist:
@@ -11129,9 +11467,107 @@ def choose_comp_star_variability(fit_lc_refs, fit_lc_best, ref_comp, comp_stars,
     plot_variable_residuals(save)
 
     std_devs = {key: np.std(value['res']) for key, value in ref_comp.items() if value}
+    if not std_devs:
+        raise RuntimeError("No usable comparison-star residuals were available for stellar variability calibration.")
     min_std_dev = min(std_devs, key=lambda y: abs(std_devs[y]))
 
     return comp_stars[min_std_dev]
+
+
+def stellar_variability_label(comp_label, comp_star):
+    if comp_star.get('is_aavso_vsp', True):
+        return comp_label
+    comp_ra = _finite_float(comp_star.get('ra'))
+    comp_dec = _finite_float(comp_star.get('dec'))
+    if comp_ra is not None and comp_dec is not None:
+        return f"RA={comp_ra:.7f} Dec={comp_dec:.7f}"
+    return comp_label
+
+
+def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name):
+    comp_mag = _finite_float(comp_star.get('mag'))
+    comp_mag_error = _finite_float(comp_star.get('error'))
+    if comp_mag is None or comp_mag_error is None:
+        raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
+
+    fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
+    fit_airmass_model = np.asarray(
+        getattr(lc_fit, 'airmass_model', np.ones_like(fit_data)),
+        dtype=float,
+    )
+    fit_airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones_like(fit_data)), dtype=float)
+    fit_times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
+    transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
+
+    if not (fit_data.shape == fit_airmass_model.shape == fit_airmass.shape == fit_times.shape):
+        raise RuntimeError("Lightcurve arrays have inconsistent shapes for stellar variability output.")
+
+    if transit_model.shape == fit_data.shape:
+        mask_ref = transit_model == 1
+    else:
+        mask_ref = np.ones_like(fit_data, dtype=bool)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        detrended_all = np.divide(fit_data, fit_airmass_model)
+    if np.count_nonzero(mask_ref) == 0:
+        mask_ref = np.isfinite(detrended_all)
+
+    detrended = detrended_all[mask_ref]
+    selected_airmass_model = fit_airmass_model[mask_ref]
+    selected_data = fit_data[mask_ref]
+    selected_times = fit_times[mask_ref]
+    selected_airmass = fit_airmass[mask_ref]
+
+    oot_scatter = np.nanstd(detrended)
+    median_data = np.nanmedian(selected_data)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        norm_flux_unc = oot_scatter * selected_airmass_model / median_data
+        target_mag = comp_mag - (2.5 * np.log10(detrended))
+        target_mag_error = (
+            comp_mag_error ** 2
+            + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2
+        ) ** 0.5
+
+    valid = (
+        np.isfinite(selected_times)
+        & np.isfinite(selected_airmass)
+        & np.isfinite(target_mag)
+        & np.isfinite(target_mag_error)
+    )
+    if np.count_nonzero(valid) == 0:
+        raise RuntimeError("No finite stellar variability magnitude points were produced.")
+
+    display_label = stellar_variability_label(comp_label, comp_star)
+    vsp_params = []
+    for time_value, airmass_value, mag_value, mag_error_value in zip(
+        selected_times[valid],
+        selected_airmass[valid],
+        target_mag[valid],
+        target_mag_error[valid],
+    ):
+        vsp_params.append({
+            'time': time_value,
+            'airmass': airmass_value,
+            'mag': mag_value,
+            'mag_err': mag_error_value,
+            'cname': display_label,
+            'cmag': comp_mag,
+            'cmag_err': comp_mag_error,
+            'pos': comp_pos,
+            'comp_ra': comp_star.get('ra'),
+            'comp_dec': comp_star.get('dec'),
+            'catalog_ra': comp_star.get('catalog_ra'),
+            'catalog_dec': comp_star.get('catalog_dec'),
+            'catalog_source': comp_star.get('catalog_source', 'AAVSO VSP'),
+            'is_aavso_vsp': bool(comp_star.get('is_aavso_vsp', True)),
+            'mag_band': comp_star.get('mag_band', 'V'),
+            'source_id': comp_star.get('source_id'),
+            'catalog_id': comp_star.get('id'),
+            'separation_arcsec': comp_star.get('separation_arcsec'),
+        })
+
+    plot_stellar_variability(vsp_params, save, s_name, display_label)
+    return vsp_params
 
 
 def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
@@ -11156,46 +11592,21 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
         return []
 
     try:
-        Mc, Mc_err = comp_star['mag'], comp_star['error']
-
         info_comp = info_comps[comp_stars.index(comp_pos)]
-        lc_fit = info_comp['fit_lc']
-        mask_ref = info_comp['mask_ref']
-
-        oot_scatter = np.std((lc_fit.data / lc_fit.airmass_model)[mask_ref])
-        norm_flux_unc = oot_scatter * lc_fit.airmass_model[mask_ref]
-        norm_flux_unc /= np.nanmedian(lc_fit.data[mask_ref])
-
-        model = lc_fit.airmass_model[mask_ref]
-        flux = lc_fit.data[mask_ref]
-        detrended = flux / model
-
-        Mt = Mc - (2.5 * np.log10(detrended))
-        Mt_err = (Mc_err ** 2 + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2) ** 0.5
+        return build_stellar_variability_params_from_fit(
+            info_comp['fit_lc'],
+            comp_star,
+            comp_pos,
+            vsp_auid_comp,
+            save,
+            s_name,
+        )
     except KeyError as e:
         log_info(f"Key error in processing stellar variability: {e}", warn=True)
         return []
     except Exception as e:
         log_info(f"Error in processing stellar variability: {e}", warn=True)
         return []
-
-    try:
-        vsp_params = [{
-            'time': lc_fit.jd_times[mask_ref][i],
-            'airmass': lc_fit.airmass[mask_ref][i],
-            'mag': mt,
-            'mag_err': Mt_err[i],
-            'cname': vsp_auid_comp,
-            'cmag': Mc,
-            'pos': comp_pos
-        } for i, mt in enumerate(Mt)]
-
-        plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp)
-    except Exception as e:
-        log_info(f"Error in plotting or finalizing stellar variability data: {e}", warn=True)
-        return []
-
-    return vsp_params
 
 
 # Mid-Transit Time Prior Helper Functions
@@ -12907,8 +13318,8 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
     if assessment.get('ultranest_error_fallbacks'):
         fallback_keys = ", ".join(sorted(assessment['ultranest_error_fallbacks']))
         log_info(
-            f"{indent}UltraNest uncertainty fallback note: replaced degenerate posterior "
-            f"summary error(s) for {fallback_keys} using the sampled log-likelihood neighborhood."
+            f"{indent}UltraNest uncertainty fallback note: replaced posterior summary "
+            f"error(s) for {fallback_keys} using the sampled log-likelihood neighborhood."
         )
 
 
@@ -15364,7 +15775,7 @@ def _main_impl():
             img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
             plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             ra_dec_tar, ra_dec_wcs = None, []
-            chart_id, vsp_comp_stars, vsp_list = None, None, []
+            chart_id, vsp_comp_stars, vsp_list = None, {}, []
 
             if wcs_file:
                 if should_log_plate_solution_path(wcs_file):
@@ -15409,6 +15820,28 @@ def _main_impl():
 
                 # Build RA/Dec for comp after list is finalized (avoid off by one issues, etc
                 ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
+                nextastro_field_catalog = None
+                try:
+                    nextastro_field_catalog = nextastro_photometry_catalog_for_wcs(
+                        wcs_file,
+                        [header['NAXIS1'], header['NAXIS2']],
+                        img_scale,
+                        exotic_infoDict['filter'],
+                    )
+                except Exception as exc:
+                    log_info(
+                        "\nWarning: NextAstro full-field photometry catalog lookup failed "
+                        f"({describe_retry_exception(exc)}). Will try per-comparison catalog lookups.",
+                        warn=True,
+                    )
+                vsp_comp_stars = merge_nextastro_calibration_stars(
+                    exotic_infoDict['comp_stars'],
+                    ra_dec_wcs,
+                    exotic_infoDict['filter'],
+                    existing_comp_stars=vsp_comp_stars,
+                    field_catalog=nextastro_field_catalog,
+                )
+                vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             else:
                 exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
@@ -16888,6 +17321,36 @@ def _main_impl():
             annotate_transit_detection_qc(myfit)
         # myfit.dataerr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])  # scale errorbars by sqrt(rchi2)
         # myfit.detrendederr *= np.sqrt(myfit.chi2 / myfit.data.shape[0])
+
+        if fitsortext != 1 and not vsp_params:
+            try:
+                calibration_label, calibration_star = nextastro_prereduced_calibration_star(
+                    exotic_infoDict.get('phot_comp_star'),
+                    exotic_infoDict.get('filter'),
+                )
+                if calibration_star:
+                    vsp_params = build_stellar_variability_params_from_fit(
+                        myfit,
+                        calibration_star,
+                        calibration_star.get('pos'),
+                        calibration_label,
+                        exotic_infoDict['save'],
+                        pDict['sName'],
+                    )
+                    if not auid:
+                        auid = vsx_auid(pDict['ra'], pDict['dec'])
+                else:
+                    log_info(
+                        "\nWarning: Could not create pre-reduced stellar variability output because "
+                        "no comparison-star RA/Dec with a usable NextAstro catalog magnitude was available.",
+                        warn=True,
+                    )
+            except Exception as exc:
+                log_info(
+                    f"\nWarning: Could not create pre-reduced stellar variability output "
+                    f"({describe_retry_exception(exc)}).",
+                    warn=True,
+                )
 
         # estimate transit duration
         pars = dict(**myfit.parameters)

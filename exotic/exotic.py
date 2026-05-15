@@ -9165,6 +9165,7 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
             'pos': list(comp_pos),
             'catalog_source': 'NextAstro photometry catalog',
             'is_aavso_vsp': False,
+            'observed_filter': obs_filter,
         })
         label = nextastro_calibration_label(match)
         unique_label = label
@@ -9209,6 +9210,7 @@ def nextastro_prereduced_calibration_star(phot_comp_star, obs_filter):
         ],
         'catalog_source': 'NextAstro photometry catalog',
         'is_aavso_vsp': False,
+        'observed_filter': obs_filter,
     })
     label = nextastro_calibration_label(match)
     log_info(
@@ -9305,6 +9307,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
 
     vsp_comp_stars_info = {}
     vsp_star_count = 0
+    observed_filter = obs_filter
 
     # Build combined list for comps and target - there are known cases when AAVsO comps have planets (XO-2 N)
     # Plus, we don't want comp too close to target
@@ -9350,6 +9353,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
                         'catalog_ra': ra_deg,
                         'catalog_dec': dec_deg,
                         'mag_band': obs_filter,
+                        'observed_filter': observed_filter,
                         'catalog_source': 'AAVSO VSP',
                         'is_aavso_vsp': True,
                     }
@@ -11484,11 +11488,13 @@ def stellar_variability_label(comp_label, comp_star):
     return comp_label
 
 
-def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name):
+def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name,
+                                              observed_filter=None):
     comp_mag = _finite_float(comp_star.get('mag'))
     comp_mag_error = _finite_float(comp_star.get('error'))
     if comp_mag is None or comp_mag_error is None:
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
+    observed_filter = observed_filter or comp_star.get('observed_filter')
 
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
     fit_airmass_model = np.asarray(
@@ -11561,6 +11567,7 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
             'catalog_source': comp_star.get('catalog_source', 'AAVSO VSP'),
             'is_aavso_vsp': bool(comp_star.get('is_aavso_vsp', True)),
             'mag_band': comp_star.get('mag_band', 'V'),
+            'observed_filter': observed_filter,
             'source_id': comp_star.get('source_id'),
             'catalog_id': comp_star.get('id'),
             'separation_arcsec': comp_star.get('separation_arcsec'),
@@ -11570,7 +11577,8 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     return vsp_params
 
 
-def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name):
+def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name,
+                        observed_filter=None):
     info_comps = {}
 
     try:
@@ -11600,6 +11608,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
             vsp_auid_comp,
             save,
             s_name,
+            observed_filter=observed_filter,
         )
     except KeyError as e:
         log_info(f"Key error in processing stellar variability: {e}", warn=True)
@@ -15614,6 +15623,7 @@ def _main_impl():
                     exotic_infoDict['long'] = -110.951376
                     exotic_infoDict['pixel_bin'] = "2x2"
 
+            exotic_infoDict.setdefault('observed_filter', exotic_infoDict.get('filter'))
             log_info("Calculating limb-darkening coefficients.")
             ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
             log_info("Limb-darkening coefficients ready.")
@@ -17101,17 +17111,22 @@ def _main_impl():
             if vsp_comp_stars:
                 if not bestCompStar:
                     vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
-                                                     vsp_comp_stars, vsp_num, None, exotic_infoDict['save'],
-                                                     pDict['sName'])
+                                                      vsp_comp_stars, vsp_num, None, exotic_infoDict['save'],
+                                                      pDict['sName'],
+                                                      observed_filter=exotic_infoDict.get('observed_filter',
+                                                                                          exotic_infoDict.get('filter')))
                 else:
                     vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
-                                                     vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
-                                                     pDict['sName'])
+                                                      vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
+                                                      pDict['sName'],
+                                                      observed_filter=exotic_infoDict.get('observed_filter',
+                                                                                          exotic_infoDict.get('filter')))
 
             log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar, comp_coords = None, None
+            exotic_infoDict.setdefault('observed_filter', exotic_infoDict.get('filter'))
             ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
 
             with exotic_infoDict['prered_file'].open('r') as f:
@@ -17336,6 +17351,7 @@ def _main_impl():
                         calibration_label,
                         exotic_infoDict['save'],
                         pDict['sName'],
+                        observed_filter=exotic_infoDict.get('observed_filter', exotic_infoDict.get('filter')),
                     )
                     if not auid:
                         auid = vsx_auid(pDict['ra'], pDict['dec'])

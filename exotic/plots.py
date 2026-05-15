@@ -526,24 +526,63 @@ def plot_variable_residuals(save):
     plt.close()
 
 
+def _finite_plot_float(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if np.isfinite(parsed) else None
+
+
+def _stellar_variability_reference_label(vsp_param, comparison_label):
+    band = vsp_param.get('mag_band') or 'V'
+    observed_filter = vsp_param.get('observed_filter')
+    cmag = _finite_plot_float(vsp_param.get('cmag'))
+    cmag_err = _finite_plot_float(vsp_param.get('cmag_err'))
+    comp_ra = _finite_plot_float(vsp_param.get('comp_ra'))
+    comp_dec = _finite_plot_float(vsp_param.get('comp_dec'))
+
+    parts = []
+    if vsp_param.get('is_aavso_vsp', True) and comparison_label:
+        parts.append(f"Label={comparison_label}")
+    if comp_ra is not None and comp_dec is not None:
+        parts.append(f"RA={comp_ra:.7f}")
+        parts.append(f"Dec={comp_dec:.7f}")
+    elif comparison_label:
+        parts.append(str(comparison_label))
+
+    if observed_filter not in (None, ''):
+        parts.append(f"Observed filter={observed_filter}")
+
+    if cmag is not None and cmag_err is not None:
+        parts.append(f"{band}={cmag:.5f} +/- {cmag_err:.5f}")
+    elif cmag is not None:
+        parts.append(f"{band}={cmag:.5f}")
+    else:
+        parts.append(f"{band}=na")
+
+    return ", ".join(parts)
+
+
 def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     if not vsp_params:
         return
 
+    fig, ax = plt.subplots(figsize=(8, 5))
     for vsp_p in vsp_params:
-        plt.errorbar(vsp_p['time'], vsp_p['mag'], yerr=vsp_p['mag_err'], color="tomato", fmt='.')
+        ax.errorbar(vsp_p['time'], vsp_p['mag'], yerr=vsp_p['mag_err'], color="tomato", fmt='.')
 
     first_param = vsp_params[0]
     band = first_param.get('mag_band') or 'V'
-    if first_param.get('is_aavso_vsp', True):
-        title = f"{s_name} (Label: {vsp_auid_comp})"
-    else:
-        title = f"{s_name} (Calib: {vsp_auid_comp})"
-    plt.title(title)
-    plt.ylabel(f"{band}mag")
-    plt.xlabel("Time [JD]")
-    plt.savefig(Path(save) / "temp" / f"Stellar_Variability.png")
-    plt.close()
+    reference_label = _stellar_variability_reference_label(first_param, vsp_auid_comp)
+    ax.set_title(f"{s_name}\nComparison: {reference_label}")
+    ax.set_ylabel(f"Magnitude ({band})")
+    ax.set_xlabel("Time [JD]")
+    fig.tight_layout()
+    output_dir = Path(save) / "temp"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_dir / f"Stellar_Variability.png")
+    plt.close(fig)
 
 
 # Observation statistics series selection

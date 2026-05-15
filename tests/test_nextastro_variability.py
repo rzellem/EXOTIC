@@ -272,6 +272,7 @@ def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
     assert calibration['dec'] == pytest.approx(-20.0)
     assert calibration['mag'] == pytest.approx(11.2)
     assert calibration['error'] == pytest.approx(0.03)
+    assert calibration['observed_filter'] == 'V'
 
 
 def test_build_stellar_variability_params_records_nextastro_reference(monkeypatch, tmp_path):
@@ -300,6 +301,7 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
         'catalog_source': 'NextAstro photometry catalog',
         'is_aavso_vsp': False,
         'mag_band': 'V',
+        'observed_filter': 'V',
         'source_id': 123,
         'separation_arcsec': 0.2,
     }
@@ -311,6 +313,7 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
         'NextAstro-123',
         tmp_path,
         'Host Star',
+        observed_filter='CV',
     )
 
     assert captured['label'] == 'RA=10.1000000 Dec=-20.2000000'
@@ -321,6 +324,7 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
     assert params[0]['comp_dec'] == pytest.approx(-20.2)
     assert params[0]['cmag'] == pytest.approx(12.0)
     assert params[0]['cmag_err'] == pytest.approx(0.05)
+    assert params[0]['observed_filter'] == 'CV'
 
 
 def test_check_for_variable_stars_uses_nextastro_flags_to_filter(monkeypatch):

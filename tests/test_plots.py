@@ -12,6 +12,7 @@ from exotic.plots import (
     plot_final_lightcurve,
     plot_individual_comp_star_calibration_series,
     plot_obs_stats,
+    plot_stellar_variability,
 )
 
 
@@ -173,6 +174,51 @@ def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
     assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.pdf").exists()
     assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.png").exists()
     assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.pdf").exists()
+
+
+def test_plot_stellar_variability_labels_reference_band_and_coordinates(tmp_path, monkeypatch):
+    titles = []
+    ylabels = []
+    original_set_title = Axes.set_title
+    original_set_ylabel = Axes.set_ylabel
+
+    def spy_set_title(self, label, *args, **kwargs):
+        titles.append(label)
+        return original_set_title(self, label, *args, **kwargs)
+
+    def spy_set_ylabel(self, label, *args, **kwargs):
+        ylabels.append(label)
+        return original_set_ylabel(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_title", spy_set_title)
+    monkeypatch.setattr(Axes, "set_ylabel", spy_set_ylabel)
+
+    plot_stellar_variability(
+        [
+            {
+                "time": 2450000.1,
+                "mag": 12.34,
+                "mag_err": 0.05,
+                "cmag": 12.345,
+                "cmag_err": 0.067,
+                "comp_ra": 10.1,
+                "comp_dec": -20.2,
+                "mag_band": "r",
+                "observed_filter": "CV",
+                "is_aavso_vsp": False,
+            }
+        ],
+        str(tmp_path),
+        "Host Star",
+        "NextAstro-123",
+    )
+
+    assert "RA=10.1000000" in titles[-1]
+    assert "Dec=-20.2000000" in titles[-1]
+    assert "Observed filter=CV" in titles[-1]
+    assert "r=12.34500 +/- 0.06700" in titles[-1]
+    assert ylabels[-1] == "Magnitude (r)"
+    assert (tmp_path / "temp" / "Stellar_Variability.png").exists()
 
 
 def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):

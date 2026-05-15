@@ -542,26 +542,33 @@ def _stellar_variability_reference_label(vsp_param, comparison_label):
     comp_ra = _finite_plot_float(vsp_param.get('comp_ra'))
     comp_dec = _finite_plot_float(vsp_param.get('comp_dec'))
 
-    parts = []
+    comparison_parts = []
     if vsp_param.get('is_aavso_vsp', True) and comparison_label:
-        parts.append(f"Label={comparison_label}")
+        comparison_parts.append(f"Label={comparison_label}")
     if comp_ra is not None and comp_dec is not None:
-        parts.append(f"RA={comp_ra:.7f}")
-        parts.append(f"Dec={comp_dec:.7f}")
+        comparison_parts.append(f"RA={comp_ra:.7f}")
+        comparison_parts.append(f"Dec={comp_dec:.7f}")
     elif comparison_label:
-        parts.append(str(comparison_label))
+        comparison_parts.append(str(comparison_label))
 
+    detail_parts = []
     if observed_filter not in (None, ''):
-        parts.append(f"Observed filter={observed_filter}")
+        detail_parts.append(f"Observed filter={observed_filter}")
 
     if cmag is not None and cmag_err is not None:
-        parts.append(f"{band}={cmag:.5f} +/- {cmag_err:.5f}")
+        detail_parts.append(f"{band}={cmag:.5f} +/- {cmag_err:.5f}")
     elif cmag is not None:
-        parts.append(f"{band}={cmag:.5f}")
+        detail_parts.append(f"{band}={cmag:.5f}")
     else:
-        parts.append(f"{band}=na")
+        detail_parts.append(f"{band}=na")
 
-    return ", ".join(parts)
+    label_lines = []
+    if comparison_parts:
+        label_lines.append(", ".join(comparison_parts))
+    if detail_parts:
+        label_lines.append(", ".join(detail_parts))
+
+    return "\n".join(label_lines)
 
 
 def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):

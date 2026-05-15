@@ -217,6 +217,7 @@ def test_plot_stellar_variability_labels_reference_band_and_coordinates(tmp_path
     assert "Dec=-20.2000000" in titles[-1]
     assert "Observed filter=CV" in titles[-1]
     assert "r=12.34500 +/- 0.06700" in titles[-1]
+    assert "Dec=-20.2000000\nObserved filter=CV" in titles[-1]
     assert ylabels[-1] == "Magnitude (r)"
     assert (tmp_path / "temp" / "Stellar_Variability.png").exists()
 

@@ -41,8 +41,18 @@ import lmfit as lm
 import logging
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+from pathlib import Path
+from urllib.parse import quote
+
+import requests
 
 log = logging.getLogger(__name__)
+
+_LDTK_HTTP_FALLBACK_BASE_URL = "https://downloads.nextastro.org/PHOENIX"
+_LDTK_HTTP_FALLBACK_ENV = "EXOTIC_LDTK_FALLBACK_BASE_URL"
+_LDTK_DOWNLOAD_TIMEOUT = (10, 120)
+_LDTK_ORIGINAL_DOWNLOAD_UNCACHED_FILES = None
 
 
 class LDPSet(ldtk.LDPSet):
@@ -59,6 +69,108 @@ class LDPSet(ldtk.LDPSet):
 
 setattr(ldtk, 'LDPSet', LDPSet)
 setattr(ldtk.ldtk, 'LDPSet', LDPSet)
+
+
+def _ldtk_http_fallback_base_url():
+    return os.environ.get(_LDTK_HTTP_FALLBACK_ENV, _LDTK_HTTP_FALLBACK_BASE_URL).strip().rstrip("/")
+
+
+def _quote_url_path(*parts):
+    segments = []
+    for part in parts:
+        segments.extend(segment for segment in str(part).strip("/").split("/") if segment)
+    return "/".join(quote(segment, safe="") for segment in segments)
+
+
+def _ldtk_http_fallback_url(client, ldtk_file):
+    base_url = _ldtk_http_fallback_base_url()
+    if not base_url:
+        return None
+    path = _quote_url_path(client.edir, ldtk_file._zstr, ldtk_file.name)
+    return f"{base_url}/{path}"
+
+
+def _download_file(url, local_path):
+    local_path = Path(local_path)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = local_path.with_name(f"{local_path.name}.download")
+    try:
+        response = requests.get(url, stream=True, timeout=_LDTK_DOWNLOAD_TIMEOUT)
+        try:
+            response.raise_for_status()
+            with open(temporary_path, "wb") as local_file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        local_file.write(chunk)
+        finally:
+            response.close()
+        os.replace(temporary_path, local_path)
+    except Exception:
+        if temporary_path.exists():
+            temporary_path.unlink()
+        raise
+
+
+def _download_ldtk_uncached_files_from_http(client, force=False):
+    files_to_download = [ldtk_file for ldtk_file in client.files if force or not ldtk_file.local_exists]
+    if not files_to_download:
+        return False
+
+    base_url = _ldtk_http_fallback_base_url()
+    if not base_url:
+        raise RuntimeError(
+            f"LDTk FTP download failed and {_LDTK_HTTP_FALLBACK_ENV} is empty, "
+            "so EXOTIC cannot try the HTTP PHOENIX fallback."
+        )
+
+    log.warning(
+        "LDTk FTP download failed; trying PHOENIX HTTP fallback at %s for %d file(s).",
+        base_url,
+        len(files_to_download),
+    )
+
+    downloaded_paths = []
+    for ldtk_file in files_to_download:
+        url = _ldtk_http_fallback_url(client, ldtk_file)
+        _download_file(url, ldtk_file.local_path)
+        downloaded_paths.append(ldtk_file.local_path)
+        if client.not_cached > 0 and not force:
+            client.not_cached -= 1
+
+    return client.check_file_corruption(downloaded_paths)
+
+
+def _install_ldtk_http_fallback():
+    global _LDTK_ORIGINAL_DOWNLOAD_UNCACHED_FILES
+
+    try:
+        from ldtk.client import Client
+    except Exception:
+        return
+
+    if getattr(Client.download_uncached_files, "_exotic_http_fallback", False):
+        return
+
+    _LDTK_ORIGINAL_DOWNLOAD_UNCACHED_FILES = Client.download_uncached_files
+
+    def download_uncached_files_with_http_fallback(self, force=False):
+        try:
+            return _LDTK_ORIGINAL_DOWNLOAD_UNCACHED_FILES(self, force=force)
+        except Exception as ftp_error:
+            try:
+                log.warning("LDTk FTP download failed with %s", ftp_error)
+                return _download_ldtk_uncached_files_from_http(self, force=force)
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    "LDTk could not download PHOENIX files from the default FTP server "
+                    "or the EXOTIC HTTP fallback."
+                ) from fallback_error
+
+    download_uncached_files_with_http_fallback._exotic_http_fallback = True
+    Client.download_uncached_files = download_uncached_files_with_http_fallback
+
+
+_install_ldtk_http_fallback()
 
 
 def createldgrid(minmu, maxmu, orbp,

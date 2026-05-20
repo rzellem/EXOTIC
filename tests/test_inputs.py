@@ -158,6 +158,21 @@ def test_comp_params_defaults_ultranest_live_points_to_200(tmp_path):
     assert inputs.info_dict["ultranest_min_num_live_points"] == 200
 
 
+def test_comp_params_defaults_rprs_search_bound_max_to_half(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["rprs_search_bound_max"] == 0.5
+
+
 def test_comp_params_defaults_sparse_posterior_live_point_retry_to_yes(tmp_path):
     init_data = {
         "user_info": {},
@@ -471,6 +486,21 @@ def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ultranest_min_num_live_points"] == 275
+
+
+def test_comp_params_reads_rprs_search_bound_max_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"maximum Rp/Rs search bound": 0.35},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["rprs_search_bound_max"] == 0.35
 
 
 def test_comp_params_reads_fast_ultranest_before_final_run_from_optional_info(tmp_path):

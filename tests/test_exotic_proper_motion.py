@@ -2800,7 +2800,8 @@ def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
     assert captured_duration_priors[1] is not None
     assert captured_duration_priors[1]["applied"] is True
     assert captured_duration_priors[1]["expected_duration"] > 0
-    assert captured_duration_priors[1]["expected_duration"] > 0
+    assert myfit.pre_ultranest_transit_coverage_valid is True
+    assert myfit.pre_ultranest_transit_coverage_expected_successful is True
 
 
 def test_fit_lightcurve_attaches_frame_filter_diagnostics(monkeypatch):

@@ -91,10 +91,13 @@ from exotic.exotic import (  # noqa: E402
     RPRS_SEARCH_BOUND_MIN,
     SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
     build_fast_ultranest_lightcurve_series,
+    build_expected_transit_coverage_assessment,
     evaluate_sparse_posterior_sample_support,
     extend_sparse_posterior_live_points_if_needed,
+    fit_final_lightcurve_with_oot_baseline_detrending,
     finalize_comparison_candidate_full_reduction,
     refit_selected_fast_comparison_on_full_lightcurve,
+    configure_rprs_search_bound_max,
     should_run_fast_ultranest_before_final_run,
     build_single_transit_duration_prior,
     build_initial_rprs_bounds,
@@ -110,6 +113,88 @@ def test_build_initial_rprs_bounds_allows_zero_depth_search_box():
         INITIAL_RPRS_BOUND_UPPER_SCALE * 0.1,
     ])
     assert INITIAL_RPRS_BOUND_LOWER_SCALE == pytest.approx(0.0)
+
+
+def test_build_initial_rprs_bounds_clamps_to_configured_search_ceiling(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_SEARCH_BOUND_MAX", 0.5)
+
+    assert build_initial_rprs_bounds(0.2) == pytest.approx([RPRS_SEARCH_BOUND_MIN, 0.5])
+    assert build_initial_rprs_bounds(0.7) == pytest.approx([RPRS_SEARCH_BOUND_MIN, 0.5])
+
+
+def test_configure_rprs_search_bound_max_updates_retry_ceiling(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_SEARCH_BOUND_MAX", 0.5)
+
+    assert configure_rprs_search_bound_max("0.4") == pytest.approx(0.4)
+    assert exotic_module.RPRS_SEARCH_BOUND_MAX == pytest.approx(0.4)
+
+
+def test_rprs_posterior_retry_clamps_to_configured_search_ceiling(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_SEARCH_BOUND_MAX", 0.5)
+    captured = {"calls": []}
+    diagnostics_sequence = [
+        {"clipped": True, "edge": "upper", "mode": 0.49, "std": 0.10, "bounds": [0.29, 0.89]},
+        {"clipped": True, "edge": "upper", "mode": 0.49, "std": 0.08, "bounds": [0.38, 0.78]},
+    ]
+
+    def make_fit(diagnostics):
+        fit = types.SimpleNamespace(
+            parameters={"tmid": 0.0, "rprs": diagnostics["mode"], "inc": 89.0, "a2": 0.0}
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = (
+            lambda key: dict(diagnostics) if key == "rprs" else None
+        )
+        return fit
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        call_index = len(captured["calls"])
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+        })
+        return make_fit(diagnostics_sequence[min(call_index, len(diagnostics_sequence) - 1)])
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(-0.03, 0.03, 7)
+    flux = np.ones(7, dtype=float)
+    fluxerr = np.full(7, 0.01, dtype=float)
+    airmass = np.ones(7, dtype=float)
+    prior = {"tmid": 0.0, "rprs": 0.4, "inc": 89.0, "a2": 0.0}
+    bounds = {"rprs": [0.0, 0.4], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]}
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][1]["bounds"]["rprs"][1] == pytest.approx(0.5)
+    assert fit.rprs_posterior_refit_bounds[1] == pytest.approx(0.5)
 
 
 def test_fast_ultranest_option_defaults_enabled_and_parses_false_values():
@@ -143,6 +228,103 @@ def test_fast_ultranest_binning_skips_short_light_curve():
 
     assert result["applied"] is False
     assert result["binned_point_count"] == 60
+
+
+def test_expected_transit_coverage_assessment_flags_ingress_only_as_very_low():
+    prior = {"tmid": 10.0, "per": 2.0, "rprs": 0.1, "ars": 12.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0}
+    duration_prior = {"applied": True, "expected_duration": 0.1}
+    times = np.linspace(9.90, 9.955, 12)
+
+    assessment = build_expected_transit_coverage_assessment(
+        times,
+        prior,
+        flux_values=np.ones(times.shape[0]),
+        flux_errors=np.full(times.shape[0], 0.001),
+        duration_prior=duration_prior,
+    )
+
+    assert assessment["valid"] is True
+    assert assessment["observed_segment"] == "pre-ingress baseline plus ingress"
+    assert assessment["transit_fraction_observed"] == pytest.approx(0.05)
+    assert assessment["success_label"] == "very low"
+    assert assessment["expected_successful"] is False
+
+
+def test_final_fit_logs_partial_coverage_before_first_ultranest_call(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    events = []
+
+    def fake_log_info(message, warn=False, error=False):
+        events.append(("log", str(message), warn))
+        return True
+
+    def fake_run_nested(times, flux_values, flux_errors, airmass, prior, bounds, **kwargs):
+        events.append(("run_nested", "", False))
+        local_times = np.asarray(times, dtype=float)
+        model = np.ones(local_times.shape[0], dtype=float)
+        model[-1:] -= 0.01
+        fit = types.SimpleNamespace(
+            time=local_times,
+            data=np.asarray(flux_values, dtype=float),
+            dataerr=np.asarray(flux_errors, dtype=float),
+            model=model,
+            residuals=np.zeros(local_times.shape[0], dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            parameters={"rprs": prior["rprs"], "tmid": prior["tmid"], "inc": prior["inc"], "a2": 0.0, "per": prior["per"]},
+            errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+            bounds=dict(bounds),
+            duration_expected=0.1,
+            duration_measured=0.1,
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = (
+            lambda key: {"clipped": False, "edge": None, "mode": fit.parameters.get(key, np.nan), "std": 0.01}
+        )
+        return fit
+
+    monkeypatch.setattr(exotic_module, "log_info", fake_log_info)
+    monkeypatch.setattr(exotic_module, "run_nested_lightcurve_fit_with_rprs_posterior_retry", fake_run_nested)
+    monkeypatch.setattr(exotic_module, "apply_plot_time_range", lambda fit, plot_time_range: fit)
+    monkeypatch.setattr(
+        exotic_module,
+        "build_final_fit_prefit_refinement_plan",
+        lambda times, flux_values, flux_errors, airmass, prior, bounds, fit, **kwargs: {
+            "applied": False,
+            "note": "not needed",
+            "times": np.asarray(times, dtype=float),
+            "flux": np.asarray(flux_values, dtype=float),
+            "unc": np.asarray(flux_errors, dtype=float),
+            "airmass": np.asarray(airmass, dtype=float),
+            "jd_times": None,
+            "prior": dict(prior),
+            "bounds": dict(bounds),
+            "duration": 0.1,
+            "original_point_count": len(times),
+            "refined_point_count": len(times),
+            "trimmed_pre_points": 0,
+            "trimmed_post_points": 0,
+            "original_tmid_bounds": bounds["tmid"],
+            "refined_tmid_bounds": bounds["tmid"],
+        },
+    )
+
+    times = np.linspace(9.90, 9.955, 12)
+    fit, _, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        np.ones(times.shape[0], dtype=float),
+        np.full(times.shape[0], 0.001, dtype=float),
+        np.linspace(1.0, 1.1, times.shape[0]),
+        {"rprs": 0.1, "tmid": 10.0, "inc": 89.0, "a2": 0.0, "per": 2.0, "ars": 12.0, "ecc": 0.0, "omega": 0.0},
+        {"rprs": [0.0, 0.5], "tmid": [9.95, 10.05], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]},
+        detrend_on_outoftransit_baseline=False,
+        duration_prior={"applied": True, "expected_duration": 0.1},
+    )
+
+    coverage_index = next(i for i, event in enumerate(events) if "Pre-UltraNest transit coverage assessment" in event[1])
+    nested_index = next(i for i, event in enumerate(events) if event[0] == "run_nested")
+    assert coverage_index < nested_index
+    assert any("Estimated fit success: VERY LOW" in event[1] and event[2] for event in events)
+    assert fit.pre_ultranest_transit_coverage_status == "very low"
 
 
 def test_finalize_comparison_candidate_runs_pre_final_ultranest_on_binned_series(monkeypatch):

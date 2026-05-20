@@ -225,6 +225,7 @@ class Inputs:
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,
+            'rprs_search_bound_max': 0.5,
             'use_sparse_posterior_live_point_retry': 'y',
         }
         self.params = {
@@ -518,6 +519,15 @@ class Inputs:
                 'run fast ultranest before final run',
                 'Run Fast UltraNest Before Final Run? (y/n)',
                 'run_fast_ultranest_before_final_run',
+            ),
+            'rprs_search_bound_max': (
+                'rprs_search_bound_max',
+                'max_rprs_search_bound',
+                'maximum rprs search bound',
+                'maximum Rp/Rs search bound',
+                'maximum Rp/R* search bound',
+                'Maximum Rp/Rs Search Bound',
+                'Maximum Rp/R* Search Bound',
             ),
             'use_sparse_posterior_live_point_retry': (
                 'use_sparse_posterior_live_point_retry',

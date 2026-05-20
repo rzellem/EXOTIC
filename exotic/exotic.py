@@ -241,7 +241,9 @@ SPARSE_POSTERIOR_MIN_OCCUPIED_BIN_FRACTION = 0.65
 SPARSE_POSTERIOR_MIN_EFFECTIVE_SAMPLES_PER_OCCUPIED_BIN = 25.0
 RPRS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 RPRS_SEARCH_BOUND_MIN = 0.0
-RPRS_SEARCH_BOUND_MAX = 1.0
+RPRS_SEARCH_BOUND_MAX_DEFAULT = 0.5
+RPRS_SEARCH_BOUND_ABSOLUTE_MAX = 1.0
+RPRS_SEARCH_BOUND_MAX = RPRS_SEARCH_BOUND_MAX_DEFAULT
 RPRS_RETRY_MIN_HALF_WIDTH = 0.05
 INITIAL_RPRS_BOUND_LOWER_SCALE = 0.0
 INITIAL_RPRS_BOUND_UPPER_SCALE = 3.0
@@ -461,6 +463,21 @@ def annotate_duration_prior(fit, duration_prior):
         summary.get('relative_sigma', np.nan)
     )
     fit.duration_prior_source = summary.get('source')
+
+
+def annotate_pre_ultranest_transit_coverage(fit, assessment):
+    if fit is None:
+        return
+
+    assessment = assessment if isinstance(assessment, dict) else {}
+    fit.pre_ultranest_transit_coverage = dict(assessment)
+    fit.pre_ultranest_transit_coverage_valid = bool(assessment.get('valid', False))
+    fit.pre_ultranest_transit_coverage_status = assessment.get('success_label')
+    fit.pre_ultranest_transit_coverage_chance = assessment.get('success_chance')
+    fit.pre_ultranest_transit_coverage_expected_successful = bool(
+        assessment.get('expected_successful', False)
+    )
+    fit.pre_ultranest_transit_coverage_note = assessment.get('note')
 
 
 def annotate_lightcurve_filter_diagnostics(fit, diagnostics):
@@ -2078,6 +2095,14 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     fit_prior = dict(prior)
     fit_bounds = clone_lightcurve_bounds(bounds)
     ensure_pre_final_ultranest_baseline_bounds(fit_prior, fit_bounds, fit_flux, fit_a2=True)
+    pre_ultranest_coverage_assessment = build_expected_transit_coverage_assessment(
+        full_good_times,
+        prior,
+        flux_values=full_good_flux,
+        flux_errors=full_good_unc,
+        tmid_search_summary=tmid_search_summary,
+        duration_prior=build_single_transit_duration_prior(p_dict),
+    )
 
     final_fit, fitted_flux, fitted_unc = fit_final_lightcurve_with_oot_baseline_detrending(
         fit_times,
@@ -2101,6 +2126,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         extend_sparse_posterior_live_points=False,
         keep_ultranest_sampler_for_deferred_extension=not bool(fast_binning.get('applied')),
         fix_baseline_terms_for_final=not bool(fast_binning.get('applied')),
+        pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
     )
     annotate_fast_ultranest_binning(final_fit, fast_binning)
     if final_fit is None:
@@ -2305,6 +2331,24 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         sparse_live_point_extension_enabled,
     )
     min_live_points = target_live_points if target_live_points is not None else base_live_points
+    coverage_duration_prior = (
+        duration_prior if isinstance(duration_prior, dict) else build_single_transit_duration_prior(p_dict)
+    )
+    pre_ultranest_coverage_assessment = build_expected_transit_coverage_assessment(
+        times,
+        prior,
+        flux_values=fit_flux,
+        flux_errors=fit_unc,
+        tmid_search_summary=build_ephemeris_tmid_search_summary_for_coverage(
+            times,
+            p_dict,
+            prior=prior,
+            duration_prior=coverage_duration_prior,
+            sigma_multiplier=35.0,
+        ),
+        duration_prior=coverage_duration_prior,
+    )
+    log_expected_transit_coverage_assessment(pre_ultranest_coverage_assessment)
 
     log_info(
         "Running the selected comparison-star final UltraNest fit on the full-resolution light curve "
@@ -2325,6 +2369,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         fixed_flux_baseline=True,
         ultranest_min_num_live_points=min_live_points,
     )
+    annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
     annotate_out_of_transit_baseline_parameter_fit(
@@ -3119,11 +3164,14 @@ def build_initial_rprs_bounds(
 
     if not np.isfinite(rprs) or rprs <= 0:
         return [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
+    if rprs >= RPRS_SEARCH_BOUND_MAX:
+        return [RPRS_SEARCH_BOUND_MIN, RPRS_SEARCH_BOUND_MAX]
 
     lower_bound = max(RPRS_SEARCH_BOUND_MIN, lower_scale * rprs)
-    upper_bound = upper_scale * rprs
+    upper_bound = min(RPRS_SEARCH_BOUND_MAX, upper_scale * rprs)
     if not np.isfinite(upper_bound) or upper_bound <= lower_bound:
-        upper_bound = max(lower_bound + np.finfo(float).eps, rprs)
+        lower_bound = RPRS_SEARCH_BOUND_MIN
+        upper_bound = RPRS_SEARCH_BOUND_MAX
 
     return [float(lower_bound), float(upper_bound)]
 
@@ -4364,6 +4412,48 @@ def configure_ultranest_min_num_live_points(config_value):
     live_points = parse_ultranest_min_num_live_points(config_value)
     os.environ[ULTRANEST_MIN_NUM_LIVE_POINTS_ENV] = str(live_points)
     return live_points
+
+
+def parse_rprs_search_bound_max(config_value):
+    if config_value is None:
+        return RPRS_SEARCH_BOUND_MAX_DEFAULT
+
+    if isinstance(config_value, str) and config_value.strip() == "":
+        return RPRS_SEARCH_BOUND_MAX_DEFAULT
+
+    try:
+        max_bound = float(str(config_value).strip())
+    except (TypeError, ValueError):
+        log_info(
+            "Warning: Invalid 'rprs_search_bound_max' value; "
+            f"defaulting to {RPRS_SEARCH_BOUND_MAX_DEFAULT:.3f}.",
+            warn=True,
+        )
+        return RPRS_SEARCH_BOUND_MAX_DEFAULT
+
+    if not np.isfinite(max_bound) or max_bound <= RPRS_SEARCH_BOUND_MIN:
+        log_info(
+            "Warning: 'rprs_search_bound_max' must be finite and positive; "
+            f"defaulting to {RPRS_SEARCH_BOUND_MAX_DEFAULT:.3f}.",
+            warn=True,
+        )
+        return RPRS_SEARCH_BOUND_MAX_DEFAULT
+
+    if max_bound > RPRS_SEARCH_BOUND_ABSOLUTE_MAX:
+        log_info(
+            "Warning: 'rprs_search_bound_max' exceeds the absolute safety ceiling "
+            f"of {RPRS_SEARCH_BOUND_ABSOLUTE_MAX:.3f}; clamping to that ceiling.",
+            warn=True,
+        )
+        return RPRS_SEARCH_BOUND_ABSOLUTE_MAX
+
+    return float(max_bound)
+
+
+def configure_rprs_search_bound_max(config_value):
+    global RPRS_SEARCH_BOUND_MAX
+    RPRS_SEARCH_BOUND_MAX = parse_rprs_search_bound_max(config_value)
+    return RPRS_SEARCH_BOUND_MAX
 
 
 def log_ultranest_mpi_status():
@@ -5710,6 +5800,336 @@ def summarize_prior_transit_coverage(
     return summary
 
 
+def _coverage_duration_from_context(prior, duration_prior=None):
+    if isinstance(duration_prior, dict):
+        duration = coerce_finite_transit_qc_scalar(duration_prior.get('expected_duration', np.nan))
+        if np.isfinite(duration) and duration > 0:
+            return float(duration)
+    return estimate_transit_duration_from_prior_geometry(prior)
+
+
+def _coverage_tmid_from_context(prior, tmid_search_summary=None):
+    if isinstance(tmid_search_summary, dict):
+        tmid = coerce_finite_transit_qc_scalar(tmid_search_summary.get('tmid', np.nan))
+        if np.isfinite(tmid):
+            return float(tmid)
+    try:
+        return float(prior.get('tmid', np.nan))
+    except (AttributeError, TypeError, ValueError):
+        return np.nan
+
+
+def build_ephemeris_tmid_search_summary_for_coverage(
+    times,
+    planet_dict,
+    prior=None,
+    duration_prior=None,
+    sigma_multiplier=35.0,
+):
+    if not isinstance(planet_dict, dict):
+        return None
+    prior = prior if isinstance(prior, dict) else {}
+
+    prior_tmid = coerce_finite_transit_qc_scalar(
+        planet_dict.get('midT', prior.get('tmid', np.nan))
+    )
+    period = coerce_finite_transit_qc_scalar(
+        planet_dict.get('pPer', prior.get('per', np.nan))
+    )
+    midt_unc = coerce_finite_transit_qc_scalar(planet_dict.get('midTUnc', 0.0))
+    per_unc = coerce_finite_transit_qc_scalar(planet_dict.get('pPerUnc', 0.0))
+    if not np.isfinite(midt_unc):
+        midt_unc = 0.0
+    if not np.isfinite(per_unc):
+        per_unc = 0.0
+    if not np.isfinite(prior_tmid) or not np.isfinite(period) or period <= 0:
+        return None
+
+    coverage_prior = dict(prior)
+    coverage_prior.setdefault('tmid', prior_tmid)
+    coverage_prior.setdefault('per', period)
+    coverage_prior.setdefault('rprs', planet_dict.get('rprs', np.nan))
+    coverage_prior.setdefault('ars', planet_dict.get('aRs', np.nan))
+    coverage_prior.setdefault('inc', planet_dict.get('inc', np.nan))
+    coverage_prior.setdefault('ecc', planet_dict.get('ecc', 0.0))
+    coverage_prior.setdefault('omega', planet_dict.get('omega', 0.0))
+    expected_duration = _coverage_duration_from_context(
+        coverage_prior,
+        duration_prior=duration_prior,
+    )
+
+    return estimate_ephemeris_tmid_and_bounds(
+        times,
+        prior_tmid,
+        period,
+        midt_unc,
+        per_unc,
+        expected_duration=expected_duration,
+        sigma_multiplier=sigma_multiplier,
+    )
+
+
+def expected_transit_observed_segment(
+    observed_start,
+    observed_end,
+    ingress_time,
+    mid_transit,
+    egress_time,
+):
+    if observed_end < ingress_time:
+        return "pre-transit baseline only"
+    if observed_start > egress_time:
+        return "post-transit baseline only"
+
+    pieces = []
+    if observed_start < ingress_time:
+        pieces.append("pre-ingress baseline")
+    if observed_start <= ingress_time <= observed_end:
+        pieces.append("ingress")
+    if observed_start <= mid_transit <= observed_end:
+        pieces.append("mid-transit")
+    if observed_start <= egress_time <= observed_end:
+        pieces.append("egress")
+    if observed_end > egress_time:
+        pieces.append("post-egress baseline")
+    if not pieces:
+        if observed_end < mid_transit:
+            return "inside the first half of transit"
+        if observed_start > mid_transit:
+            return "inside the second half of transit"
+        return "inside the expected transit"
+    return " plus ".join(pieces)
+
+
+def score_expected_transit_model_success(
+    transit_fraction_observed,
+    covers_ingress,
+    covers_mid_transit,
+    covers_egress,
+    pre_points,
+    post_points,
+):
+    has_two_sided_baseline = pre_points > 0 and post_points > 0
+    if transit_fraction_observed <= 0:
+        return "very low", 0.05
+    if transit_fraction_observed < 0.25:
+        return "very low", 0.15
+    if not has_two_sided_baseline:
+        if transit_fraction_observed >= 0.9 and covers_ingress and covers_egress:
+            return "moderate", 0.50
+        if transit_fraction_observed >= 0.5 and covers_mid_transit:
+            return "low", 0.35
+        return "low", 0.25
+    if transit_fraction_observed >= 0.9 and covers_ingress and covers_egress:
+        return "high", 0.85
+    if transit_fraction_observed >= 0.65 and covers_mid_transit and (covers_ingress or covers_egress):
+        return "moderate", 0.65
+    if transit_fraction_observed >= 0.4:
+        return "low", 0.40
+    return "low", 0.25
+
+
+def build_expected_transit_coverage_assessment(
+    times,
+    prior,
+    flux_values=None,
+    flux_errors=None,
+    tmid_search_summary=None,
+    duration_prior=None,
+):
+    times = np.asarray(times, dtype=float)
+    if flux_values is None:
+        flux_values = np.ones_like(times, dtype=float)
+    else:
+        flux_values = np.asarray(flux_values, dtype=float)
+
+    base = {
+        'valid': False,
+        'point_count': 0,
+        'observed_start': np.nan,
+        'observed_end': np.nan,
+        'observed_span': np.nan,
+        'expected_tmid': np.nan,
+        'expected_duration': np.nan,
+        'expected_ingress_time': np.nan,
+        'expected_egress_time': np.nan,
+        'overlap_duration': 0.0,
+        'transit_fraction_observed': 0.0,
+        'pre_ingress_points': 0,
+        'in_transit_points': 0,
+        'post_egress_points': 0,
+        'covers_ingress': False,
+        'covers_mid_transit': False,
+        'covers_egress': False,
+        'observed_segment': 'unknown',
+        'success_label': 'unknown',
+        'success_chance': np.nan,
+        'expected_successful': False,
+        'note': 'Could not evaluate expected transit coverage before UltraNest.',
+    }
+
+    if times.shape != flux_values.shape:
+        base['note'] = 'Could not evaluate expected transit coverage because time and flux arrays were misaligned.'
+        return base
+
+    valid = np.isfinite(times) & np.isfinite(flux_values) & (flux_values > 0)
+    if flux_errors is not None:
+        flux_errors = np.asarray(flux_errors, dtype=float)
+        if flux_errors.shape == flux_values.shape:
+            valid &= np.isfinite(flux_errors) & (flux_errors > 0)
+
+    if np.count_nonzero(valid) < 3:
+        base['note'] = 'Could not evaluate expected transit coverage because too few finite light-curve points remain.'
+        return base
+
+    finite_times = np.sort(times[valid])
+    observed_start = float(finite_times[0])
+    observed_end = float(finite_times[-1])
+    observed_span = float(observed_end - observed_start)
+    mid_transit = _coverage_tmid_from_context(prior, tmid_search_summary=tmid_search_summary)
+    duration = _coverage_duration_from_context(prior, duration_prior=duration_prior)
+    base.update({
+        'point_count': int(finite_times.size),
+        'observed_start': observed_start,
+        'observed_end': observed_end,
+        'observed_span': observed_span,
+        'expected_tmid': mid_transit,
+        'expected_duration': duration,
+    })
+
+    if not np.isfinite(mid_transit):
+        base['note'] = 'Could not evaluate expected transit coverage because no finite ephemeris Tmid was available.'
+        return base
+    if not np.isfinite(duration) or duration <= 0:
+        base['note'] = 'Could not evaluate expected transit coverage because the expected transit duration is unavailable.'
+        return base
+
+    ingress_time = float(mid_transit - 0.5 * duration)
+    egress_time = float(mid_transit + 0.5 * duration)
+    in_transit_mask = valid & (times >= ingress_time) & (times <= egress_time)
+    pre_mask = valid & (times < ingress_time)
+    post_mask = valid & (times > egress_time)
+    overlap_start = max(observed_start, ingress_time)
+    overlap_end = min(observed_end, egress_time)
+    overlap_duration = max(0.0, float(overlap_end - overlap_start))
+    transit_fraction_observed = float(np.clip(overlap_duration / duration, 0.0, 1.0))
+    covers_ingress = observed_start <= ingress_time <= observed_end
+    covers_mid_transit = observed_start <= mid_transit <= observed_end
+    covers_egress = observed_start <= egress_time <= observed_end
+    observed_segment = expected_transit_observed_segment(
+        observed_start,
+        observed_end,
+        ingress_time,
+        mid_transit,
+        egress_time,
+    )
+    success_label, success_chance = score_expected_transit_model_success(
+        transit_fraction_observed,
+        covers_ingress,
+        covers_mid_transit,
+        covers_egress,
+        int(np.count_nonzero(pre_mask)),
+        int(np.count_nonzero(post_mask)),
+    )
+    expected_successful = success_chance >= 0.5
+
+    if expected_successful:
+        note = (
+            "The observed timestamps appear to contain enough of the expected transit window "
+            "for a constrained nested fit."
+        )
+    elif transit_fraction_observed <= 0:
+        note = (
+            "The observed timestamps do not overlap the expected transit window; "
+            "UltraNest is unlikely to recover a constrained transit solution."
+        )
+    elif int(np.count_nonzero(pre_mask)) == 0 or int(np.count_nonzero(post_mask)) == 0:
+        note = (
+            "The expected transit is not bracketed by out-of-transit data on both sides; "
+            "UltraNest may chase partial-transit or baseline-degenerate solutions."
+        )
+    else:
+        note = (
+            "The expected transit is only partially observed; UltraNest may return broad or "
+            "edge-hugging posteriors."
+        )
+
+    base.update({
+        'valid': True,
+        'expected_ingress_time': ingress_time,
+        'expected_egress_time': egress_time,
+        'overlap_duration': overlap_duration,
+        'transit_fraction_observed': transit_fraction_observed,
+        'pre_ingress_points': int(np.count_nonzero(pre_mask)),
+        'in_transit_points': int(np.count_nonzero(in_transit_mask)),
+        'post_egress_points': int(np.count_nonzero(post_mask)),
+        'covers_ingress': bool(covers_ingress),
+        'covers_mid_transit': bool(covers_mid_transit),
+        'covers_egress': bool(covers_egress),
+        'observed_segment': observed_segment,
+        'success_label': success_label,
+        'success_chance': float(success_chance),
+        'expected_successful': bool(expected_successful),
+        'note': note,
+    })
+    return base
+
+
+def _format_minutes_from_days(days):
+    try:
+        value = float(days) * 24.0 * 60.0
+    except (TypeError, ValueError):
+        return "n/a"
+    return "n/a" if not np.isfinite(value) else f"{value:.1f} min"
+
+
+def log_expected_transit_coverage_assessment(assessment, indent="  "):
+    if not isinstance(assessment, dict):
+        return
+
+    if not assessment.get('valid'):
+        log_info(
+            f"{indent}Warning: pre-UltraNest transit coverage assessment unavailable: "
+            f"{assessment.get('note', 'unknown reason')}",
+            warn=True,
+        )
+        return
+
+    success_label = str(assessment.get('success_label', 'unknown')).upper()
+    success_chance = coerce_finite_transit_qc_scalar(assessment.get('success_chance', np.nan))
+    success_text = success_label
+    if np.isfinite(success_chance):
+        success_text = f"{success_label} (~{100.0 * float(success_chance):.0f}%)"
+
+    warn = not bool(assessment.get('expected_successful', False))
+    log_info(f"{indent}Pre-UltraNest transit coverage assessment:", warn=warn)
+    log_info(
+        f"{indent}  Data time range: {assessment['observed_start']:.8f} to "
+        f"{assessment['observed_end']:.8f} BJD_TDB "
+        f"({_format_minutes_from_days(assessment.get('observed_span'))}, "
+        f"{assessment.get('point_count', 0)} point(s)).",
+        warn=warn,
+    )
+    log_info(
+        f"{indent}  Expected transit window: ingress {assessment['expected_ingress_time']:.8f}, "
+        f"mid {assessment['expected_tmid']:.8f}, egress {assessment['expected_egress_time']:.8f} "
+        f"BJD_TDB (duration {_format_minutes_from_days(assessment.get('expected_duration'))}).",
+        warn=warn,
+    )
+    log_info(
+        f"{indent}  Observed coverage: {assessment.get('observed_segment', 'unknown')}; "
+        f"{100.0 * assessment.get('transit_fraction_observed', 0.0):.1f}% of the expected transit "
+        f"window with {assessment.get('pre_ingress_points', 0)} pre-ingress, "
+        f"{assessment.get('in_transit_points', 0)} in-transit, and "
+        f"{assessment.get('post_egress_points', 0)} post-egress point(s).",
+        warn=warn,
+    )
+    log_info(
+        f"{indent}  Estimated fit success: {success_text}. {assessment.get('note', '')}",
+        warn=warn,
+    )
+
+
 def extract_baseline_corrected_lightcurve_arrays(fit):
     times = np.asarray(getattr(fit, 'time', []), dtype=float)
     if times.ndim != 1 or times.size == 0:
@@ -6538,9 +6958,20 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     extend_sparse_posterior_live_points=True,
     keep_ultranest_sampler_for_deferred_extension=False,
     fix_baseline_terms_for_final=True,
+    pre_ultranest_coverage_assessment=None,
 ):
     if duration_prior is None and expected_planet_dict is not None:
         duration_prior = build_single_transit_duration_prior(expected_planet_dict)
+    if pre_ultranest_coverage_assessment is None:
+        pre_ultranest_coverage_assessment = build_expected_transit_coverage_assessment(
+            times,
+            prior,
+            flux_values=flux_values,
+            flux_errors=flux_errors,
+            tmid_search_summary=expected_tmid_search_summary,
+            duration_prior=duration_prior,
+        )
+    log_expected_transit_coverage_assessment(pre_ultranest_coverage_assessment)
     sparse_posterior_live_point_extension_enabled = should_use_sparse_posterior_live_point_retry(
         os.environ.get(
             SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV,
@@ -6575,6 +7006,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         tmid_search_summary=expected_tmid_search_summary,
         eebls_search_summary=eebls_search_summary,
     )
+    annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
 
     effective_bounds = get_posterior_refit_final_bounds(fit, bounds)
     prefit_plan = build_final_fit_prefit_refinement_plan(
@@ -6625,6 +7057,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             tmid_search_summary=expected_tmid_search_summary,
             eebls_search_summary=eebls_search_summary,
         )
+        annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
 
     working_bounds = get_posterior_refit_final_bounds(fit, working_bounds)
 
@@ -6722,6 +7155,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             tmid_search_summary=expected_tmid_search_summary,
             eebls_search_summary=eebls_search_summary,
         )
+        annotate_pre_ultranest_transit_coverage(refit, pre_ultranest_coverage_assessment)
         annotate_final_fit_prefit_refinement(
             refit,
             prefit_plan.get('applied', False),
@@ -6837,6 +7271,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         tmid_search_summary=expected_tmid_search_summary,
         eebls_search_summary=eebls_search_summary,
     )
+    annotate_pre_ultranest_transit_coverage(refit, pre_ultranest_coverage_assessment)
     annotate_final_fit_prefit_refinement(
         refit,
         prefit_plan.get('applied', False),
@@ -12075,6 +12510,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     )
     prior['tmid'] = tmid_search_summary['tmid']
     lower, upper = tmid_search_summary['bounds']
+    ephemeris_tmid_search_summary = tmid_search_summary
 
     if (
         allow_mid_transit_range_warning
@@ -12179,6 +12615,15 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     debug_phase_clip_keep_mask = np.ones(np.count_nonzero(debug_initial_sigma_keep_mask), dtype=bool)
     if final_fit_mode == 'ns' and myfit is not None:
         duration_prior = build_single_transit_duration_prior(pDict)
+        pre_ultranest_coverage_assessment = build_expected_transit_coverage_assessment(
+            arrayTimes,
+            prior,
+            flux_values=arrayFinalFlux,
+            flux_errors=arrayNormUnc,
+            tmid_search_summary=ephemeris_tmid_search_summary,
+            duration_prior=duration_prior,
+        )
+        log_expected_transit_coverage_assessment(pre_ultranest_coverage_assessment)
         nested_refinement = build_nested_tmid_refinement_from_initial_fit(
             arrayTimes,
             arrayFinalFlux,
@@ -12198,6 +12643,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
         )
+        annotate_pre_ultranest_transit_coverage(myfit, pre_ultranest_coverage_assessment)
         myfit = apply_plot_time_range(myfit, plot_time_range)
         annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
         annotate_lightcurve_filter_diagnostics(myfit, filter_diagnostics)
@@ -13222,6 +13668,24 @@ def summarize_lightcurve_fit_assessment(fit):
         'fit_method': fit_method,
         'duration_prior_applied': bool(getattr(fit, 'duration_prior_applied', False)),
         'duration_prior_note': getattr(fit, 'duration_prior_note', None),
+        'pre_ultranest_transit_coverage_valid': bool(
+            getattr(fit, 'pre_ultranest_transit_coverage_valid', False)
+        ),
+        'pre_ultranest_transit_coverage_status': getattr(
+            fit,
+            'pre_ultranest_transit_coverage_status',
+            None,
+        ),
+        'pre_ultranest_transit_coverage_chance': getattr(
+            fit,
+            'pre_ultranest_transit_coverage_chance',
+            np.nan,
+        ),
+        'pre_ultranest_transit_coverage_note': getattr(
+            fit,
+            'pre_ultranest_transit_coverage_note',
+            None,
+        ),
         'rprs_posterior_refit_applied': bool(getattr(fit, 'rprs_posterior_refit_applied', False)),
         'rprs_posterior_refit_count': rprs_retry_count,
         'rprs_posterior_refit_note': getattr(fit, 'rprs_posterior_refit_note', None),
@@ -13305,6 +13769,16 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
     )
     if assessment.get('duration_prior_note'):
         log_info(f"{indent}Duration prior note: {assessment['duration_prior_note']}")
+    if assessment.get('pre_ultranest_transit_coverage_note'):
+        status = assessment.get('pre_ultranest_transit_coverage_status') or 'unknown'
+        chance = coerce_finite_transit_qc_scalar(
+            assessment.get('pre_ultranest_transit_coverage_chance', np.nan)
+        )
+        chance_text = f", chance~{100.0 * float(chance):.0f}%" if np.isfinite(chance) else ""
+        log_info(
+            f"{indent}Pre-UltraNest coverage note: status={str(status).upper()}{chance_text}; "
+            f"{assessment['pre_ultranest_transit_coverage_note']}"
+        )
     if assessment.get('rprs_posterior_refit_note'):
         log_info(f"{indent}Rp/R* posterior retry note: {assessment['rprs_posterior_refit_note']}")
     if assessment.get('b_posterior_refit_note'):
@@ -15473,7 +15947,14 @@ def _main_impl():
                 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT,
             )
         )
+        rprs_search_bound_max = configure_rprs_search_bound_max(
+            exotic_infoDict.get(
+                'rprs_search_bound_max',
+                RPRS_SEARCH_BOUND_MAX_DEFAULT,
+            )
+        )
         log_info(f"UltraNest minimum live points: {ultranest_min_num_live_points}.")
+        log_info(f"Rp/R* maximum search bound: {rprs_search_bound_max:.3f}.")
         if run_fast_ultranest_before_final_run:
             log_info(
                 "Fast pre-final UltraNest enabled: comparison-candidate UltraNest search runs "

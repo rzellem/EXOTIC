@@ -138,6 +138,7 @@ from exotic.exotic import (
     prepare_final_fit_lightcurve_series,
     prepare_lightcurve_fit_input_series,
     rank_comparison_candidate_preflight_plans,
+    refit_selected_fast_comparison_on_full_lightcurve,
     representative_psf_sigma,
     ranked_comparison_calibration_summaries,
     resolve_sky_annulus_geometry,
@@ -2981,12 +2982,12 @@ def test_evaluate_transit_detection_qc_rejects_large_expected_value_deviation():
 
     assert summary["computed"] is True
     assert summary["status"] == "fail"
-    assert summary["tmid_deviation_sigma"] == pytest.approx(6.0)
-    assert summary["tmid_deviation_minutes"] == pytest.approx(8.64)
-    assert summary["tmid_deviation_threshold_minutes"] == pytest.approx(7.2)
     assert summary["rprs_deviation_sigma"] == pytest.approx(8.0)
     assert summary["deviation_from_expected_value"] == pytest.approx(0.0)
     assert summary["ktmf_metric"] <= 5.0
+    assert np.isnan(summary["tmid_deviation_sigma"])
+    assert np.isnan(summary["tmid_deviation_minutes"])
+    assert summary["rprs_deviation_fit_unc"] == pytest.approx(0.01)
 
 
 def test_annotate_transit_qc_expected_values_prefers_propagated_epoch_tmid():
@@ -3037,7 +3038,7 @@ def test_annotate_transit_qc_expected_values_coerces_scalar_like_inputs():
     assert fit.transit_qc_deviation_sigma_threshold == pytest.approx(7.5)
 
 
-def test_evaluate_transit_detection_qc_keeps_tmid_deviation_diagnostic_only():
+def test_evaluate_transit_detection_qc_does_not_calculate_tmid_expected_value_deviation():
     times = np.linspace(0.0, 1.0, 21)
     transit_model = np.ones(times.shape[0], dtype=float)
     transit_model[9:12] -= 0.02
@@ -3073,13 +3074,154 @@ def test_evaluate_transit_detection_qc_keeps_tmid_deviation_diagnostic_only():
     summary = evaluate_transit_detection_qc(fit)
 
     assert summary["status"] == "pass"
-    assert summary["tmid_deviation_minutes"] == pytest.approx(40.32)
+    assert np.isnan(summary["tmid_deviation_minutes"])
+    assert np.isnan(summary["tmid_deviation_sigma"])
     assert summary["rprs_deviation_sigma"] == pytest.approx(0.0)
     assert summary["deviation_from_expected_value"] == pytest.approx(1.0)
-    assert any("Expected-value Tmid deviation: 40.32 minutes" in note for note in summary["notes"])
+    assert not any("Expected-value Tmid" in note for note in summary["notes"])
     assert "QC rejected the fit because" not in summary["summary"]
     assert "Tmid of the fit is 40.32 minutes away from the ephemeris Tmid" not in summary["summary"]
     assert "not supported strongly enough against a flat/null model" not in summary["summary"]
+
+
+def test_expected_value_rprs_deviation_uses_fit_uncertainty_not_prior_uncertainty():
+    transit_model = np.ones(21, dtype=float)
+    transit_model[9:12] -= 0.0287
+    data = transit_model.copy()
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.1694, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.0046, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 0.5], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+        transit_qc_expected_tmid=0.5,
+        transit_qc_expected_tmid_unc=0.001,
+        transit_qc_expected_rprs=0.1589,
+        transit_qc_expected_rprs_unc=0.0001,
+        transit_qc_use_deviation_from_expected_transit_in_qc=True,
+        transit_qc_deviation_sigma_threshold=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["rprs_deviation_fit_unc"] == pytest.approx(0.0046)
+    assert summary["rprs_deviation_sigma"] == pytest.approx(abs(0.1694 - 0.1589) / 0.0046)
+    assert summary["deviation_from_expected_value"] == pytest.approx(
+        1.0 - summary["rprs_deviation_sigma"] / 5.0
+    )
+    assert summary["deviation_from_expected_value"] > 0.0
+
+
+def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    times = np.linspace(0.0, 1.0, 21)
+    transit_model = np.ones(times.shape[0], dtype=float)
+    transit_model[9:12] -= 0.0287
+    errors = np.full(times.shape[0], 0.0015, dtype=float)
+    airmass = np.ones(times.shape[0], dtype=float)
+
+    previous_fit = types.SimpleNamespace(
+        fast_ultranest_binning_applied=True,
+        parameters={
+            "rprs": 0.1694,
+            "tmid": 0.5,
+            "ars": 5.0,
+            "inc": 89.0,
+            "per": 1.0,
+            "u0": 0.1,
+            "u1": 0.1,
+            "u2": 0.1,
+            "u3": 0.1,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.0,
+            "a1": 1.0,
+            "a2": 0.0,
+        },
+        errors={"rprs": 0.0046, "tmid": 0.001, "ars": 0.1, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+        bounds={"rprs": [0.0, 0.5], "tmid": [0.4, 0.6], "ars": [1.0, 10.0], "inc": [80.0, 90.0]},
+    )
+
+    def fake_run_nested(*args, **kwargs):
+        return types.SimpleNamespace(
+            time=times,
+            data=transit_model.copy(),
+            dataerr=errors.copy(),
+            model=transit_model.copy(),
+            airmass=airmass.copy(),
+            prior={"per": 1.0, "tmid": 0.5},
+            parameters={
+                "rprs": 0.1694,
+                "tmid": 0.5,
+                "ars": 5.0,
+                "inc": 89.0,
+                "per": 1.0,
+                "a0": 1.0,
+                "a1": 1.0,
+                "a2": 0.0,
+            },
+            errors={"rprs": 0.0046, "tmid": 0.001, "ars": 0.1, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            bounds={"rprs": [0.0, 0.5], "tmid": [0.4, 0.6], "ars": [1.0, 10.0], "inc": [80.0, 90.0]},
+            airmass_fit_skipped=True,
+            eebls_diagnostic_depth_snr=50.0,
+            duration_expected=0.1,
+            duration_measured=0.1,
+        )
+
+    monkeypatch.setattr(exotic_module, "run_nested_lightcurve_fit_with_rprs_posterior_retry", fake_run_nested)
+    monkeypatch.setattr(exotic_module, "build_expected_transit_coverage_assessment", lambda *args, **kwargs: {})
+    monkeypatch.setattr(exotic_module, "log_expected_transit_coverage_assessment", lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, "annotate_pre_ultranest_transit_coverage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, "selected_final_live_point_target", lambda *args, **kwargs: (200, None))
+
+    p_dict = {
+        "rprs": 0.1589,
+        "rprsUnc": 0.0001,
+        "midT": 0.5,
+        "midTUnc": 0.001,
+        "pPer": 1.0,
+        "pPerUnc": 0.0,
+        "aRs": 5.0,
+        "aRsUnc": 0.1,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "use_deviation_from_expected_transit_in_qc": True,
+        "deviation_from_expected_transit_in_qc_sigma": 5.0,
+    }
+    selected_result = {
+        "fit": previous_fit,
+        "good_times": times,
+        "good_flux": transit_model.copy(),
+        "good_unc": errors.copy(),
+        "good_airmass": airmass.copy(),
+        "good_jd_times": times.copy(),
+        "fast_fit_bounds": previous_fit.bounds,
+    }
+
+    refit, _, _ = refit_selected_fast_comparison_on_full_lightcurve(
+        selected_result,
+        p_dict,
+        detrend_on_outoftransit_baseline=False,
+        duration_prior={"duration": 0.1},
+    )
+
+    assert refit.transit_qc_rprs_deviation_fit_unc == pytest.approx(0.0046)
+    assert refit.transit_qc_rprs_deviation_sigma == pytest.approx(abs(0.1694 - 0.1589) / 0.0046)
+    contribution = next(
+        item for item in refit.transit_qc_ktmf_contributions
+        if item["label"] == "Deviation From Expected Value"
+    )
+    assert contribution["score"] > 0.0
+    assert contribution["max_points"] > 0.0
+    assert "fit uncertainty=0.004600" in contribution["detail"]
+    assert "Tmid" not in contribution["detail"]
 
 
 def test_evaluate_transit_detection_qc_computes_missing_eebls_depth_snr(monkeypatch):
@@ -4701,7 +4843,7 @@ def test_fit_ranked_comparison_calibration_candidates_falls_back_to_best_qc_reje
             self.transit_qc_status = "fail"
             self.transit_qc_summary = (
                 "Transit model is preferred over the flat/null model, but QC rejected the fit because "
-                "the fit deviates too far from the expected published Tmid and/or Rp/R* values "
+                "the fit deviates too far from the expected published Rp/R* value "
                 f"(Delta BIC={delta_bic:.2f}, Delta chi2=27.10)."
             )
             self.transit_qc = {

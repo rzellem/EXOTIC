@@ -333,6 +333,34 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
 
 
+def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertainties(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {
+        "pName": "HAT-P-32 b",
+        "midTUnc": 9.9,
+        "rprsUnc": 8.8,
+        "aRsUnc": 7.7,
+        "incUnc": 6.6,
+    }
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Mid-Transit Time (Tmid)"].endswith("+/- 0.0001 BJD_TDB")
+    assert final_params["Ratio of Planet to Stellar Radius (Rp/R*)"] == "0.1234 +/- 0.001"
+    assert final_params["Orbital Inclination (inc)"] == "88.5 +/- 0.2 "
+    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.0 +/- 0.4"
+    assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
+
+
 def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
     fit = DummyFit()
     (tmp_path / "temp").mkdir()
@@ -410,6 +438,7 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
         "tmid_deviation_minutes": 3.2,
         "tmid_deviation_threshold_minutes": 14.4,
         "expected_tmid_unc_minutes": 2.88,
+        "rprs_deviation_fit_unc": 0.0046,
         "rprs_deviation_sigma": 0.8,
         "deviation_sigma_threshold": 5.0,
         "ktmf_metric": 4.63,
@@ -428,7 +457,7 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
                 "points": 0.91,
                 "max_points": 1.00,
                 "score": 0.91,
-                "detail": "score=0.91, Tmid sigma=1.10, Rp/R* sigma=0.80",
+                "detail": "score=0.91, Rp/R* sigma=0.80, fit uncertainty=0.004600",
             },
         ],
         "notes": ["The transit model is strongly preferred over the flat/null model."],
@@ -452,9 +481,9 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
     assert "Delta BIC=18.40" in output_text
     assert "Residual scatter around full model fit" in output_text
     assert "Deviation From Expected Value" in output_text
-    assert "Expected-value Tmid offset" in output_text
-    assert "3.20 minutes" in output_text
-    assert "Expected-value Tmid QC window" in output_text
+    assert "3.20 minutes" not in output_text
+    assert "Expected-value Tmid offset" not in output_text
+    assert "Expected-value Tmid QC window" not in output_text
     assert "KTMF" in output_text
     assert "KTMF contribution 1" in output_text
 

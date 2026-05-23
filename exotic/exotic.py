@@ -851,10 +851,13 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         'expected_tmid_unc': np.nan,
         'expected_tmid_unc_minutes': np.nan,
         'fitted_tmid': np.nan,
+        'fitted_rprs': np.nan,
+        'fitted_rprs_unc': np.nan,
         'tmid_deviation_days': np.nan,
         'tmid_deviation_minutes': np.nan,
         'tmid_deviation_threshold_minutes': np.nan,
         'tmid_deviation_sigma': np.nan,
+        'rprs_deviation_fit_unc': np.nan,
         'rprs_deviation_sigma': np.nan,
         'tmid_deviation_score': np.nan,
         'rprs_deviation_score': np.nan,
@@ -872,43 +875,26 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
     sigma_threshold = expected.get('deviation_sigma_threshold', sigma_threshold)
     summary['sigma_threshold'] = sigma_threshold
 
-    expected_tmid = expected.get('expected_tmid', np.nan)
-    expected_tmid_unc = expected.get('expected_tmid_unc', np.nan)
-    fitted_tmid = parameters.get('tmid', np.nan)
-    summary['expected_tmid'] = expected_tmid
-    summary['expected_tmid_unc'] = expected_tmid_unc
-    summary['fitted_tmid'] = fitted_tmid
+    summary['expected_tmid'] = expected.get('expected_tmid', np.nan)
+    summary['expected_tmid_unc'] = expected.get('expected_tmid_unc', np.nan)
+    summary['fitted_tmid'] = parameters.get('tmid', np.nan)
     if not enabled:
         return summary
 
-    if (
-        np.isfinite(expected_tmid)
-        and np.isfinite(expected_tmid_unc)
-        and expected_tmid_unc > 0
-        and np.isfinite(fitted_tmid)
-    ):
-        tmid_deviation_days = float(abs(fitted_tmid - expected_tmid))
-        tmid_sigma = float(tmid_deviation_days / expected_tmid_unc)
-        summary['tmid_deviation_days'] = tmid_deviation_days
-        summary['tmid_deviation_minutes'] = tmid_deviation_days * 24.0 * 60.0
-        summary['expected_tmid_unc_minutes'] = float(expected_tmid_unc) * 24.0 * 60.0
-        if np.isfinite(sigma_threshold) and sigma_threshold > 0:
-            summary['tmid_deviation_threshold_minutes'] = (
-                float(sigma_threshold) * float(expected_tmid_unc) * 24.0 * 60.0
-            )
-        summary['tmid_deviation_sigma'] = tmid_sigma
-        summary['tmid_deviation_score'] = transit_qc_deviation_score_from_sigma(tmid_sigma, sigma_threshold)
-
     expected_rprs = expected.get('expected_rprs', np.nan)
-    expected_rprs_unc = expected.get('expected_rprs_unc', np.nan)
     fitted_rprs = parameters.get('rprs', np.nan)
+    errors = getattr(fit, 'errors', {}) or {}
+    fitted_rprs_unc = errors.get('rprs', np.nan)
+    summary['fitted_rprs'] = fitted_rprs
+    summary['fitted_rprs_unc'] = fitted_rprs_unc
     if (
         np.isfinite(expected_rprs)
-        and np.isfinite(expected_rprs_unc)
-        and expected_rprs_unc > 0
         and np.isfinite(fitted_rprs)
+        and np.isfinite(fitted_rprs_unc)
+        and fitted_rprs_unc > 0
     ):
-        rprs_sigma = float(abs(fitted_rprs - expected_rprs) / expected_rprs_unc)
+        rprs_sigma = float(abs(fitted_rprs - expected_rprs) / fitted_rprs_unc)
+        summary['rprs_deviation_fit_unc'] = fitted_rprs_unc
         summary['rprs_deviation_sigma'] = rprs_sigma
         summary['rprs_deviation_score'] = transit_qc_deviation_score_from_sigma(rprs_sigma, sigma_threshold)
 
@@ -916,18 +902,13 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         summary['available'] = True
         summary['deviation_from_expected_value'] = float(summary['rprs_deviation_score'])
 
-    if np.isfinite(summary['tmid_deviation_sigma']):
-        summary['notes'].append(
-            "Expected-value Tmid deviation: "
-            f"{summary['tmid_deviation_minutes']:.2f} minutes "
-            f"({summary['tmid_deviation_sigma']:.2f} sigma; "
-            f"fit={summary['fitted_tmid']:.6f}, "
-            f"ephemeris={summary['expected_tmid']:.6f} +/- "
-            f"{summary['expected_tmid_unc_minutes']:.2f} minutes)."
-        )
     if np.isfinite(summary['rprs_deviation_sigma']):
         summary['notes'].append(
-            f"Expected-value Rp/R* deviation: {summary['rprs_deviation_sigma']:.2f} sigma."
+            "Expected-value Rp/R* deviation: "
+            f"{summary['rprs_deviation_sigma']:.2f} sigma "
+            f"(fit={summary['fitted_rprs']:.6f} +/- {summary['fitted_rprs_unc']:.6f}, "
+            f"expected={expected_rprs:.6f}; "
+            f"fit uncertainty={summary['rprs_deviation_fit_unc']:.6f})."
         )
 
     rprs_sigma = summary['rprs_deviation_sigma']
@@ -956,6 +937,18 @@ def compute_transit_qc_ktmf(summary):
         if np.isfinite(summary.get('delta_chi2', np.nan))
         else "Delta chi2=n/a",
     ]
+    deviation_score = summary.get('deviation_from_expected_value', np.nan)
+    if np.isfinite(deviation_score):
+        deviation_detail_parts = [
+            f"score={deviation_score:.2f}",
+            f"Rp/R* sigma={summary.get('rprs_deviation_sigma', np.nan):.2f}",
+        ]
+        rprs_fit_unc = summary.get('rprs_deviation_fit_unc', np.nan)
+        if np.isfinite(rprs_fit_unc):
+            deviation_detail_parts.append(f"fit uncertainty={rprs_fit_unc:.6f}")
+        deviation_detail = ", ".join(deviation_detail_parts)
+    else:
+        deviation_detail = "expected-value deviation disabled or unavailable"
 
     raw_components = [
         {
@@ -967,13 +960,8 @@ def compute_transit_qc_ktmf(summary):
         {
             'key': 'deviation_from_expected_value',
             'label': 'Deviation From Expected Value',
-            'score': summary.get('deviation_from_expected_value', np.nan),
-            'detail': (
-                f"score={summary.get('deviation_from_expected_value', np.nan):.2f}, "
-                f"Rp/R* sigma={summary.get('rprs_deviation_sigma', np.nan):.2f}"
-                if np.isfinite(summary.get('deviation_from_expected_value', np.nan))
-                else "expected-value deviation disabled or unavailable"
-            ),
+            'score': deviation_score,
+            'detail': deviation_detail,
         },
         {
             'key': 'residual_scatter',
@@ -1246,10 +1234,13 @@ def evaluate_transit_detection_qc(fit):
         'fitted_tmid': np.nan,
         'expected_rprs': expected_context.get('expected_rprs', np.nan),
         'expected_rprs_unc': expected_context.get('expected_rprs_unc', np.nan),
+        'fitted_rprs': np.nan,
+        'fitted_rprs_unc': np.nan,
         'tmid_deviation_days': np.nan,
         'tmid_deviation_minutes': np.nan,
         'tmid_deviation_threshold_minutes': np.nan,
         'tmid_deviation_sigma': np.nan,
+        'rprs_deviation_fit_unc': np.nan,
         'rprs_deviation_sigma': np.nan,
         'tmid_deviation_score': np.nan,
         'rprs_deviation_score': np.nan,
@@ -1381,10 +1372,13 @@ def evaluate_transit_detection_qc(fit):
         'expected_tmid_unc': deviation_summary.get('expected_tmid_unc', np.nan),
         'expected_tmid_unc_minutes': deviation_summary.get('expected_tmid_unc_minutes', np.nan),
         'fitted_tmid': deviation_summary.get('fitted_tmid', np.nan),
+        'fitted_rprs': deviation_summary.get('fitted_rprs', np.nan),
+        'fitted_rprs_unc': deviation_summary.get('fitted_rprs_unc', np.nan),
         'tmid_deviation_days': deviation_summary.get('tmid_deviation_days', np.nan),
         'tmid_deviation_minutes': deviation_summary.get('tmid_deviation_minutes', np.nan),
         'tmid_deviation_threshold_minutes': deviation_summary.get('tmid_deviation_threshold_minutes', np.nan),
         'tmid_deviation_sigma': deviation_summary.get('tmid_deviation_sigma', np.nan),
+        'rprs_deviation_fit_unc': deviation_summary.get('rprs_deviation_fit_unc', np.nan),
         'rprs_deviation_sigma': deviation_summary.get('rprs_deviation_sigma', np.nan),
         'tmid_deviation_score': deviation_summary.get('tmid_deviation_score', np.nan),
         'rprs_deviation_score': deviation_summary.get('rprs_deviation_score', np.nan),
@@ -1533,10 +1527,13 @@ def annotate_transit_detection_qc(fit, summary=None):
     fit.transit_qc_expected_tmid_unc = summary.get('expected_tmid_unc')
     fit.transit_qc_expected_tmid_unc_minutes = summary.get('expected_tmid_unc_minutes')
     fit.transit_qc_fitted_tmid = summary.get('fitted_tmid')
+    fit.transit_qc_fitted_rprs = summary.get('fitted_rprs')
+    fit.transit_qc_fitted_rprs_unc = summary.get('fitted_rprs_unc')
     fit.transit_qc_tmid_deviation_days = summary.get('tmid_deviation_days')
     fit.transit_qc_tmid_deviation_minutes = summary.get('tmid_deviation_minutes')
     fit.transit_qc_tmid_deviation_threshold_minutes = summary.get('tmid_deviation_threshold_minutes')
     fit.transit_qc_tmid_deviation_sigma = summary.get('tmid_deviation_sigma')
+    fit.transit_qc_rprs_deviation_fit_unc = summary.get('rprs_deviation_fit_unc')
     fit.transit_qc_rprs_deviation_sigma = summary.get('rprs_deviation_sigma')
     fit.transit_qc_expected_rprs_deviation_sigma = summary.get('rprs_deviation_sigma')
     fit.transit_qc_ktmf_metric = summary.get('ktmf_metric')
@@ -2720,6 +2717,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             'note': 'Full-resolution selected comparison-star final run; fast binning was not applied.',
         },
     )
+    annotate_transit_qc_expected_values(fit, p_dict)
     if target_live_points is not None:
         diagnostics = evaluate_sparse_posterior_sample_support(fit, base_live_points=base_live_points)
         annotate_sparse_posterior_live_point_extension(
@@ -18385,19 +18383,6 @@ def _main_impl():
             if np.isfinite(transit_qc.get('deviation_from_expected_value', np.nan)):
                 log_info(
                     f"      Deviation From Expected Value: {transit_qc['deviation_from_expected_value']:.2f} / 1.00"
-                )
-            if np.isfinite(transit_qc.get('tmid_deviation_sigma', np.nan)):
-                log_info(
-                    f"          Expected-value Tmid sigma: {transit_qc['tmid_deviation_sigma']:.2f}"
-                )
-            if np.isfinite(transit_qc.get('tmid_deviation_minutes', np.nan)):
-                log_info(
-                    f"         Expected-value Tmid offset: {transit_qc['tmid_deviation_minutes']:.2f} minutes"
-                )
-            if np.isfinite(transit_qc.get('tmid_deviation_threshold_minutes', np.nan)):
-                log_info(
-                    "      Expected-value Tmid QC window: "
-                    f"{transit_qc['tmid_deviation_threshold_minutes']:.2f} minutes"
                 )
             if np.isfinite(transit_qc.get('rprs_deviation_sigma', np.nan)):
                 log_info(

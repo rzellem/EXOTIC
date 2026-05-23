@@ -214,9 +214,8 @@ class Inputs:
             'pick_comparison_by_eebls_snr': 'y',
             'use_deviation_from_expected_transit_in_qc': True,
             'deviation_from_expected_transit_in_qc_sigma': 5.0,
-            'assess_all_comparisons_before_selecting_best': 'y',
             'exit_at_first_qc_pass_solution': 'y',
-            'detect_bad_pixels_before_photometry': 'y',
+            'detect_bad_pixels_before_photometry': 'n',
             'multiprocess_bad_pixel_precheck': 'n',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
@@ -470,10 +469,6 @@ class Inputs:
             'deviation_from_expected_transit_in_qc_sigma': (
                 'deviation_from_expected_transit_in_qc_sigma',
                 'Deviation From Expected Transit In QC Sigma',
-            ),
-            'assess_all_comparisons_before_selecting_best': (
-                'assess_all_comparisons_before_selecting_best',
-                'Assess All Comparisons Before Selecting Best? (y/n)',
             ),
             'exit_at_first_qc_pass_solution': (
                 'exit_at_first_qc_pass_solution',

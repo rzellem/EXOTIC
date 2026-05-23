@@ -218,7 +218,7 @@ def test_comp_params_defaults_disable_vertical_flux_normalization_to_false(tmp_p
     assert inputs.info_dict["disable_vertical_flux_normalization"] is False
 
 
-def test_comp_params_defaults_detect_bad_pixels_before_photometry_to_yes(tmp_path):
+def test_comp_params_defaults_detect_bad_pixels_before_photometry_to_no(tmp_path):
     init_data = {
         "user_info": {},
         "optional_info": {},
@@ -230,7 +230,7 @@ def test_comp_params_defaults_detect_bad_pixels_before_photometry_to_yes(tmp_pat
     inputs = Inputs(init_opt="y")
     inputs.comp_params(init_file, {})
 
-    assert inputs.info_dict["detect_bad_pixels_before_photometry"] == "y"
+    assert inputs.info_dict["detect_bad_pixels_before_photometry"] == "n"
 
 
 def test_comp_params_defaults_multiprocess_bad_pixel_precheck_to_no(tmp_path):

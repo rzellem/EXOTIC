@@ -162,7 +162,6 @@ from exotic.exotic import (
     should_stop_after_promising_partial_comparison_attempt,
     should_use_psf_photometry,
     should_skip_low_comparison_coverage_rejection,
-    should_assess_all_comparisons_before_selecting_best,
     should_use_fast_target_centroid,
     should_use_deviation_from_expected_transit_in_qc,
     update_coordinates_with_proper_motion,
@@ -789,7 +788,7 @@ def test_should_fit_lightcurve_to_every_comparison_candidate_parses_values():
 
 
 def test_should_detect_bad_pixels_before_photometry_parses_values():
-    assert should_detect_bad_pixels_before_photometry(None) is True
+    assert should_detect_bad_pixels_before_photometry(None) is False
     assert should_detect_bad_pixels_before_photometry("y") is True
     assert should_detect_bad_pixels_before_photometry("n") is False
 
@@ -855,13 +854,6 @@ def test_parse_deviation_from_expected_transit_in_qc_sigma_parses_values():
     assert parse_deviation_from_expected_transit_in_qc_sigma("7.5") == pytest.approx(7.5)
     assert parse_deviation_from_expected_transit_in_qc_sigma(3) == pytest.approx(3.0)
     assert parse_deviation_from_expected_transit_in_qc_sigma(-1) == pytest.approx(5.0)
-
-
-def test_should_assess_all_comparisons_before_selecting_best_parses_values():
-    assert should_assess_all_comparisons_before_selecting_best(None) is True
-    assert should_assess_all_comparisons_before_selecting_best("y") is True
-    assert should_assess_all_comparisons_before_selecting_best("n") is False
-    assert should_assess_all_comparisons_before_selecting_best(True) is True
 
 
 def test_should_exit_at_first_qc_pass_solution_parses_values():
@@ -4011,7 +4003,7 @@ def test_fit_ranked_comparison_calibration_candidates_applies_field_image_clip(m
     assert result["attempts"][0]["fit_point_count"] == 4
 
 
-def test_fit_ranked_comparison_calibration_candidates_evaluates_all_candidates_even_when_flag_disabled(
+def test_fit_ranked_comparison_calibration_candidates_saves_outputs_for_completed_candidates(
     monkeypatch, tmp_path
 ):
     def fake_diagnostics(*args, **kwargs):
@@ -4094,7 +4086,6 @@ def test_fit_ranked_comparison_calibration_candidates_evaluates_all_candidates_e
         psf_data={},
         aper_data=aper_data,
         target_psf_flux=np.full(6, 100.0, dtype=float),
-        assess_all_comparisons_before_selecting_best=False,
         save_dir=tmp_path,
         planet_name="HAT-P-32 b",
         observation_date="2026-04-28",

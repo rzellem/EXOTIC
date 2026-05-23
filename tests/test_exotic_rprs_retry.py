@@ -429,6 +429,9 @@ def test_selected_fast_candidate_final_refit_uses_full_series_and_fixed_baseline
         captured["fixed_parameter_errors"] = dict(kwargs.get("fixed_parameter_errors", {}))
         captured["fixed_flux_baseline"] = kwargs.get("fixed_flux_baseline")
         captured["ultranest_min_num_live_points"] = kwargs.get("ultranest_min_num_live_points")
+        captured["max_rprs_retries"] = kwargs.get("max_rprs_retries")
+        captured["max_ars_retries"] = kwargs.get("max_ars_retries")
+        captured["max_impact_parameter_retries"] = kwargs.get("max_impact_parameter_retries")
         fit = types.SimpleNamespace(
             time=np.asarray(times, dtype=float),
             data=np.asarray(flux_values, dtype=float),
@@ -505,6 +508,9 @@ def test_selected_fast_candidate_final_refit_uses_full_series_and_fixed_baseline
     assert captured["point_count"] == 80
     assert captured["fixed_flux_baseline"] is True
     assert captured["ultranest_min_num_live_points"] == 1200
+    assert captured["max_rprs_retries"] == 0
+    assert captured["max_ars_retries"] == 0
+    assert captured["max_impact_parameter_retries"] == 0
     assert captured["prior"]["a0"] == pytest.approx(1.03)
     assert captured["prior"]["a2"] == pytest.approx(0.12)
     assert captured["fixed_parameter_errors"]["a0"] == pytest.approx(0.02)

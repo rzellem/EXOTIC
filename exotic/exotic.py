@@ -2678,6 +2678,9 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         bounds,
         jd_times=jd_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        max_rprs_retries=0,
+        max_ars_retries=0,
+        max_impact_parameter_retries=0,
         duration_prior=duration_prior,
         keep_ultranest_sampler=False,
         fixed_parameter_errors=fixed_errors,
@@ -3942,6 +3945,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 max_rprs_retries,
                 partial_retry_limits['max_retries']['rprs'],
             ) if partial_retry_limits['active'] else max_rprs_retries,
+            'requested_max_retries': max_rprs_retries,
             'min_bound': RPRS_SEARCH_BOUND_MIN,
             'max_bound': RPRS_SEARCH_BOUND_MAX,
             'prior_mode_key': 'rprs',
@@ -3960,6 +3964,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 max_ars_retries,
                 partial_retry_limits['max_retries']['ars'],
             ) if partial_retry_limits['active'] else max_ars_retries,
+            'requested_max_retries': max_ars_retries,
             'min_bound': ARS_SEARCH_BOUND_MIN,
             'max_bound': None,
             'prior_mode_key': 'ars',
@@ -3978,6 +3983,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 max_impact_parameter_retries,
                 partial_retry_limits['max_retries']['b'],
             ) if partial_retry_limits['active'] else max_impact_parameter_retries,
+            'requested_max_retries': max_impact_parameter_retries,
             'min_bound': INCLINATION_SEARCH_BOUND_MIN,
             'max_bound': INCLINATION_SEARCH_BOUND_MAX,
             'prior_mode_key': None,
@@ -4055,14 +4061,21 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 continue
 
             new_bounds = parameter_diagnostics.get('bounds') if parameter_diagnostics else None
-            if len(retry_histories[key]) >= int(max(0, config['max_retries'])):
+            max_retries_allowed = int(max(0, config['max_retries']))
+            if len(retry_histories[key]) >= max_retries_allowed:
                 if (
-                    partial_retry_limits['active']
-                    and parameter_diagnostics
+                    parameter_diagnostics
                     and parameter_diagnostics.get('clipped')
                     and retry_notes[key] is None
                 ):
-                    retry_notes[key] = partial_retry_limits['note']
+                    requested_max_retries = int(max(0, config.get('requested_max_retries', config['max_retries'])))
+                    if requested_max_retries <= 0:
+                        retry_notes[key] = (
+                            f"Skipped; automatic {config['label']} posterior range refits are disabled "
+                            "for this fit."
+                        )
+                    elif partial_retry_limits['active']:
+                        retry_notes[key] = partial_retry_limits['note']
                 continue
 
             if parameter_diagnostics and parameter_diagnostics.get('clipped') and new_bounds is not None:
@@ -4671,28 +4684,6 @@ def parse_deviation_from_expected_transit_in_qc_sigma(config_value):
     return float(sigma_value)
 
 
-def should_assess_all_comparisons_before_selecting_best(config_value):
-    if config_value is None:
-        return True
-    if isinstance(config_value, bool):
-        return config_value
-    if isinstance(config_value, (int, float)):
-        return bool(config_value)
-    if isinstance(config_value, str):
-        normalized = config_value.strip().lower()
-        if normalized in ('y', 'yes', 'true', '1', 'on'):
-            return True
-        if normalized in ('n', 'no', 'false', '0', 'off', ''):
-            return False
-
-    log_info(
-        "Warning: Invalid 'assess_all_comparisons_before_selecting_best' value; "
-        "defaulting to assess all comparisons.",
-        warn=True,
-    )
-    return True
-
-
 def should_exit_at_first_qc_pass_solution(config_value):
     if config_value is None:
         return True
@@ -4935,7 +4926,7 @@ def should_use_eebls_to_initialize_tmid_and_bounds(config_value):
 
 def should_detect_bad_pixels_before_photometry(config_value):
     if config_value is None:
-        return True
+        return False
     if isinstance(config_value, bool):
         return config_value
     if isinstance(config_value, (int, float)):
@@ -4948,10 +4939,10 @@ def should_detect_bad_pixels_before_photometry(config_value):
             return False
 
     log_info(
-        "Warning: Invalid 'detect_bad_pixels_before_photometry' value; keeping bad-pixel precheck enabled.",
+        "Warning: Invalid 'detect_bad_pixels_before_photometry' value; keeping bad-pixel precheck disabled.",
         warn=True,
     )
-    return True
+    return False
 
 
 def get_multiprocess_bad_pixel_precheck_processes(config_value):
@@ -12425,7 +12416,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(info_dict.get('bad_wcs_threshold_percent'))
     pointing_rejection_sigma = get_pointing_rejection_sigma(info_dict.get('pointing_rejection_sigma'))
     detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
-        info_dict.get('detect_bad_pixels_before_photometry', 'y')
+        info_dict.get('detect_bad_pixels_before_photometry', 'n')
     )
     multiprocess_bad_pixel_precheck = get_multiprocess_bad_pixel_precheck_processes(
         info_dict.get('multiprocess_bad_pixel_precheck', 'n')
@@ -15645,7 +15636,6 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
                                                  use_eebls_to_initialize_tmid_and_bounds=True,
                                                  pick_comparison_by_eebls_snr=True,
-                                                 assess_all_comparisons_before_selecting_best=True,
                                                  exit_at_first_qc_pass_solution=True,
                                                  final_fit_baseline_duration_multiplier=
                                                  FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
@@ -16589,7 +16579,7 @@ def _main_impl():
                 exotic_infoDict.get('pointing_rejection_sigma')
             )
             detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
-                exotic_infoDict.get('detect_bad_pixels_before_photometry', 'y')
+                exotic_infoDict.get('detect_bad_pixels_before_photometry', 'n')
             )
             multiprocess_bad_pixel_precheck = get_multiprocess_bad_pixel_precheck_processes(
                 exotic_infoDict.get('multiprocess_bad_pixel_precheck', 'n')
@@ -16827,9 +16817,6 @@ def _main_impl():
             deviation_from_expected_transit_in_qc_sigma = parse_deviation_from_expected_transit_in_qc_sigma(
                 exotic_infoDict.get('deviation_from_expected_transit_in_qc_sigma', 5.0)
             )
-            assess_all_comparisons_before_selecting_best = should_assess_all_comparisons_before_selecting_best(
-                exotic_infoDict.get('assess_all_comparisons_before_selecting_best', 'y')
-            )
             exit_at_first_qc_pass_solution = should_exit_at_first_qc_pass_solution(
                 exotic_infoDict.get('exit_at_first_qc_pass_solution', 'y')
             )
@@ -16859,12 +16846,6 @@ def _main_impl():
                 log_info(
                     "Warning: target-driven comparison selection is no longer used; "
                     "EXOTIC will run comparison-star calibration followed by full candidate reductions.",
-                    warn=True,
-                )
-            if not assess_all_comparisons_before_selecting_best:
-                log_info(
-                    "Warning: 'assess_all_comparisons_before_selecting_best' is now ignored; "
-                    "comparison-star target-fit search is controlled by 'exit_at_first_qc_pass_solution'.",
                     warn=True,
                 )
             if not exit_at_first_qc_pass_solution:
@@ -17476,7 +17457,6 @@ def _main_impl():
                     use_impactparameter_rather_than_inclination_to_fit,
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                     pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
-                    assess_all_comparisons_before_selecting_best=assess_all_comparisons_before_selecting_best,
                     exit_at_first_qc_pass_solution=exit_at_first_qc_pass_solution,
                     final_fit_baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
                     use_adaptive_apertures=use_adaptive_apertures,

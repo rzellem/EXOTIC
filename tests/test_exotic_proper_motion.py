@@ -137,6 +137,7 @@ from exotic.exotic import (
     parse_deviation_from_expected_transit_in_qc_sigma,
     prepare_final_fit_lightcurve_series,
     prepare_lightcurve_fit_input_series,
+    rank_comparison_candidate_preflight_plans,
     representative_psf_sigma,
     ranked_comparison_calibration_summaries,
     resolve_sky_annulus_geometry,
@@ -157,6 +158,7 @@ from exotic.exotic import (
     should_use_aperture_photometry,
     should_exit_at_first_qc_pass_solution,
     should_pick_comparison_by_eebls_snr,
+    should_stop_after_promising_partial_comparison_attempt,
     should_use_psf_photometry,
     should_skip_low_comparison_coverage_rejection,
     should_assess_all_comparisons_before_selecting_best,
@@ -1591,6 +1593,8 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
     assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7)
     assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75)
     assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(0.75)
+    assert "Rp/R* sigma=2.00" in contributions_by_label["Deviation From Expected Value"]["detail"]
+    assert "Tmid" not in contributions_by_label["Deviation From Expected Value"]["detail"]
 
     model_evidence_score = ((1.0 - np.exp(-1.0)) + (1.0 - np.exp(-2.0))) / 2.0
     expected_ktmf = (
@@ -3033,7 +3037,7 @@ def test_annotate_transit_qc_expected_values_coerces_scalar_like_inputs():
     assert fit.transit_qc_deviation_sigma_threshold == pytest.approx(7.5)
 
 
-def test_evaluate_transit_detection_qc_failure_summary_reflects_expected_value_rejection():
+def test_evaluate_transit_detection_qc_keeps_tmid_deviation_diagnostic_only():
     times = np.linspace(0.0, 1.0, 21)
     transit_model = np.ones(times.shape[0], dtype=float)
     transit_model[9:12] -= 0.02
@@ -3068,11 +3072,13 @@ def test_evaluate_transit_detection_qc_failure_summary_reflects_expected_value_r
 
     summary = evaluate_transit_detection_qc(fit)
 
-    assert summary["status"] == "fail"
+    assert summary["status"] == "pass"
     assert summary["tmid_deviation_minutes"] == pytest.approx(40.32)
-    assert "QC rejected the fit because" in summary["summary"]
-    assert "Tmid of the fit is 40.32 minutes away from the ephemeris Tmid" in summary["summary"]
-    assert "7.20 minutes" in summary["summary"]
+    assert summary["rprs_deviation_sigma"] == pytest.approx(0.0)
+    assert summary["deviation_from_expected_value"] == pytest.approx(1.0)
+    assert any("Expected-value Tmid deviation: 40.32 minutes" in note for note in summary["notes"])
+    assert "QC rejected the fit because" not in summary["summary"]
+    assert "Tmid of the fit is 40.32 minutes away from the ephemeris Tmid" not in summary["summary"]
     assert "not supported strongly enough against a flat/null model" not in summary["summary"]
 
 
@@ -3545,6 +3551,94 @@ def test_fit_ranked_comparison_calibration_candidates_stops_at_first_qc_pass_by_
     assert "first completed comparison-star candidate" in result["selected_result"]["selection_reason"]
 
 
+def test_fit_ranked_comparison_calibration_candidates_stops_at_promising_partial_marginal(monkeypatch):
+    def fake_diagnostics(*args, **kwargs):
+        return {"usable_point_count": 6}
+
+    monkeypatch.setattr(
+        "exotic.exotic.build_comparison_candidate_preflight",
+        lambda *args, **kwargs: {
+            "prepared_series": None,
+            "coverage_priority": 2,
+            "scout": {"score": np.nan},
+        },
+    )
+
+    call_markers = []
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        comp_marker = int(np.nanmedian(cflux))
+        call_markers.append(comp_marker)
+        status = "marginal" if comp_marker == 50 else "pass"
+        fit = types.SimpleNamespace(
+            residuals=np.full(6, 0.01, dtype=float),
+            data=np.ones(6, dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc={"status": status, "summary": "ok"},
+            transit_qc_status=status,
+            transit_qc_ktmf_metric=3.5,
+            transit_qc_delta_bic=15.1,
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+        "comp2": np.full((6, 1, 1), 40.0, dtype=float),
+    }
+    comparison_calibration = {
+        "method": "aperture",
+        "a": 0,
+        "an": 0,
+        "comp_summaries": [
+            {"label": "Comp 1", "aggregate_score": 0.01, "coverage_rejected": False, "comp_index": 0},
+            {"label": "Comp 2", "aggregate_score": 0.02, "coverage_rejected": False, "comp_index": 1},
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+    )
+
+    assert call_markers == [50]
+    assert result["selection_metric"] == "promising_partial"
+    assert result["selected_result"]["search_stopped_after_promising_partial"] is True
+    assert result["stopped_after_promising_partial"] is True
+
+
 def test_fit_ranked_comparison_calibration_candidates_can_evaluate_all_qc_passes_when_exit_disabled(monkeypatch):
     def fake_diagnostics(*args, **kwargs):
         return {"usable_point_count": 6}
@@ -3647,6 +3741,47 @@ def test_ranked_comparison_calibration_summaries_skip_suitability_outliers():
     )
 
     assert [summary["comp_index"] for summary in ranked] == [2, 3]
+
+
+def test_comparison_preflight_ranking_prioritizes_full_coverage_then_scout_score():
+    plans = [
+        {
+            "field_rank": 0,
+            "summary": {"comp_index": 7, "aggregate_score": 0.002175, "label": "Comp 8"},
+            "preflight": {"coverage_priority": 2, "scout": {"score": 0.42}},
+        },
+        {
+            "field_rank": 1,
+            "summary": {"comp_index": 0, "aggregate_score": 0.002331, "label": "Comp 1"},
+            "preflight": {"coverage_priority": 2, "scout": {"score": 0.91}},
+        },
+        {
+            "field_rank": 4,
+            "summary": {"comp_index": 2, "aggregate_score": 0.002804, "label": "Comp 3"},
+            "preflight": {"coverage_priority": 0, "scout": {"score": 0.25}},
+        },
+    ]
+
+    ranked = rank_comparison_candidate_preflight_plans(plans)
+
+    assert [plan["summary"]["comp_index"] for plan in ranked] == [2, 0, 7]
+
+
+def test_promising_partial_comparison_attempt_can_stop_candidate_search():
+    attempt = {
+        "fit": object(),
+        "full_reduction_applied": True,
+        "rejected_by_transit_qc": False,
+        "transit_qc_status": "marginal",
+        "preflight_coverage_priority": 2,
+        "ktmf_metric": 3.50,
+        "transit_delta_bic": 15.09,
+    }
+
+    assert should_stop_after_promising_partial_comparison_attempt(attempt) is True
+
+    attempt["preflight_coverage_priority"] = 4
+    assert should_stop_after_promising_partial_comparison_attempt(attempt) is False
 
 
 def test_fit_ranked_comparison_calibration_candidates_applies_field_image_clip(monkeypatch):

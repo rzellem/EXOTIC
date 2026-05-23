@@ -904,6 +904,68 @@ def test_ars_posterior_retry_expands_bounds_when_upper_edge_is_truncated(monkeyp
     assert fit.ars_posterior_refit_bounds == pytest.approx([12.60, 16.30])
 
 
+def test_partial_coverage_suppresses_open_geometry_posterior_retries(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {"calls": []}
+    diagnostics = {
+        "rprs": {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]},
+        "ars": {"clipped": True, "edge": "lower", "mode": 5.0, "std": 3.0, "bounds": [0.000001, 20.0]},
+        "b": {"clipped": True, "edge": "upper", "mode": 1.6, "std": 0.3, "bounds": [0.5, 2.5]},
+    }
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        duration_prior=None,
+    ):
+        captured["calls"].append({"prior": dict(call_prior), "bounds": dict(call_bounds)})
+        fit = types.SimpleNamespace(
+            sampled_keys=["rprs", "ars", "b", "tmid"],
+            sample_bounds={"rprs": [0.0, 0.25], "ars": [0.000001, 20.0], "b": [0.0, 2.5]},
+            parameters={"rprs": 0.1, "ars": 5.0, "tmid": 0.0, "inc": 80.0, "a2": 0.0},
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: dict(diagnostics[key])
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 89.0, "a2": 0.0},
+        {
+            "rprs": [0.0, 0.25],
+            "ars": [5.0, 15.0],
+            "tmid": [-0.01, 0.01],
+            "inc": [70.0, 90.0],
+            "a2": [-3.0, 3.0],
+        },
+        pre_ultranest_coverage_assessment={
+            "valid": True,
+            "success_label": "low",
+            "expected_successful": False,
+            "pre_ingress_points": 0,
+            "post_egress_points": 8,
+        },
+    )
+
+    assert len(captured["calls"]) == 1
+    assert fit.ars_posterior_refit_applied is False
+    assert "one-sided/LOW" in fit.ars_posterior_refit_note
+    assert fit.b_posterior_refit_applied is False
+    assert "one-sided/LOW" in fit.b_posterior_refit_note
+
+
 def test_impact_parameter_posterior_retry_expands_inclination_bounds(monkeypatch):
     import exotic.exotic as exotic_module
 

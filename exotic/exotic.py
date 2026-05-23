@@ -230,6 +230,12 @@ ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
 FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT = True
 FAST_ULTRANEST_MAX_BINNED_POINTS = 20
 FAST_ULTRANEST_MIN_POINTS_TO_BIN = 60
+COMPARISON_PREFLIGHT_FIELD_SCORE_RELATIVE_BAND = 0.25
+COMPARISON_PREFLIGHT_FIELD_SCORE_ABSOLUTE_BAND = 2.5e-4
+PARTIAL_COVERAGE_RPRS_POSTERIOR_MAX_RETRIES = 1
+PARTIAL_COVERAGE_ARS_POSTERIOR_MAX_RETRIES = 0
+PARTIAL_COVERAGE_IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES = 0
+PROMISING_PARTIAL_COMPARISON_KTMF_MIN = 3.0
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT = True
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV = "EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY"
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT = 5
@@ -906,14 +912,9 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         summary['rprs_deviation_sigma'] = rprs_sigma
         summary['rprs_deviation_score'] = transit_qc_deviation_score_from_sigma(rprs_sigma, sigma_threshold)
 
-    component_scores = [
-        score
-        for score in (summary['tmid_deviation_score'], summary['rprs_deviation_score'])
-        if np.isfinite(score)
-    ]
-    summary['available'] = bool(component_scores)
-    if component_scores:
-        summary['deviation_from_expected_value'] = float(min(component_scores))
+    if np.isfinite(summary['rprs_deviation_score']):
+        summary['available'] = True
+        summary['deviation_from_expected_value'] = float(summary['rprs_deviation_score'])
 
     if np.isfinite(summary['tmid_deviation_sigma']):
         summary['notes'].append(
@@ -929,26 +930,12 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
             f"Expected-value Rp/R* deviation: {summary['rprs_deviation_sigma']:.2f} sigma."
         )
 
-    for label, sigma_value in (
-        ('Tmid', summary['tmid_deviation_sigma']),
-        ('Rp/R*', summary['rprs_deviation_sigma']),
-    ):
-        if np.isfinite(sigma_value) and np.isfinite(sigma_threshold) and sigma_threshold > 0 and sigma_value > sigma_threshold:
-            summary['failed'] = True
-            if label == 'Tmid' and np.isfinite(summary['tmid_deviation_minutes']):
-                threshold_text = ""
-                if np.isfinite(summary['tmid_deviation_threshold_minutes']):
-                    threshold_text = f" ({summary['tmid_deviation_threshold_minutes']:.2f} minutes)"
-                reason = (
-                    "Tmid of the fit is "
-                    f"{summary['tmid_deviation_minutes']:.2f} minutes away from the ephemeris Tmid, "
-                    f"which is {summary['tmid_deviation_sigma']:.2f} sigma from the propagated ephemeris "
-                    f"uncertainty and beyond the {sigma_threshold:.2f}-sigma threshold{threshold_text}"
-                )
-            else:
-                reason = f"{label} differs from the expected value by more than {sigma_threshold:.2f} sigma"
-            summary['notes'].append(reason + ".")
-            summary['failure_reasons'].append(reason)
+    rprs_sigma = summary['rprs_deviation_sigma']
+    if np.isfinite(rprs_sigma) and np.isfinite(sigma_threshold) and sigma_threshold > 0 and rprs_sigma > sigma_threshold:
+        summary['failed'] = True
+        reason = f"Rp/R* differs from the expected value by more than {sigma_threshold:.2f} sigma"
+        summary['notes'].append(reason + ".")
+        summary['failure_reasons'].append(reason)
 
     return summary
 
@@ -983,8 +970,6 @@ def compute_transit_qc_ktmf(summary):
             'score': summary.get('deviation_from_expected_value', np.nan),
             'detail': (
                 f"score={summary.get('deviation_from_expected_value', np.nan):.2f}, "
-                f"Tmid sigma={summary.get('tmid_deviation_sigma', np.nan):.2f}, "
-                f"Tmid offset={summary.get('tmid_deviation_minutes', np.nan):.2f} min, "
                 f"Rp/R* sigma={summary.get('rprs_deviation_sigma', np.nan):.2f}"
                 if np.isfinite(summary.get('deviation_from_expected_value', np.nan))
                 else "expected-value deviation disabled or unavailable"
@@ -1483,10 +1468,10 @@ def evaluate_transit_detection_qc(fit):
                 failure_reasons.extend(detailed_reasons)
             else:
                 notes.append(
-                    "The fit deviates too far from the expected published Tmid and/or Rp/R* values."
+                    "The fit deviates too far from the expected published Rp/R* value."
                 )
                 failure_reasons.append(
-                    "the fit deviates too far from the expected published Tmid and/or Rp/R* values"
+                    "the fit deviates too far from the expected published Rp/R* value"
                 )
 
     ktmf_metric, ktmf_contributions = compute_transit_qc_ktmf(summary)
@@ -1832,57 +1817,41 @@ def build_comparison_candidate_adaptive_summary(comparison_calibration, psf_data
     )
 
 
-def match_time_subset_indices(full_times, subset_times, rtol=1e-10, atol=1e-10):
-    full_times = np.asarray(full_times, dtype=float).reshape(-1)
-    subset_times = np.asarray(subset_times, dtype=float).reshape(-1)
-    if subset_times.size == 0:
-        return np.array([], dtype=int)
-    if full_times.size < subset_times.size:
-        return None
-
-    matched_indices = []
-    search_start = 0
-    for subset_time in subset_times:
-        if not np.isfinite(subset_time):
-            return None
-        remaining = full_times[search_start:]
-        matches = np.flatnonzero(np.isclose(remaining, subset_time, rtol=rtol, atol=atol))
-        if matches.size == 0:
-            return None
-        matched_index = search_start + int(matches[0])
-        matched_indices.append(matched_index)
-        search_start = matched_index + 1
-
-    return np.asarray(matched_indices, dtype=int)
+def build_comparison_candidate_transit_prior(p_dict, ld):
+    return {
+        'rprs': p_dict['rprs'],
+        'ars': p_dict['aRs'],
+        'per': p_dict['pPer'],
+        'inc': p_dict['inc'],
+        'u0': ld[0], 'u1': ld[1], 'u2': ld[2], 'u3': ld[3],
+        'ecc': p_dict['ecc'],
+        'omega': p_dict['omega'],
+        'tmid': p_dict['midT'],
+        'a2': 0,
+    }
 
 
-def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, airmass, ld, p_dict,
-                                                 jd_times=None,
-                                                 disable_vertical_flux_normalization=False,
-                                                 detrend_on_outoftransit_baseline=True,
-                                                 use_impactparameter_rather_than_inclination_to_fit=True,
-                                                 use_eebls_to_initialize_tmid_and_bounds=True,
-                                                 plot_time_range=None,
-                                                 baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
-                                                 adaptive_summary=None,
-                                                 run_fast_ultranest_before_final_run=FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT):
+def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_flux, airmass,
+                                                       jd_times=None, adaptive_summary=None):
     result = {
         'applied': False,
-        'fit': None,
-        'good_times': np.array([], dtype=float),
-        'good_flux': np.array([], dtype=float),
-        'good_unc': np.array([], dtype=float),
-        'good_airmass': np.array([], dtype=float),
-        'good_jd_times': np.array([], dtype=float),
-        'good_target_flux': np.array([], dtype=float),
-        'good_comp_flux': np.array([], dtype=float),
-        'source_indices': np.array([], dtype=int),
-        'data_highres': None,
-        'duration_samples': np.array([], dtype=float),
-        'failure_reason': "full candidate reduction did not run.",
+        'failure_reason': "the raw comparison-candidate photometry did not yield a usable light curve.",
         'filter_diagnostics': [],
-        'note': None,
+        'debug_times': np.array([], dtype=float),
+        'debug_target_flux': np.array([], dtype=float),
+        'debug_comp_flux': np.array([], dtype=float),
+        'debug_raw_ratio': np.array([], dtype=float),
+        'initial_sigma_keep_mask': np.array([], dtype=bool),
+        'time': np.array([], dtype=float),
+        'flux': np.array([], dtype=float),
+        'unc': np.array([], dtype=float),
+        'airmass': np.array([], dtype=float),
+        'jd_time': np.array([], dtype=float),
+        'target_flux': np.array([], dtype=float),
+        'comp_flux': np.array([], dtype=float),
+        'source_indices': np.array([], dtype=int),
     }
+
     prepared = prepare_lightcurve_fit_input_series(
         times,
         target_flux,
@@ -1891,6 +1860,9 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         jd_times=jd_times,
     )
     result['filter_diagnostics'] = prepared.get('filter_diagnostics', [])
+    for key in ('debug_times', 'debug_target_flux', 'debug_comp_flux', 'debug_raw_ratio', 'initial_sigma_keep_mask'):
+        if key in prepared:
+            result[key] = prepared[key]
     if not prepared.get('applied'):
         result['failure_reason'] = prepared.get(
             'failure_reason',
@@ -1951,26 +1923,372 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         )
         return result
 
-    good_times = good_times[relative_flux_mask]
-    good_flux = good_flux[relative_flux_mask]
-    good_unc = good_unc[relative_flux_mask]
-    good_airmass = good_airmass[relative_flux_mask]
-    good_jd_times = good_jd_times[relative_flux_mask]
-    good_target_flux = good_target_flux[relative_flux_mask]
-    good_comp_flux = good_comp_flux[relative_flux_mask]
-    source_indices = source_indices[relative_flux_mask]
+    result.update({
+        'applied': True,
+        'failure_reason': None,
+        'time': good_times[relative_flux_mask],
+        'flux': good_flux[relative_flux_mask],
+        'unc': good_unc[relative_flux_mask],
+        'airmass': good_airmass[relative_flux_mask],
+        'jd_time': good_jd_times[relative_flux_mask],
+        'target_flux': good_target_flux[relative_flux_mask],
+        'comp_flux': good_comp_flux[relative_flux_mask],
+        'source_indices': source_indices[relative_flux_mask],
+    })
+    return result
 
-    prior = {
-        'rprs': p_dict['rprs'],
-        'ars': p_dict['aRs'],
-        'per': p_dict['pPer'],
-        'inc': p_dict['inc'],
-        'u0': ld[0], 'u1': ld[1], 'u2': ld[2], 'u3': ld[3],
-        'ecc': p_dict['ecc'],
-        'omega': p_dict['omega'],
-        'tmid': p_dict['midT'],
-        'a2': 0,
+
+def comparison_candidate_coverage_priority(assessment):
+    if not isinstance(assessment, dict) or not assessment.get('valid'):
+        return 4
+
+    pre_points = int(assessment.get('pre_ingress_points', 0) or 0)
+    post_points = int(assessment.get('post_egress_points', 0) or 0)
+    transit_fraction = coerce_finite_transit_qc_scalar(
+        assessment.get('transit_fraction_observed', np.nan)
+    )
+    has_two_sided_oot = pre_points > 0 and post_points > 0
+    covers_full_window = (
+        bool(assessment.get('covers_ingress', False))
+        and bool(assessment.get('covers_mid_transit', False))
+        and bool(assessment.get('covers_egress', False))
+    )
+
+    if has_two_sided_oot and covers_full_window:
+        return 0
+    if has_two_sided_oot:
+        return 1
+    if np.isfinite(transit_fraction) and transit_fraction >= 0.75 and assessment.get('covers_mid_transit', False):
+        return 2
+    if np.isfinite(transit_fraction) and transit_fraction > 0:
+        return 3
+    return 4
+
+
+def is_low_one_sided_expected_transit_coverage(assessment):
+    if not isinstance(assessment, dict) or not assessment.get('valid'):
+        return False
+
+    pre_points = int(assessment.get('pre_ingress_points', 0) or 0)
+    post_points = int(assessment.get('post_egress_points', 0) or 0)
+    success_label = str(assessment.get('success_label', '')).strip().lower()
+    expected_successful = bool(assessment.get('expected_successful', False))
+    return (pre_points == 0 or post_points == 0) and (
+        success_label in ('very low', 'low') or not expected_successful
+    )
+
+
+def partial_transit_geometry_retry_limits(assessment):
+    active = is_low_one_sided_expected_transit_coverage(assessment)
+    note = None
+    if active:
+        note = (
+            "Skipped; pre-UltraNest coverage is one-sided/LOW, so EXOTIC does not expand this "
+            "geometry posterior range while the transit shape is baseline-degenerate."
+        )
+    return {
+        'active': active,
+        'note': note,
+        'max_retries': {
+            'rprs': PARTIAL_COVERAGE_RPRS_POSTERIOR_MAX_RETRIES,
+            'ars': PARTIAL_COVERAGE_ARS_POSTERIOR_MAX_RETRIES,
+            'b': PARTIAL_COVERAGE_IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES,
+        },
     }
+
+
+def score_comparison_candidate_lightcurve_scout(prepared_series, eebls_summary, prior):
+    result = {
+        'score': np.nan,
+        'scatter': np.nan,
+        'scatter_score': np.nan,
+        'depth_score': np.nan,
+        'eebls_score': np.nan,
+        'eebls_snr': np.nan,
+        'eebls_depth': np.nan,
+        'expected_depth': np.nan,
+    }
+    if not isinstance(prepared_series, dict) or not prepared_series.get('applied'):
+        return result
+
+    flux = np.asarray(prepared_series.get('flux', []), dtype=float)
+    finite_flux = flux[np.isfinite(flux) & (flux > 0)]
+    if finite_flux.size < LIGHTCURVE_MIN_VALID_POINTS:
+        return result
+
+    baseline = bn.nanmedian(finite_flux)
+    if not np.isfinite(baseline) or baseline <= 0:
+        return result
+
+    normalized_flux = finite_flux / baseline
+    scatter = robust_scatter(normalized_flux - bn.nanmedian(normalized_flux))
+    rprs = coerce_finite_transit_qc_scalar(prior.get('rprs', np.nan) if isinstance(prior, dict) else np.nan)
+    expected_depth = rprs ** 2 if np.isfinite(rprs) and rprs >= 0 else np.nan
+    if np.isfinite(scatter):
+        result['scatter'] = float(scatter)
+    if np.isfinite(expected_depth):
+        result['expected_depth'] = float(expected_depth)
+
+    depth = coerce_finite_transit_qc_scalar((eebls_summary or {}).get('depth', np.nan))
+    depth_snr = coerce_finite_transit_qc_scalar((eebls_summary or {}).get('depth_snr', np.nan))
+    if np.isfinite(depth):
+        result['eebls_depth'] = float(depth)
+    if np.isfinite(depth_snr):
+        result['eebls_snr'] = float(depth_snr)
+
+    scatter_reference = expected_depth if np.isfinite(expected_depth) and expected_depth > 0 else 0.005
+    if np.isfinite(scatter) and scatter >= 0:
+        result['scatter_score'] = float(np.clip(1.0 / (1.0 + scatter / max(scatter_reference, 1e-6)), 0.0, 1.0))
+
+    if np.isfinite(depth) and depth > 0 and np.isfinite(expected_depth) and expected_depth > 0:
+        depth_ratio = depth / expected_depth
+        if np.isfinite(depth_ratio) and depth_ratio > 0:
+            result['depth_score'] = float(np.clip(np.exp(-abs(np.log(depth_ratio)) / np.log(2.0)), 0.0, 1.0))
+
+    if np.isfinite(depth_snr) and depth_snr > 0:
+        result['eebls_score'] = float(np.clip(depth_snr / 8.0, 0.0, 1.0))
+
+    components = [
+        (0.45, result['scatter_score']),
+        (0.35, result['depth_score']),
+        (0.20, result['eebls_score']),
+    ]
+    available = [(weight, value) for weight, value in components if np.isfinite(value)]
+    if available:
+        weight_sum = sum(weight for weight, _ in available)
+        result['score'] = float(sum(weight * value for weight, value in available) / weight_sum)
+    return result
+
+
+def build_comparison_candidate_preflight(times, jd_times, airmass, ld, p_dict, target_flux, comp_flux,
+                                         adaptive_summary=None, use_eebls_to_initialize_tmid_and_bounds=True):
+    prepared = prepare_comparison_candidate_full_reduction_series(
+        times,
+        target_flux,
+        comp_flux,
+        airmass,
+        jd_times=jd_times,
+        adaptive_summary=adaptive_summary,
+    )
+    try:
+        prior = build_comparison_candidate_transit_prior(p_dict, ld)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return {
+            'prepared_series': prepared,
+            'coverage_assessment': None,
+            'coverage_priority': 4,
+            'eebls_summary': None,
+            'tmid_search_summary': None,
+            'duration_prior': None,
+            'scout': {'score': np.nan},
+        }
+
+    duration_prior = build_single_transit_duration_prior(p_dict)
+    eebls_summary = None
+    tmid_search_summary = None
+    coverage_assessment = None
+    scout = {'score': np.nan}
+
+    if prepared.get('applied'):
+        good_times = np.asarray(prepared['time'], dtype=float)
+        good_flux = np.asarray(prepared['flux'], dtype=float)
+        good_unc = np.asarray(prepared['unc'], dtype=float)
+        expected_duration = estimate_transit_duration_from_prior_geometry(prior)
+        tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
+            good_times,
+            p_dict.get('midT', prior.get('tmid', np.nan)),
+            prior['per'],
+            p_dict.get('midTUnc', 0.01),
+            p_dict.get('pPerUnc', 0.0),
+            expected_duration=expected_duration,
+            sigma_multiplier=35.0,
+        )
+        prior['tmid'] = tmid_search_summary['tmid']
+        lower, upper = tmid_search_summary['bounds']
+        if use_eebls_to_initialize_tmid_and_bounds:
+            eebls_summary = estimate_tmid_and_bounds_with_eebls(
+                good_times,
+                good_flux,
+                good_unc,
+                prior,
+                [lower, upper],
+            )
+        else:
+            eebls_summary = {'applied': False, 'depth': np.nan, 'depth_snr': np.nan}
+        coverage_assessment = build_expected_transit_coverage_assessment(
+            good_times,
+            prior,
+            flux_values=good_flux,
+            flux_errors=good_unc,
+            tmid_search_summary=tmid_search_summary,
+            duration_prior=duration_prior,
+        )
+        scout = score_comparison_candidate_lightcurve_scout(prepared, eebls_summary, prior)
+
+    return {
+        'prepared_series': prepared,
+        'coverage_assessment': coverage_assessment,
+        'coverage_priority': comparison_candidate_coverage_priority(coverage_assessment),
+        'eebls_summary': eebls_summary,
+        'tmid_search_summary': tmid_search_summary,
+        'duration_prior': duration_prior,
+        'scout': scout,
+    }
+
+
+def comparison_preflight_field_band_limit(plans):
+    finite_scores = [
+        plan['summary'].get('aggregate_score', np.nan)
+        for plan in plans
+        if np.isfinite(plan['summary'].get('aggregate_score', np.nan))
+    ]
+    if not finite_scores:
+        return np.inf
+    best_score = float(min(finite_scores))
+    return best_score + max(
+        COMPARISON_PREFLIGHT_FIELD_SCORE_ABSOLUTE_BAND,
+        abs(best_score) * COMPARISON_PREFLIGHT_FIELD_SCORE_RELATIVE_BAND,
+    )
+
+
+def rank_comparison_candidate_preflight_plans(plans):
+    if not plans:
+        return []
+
+    field_band_limit = comparison_preflight_field_band_limit(plans)
+
+    def sort_key(plan):
+        preflight = plan.get('preflight') or {}
+        scout = preflight.get('scout') or {}
+        aggregate_score = plan['summary'].get('aggregate_score', np.inf)
+        finite_aggregate = aggregate_score if np.isfinite(aggregate_score) else np.inf
+        close_field_band = 0 if finite_aggregate <= field_band_limit else 1
+        scout_score = scout.get('score', np.nan)
+        scout_sort = -float(scout_score) if np.isfinite(scout_score) else np.inf
+        return (
+            int(preflight.get('coverage_priority', 4)),
+            close_field_band,
+            scout_sort,
+            finite_aggregate,
+            plan.get('field_rank', np.inf),
+        )
+
+    return sorted(plans, key=sort_key)
+
+
+def log_comparison_candidate_preflight_order(plans, ranked_plans):
+    if not plans or not ranked_plans:
+        return
+    original_order = [plan['summary'].get('comp_index') for plan in plans]
+    ranked_order = [plan['summary'].get('comp_index') for plan in ranked_plans]
+    if original_order == ranked_order:
+        return
+
+    log_info(
+        "Comparison-star target-fit order adjusted by pre-UltraNest coverage/scout preflight "
+        "(Tmid remains free; scout uses coverage, scatter, depth plausibility, and EEBLS SNR)."
+    )
+    for new_rank, plan in enumerate(ranked_plans, start=1):
+        summary = plan['summary']
+        preflight = plan.get('preflight') or {}
+        coverage = preflight.get('coverage_assessment') or {}
+        scout = preflight.get('scout') or {}
+        scout_score = scout.get('score', np.nan)
+        scout_text = "n/a" if not np.isfinite(scout_score) else f"{scout_score:.3f}"
+        scatter = scout.get('scatter', np.nan)
+        scatter_text = "n/a" if not np.isfinite(scatter) else f"{100.0 * scatter:.4f}%"
+        eebls_snr = scout.get('eebls_snr', np.nan)
+        eebls_text = "n/a" if not np.isfinite(eebls_snr) else f"{eebls_snr:.2f}"
+        label = summary.get('label', f"Comp {summary.get('comp_index', 0) + 1}")
+        log_info(
+            f"  Preflight rank {new_rank}: {label} "
+            f"(field rank {plan.get('field_rank', 0) + 1}), coverage_priority={preflight.get('coverage_priority', 'n/a')}, "
+            f"pre/post={coverage.get('pre_ingress_points', 'n/a')}/{coverage.get('post_egress_points', 'n/a')}, "
+            f"scout={scout_text}, scatter={scatter_text}, eebls_snr={eebls_text}."
+        )
+
+
+def match_time_subset_indices(full_times, subset_times, rtol=1e-10, atol=1e-10):
+    full_times = np.asarray(full_times, dtype=float).reshape(-1)
+    subset_times = np.asarray(subset_times, dtype=float).reshape(-1)
+    if subset_times.size == 0:
+        return np.array([], dtype=int)
+    if full_times.size < subset_times.size:
+        return None
+
+    matched_indices = []
+    search_start = 0
+    for subset_time in subset_times:
+        if not np.isfinite(subset_time):
+            return None
+        remaining = full_times[search_start:]
+        matches = np.flatnonzero(np.isclose(remaining, subset_time, rtol=rtol, atol=atol))
+        if matches.size == 0:
+            return None
+        matched_index = search_start + int(matches[0])
+        matched_indices.append(matched_index)
+        search_start = matched_index + 1
+
+    return np.asarray(matched_indices, dtype=int)
+
+
+def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, airmass, ld, p_dict,
+                                                 jd_times=None,
+                                                 disable_vertical_flux_normalization=False,
+                                                 detrend_on_outoftransit_baseline=True,
+                                                 use_impactparameter_rather_than_inclination_to_fit=True,
+                                                 use_eebls_to_initialize_tmid_and_bounds=True,
+                                                 plot_time_range=None,
+                                                 baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
+                                                 adaptive_summary=None,
+                                                 run_fast_ultranest_before_final_run=FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
+                                                 precomputed_candidate_series=None):
+    result = {
+        'applied': False,
+        'fit': None,
+        'good_times': np.array([], dtype=float),
+        'good_flux': np.array([], dtype=float),
+        'good_unc': np.array([], dtype=float),
+        'good_airmass': np.array([], dtype=float),
+        'good_jd_times': np.array([], dtype=float),
+        'good_target_flux': np.array([], dtype=float),
+        'good_comp_flux': np.array([], dtype=float),
+        'source_indices': np.array([], dtype=int),
+        'data_highres': None,
+        'duration_samples': np.array([], dtype=float),
+        'failure_reason': "full candidate reduction did not run.",
+        'filter_diagnostics': [],
+        'note': None,
+    }
+    if precomputed_candidate_series is None:
+        prepared = prepare_comparison_candidate_full_reduction_series(
+            times,
+            target_flux,
+            comp_flux,
+            airmass,
+            jd_times=jd_times,
+            adaptive_summary=adaptive_summary,
+        )
+    else:
+        prepared = precomputed_candidate_series
+    result['filter_diagnostics'] = prepared.get('filter_diagnostics', [])
+    if not prepared.get('applied'):
+        result['failure_reason'] = prepared.get(
+            'failure_reason',
+            "the raw comparison-candidate photometry did not yield a usable light curve.",
+        )
+        return result
+
+    good_times = np.asarray(prepared['time'], dtype=float)
+    good_flux = np.asarray(prepared['flux'], dtype=float)
+    good_unc = np.asarray(prepared['unc'], dtype=float)
+    good_airmass = np.asarray(prepared['airmass'], dtype=float)
+    good_jd_times = np.asarray(prepared['jd_time'], dtype=float)
+    good_target_flux = np.asarray(prepared['target_flux'], dtype=float)
+    good_comp_flux = np.asarray(prepared['comp_flux'], dtype=float)
+    source_indices = np.asarray(prepared['source_indices'], dtype=int)
+
+    prior = build_comparison_candidate_transit_prior(p_dict, ld)
 
     expected_duration = estimate_transit_duration_from_prior_geometry(prior)
     tmid_search_summary = estimate_ephemeris_tmid_and_bounds(
@@ -2368,6 +2686,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         fixed_parameter_errors=fixed_errors,
         fixed_flux_baseline=True,
         ultranest_min_num_live_points=min_live_points,
+        pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
     )
     annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
@@ -3563,6 +3882,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     fixed_parameter_errors=None,
     fixed_flux_baseline=False,
     ultranest_min_num_live_points=None,
+    pre_ultranest_coverage_assessment=None,
 ):
     def impact_parameter_retry_available(fit, local_bounds):
         if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
@@ -3609,6 +3929,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             return new_upper > previous_upper + 1e-12
         return new_lower < previous_lower - 1e-12 or new_upper > previous_upper + 1e-12
 
+    partial_retry_limits = partial_transit_geometry_retry_limits(pre_ultranest_coverage_assessment)
     retry_configs = [
         {
             'key': 'rprs',
@@ -3619,7 +3940,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'enforce_half_width': enforce_minimum_rprs_retry_half_width,
             'propose_bounds': identity_retry_bounds,
             'expands_bounds': normal_retry_expands,
-            'max_retries': max_rprs_retries,
+            'max_retries': min(
+                max_rprs_retries,
+                partial_retry_limits['max_retries']['rprs'],
+            ) if partial_retry_limits['active'] else max_rprs_retries,
             'min_bound': RPRS_SEARCH_BOUND_MIN,
             'max_bound': RPRS_SEARCH_BOUND_MAX,
             'prior_mode_key': 'rprs',
@@ -3634,7 +3958,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'enforce_half_width': enforce_minimum_ars_retry_half_width,
             'propose_bounds': identity_retry_bounds,
             'expands_bounds': normal_retry_expands,
-            'max_retries': max_ars_retries,
+            'max_retries': min(
+                max_ars_retries,
+                partial_retry_limits['max_retries']['ars'],
+            ) if partial_retry_limits['active'] else max_ars_retries,
             'min_bound': ARS_SEARCH_BOUND_MIN,
             'max_bound': None,
             'prior_mode_key': 'ars',
@@ -3649,7 +3976,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'enforce_half_width': lambda mode, bounds: bounds,
             'propose_bounds': impact_parameter_retry_bounds,
             'expands_bounds': impact_parameter_retry_expands,
-            'max_retries': max_impact_parameter_retries,
+            'max_retries': min(
+                max_impact_parameter_retries,
+                partial_retry_limits['max_retries']['b'],
+            ) if partial_retry_limits['active'] else max_impact_parameter_retries,
             'min_bound': INCLINATION_SEARCH_BOUND_MIN,
             'max_bound': INCLINATION_SEARCH_BOUND_MAX,
             'prior_mode_key': None,
@@ -3726,10 +4056,17 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             if key in blocked_retry_keys:
                 continue
 
+            new_bounds = parameter_diagnostics.get('bounds') if parameter_diagnostics else None
             if len(retry_histories[key]) >= int(max(0, config['max_retries'])):
+                if (
+                    partial_retry_limits['active']
+                    and parameter_diagnostics
+                    and parameter_diagnostics.get('clipped')
+                    and retry_notes[key] is None
+                ):
+                    retry_notes[key] = partial_retry_limits['note']
                 continue
 
-            new_bounds = parameter_diagnostics.get('bounds') if parameter_diagnostics else None
             if parameter_diagnostics and parameter_diagnostics.get('clipped') and new_bounds is not None:
                 retry_config = config
                 diagnostics = parameter_diagnostics
@@ -6997,6 +7334,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         duration_prior=duration_prior,
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
+        pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
     )
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -7048,6 +7386,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
             keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
+            pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
         )
         fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -7146,6 +7485,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             baseline_fit_mask=baseline_fit_mask,
             fixed_parameter_errors=baseline_fixed_errors,
             fixed_flux_baseline=True,
+            pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
         )
         refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -7262,6 +7602,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         baseline_fit_mask=baseline_fit_mask,
         fixed_parameter_errors=baseline_fixed_errors,
         fixed_flux_baseline=bool(baseline_parameter_result.get('applied')),
+        pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -13660,6 +14001,10 @@ def summarize_lightcurve_fit_assessment(fit):
     except (TypeError, ValueError):
         rprs_retry_count = 0
     try:
+        ars_retry_count = int(getattr(fit, 'ars_posterior_refit_count', 0) or 0)
+    except (TypeError, ValueError):
+        ars_retry_count = 0
+    try:
         b_retry_count = int(getattr(fit, 'b_posterior_refit_count', 0) or 0)
     except (TypeError, ValueError):
         b_retry_count = 0
@@ -13689,6 +14034,9 @@ def summarize_lightcurve_fit_assessment(fit):
         'rprs_posterior_refit_applied': bool(getattr(fit, 'rprs_posterior_refit_applied', False)),
         'rprs_posterior_refit_count': rprs_retry_count,
         'rprs_posterior_refit_note': getattr(fit, 'rprs_posterior_refit_note', None),
+        'ars_posterior_refit_applied': bool(getattr(fit, 'ars_posterior_refit_applied', False)),
+        'ars_posterior_refit_count': ars_retry_count,
+        'ars_posterior_refit_note': getattr(fit, 'ars_posterior_refit_note', None),
         'b_posterior_refit_applied': bool(getattr(fit, 'b_posterior_refit_applied', False)),
         'b_posterior_refit_count': b_retry_count,
         'b_posterior_refit_note': getattr(fit, 'b_posterior_refit_note', None),
@@ -13739,6 +14087,14 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
             if retry_count > 0 else
             "applied"
         )
+    ars_retry_status = "not applied"
+    if assessment['ars_posterior_refit_applied']:
+        retry_count = assessment['ars_posterior_refit_count']
+        ars_retry_status = (
+            f"applied ({retry_count} refit(s))"
+            if retry_count > 0 else
+            "applied"
+        )
     b_retry_status = "not applied"
     if assessment['b_posterior_refit_applied']:
         retry_count = assessment['b_posterior_refit_count']
@@ -13761,6 +14117,7 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         f"{indent}fit assessment: fit_method={assessment['fit_method']}, "
         f"duration_prior={duration_prior_status}, "
         f"Rp/R* posterior retry={rprs_retry_status}, "
+        f"a/Rs posterior retry={ars_retry_status}, "
         f"impact parameter posterior retry={b_retry_status}, "
         f"sparse posterior extension={sparse_extension_status}, "
         f"prefit_refinement={prefit_status}, "
@@ -13781,6 +14138,8 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         )
     if assessment.get('rprs_posterior_refit_note'):
         log_info(f"{indent}Rp/R* posterior retry note: {assessment['rprs_posterior_refit_note']}")
+    if assessment.get('ars_posterior_refit_note'):
+        log_info(f"{indent}a/Rs posterior retry note: {assessment['ars_posterior_refit_note']}")
     if assessment.get('b_posterior_refit_note'):
         log_info(f"{indent}Impact parameter posterior retry note: {assessment['b_posterior_refit_note']}")
     if assessment.get('sparse_posterior_live_point_extension_note'):
@@ -13880,6 +14239,8 @@ def log_comparison_candidate_evaluation_result(attempt):
 def comparison_selection_metric_label(selection_metric):
     if selection_metric == 'first_qc_pass':
         return "First QC PASS"
+    if selection_metric == 'promising_partial':
+        return "Promising Partial"
     if selection_metric == 'comparison_field_rank':
         return "Comparison-Field Rank"
     if selection_metric == 'ktmf':
@@ -13887,6 +14248,35 @@ def comparison_selection_metric_label(selection_metric):
     if selection_metric == 'eebls_snr':
         return "EEBLS SNR"
     return "transit-vs-flat Delta BIC"
+
+
+def should_stop_after_promising_partial_comparison_attempt(attempt):
+    if not isinstance(attempt, dict):
+        return False
+    if attempt.get('fit') is None or not attempt.get('full_reduction_applied', False):
+        return False
+    if attempt.get('rejected_by_transit_qc', False):
+        return False
+
+    status = str(attempt.get('transit_qc_status') or '').strip().lower()
+    if status != 'marginal':
+        return False
+
+    try:
+        coverage_priority = int(attempt.get('preflight_coverage_priority', 4))
+    except (TypeError, ValueError):
+        coverage_priority = 4
+    if coverage_priority > 2:
+        return False
+
+    ktmf_metric = coerce_finite_transit_qc_scalar(attempt.get('ktmf_metric', np.nan))
+    delta_bic = coerce_finite_transit_qc_scalar(attempt.get('transit_delta_bic', np.nan))
+    return (
+        np.isfinite(ktmf_metric)
+        and ktmf_metric >= PROMISING_PARTIAL_COMPARISON_KTMF_MIN
+        and np.isfinite(delta_bic)
+        and delta_bic >= TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD
+    )
 
 
 def select_preferred_comparison_attempt(attempts, pick_comparison_by_eebls_snr=True):
@@ -15316,9 +15706,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             ),
         )
 
-    attempts = []
-    stopped_after_first_qc_pass = False
-    for rank, comp_summary in enumerate(ranked_summaries):
+    preflight_plans = []
+    for field_rank, comp_summary in enumerate(ranked_summaries):
         comp_index = comp_summary['comp_index']
         ckey = comp_summary.get('key', f"comp{comp_index + 1}")
         if method == 'psf':
@@ -15341,10 +15730,45 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             airmass[fit_mask],
             enforce_relative_flux_max=False,
         )
+        preflight = build_comparison_candidate_preflight(
+            times[fit_mask],
+            jd_times[fit_mask],
+            airmass[fit_mask],
+            ld,
+            p_dict,
+            target_flux[fit_mask],
+            comp_flux[fit_mask],
+            adaptive_summary=adaptive_summary,
+            use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+        )
+        preflight_plans.append({
+            'field_rank': field_rank,
+            'summary': comp_summary,
+            'ckey': ckey,
+            'comp_flux': comp_flux,
+            'fit_mask': fit_mask,
+            'fit_diagnostics': fit_diagnostics,
+            'preflight': preflight,
+        })
+
+    ranked_preflight_plans = rank_comparison_candidate_preflight_plans(preflight_plans)
+    log_comparison_candidate_preflight_order(preflight_plans, ranked_preflight_plans)
+
+    attempts = []
+    stopped_after_first_qc_pass = False
+    stopped_after_promising_partial = False
+    for rank, plan in enumerate(ranked_preflight_plans):
+        comp_summary = plan['summary']
+        comp_index = comp_summary['comp_index']
+        ckey = plan['ckey']
+        comp_flux = plan['comp_flux']
+        fit_mask = plan['fit_mask']
+        fit_diagnostics = plan['fit_diagnostics']
+        preflight = plan.get('preflight') or {}
         log_comparison_candidate_evaluation_start(
             comp_summary,
             rank,
-            len(ranked_summaries),
+            len(ranked_preflight_plans),
             method_label,
             fit_diagnostics,
         )
@@ -15369,6 +15793,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
             adaptive_summary=adaptive_summary,
             run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
+            precomputed_candidate_series=preflight.get('prepared_series'),
         )
         fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
         tflux_fit = final_reduction.get('good_target_flux')
@@ -15405,6 +15830,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
 
         attempt = {
             'rank': rank,
+            'field_rank': plan.get('field_rank'),
             'comp_index': comp_index,
             'ckey': ckey,
             'label': comp_summary.get('label', f"Comp {comp_index + 1}"),
@@ -15443,6 +15869,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'selected': False,
             'selection_reason': None,
             'search_stopped_after_qc_pass': False,
+            'search_stopped_after_promising_partial': False,
             'failed_run_dir': None,
             'final_output_dir': None,
             'full_reduction_applied': final_reduction.get('applied', False),
@@ -15450,6 +15877,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'fast_ultranest_binning': final_reduction.get('fast_ultranest_binning'),
             'skip_airmass_fit': final_reduction.get('skip_airmass_fit', False),
             'airmass_skip_note': final_reduction.get('airmass_skip_note'),
+            'preflight_coverage_priority': preflight.get('coverage_priority'),
+            'preflight_scout_score': (preflight.get('scout') or {}).get('score', np.nan),
         }
         if final_reduction.get('applied') and selection_fit is not None and save_dir is not None:
             final_output_dir = save_comparison_candidate_full_reduction_outputs(
@@ -15504,6 +15933,17 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 f"({attempt['label']})."
             )
             break
+        if (
+            exit_at_first_qc_pass_solution
+            and should_stop_after_promising_partial_comparison_attempt(attempt)
+        ):
+            attempt['search_stopped_after_promising_partial'] = True
+            stopped_after_promising_partial = True
+            log_info(
+                "Stopping comparison-star candidate search after a promising partial-coverage "
+                f"MARGINAL fit ({attempt['label']}); proceeding to selected full-resolution confirmation."
+            )
+            break
 
     selected_result = None
     completed_attempts = [
@@ -15526,11 +15966,21 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         ),
         None,
     )
+    first_promising_partial_attempt = next(
+        (
+            attempt for attempt in attempts
+            if attempt.get('search_stopped_after_promising_partial', False)
+        ),
+        None,
+    )
     selection_metric = 'ktmf'
     fallback_to_qc_rejected = False
     if first_qc_pass_attempt is not None:
         selected_result = first_qc_pass_attempt
         selection_metric = 'first_qc_pass'
+    elif first_promising_partial_attempt is not None:
+        selected_result = first_promising_partial_attempt
+        selection_metric = 'promising_partial'
     elif successful_attempts:
         selected_result, selection_metric = select_preferred_comparison_attempt(
             successful_attempts,
@@ -15578,6 +16028,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                     attempt['selection_reason'] = (
                         "selected: first completed comparison-star candidate with PASS transit QC"
                     )
+                elif attempt.get('search_stopped_after_promising_partial', False):
+                    attempt['selection_reason'] = (
+                        "selected: first partial-coverage comparison-star candidate with promising "
+                        "MARGINAL transit diagnostics"
+                    )
                 elif selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
                     attempt['selection_reason'] = (
                         "selected: highest KTMF among the evaluated "
@@ -15609,6 +16064,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                     attempt['selection_reason'] = (
                         "not selected: search stopped after the first comparison-star candidate "
                         "with PASS transit QC"
+                    )
+                elif selection_metric == 'promising_partial':
+                    attempt['selection_reason'] = (
+                        "not selected: search stopped after the first partial-coverage comparison-star "
+                        "candidate with promising MARGINAL transit diagnostics"
                     )
                 elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
                     if np.isfinite(attempt.get('eebls_snr', np.nan)):
@@ -15707,6 +16167,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         'selected_result': selected_result,
         'selection_metric': selection_metric,
         'stopped_after_first_qc_pass': stopped_after_first_qc_pass,
+        'stopped_after_promising_partial': stopped_after_promising_partial,
     }
 
 
@@ -17065,6 +17526,8 @@ def _main_impl():
                     )
                     if selected_attempt.get('search_stopped_after_qc_pass', False):
                         selection_basis = 'first_qc_pass'
+                    elif selected_attempt.get('search_stopped_after_promising_partial', False):
+                        selection_basis = 'promising_partial'
                     elif selected_attempt.get('selected_despite_transit_qc', False):
                         selection_basis = 'comparison_field_qc_fallback'
                     elif selected_comp_index == comparison_calibration['best_comp_index']:
@@ -17076,6 +17539,13 @@ def _main_impl():
                             "Comparison-star calibration target-fit selection chose "
                             f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
                             "because it was the first candidate to pass transit QC."
+                        )
+                    elif selection_basis == 'promising_partial':
+                        log_info(
+                            "Comparison-star calibration target-fit selection chose "
+                            f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
+                            "because pre-UltraNest preflight and the candidate fit indicated a promising "
+                            "partial-coverage MARGINAL solution."
                         )
                     elif selection_basis == 'comparison_field_qc_fallback':
                         fallback_selection_metric = comparison_fit_search.get('selection_metric', 'ktmf')

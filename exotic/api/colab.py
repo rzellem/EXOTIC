@@ -220,7 +220,7 @@ def convert_Mobs_to_utc(datestamp, latitude, longitude, height):
 def find (hdr, ks, obs):
   # Special stuff for MObs and Boyce-Astro Observatories
   boyce = {"FILTER": "ip", "LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405 }
-  mobs = {"FILTER": "V", "LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606 }
+  mobs = {"FILTER": "CV", "LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
 
   if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
     obs = "MObs"
@@ -365,7 +365,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "Obs. Longitude": "%s",
             "Obs. Elevation (meters)": %d,
             "Camera Type (CCD or DSLR)": "CCD",
-            "Pixel Binning": "1x1",
+            "Pixel Binning": "2x2",
             "Filter Name (aavso.org/filters)": "%s",
             "Observing Notes": "%s",
 

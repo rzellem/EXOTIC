@@ -163,6 +163,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Fast Aperture Mask (y/n)": false,
             "use_psf_photometry": "y",
             "use_aperture_photometry": "y",
+            "use_aperture_corrections_and_full_image_fwhm": false,
             "skip_low_comparison_coverage_rejection": "n",
             "fit_lightcurve_to_every_comparison_candidate": "n",
             "detrend_on_outoftransit_baseline": true,

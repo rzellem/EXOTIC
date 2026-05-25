@@ -91,9 +91,15 @@ sys.modules.setdefault("exotic.api.elca", fake_elca)
 sys.modules.setdefault("exotic.api.ld", fake_ld)
 
 from exotic.exotic import (
+    APERTURE_MAX_FWHM_MULTIPLIER,
+    APERTURE_MIN_FWHM_MULTIPLIER,
+    APERTURE_SIGMA_MAX,
+    APERTURE_SIGMA_MIN,
+    GAUSSIAN_SIGMA_TO_FWHM,
     adaptive_aperture_outlier_mask,
     annotate_transit_qc_expected_values,
     auto_tune_aperture_sigma_grid,
+    build_aperture_correction_profile,
     build_initial_ars_bounds,
     build_single_transit_duration_prior,
     build_target_fit_candidate_jobs,
@@ -102,7 +108,9 @@ from exotic.exotic import (
     cheap_lightcurve_prescore,
     centroid_offset_matches_reference,
     choose_centroid_seed_position,
+    compute_star_aperture_grid,
     compute_transit_qc_ktmf,
+    detect_aperture_correction_star_candidates,
     apply_comparison_star_suitability_outlier_rejection,
     comparison_calibration_selection_reason,
     comparison_candidate_triangle_plot_output_path,
@@ -125,6 +133,7 @@ from exotic.exotic import (
     get_multiprocess_bad_pixel_precheck_processes,
     estimate_ephemeris_tmid_and_bounds,
     estimate_tmid_and_bounds_with_eebls,
+    initialize_aperture_data_store,
     is_adaptive_aperture_mode_enabled,
     is_comp_star_required,
     is_out_of_transit_baseline_detrending_enabled,
@@ -137,6 +146,7 @@ from exotic.exotic import (
     parse_deviation_from_expected_transit_in_qc_sigma,
     prepare_final_fit_lightcurve_series,
     prepare_lightcurve_fit_input_series,
+    populate_aperture_data_for_frame,
     rank_comparison_candidate_preflight_plans,
     refit_selected_fast_comparison_on_full_lightcurve,
     representative_psf_sigma,
@@ -157,6 +167,7 @@ from exotic.exotic import (
     should_fit_lightcurve_to_every_comparison_candidate,
     should_detect_bad_pixels_before_photometry,
     should_use_aperture_photometry,
+    should_use_aperture_corrections_and_full_image_fwhm,
     should_exit_at_first_qc_pass_solution,
     should_pick_comparison_by_eebls_snr,
     should_stop_after_promising_partial_comparison_attempt,
@@ -830,6 +841,13 @@ def test_should_use_aperture_photometry_parses_values():
     assert should_use_aperture_photometry("n") is False
 
 
+def test_should_use_aperture_corrections_and_full_image_fwhm_parses_values():
+    assert should_use_aperture_corrections_and_full_image_fwhm(None) is False
+    assert should_use_aperture_corrections_and_full_image_fwhm("y") is True
+    assert should_use_aperture_corrections_and_full_image_fwhm("n") is False
+    assert should_use_aperture_corrections_and_full_image_fwhm(True) is True
+
+
 def test_should_use_eebls_to_initialize_tmid_and_bounds_parses_values():
     assert should_use_eebls_to_initialize_tmid_and_bounds(None) is True
     assert should_use_eebls_to_initialize_tmid_and_bounds("y") is True
@@ -1110,6 +1128,144 @@ def test_is_adaptive_aperture_mode_enabled_parses_values():
     assert is_adaptive_aperture_mode_enabled("y") is True
     assert is_adaptive_aperture_mode_enabled("n") is False
     assert is_adaptive_aperture_mode_enabled(True) is True
+
+
+def test_aperture_sigma_bounds_match_physical_fwhm_limits():
+    assert APERTURE_SIGMA_MIN == pytest.approx(
+        APERTURE_MIN_FWHM_MULTIPLIER * GAUSSIAN_SIGMA_TO_FWHM
+    )
+    assert APERTURE_SIGMA_MAX == pytest.approx(
+        APERTURE_MAX_FWHM_MULTIPLIER * GAUSSIAN_SIGMA_TO_FWHM
+    )
+
+
+def test_aperture_correction_profile_recovers_gaussian_curve_of_growth():
+    sigma = 2.0
+    fwhm = GAUSSIAN_SIGMA_TO_FWHM * sigma
+    y, x = np.mgrid[0:120, 0:120]
+    image = np.full((120, 120), 10.0, dtype=float)
+    positions = np.array([
+        [25.0, 25.0],
+        [25.0, 70.0],
+        [70.0, 25.0],
+        [70.0, 70.0],
+        [95.0, 95.0],
+    ])
+    for xc, yc in positions:
+        image += 1200.0 * np.exp(-((x - xc) ** 2 + (y - yc) ** 2) / (2.0 * sigma ** 2))
+
+    field_star_psfs = np.column_stack([
+        positions[:, 0],
+        positions[:, 1],
+        np.full(positions.shape[0], 1200.0),
+        np.full(positions.shape[0], sigma),
+        np.full(positions.shape[0], sigma),
+        np.zeros(positions.shape[0]),
+        np.full(positions.shape[0], 10.0),
+    ])
+    radii = np.array([
+        APERTURE_MIN_FWHM_MULTIPLIER * fwhm,
+        fwhm,
+        APERTURE_MAX_FWHM_MULTIPLIER * fwhm,
+    ])
+
+    profile = build_aperture_correction_profile(
+        image,
+        radii,
+        fwhm_hint=fwhm,
+        field_star_psfs=field_star_psfs,
+    )
+
+    assert profile["applied"] is True
+    assert profile["star_count"] == positions.shape[0]
+    assert profile["image_fwhm"] == pytest.approx(fwhm)
+    assert profile["correction_factors"][0] == pytest.approx(2.0, rel=0.15)
+    assert profile["correction_factors"][1] == pytest.approx(1.066, rel=0.08)
+    assert profile["correction_factors"][2] == pytest.approx(1.0, abs=0.02)
+
+
+def test_detect_aperture_correction_star_candidates_finds_numpy_local_peaks():
+    sigma = 1.8
+    fwhm = GAUSSIAN_SIGMA_TO_FWHM * sigma
+    y, x = np.mgrid[0:140, 0:140]
+    image = np.full((140, 140), 10.0, dtype=float)
+    positions = np.array([
+        [30.0, 35.0],
+        [95.0, 42.0],
+        [58.0, 108.0],
+    ])
+    amplitudes = np.array([1000.0, 850.0, 700.0])
+    for (xc, yc), amplitude in zip(positions, amplitudes):
+        image += amplitude * np.exp(-((x - xc) ** 2 + (y - yc) ** 2) / (2.0 * sigma ** 2))
+
+    candidates = detect_aperture_correction_star_candidates(image, fwhm_hint=fwhm)
+
+    assert candidates.shape[0] >= positions.shape[0]
+    for xc, yc in positions:
+        nearest = np.min(np.hypot(candidates[:, 0] - xc, candidates[:, 1] - yc))
+        assert nearest < 1.5
+
+
+def test_compute_star_aperture_grid_applies_aperture_correction_factors():
+    y, x = np.mgrid[0:41, 0:41]
+    image = 100.0 * np.exp(-((x - 20.0) ** 2 + (y - 20.0) ** 2) / (2.0 * 2.0 ** 2))
+    apertures = np.array([2.5, 4.0])
+    annuli = np.array([0.0])
+
+    raw_flux, _ = compute_star_aperture_grid(
+        image,
+        0,
+        20.0,
+        20.0,
+        apertures,
+        annuli,
+    )
+    corrected_flux, _ = compute_star_aperture_grid(
+        image,
+        0,
+        20.0,
+        20.0,
+        apertures,
+        annuli,
+        aperture_correction_factors=np.array([2.0, 1.25]),
+    )
+
+    np.testing.assert_allclose(corrected_flux[:, 0], raw_flux[:, 0] * np.array([2.0, 1.25]))
+
+
+def test_populate_aperture_data_skips_field_star_corrections_when_disabled(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    def fail_field_star_estimate(*_args, **_kwargs):
+        raise AssertionError("field-star FWHM estimation should be opt-in")
+
+    monkeypatch.setattr(exotic_module, "estimate_isolated_field_star_psfs", fail_field_star_estimate)
+    y, x = np.mgrid[0:41, 0:41]
+    image = 100.0 * np.exp(-((x - 20.0) ** 2 + (y - 20.0) ** 2) / (2.0 * 2.0 ** 2))
+    psf_data = {
+        "target": np.array([[20.0, 20.0, 100.0, 2.0, 2.0, 0.0, 0.0]]),
+    }
+    aper_data = initialize_aperture_data_store(
+        frame_count=1,
+        aperture_count=1,
+        annulus_count=1,
+        comp_star_count=0,
+    )
+
+    profile = populate_aperture_data_for_frame(
+        image,
+        0,
+        psf_data,
+        0,
+        aper_data,
+        np.array([4.0]),
+        np.array([0.0]),
+        fast_aperture_mask=False,
+        use_aperture_corrections_and_full_image_fwhm=False,
+    )
+
+    assert profile["applied"] is False
+    assert np.isfinite(aper_data["target"][0, 0, 0])
 
 
 def test_should_use_fast_target_centroid_disables_fast_sigma_path_for_adaptive_runs():

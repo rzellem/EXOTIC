@@ -368,6 +368,21 @@ def test_comp_params_defaults_use_adaptive_apertures_to_false(tmp_path):
     assert inputs.info_dict["use_adaptive_apertures"] is False
 
 
+def test_comp_params_defaults_aperture_corrections_and_full_image_fwhm_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_aperture_corrections_and_full_image_fwhm"] is False
+
+
 def test_comp_params_reads_observatory_full_title_from_user_info(tmp_path):
     init_data = {
         "user_info": {"Observatory Full Title": "Whipple Observatory"},
@@ -711,6 +726,21 @@ def test_comp_params_reads_use_adaptive_apertures_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["use_adaptive_apertures"] is True
+
+
+def test_comp_params_reads_aperture_corrections_and_full_image_fwhm_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_aperture_corrections_and_full_image_fwhm": True},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_aperture_corrections_and_full_image_fwhm"] is True
 
 
 class DummyResponse:

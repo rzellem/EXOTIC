@@ -307,7 +307,7 @@ NEXTASTRO_PHOTOMETRY_COLUMNS = (
     'umag', 'err_umag', 'g', 'dg', 'r', 'dr', 'i', 'di', 'z', 'dz',
 )
 NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
-NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 30.0
+NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 2.0
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
 BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
@@ -5042,6 +5042,28 @@ def is_adaptive_aperture_mode_enabled(config_value):
             return False
 
     log_info("Warning: Invalid 'use_adaptive_apertures' value; using fixed apertures.", warn=True)
+    return False
+
+
+def should_use_aperture_corrections_and_full_image_fwhm(config_value):
+    if config_value is None:
+        return False
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'use_aperture_corrections_and_full_image_fwhm' value; "
+        "keeping aperture corrections and full-image FWHM estimation disabled.",
+        warn=True,
+    )
     return False
 
 
@@ -9960,6 +9982,13 @@ def sky_separation_arcsec(ra_a, dec_a, ra_b, dec_b):
 
 def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
                                        max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    effective_max_separation_arcsec = _finite_float(max_separation_arcsec)
+    if effective_max_separation_arcsec is None:
+        effective_max_separation_arcsec = NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC
+    effective_max_separation_arcsec = min(
+        effective_max_separation_arcsec,
+        NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC,
+    )
     band_candidates = nextastro_photometry_band_candidates(obs_filter)
     matches = []
     for row in nextastro_catalog_rows(catalog_response):
@@ -9971,7 +10000,7 @@ def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
         if magnitude is None:
             continue
         separation = sky_separation_arcsec(ra, dec, row_ra, row_dec)
-        if separation > max_separation_arcsec:
+        if separation > effective_max_separation_arcsec:
             continue
         matches.append({
             **magnitude,
@@ -11498,16 +11527,28 @@ POINTING_REJECTION_MIN_FRAMES = 5
 POINTING_REJECTION_MAX_ITERS = 5
 
 # Automatic aperture-grid tuning constants (in PSF sigma units)
-APERTURE_SIGMA_MIN = 1.5
-APERTURE_SIGMA_MAX = 6.0
+GAUSSIAN_SIGMA_TO_FWHM = 2.355
+APERTURE_MIN_FWHM_MULTIPLIER = 0.5
+APERTURE_MAX_FWHM_MULTIPLIER = 2.0
+APERTURE_SIGMA_MIN = APERTURE_MIN_FWHM_MULTIPLIER * GAUSSIAN_SIGMA_TO_FWHM
+APERTURE_SIGMA_MAX = APERTURE_MAX_FWHM_MULTIPLIER * GAUSSIAN_SIGMA_TO_FWHM
 ANNULUS_SIGMA_MIN = 6.0
 ANNULUS_SIGMA_MAX = 15.0
-GAUSSIAN_SIGMA_TO_FWHM = 2.355
 SKY_ANNULUS_MIN_GAP_PIXELS = 2.0
 SKY_ANNULUS_MIN_FWHM_MULTIPLIER = 2.0
 SKY_ANNULUS_MIN_EFFECTIVE_PIXELS = 250.0
 SKY_BACKGROUND_SIGMA_CLIP = 3.0
 SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS = 3
+APERTURE_CORRECTION_DETECTION_SIGMA = 5.0
+APERTURE_CORRECTION_MAX_DETECTED_STARS = 500
+APERTURE_CORRECTION_PEAK_TEST_LIMIT = APERTURE_CORRECTION_MAX_DETECTED_STARS * 50
+APERTURE_CORRECTION_PEAK_BLOCK_SIZE = 512
+APERTURE_CORRECTION_PEAK_BLOCK_LIMIT = 128
+APERTURE_CORRECTION_MAX_STARS = 60
+APERTURE_CORRECTION_MIN_STARS = 3
+APERTURE_CORRECTION_MIN_SEPARATION_FWHM = 5.0
+APERTURE_CORRECTION_MIN_BORDER_PIXELS = 20.0
+APERTURE_CORRECTION_MAX_FACTOR = 10.0
 APERTURE_AUTOTUNE_COARSE_APER_POINTS = 5
 APERTURE_AUTOTUNE_COARSE_ANNULUS_POINTS = 4
 APERTURE_AUTOTUNE_REFINED_APER_POINTS = 6
@@ -12137,6 +12178,466 @@ def resolve_sky_annulus_geometry(
     }
 
 
+def finite_positive_or_nan(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(value) or value <= 0:
+        return np.nan
+    return value
+
+
+def _aperture_correction_fallback_fwhm(fwhm_hint=np.nan, fallback_sigma=np.nan):
+    fwhm = finite_positive_or_nan(fwhm_hint)
+    if np.isfinite(fwhm):
+        return fwhm
+
+    sigma = finite_positive_or_nan(fallback_sigma)
+    if np.isfinite(sigma):
+        return psf_fwhm_from_sigma(sigma)
+
+    return np.nan
+
+
+def _limited_bright_pixel_indices(search_image, bright, max_count):
+    bright_count = int(np.count_nonzero(bright))
+    if bright_count == 0:
+        return np.empty(0, dtype=np.intp)
+    if bright_count <= max_count:
+        return np.flatnonzero(bright.ravel())
+
+    height, width = bright.shape
+    selected_blocks = []
+    for y0 in range(0, height, APERTURE_CORRECTION_PEAK_BLOCK_SIZE):
+        y1 = min(y0 + APERTURE_CORRECTION_PEAK_BLOCK_SIZE, height)
+        for x0 in range(0, width, APERTURE_CORRECTION_PEAK_BLOCK_SIZE):
+            x1 = min(x0 + APERTURE_CORRECTION_PEAK_BLOCK_SIZE, width)
+            block_bright = bright[y0:y1, x0:x1]
+            block_count = int(np.count_nonzero(block_bright))
+            if block_count == 0:
+                continue
+
+            if block_count <= APERTURE_CORRECTION_PEAK_BLOCK_LIMIT:
+                local_flat = np.flatnonzero(block_bright.ravel())
+            else:
+                block_scores = np.where(block_bright, search_image[y0:y1, x0:x1], -np.inf)
+                local_flat = np.argpartition(
+                    block_scores.ravel(),
+                    -APERTURE_CORRECTION_PEAK_BLOCK_LIMIT,
+                )[-APERTURE_CORRECTION_PEAK_BLOCK_LIMIT:]
+                local_flat = local_flat[np.isfinite(block_scores.ravel()[local_flat])]
+
+            yy, xx = np.divmod(local_flat, x1 - x0)
+            selected_blocks.append((yy + y0) * width + (xx + x0))
+
+    if not selected_blocks:
+        return np.empty(0, dtype=np.intp)
+
+    selected = np.concatenate(selected_blocks).astype(np.intp, copy=False)
+    if selected.size <= max_count:
+        return selected
+
+    selected_values = search_image.ravel()[selected]
+    strongest = np.argpartition(selected_values, -max_count)[-max_count:]
+    return selected[strongest]
+
+
+def detect_aperture_correction_star_candidates(data, fwhm_hint=np.nan):
+    image = np.asarray(data, dtype=float)
+    if image.ndim != 2:
+        return np.empty((0, 3), dtype=float)
+    if image.shape[0] < 3 or image.shape[1] < 3:
+        return np.empty((0, 3), dtype=float)
+
+    finite = np.isfinite(image)
+    if not np.any(finite):
+        return np.empty((0, 3), dtype=float)
+
+    background, scatter = sigma_clipped_nanmedian(image[finite], sigma=3.0, max_iters=3)
+    if not np.isfinite(background):
+        background = float(np.nanmedian(image[finite]))
+    if not np.isfinite(scatter) or scatter <= 0:
+        scatter = float(np.nanstd(image[finite]))
+    if not np.isfinite(scatter) or scatter <= 0:
+        return np.empty((0, 3), dtype=float)
+
+    fwhm = finite_positive_or_nan(fwhm_hint)
+    if not np.isfinite(fwhm):
+        fwhm = 3.0
+    fwhm = float(np.clip(fwhm, 1.0, 20.0))
+
+    search_image = np.where(finite, image - background, -np.inf)
+    threshold = APERTURE_CORRECTION_DETECTION_SIGMA * scatter
+    bright = finite & (search_image > threshold)
+    bright[0, :] = False
+    bright[-1, :] = False
+    bright[:, 0] = False
+    bright[:, -1] = False
+
+    bright_flat = _limited_bright_pixel_indices(
+        search_image,
+        bright,
+        APERTURE_CORRECTION_PEAK_TEST_LIMIT,
+    )
+    if bright_flat.size == 0:
+        return np.empty((0, 3), dtype=float)
+
+    y, x = np.divmod(bright_flat, image.shape[1])
+    flux = search_image[y, x]
+    order = np.argsort(flux, kind='mergesort')[::-1]
+    local_radius = int(np.clip(np.ceil(0.5 * fwhm), 1, 10))
+    suppression_radius = max(1.0, 0.75 * fwhm)
+    suppression_radius_sq = suppression_radius * suppression_radius
+
+    rows = []
+    accepted_xy = []
+    for idx in order:
+        xc = int(x[idx])
+        yc = int(y[idx])
+        center_flux = float(flux[idx])
+        if not np.isfinite(center_flux):
+            continue
+
+        y0 = yc - local_radius
+        y1 = yc + local_radius + 1
+        x0 = xc - local_radius
+        x1 = xc + local_radius + 1
+        if y0 < 0 or x0 < 0 or y1 > image.shape[0] or x1 > image.shape[1]:
+            continue
+        if center_flux < float(np.nanmax(search_image[y0:y1, x0:x1])):
+            continue
+
+        if accepted_xy:
+            accepted = np.asarray(accepted_xy, dtype=float)
+            if np.any((accepted[:, 0] - xc) ** 2 + (accepted[:, 1] - yc) ** 2 <= suppression_radius_sq):
+                continue
+
+        rows.append((float(xc), float(yc), center_flux))
+        accepted_xy.append((float(xc), float(yc)))
+        if len(rows) >= APERTURE_CORRECTION_MAX_DETECTED_STARS:
+            break
+
+    if not rows:
+        return np.empty((0, 3), dtype=float)
+    return np.asarray(rows, dtype=float)
+
+
+def isolated_aperture_correction_candidates(candidates, image_shape, fwhm_hint=np.nan):
+    candidates = np.asarray(candidates, dtype=float)
+    if candidates.ndim != 2 or candidates.shape[1] < 2 or candidates.size == 0:
+        return np.empty((0, 3), dtype=float)
+
+    fwhm = finite_positive_or_nan(fwhm_hint)
+    if not np.isfinite(fwhm):
+        fwhm = 3.0
+
+    height, width = image_shape[:2]
+    min_separation = APERTURE_CORRECTION_MIN_SEPARATION_FWHM * fwhm
+    border = max(
+        APERTURE_CORRECTION_MIN_BORDER_PIXELS,
+        APERTURE_CORRECTION_MIN_SEPARATION_FWHM * fwhm,
+    )
+
+    x = candidates[:, 0]
+    y = candidates[:, 1]
+    keep = (
+        np.isfinite(x)
+        & np.isfinite(y)
+        & (x >= border)
+        & (x <= (width - 1 - border))
+        & (y >= border)
+        & (y <= (height - 1 - border))
+    )
+    candidates = candidates[keep]
+    if candidates.shape[0] <= 1:
+        return candidates[:APERTURE_CORRECTION_MAX_STARS]
+
+    x = candidates[:, 0]
+    y = candidates[:, 1]
+    distances = np.hypot(x[:, None] - x[None, :], y[:, None] - y[None, :])
+    np.fill_diagonal(distances, np.inf)
+    nearest = np.min(distances, axis=1)
+    candidates = candidates[nearest >= min_separation]
+    if candidates.size == 0:
+        return np.empty((0, 3), dtype=float)
+
+    order = np.argsort(candidates[:, 2], kind='mergesort')[::-1]
+    return candidates[order[:APERTURE_CORRECTION_MAX_STARS]]
+
+
+def estimate_isolated_field_star_psfs(data, fwhm_hint=np.nan):
+    image = np.asarray(data, dtype=float)
+    if image.ndim != 2:
+        return np.empty((0, 7), dtype=float)
+
+    candidates = detect_aperture_correction_star_candidates(image, fwhm_hint=fwhm_hint)
+    candidates = isolated_aperture_correction_candidates(candidates, image.shape, fwhm_hint=fwhm_hint)
+    if candidates.size == 0:
+        return np.empty((0, 7), dtype=float)
+
+    fwhm = finite_positive_or_nan(fwhm_hint)
+    if not np.isfinite(fwhm):
+        fwhm = 3.0
+    box = int(np.clip(np.ceil(3.0 * fwhm), 6, 30))
+
+    rows = []
+    for x, y, _ in candidates:
+        try:
+            xv, yv = mesh_box([x, y], box, maxx=image.shape[1], maxy=image.shape[0])
+            subarray = image[yv, xv]
+        except Exception:
+            continue
+
+        if subarray.size == 0:
+            continue
+
+        row = _fit_centroid_moments(subarray, xv, yv, [x, y], box)
+        if not np.all(np.isfinite(row[:5])):
+            continue
+        if not _has_usable_centroid_signal(subarray, row[2], min_snr=5.0):
+            continue
+
+        solved_fwhm = psf_fwhm_from_sigma(0.5 * (row[3] + row[4]))
+        if not np.isfinite(solved_fwhm):
+            continue
+        if np.hypot(row[0] - x, row[1] - y) > max(2.0, 0.75 * solved_fwhm):
+            continue
+
+        rows.append(row)
+
+    if not rows:
+        return np.empty((0, 7), dtype=float)
+    return np.asarray(rows, dtype=float)
+
+
+def image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=np.nan):
+    rows = np.asarray(field_star_psfs, dtype=float)
+    if rows.ndim != 2 or rows.shape[1] < 5 or rows.size == 0:
+        return finite_positive_or_nan(fallback_fwhm)
+
+    sigmas = 0.5 * (rows[:, 3] + rows[:, 4])
+    fwhm_values = GAUSSIAN_SIGMA_TO_FWHM * sigmas
+    fwhm_values[~np.isfinite(fwhm_values) | (fwhm_values <= 0)] = np.nan
+    center, _ = sigma_clipped_nanmedian(fwhm_values, sigma=3.0, max_iters=3)
+    if np.isfinite(center) and center > 0:
+        return float(center)
+
+    return finite_positive_or_nan(fallback_fwhm)
+
+
+def estimate_image_fwhm_from_isolated_stars(data, fwhm_hint=np.nan, fallback_sigma=np.nan):
+    fallback_fwhm = _aperture_correction_fallback_fwhm(fwhm_hint, fallback_sigma)
+    field_star_psfs = estimate_isolated_field_star_psfs(data, fwhm_hint=fallback_fwhm)
+    return image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=fallback_fwhm)
+
+
+def _aperture_correction_sky_background(data, xc, yc, reference_radius, image_fwhm, fast_mode=False):
+    sigma_hint = image_fwhm / GAUSSIAN_SIGMA_TO_FWHM if np.isfinite(image_fwhm) and image_fwhm > 0 else np.nan
+    sky_geometry = resolve_sky_annulus_geometry(
+        reference_radius,
+        max(float(image_fwhm), 3.0) if np.isfinite(image_fwhm) else 5.0,
+        psf_sigma=sigma_hint,
+    )
+
+    try:
+        annulus = CircularAnnulus(
+            positions=[(xc, yc)],
+            r_in=sky_geometry['inner_radius'],
+            r_out=sky_geometry['outer_radius'],
+        )
+        mask_method = 'center' if fast_mode else 'exact'
+        annulus_mask = annulus.to_mask(method=mask_method)[0]
+        annulus_cutout = annulus_mask.cutout(data, fill_value=np.nan)
+    except Exception:
+        return np.nan
+
+    if annulus_cutout is None:
+        return np.nan
+
+    annulus_cutout = np.asarray(annulus_cutout, dtype=float)
+    annulus_weights = np.asarray(annulus_mask.data, dtype=float)
+    valid_mask = np.isfinite(annulus_cutout) & np.isfinite(annulus_weights) & (annulus_weights > 0)
+    if not np.any(valid_mask):
+        return np.nan
+
+    annulus_pixels = annulus_cutout[valid_mask]
+    annulus_pixel_weights = annulus_weights[valid_mask]
+    cutoff = weighted_nanpercentile(annulus_pixels, annulus_pixel_weights, 99)
+    if not np.isfinite(cutoff):
+        return np.nan
+
+    clipped_keep = annulus_pixels <= cutoff
+    if not np.any(clipped_keep):
+        return np.nan
+
+    sky_median, _ = sigma_clipped_weighted_median(
+        annulus_pixels[clipped_keep],
+        annulus_pixel_weights[clipped_keep],
+        sigma=SKY_BACKGROUND_SIGMA_CLIP,
+        max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS,
+        high_only=True,
+    )
+    return sky_median
+
+
+def _background_subtracted_aperture_sum(data, xc, yc, radius, background, fast_mode=False):
+    radius = finite_positive_or_nan(radius)
+    if not np.isfinite(radius) or not np.isfinite(background):
+        return np.nan
+
+    try:
+        aperture = CircularAperture(positions=[(xc, yc)], r=radius)
+        mask_method = 'center' if fast_mode else 'exact'
+        mask = aperture.to_mask(method=mask_method)[0]
+        data_cutout = mask.cutout(data)
+    except Exception:
+        return np.nan
+
+    if data_cutout is None:
+        return np.nan
+
+    weights = np.asarray(mask.data, dtype=float)
+    values = np.asarray(data_cutout, dtype=float)
+    valid = np.isfinite(weights) & np.isfinite(values) & (weights > 0)
+    if not np.any(valid):
+        return np.nan
+
+    return float(np.sum(weights[valid] * (values[valid] - background)))
+
+
+def build_aperture_correction_profile(data, aperture_radii, fwhm_hint=np.nan, fast_mode=False,
+                                      field_star_psfs=None):
+    aperture_radii = np.asarray(aperture_radii, dtype=float).reshape(-1)
+    correction_factors = np.ones(aperture_radii.shape, dtype=float)
+    fallback_fwhm = finite_positive_or_nan(fwhm_hint)
+
+    if field_star_psfs is None:
+        field_star_psfs = estimate_isolated_field_star_psfs(data, fwhm_hint=fallback_fwhm)
+    else:
+        field_star_psfs = np.asarray(field_star_psfs, dtype=float)
+
+    image_fwhm = image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=fallback_fwhm)
+    profile = {
+        'applied': False,
+        'image_fwhm': image_fwhm,
+        'star_count': int(field_star_psfs.shape[0]) if field_star_psfs.ndim == 2 else 0,
+        'aperture_radii': aperture_radii,
+        'correction_factors': correction_factors,
+        'curve_radii': np.array([], dtype=float),
+        'enclosed_fraction': np.array([], dtype=float),
+        'note': 'Aperture correction skipped; no aperture radii were provided.',
+    }
+
+    valid_radius_mask = np.isfinite(aperture_radii) & (aperture_radii > 0)
+    if not np.any(valid_radius_mask):
+        return profile
+
+    if not np.isfinite(image_fwhm) or image_fwhm <= 0:
+        profile['note'] = 'Aperture correction skipped; image FWHM could not be estimated.'
+        return profile
+
+    if profile['star_count'] < APERTURE_CORRECTION_MIN_STARS:
+        profile['note'] = (
+            "Aperture correction skipped; fewer than "
+            f"{APERTURE_CORRECTION_MIN_STARS} isolated field stars were available."
+        )
+        return profile
+
+    reference_radius = APERTURE_MAX_FWHM_MULTIPLIER * image_fwhm
+    measurement_radii = np.unique(np.concatenate([aperture_radii[valid_radius_mask], [reference_radius]]))
+    measurement_radii = measurement_radii[np.isfinite(measurement_radii) & (measurement_radii > 0)]
+    if measurement_radii.size == 0:
+        return profile
+
+    fractions_by_radius = {float(radius): [] for radius in measurement_radii}
+    for row in field_star_psfs:
+        xc, yc = float(row[0]), float(row[1])
+        background = _aperture_correction_sky_background(
+            data,
+            xc,
+            yc,
+            reference_radius,
+            image_fwhm,
+            fast_mode=fast_mode,
+        )
+        reference_flux = _background_subtracted_aperture_sum(
+            data,
+            xc,
+            yc,
+            reference_radius,
+            background,
+            fast_mode=fast_mode,
+        )
+        if not np.isfinite(reference_flux) or reference_flux <= 0:
+            continue
+
+        for radius in measurement_radii:
+            flux = _background_subtracted_aperture_sum(
+                data,
+                xc,
+                yc,
+                radius,
+                background,
+                fast_mode=fast_mode,
+            )
+            fraction = flux / reference_flux if np.isfinite(flux) else np.nan
+            if np.isfinite(fraction) and fraction > 0:
+                fractions_by_radius[float(radius)].append(float(fraction))
+
+    curve_radii = []
+    enclosed_fraction = []
+    for radius in measurement_radii:
+        fractions = np.asarray(fractions_by_radius[float(radius)], dtype=float)
+        if fractions.size == 0:
+            continue
+        center, _ = sigma_clipped_nanmedian(fractions, sigma=3.0, max_iters=3)
+        if np.isfinite(center) and center > 0:
+            curve_radii.append(float(radius))
+            enclosed_fraction.append(float(center))
+
+    if not curve_radii:
+        profile['note'] = 'Aperture correction skipped; isolated-star curve of growth could not be measured.'
+        return profile
+
+    curve_radii = np.asarray(curve_radii, dtype=float)
+    enclosed_fraction = np.asarray(enclosed_fraction, dtype=float)
+    order = np.argsort(curve_radii, kind='mergesort')
+    curve_radii = curve_radii[order]
+    enclosed_fraction = enclosed_fraction[order]
+    enclosed_fraction = np.clip(enclosed_fraction, 1.0 / APERTURE_CORRECTION_MAX_FACTOR, 1.0)
+    enclosed_fraction = np.maximum.accumulate(enclosed_fraction)
+    enclosed_fraction = np.minimum(enclosed_fraction, 1.0)
+
+    interpolated_fraction = np.interp(
+        aperture_radii[valid_radius_mask],
+        curve_radii,
+        enclosed_fraction,
+        left=enclosed_fraction[0],
+        right=1.0,
+    )
+    interpolated_fraction = np.clip(interpolated_fraction, 1.0 / APERTURE_CORRECTION_MAX_FACTOR, 1.0)
+    correction_factors[valid_radius_mask] = np.clip(
+        1.0 / interpolated_fraction,
+        1.0,
+        APERTURE_CORRECTION_MAX_FACTOR,
+    )
+
+    profile.update({
+        'applied': True,
+        'correction_factors': correction_factors,
+        'curve_radii': curve_radii,
+        'enclosed_fraction': enclosed_fraction,
+        'reference_radius': float(reference_radius),
+        'note': (
+            "Applied aperture correction from "
+            f"{profile['star_count']} isolated field star(s); image FWHM={image_fwhm:.2f}px."
+        ),
+    })
+    return profile
+
+
 # Method calculates the flux of the star (uses the skybg_phot method to do background sub)
 def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=False, sigma_hint=np.nan):
     stage_start = perf_counter()
@@ -12708,15 +13209,31 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     del centroid_reference_image
 
     # aperture and annulus scale factors in PSF sigma units
-    aper_sigma = 3 * max(targ_sig_xy)
+    aper_sigma = finite_positive_or_nan(3 * max(targ_sig_xy))
+    if not np.isfinite(aper_sigma):
+        aper_sigma = 3.0
+    aper_sigma = float(np.clip(aper_sigma, APERTURE_SIGMA_MIN, APERTURE_SIGMA_MAX))
     annulus_sigma = 10
     fast_aperture_mask = is_fast_aperture_mask_enabled(info_dict.get('fast_aperture_mask'))
     use_adaptive_apertures = is_adaptive_aperture_mode_enabled(info_dict.get('use_adaptive_apertures'))
+    use_aperture_corrections_and_full_image_fwhm = should_use_aperture_corrections_and_full_image_fwhm(
+        info_dict.get('use_aperture_corrections_and_full_image_fwhm', False)
+    )
     aper = np.nan
     annulus = np.nan
     sigma = np.nan
     if use_adaptive_apertures:
-        log_info("Adaptive aperture scaling enabled for realtime photometry.")
+        log_info(
+            "Adaptive aperture scaling enabled for realtime photometry: "
+            f"aperture scales are in PSF sigma units (1 image FWHM = {GAUSSIAN_SIGMA_TO_FWHM:.3f} sigma)."
+        )
+    log_info(
+        "Realtime aperture candidates are limited to "
+        f"{APERTURE_MIN_FWHM_MULTIPLIER:.1f}-{APERTURE_MAX_FWHM_MULTIPLIER:.1f} image FWHM "
+        f"({APERTURE_SIGMA_MIN:.2f}-{APERTURE_SIGMA_MAX:.2f} sigma)."
+    )
+    if use_aperture_corrections_and_full_image_fwhm:
+        log_info("Aperture corrections and full-image FWHM estimation enabled for realtime photometry.")
 
     # alloc psf fitting param
     psf_data = {
@@ -12891,7 +13408,18 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                     tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
 
         # aperture photometry
-        frame_sigma = psf_sigma_from_fit(psf_data['target'][i], fallback_sigma=sigma)
+        target_sigma = psf_sigma_from_fit(psf_data['target'][i], fallback_sigma=sigma)
+        target_fwhm = psf_fwhm_from_sigma(target_sigma)
+        field_star_psfs = np.empty((0, 7), dtype=float)
+        image_fwhm = target_fwhm
+        if use_aperture_corrections_and_full_image_fwhm:
+            field_star_psfs = estimate_isolated_field_star_psfs(imageData, fwhm_hint=target_fwhm)
+            image_fwhm = image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=target_fwhm)
+        frame_sigma = (
+            image_fwhm / GAUSSIAN_SIGMA_TO_FWHM
+            if np.isfinite(image_fwhm) and image_fwhm > 0
+            else target_sigma
+        )
         if i == 0:
             sigma = frame_sigma
             if not np.isfinite(sigma) or sigma <= 0:
@@ -12919,6 +13447,19 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
             aper = float(aper[0])
             annulus = float(annulus[0])
 
+        aperture_correction_factor = 1.0
+        if use_aperture_corrections_and_full_image_fwhm:
+            aperture_correction = build_aperture_correction_profile(
+                imageData,
+                [aper],
+                fwhm_hint=image_fwhm,
+                fast_mode=fast_aperture_mask,
+                field_star_psfs=field_star_psfs,
+            )
+            correction_factors = np.asarray(aperture_correction.get('correction_factors', [1.0]), dtype=float).reshape(-1)
+            if correction_factors.size and np.isfinite(correction_factors[0]) and correction_factors[0] > 0:
+                aperture_correction_factor = float(correction_factors[0])
+
         comp_frame_sigma = psf_sigma_from_fit(psf_data['comp'][i], fallback_sigma=frame_sigma)
         tFlux = aperPhot(
             imageData,
@@ -12929,7 +13470,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
             annulus,
             fast_mode=fast_aperture_mask,
             sigma_hint=frame_sigma,
-        )[0]
+        )[0] * aperture_correction_factor
         cFlux = aperPhot(
             imageData,
             1,
@@ -12939,7 +13480,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
             annulus,
             fast_mode=fast_aperture_mask,
             sigma_hint=comp_frame_sigma,
-        )[0]
+        )[0] * aperture_correction_factor
         norm_flux.append(tFlux / cFlux)
 
         # close file + delete from memory
@@ -15762,7 +16303,8 @@ def initialize_aperture_data_store(frame_count, aperture_count, annulus_count, c
     return aper_data
 
 
-def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan):
+def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan,
+                               aperture_correction_factors=None):
     flux_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
     bg_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
 
@@ -15812,12 +16354,31 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
             finally:
                 _record_photometry_stage_timing('aperPhot', perf_counter() - stage_start)
 
+    if aperture_correction_factors is not None:
+        factors = np.asarray(aperture_correction_factors, dtype=float).reshape(-1)
+        if factors.shape[0] == len(apertures):
+            valid_factors = np.isfinite(factors) & (factors > 0)
+            if np.any(valid_factors):
+                flux_grid[valid_factors, :] *= factors[valid_factors, None]
+
     return flux_grid, bg_grid
 
 
 def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_star_count, aper_data, apertures, annuli,
-                                     fast_aperture_mask, adaptive_apertures=False, fallback_sigma=np.nan):
-    frame_sigma = psf_sigma_from_fit(psf_data['target'][frame_index], fallback_sigma=fallback_sigma)
+                                     fast_aperture_mask, adaptive_apertures=False, fallback_sigma=np.nan,
+                                     use_aperture_corrections_and_full_image_fwhm=False):
+    target_sigma = psf_sigma_from_fit(psf_data['target'][frame_index], fallback_sigma=fallback_sigma)
+    target_fwhm = psf_fwhm_from_sigma(target_sigma)
+    field_star_psfs = np.empty((0, 7), dtype=float)
+    image_fwhm = target_fwhm
+    if use_aperture_corrections_and_full_image_fwhm:
+        field_star_psfs = estimate_isolated_field_star_psfs(image_data, fwhm_hint=target_fwhm)
+        image_fwhm = image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=target_fwhm)
+    frame_sigma = (
+        image_fwhm / GAUSSIAN_SIGMA_TO_FWHM
+        if np.isfinite(image_fwhm) and image_fwhm > 0
+        else target_sigma
+    )
     frame_apertures, frame_annuli = resolve_frame_aperture_radii(
         apertures,
         annuli,
@@ -15825,6 +16386,23 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         frame_sigma=frame_sigma,
         fallback_sigma=fallback_sigma,
     )
+    aperture_correction = {
+        'applied': False,
+        'image_fwhm': image_fwhm,
+        'star_count': 0,
+        'correction_factors': np.ones(len(frame_apertures), dtype=float),
+        'note': 'Aperture corrections and full-image FWHM estimation disabled.',
+    }
+    aperture_correction_factors = None
+    if use_aperture_corrections_and_full_image_fwhm:
+        aperture_correction = build_aperture_correction_profile(
+            image_data,
+            frame_apertures,
+            fwhm_hint=image_fwhm,
+            fast_mode=fast_aperture_mask,
+            field_star_psfs=field_star_psfs,
+        )
+        aperture_correction_factors = aperture_correction.get('correction_factors')
 
     target_flux, target_bg = compute_star_aperture_grid(
         image_data,
@@ -15835,6 +16413,7 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         frame_annuli,
         fast_mode=fast_aperture_mask,
         sigma_hint=frame_sigma,
+        aperture_correction_factors=aperture_correction_factors,
     )
     aper_data['target'][frame_index] = target_flux
     aper_data['target_bg'][frame_index] = target_bg
@@ -15851,9 +16430,12 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
             frame_annuli,
             fast_mode=fast_aperture_mask,
             sigma_hint=comp_sigma,
+            aperture_correction_factors=aperture_correction_factors,
         )
         aper_data[ckey][frame_index] = comp_flux
         aper_data[f"{ckey}_bg"][frame_index] = comp_bg
+
+    return aperture_correction
 
 
 def load_calibrated_reduction_image(file_name, generalDark, generalBias, generalFlat,
@@ -17291,6 +17873,9 @@ def _main_impl():
             use_adaptive_apertures = is_adaptive_aperture_mode_enabled(
                 exotic_infoDict.get('use_adaptive_apertures', False)
             )
+            use_aperture_corrections_and_full_image_fwhm = should_use_aperture_corrections_and_full_image_fwhm(
+                exotic_infoDict.get('use_aperture_corrections_and_full_image_fwhm', False)
+            )
             if not use_psf_photometry and not use_aperture_photometry:
                 log_info("Error: both PSF and aperture photometry are disabled in optional_info.", error=True)
                 return
@@ -17377,7 +17962,18 @@ def _main_impl():
             )
             fast_aperture_mask = is_fast_aperture_mask_enabled(exotic_infoDict.get('fast_aperture_mask'))
             if use_aperture_photometry and use_adaptive_apertures:
-                log_info("Adaptive aperture scaling enabled: evaluating aperture candidates in PSF sigma units per frame.")
+                log_info(
+                    "Adaptive aperture scaling enabled: evaluating aperture candidates in PSF sigma units per frame "
+                    f"(1 image FWHM = {GAUSSIAN_SIGMA_TO_FWHM:.3f} sigma)."
+                )
+            if use_aperture_photometry:
+                log_info(
+                    "Aperture candidates are limited to "
+                    f"{APERTURE_MIN_FWHM_MULTIPLIER:.1f}-{APERTURE_MAX_FWHM_MULTIPLIER:.1f} image FWHM "
+                    f"({APERTURE_SIGMA_MIN:.2f}-{APERTURE_SIGMA_MAX:.2f} sigma)."
+                )
+                if use_aperture_corrections_and_full_image_fwhm:
+                    log_info("Aperture corrections and full-image FWHM estimation enabled per optional_info setting.")
 
             # open files, calibrate, align, photometry
             reset_transform_timing_stats()
@@ -17580,6 +18176,14 @@ def _main_impl():
                 # aperture photometry
                 if use_aperture_photometry and i == 0:
                     sigma = psf_sigma_from_fit(psf_data['target'][0])
+                    if use_aperture_corrections_and_full_image_fwhm:
+                        image_fwhm = estimate_image_fwhm_from_isolated_stars(
+                            imageData,
+                            fwhm_hint=psf_fwhm_from_sigma(sigma),
+                            fallback_sigma=sigma,
+                        )
+                        if np.isfinite(image_fwhm) and image_fwhm > 0:
+                            sigma = image_fwhm / GAUSSIAN_SIGMA_TO_FWHM
                     if not np.isfinite(sigma) or sigma <= 0:
                         log_info("Warning: Initial PSF sigma is invalid; using sigma=1.0 for automatic aperture tuning.", warn=True)
                         sigma = 1.0
@@ -17603,6 +18207,7 @@ def _main_impl():
                         fast_aperture_mask,
                         adaptive_apertures=use_adaptive_apertures,
                         fallback_sigma=sigma,
+                        use_aperture_corrections_and_full_image_fwhm=use_aperture_corrections_and_full_image_fwhm,
                     )
 
                     if i == coarse_tune_frames - 1:
@@ -17631,9 +18236,11 @@ def _main_impl():
                         if best_coarse_candidate['comp_index'] is not None:
                             best_comp_label = str(best_coarse_candidate['comp_index'] + 1)
                         score_text = "n/a" if not np.isfinite(best_coarse_score) else f"{best_coarse_score:.5f}"
+                        best_aper_sigma = best_coarse_candidate['aper_sigma']
+                        best_aper_fwhm = best_aper_sigma / GAUSSIAN_SIGMA_TO_FWHM
                         log_info(
                             "Auto-tuned aperture grid: "
-                            f"coarse_best=(aper={best_coarse_candidate['aper_sigma']:.2f} sigma, "
+                            f"coarse_best=(aper={best_aper_sigma:.2f} sigma/{best_aper_fwhm:.2f} FWHM, "
                             f"annulus={best_coarse_candidate['annulus_sigma']:.2f} sigma, comp={best_comp_label}, score={score_text}), "
                             f"refined_grid={len(refined_apertures_sigma)}x{len(refined_annuli_sigma)}."
                         )
@@ -17666,6 +18273,9 @@ def _main_impl():
                                     fast_aperture_mask,
                                     adaptive_apertures=use_adaptive_apertures,
                                     fallback_sigma=sigma,
+                                    use_aperture_corrections_and_full_image_fwhm=(
+                                        use_aperture_corrections_and_full_image_fwhm
+                                    ),
                                 )
                             finally:
                                 if loaded_from_disk:
@@ -17696,6 +18306,7 @@ def _main_impl():
                         fast_aperture_mask,
                         adaptive_apertures=use_adaptive_apertures,
                         fallback_sigma=sigma,
+                        use_aperture_corrections_and_full_image_fwhm=use_aperture_corrections_and_full_image_fwhm,
                     )
 
                 # close file + delete from memory

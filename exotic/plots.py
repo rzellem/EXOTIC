@@ -399,6 +399,12 @@ def _draw_comp_star_calibration_axis(axis, times, summary, colors):
     if np.any(ensemble_valid):
         axis.plot(times[ensemble_valid], ensemble_ratio[ensemble_valid], color='black', lw=1.8,
                   label='Ensemble')
+        ensemble_keep_mask = np.asarray(summary.get('ensemble_frame_keep_mask'), dtype=bool)
+        if ensemble_keep_mask.shape == times.shape:
+            rejected = ensemble_valid & ~ensemble_keep_mask
+            if np.any(rejected):
+                axis.scatter(times[rejected], ensemble_ratio[rejected], marker='x', s=42,
+                             color='red', linewidths=1.4, label='Ensemble clip')
 
     selected_text = " selected" if summary.get('selected') else ""
     aggregate = summary.get('aggregate_score', np.nan)

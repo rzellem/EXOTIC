@@ -1,4 +1,5 @@
 import logging
+from math import isfinite
 import re
 import requests
 from numpy import floor, log10
@@ -22,6 +23,8 @@ _WINDOWS_RESERVED_FILENAME_STEMS = {
     *(f'LPT{i}' for i in range(1, 10)),
 }
 _WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+MAX_APPARENT_MAGNITUDE = 30.0
+MAGNITUDE_DECIMAL_PLACES = 3
 
 
 def sanitize_filename_component(value, fallback='output'):
@@ -56,6 +59,47 @@ def safe_output_filename(prefix, *parts, extension):
     if ext and not ext.startswith('.'):
         ext = f'.{ext}'
     return f'{safe_stem}{ext}'
+
+
+def parse_finite_float(value, default=None):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if isfinite(parsed) else default
+
+
+def is_usable_apparent_magnitude(value, max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    return parsed is not None and parsed <= max_magnitude
+
+
+def format_magnitude(value, default="na", digits=MAGNITUDE_DECIMAL_PLACES,
+                     max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    if parsed is None or parsed > max_magnitude:
+        return default
+    return f"{parsed:.{digits}f}"
+
+
+def rounded_magnitude_value(value, default=None, digits=MAGNITUDE_DECIMAL_PLACES,
+                            max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    if parsed is None or parsed > max_magnitude:
+        return default
+    return round(parsed, digits)
+
+
+def magnitude_text(band, magnitude, magnitude_error=None):
+    formatted_mag = format_magnitude(magnitude, default=None)
+    if formatted_mag is None:
+        return None
+
+    parsed_error = parse_finite_float(magnitude_error)
+    formatted_error = format_magnitude(abs(parsed_error), default=None) if parsed_error is not None else None
+    if formatted_error is None:
+        return f"{band}={formatted_mag}"
+    return f"{band}={formatted_mag} +/- {formatted_error}"
 
 
 def user_input(prompt, type_, values=None, max_tries=1000):

@@ -216,10 +216,65 @@ def test_plot_stellar_variability_labels_reference_band_and_coordinates(tmp_path
     assert "RA=10.1000000" in titles[-1]
     assert "Dec=-20.2000000" in titles[-1]
     assert "Observed filter=CV" in titles[-1]
-    assert "r=12.34500 +/- 0.06700" in titles[-1]
+    assert "r=12.345 +/- 0.067" in titles[-1]
     assert "Dec=-20.2000000\nObserved filter=CV" in titles[-1]
     assert ylabels[-1] == "Magnitude (r)"
     assert (tmp_path / "temp" / "Stellar_Variability.png").exists()
+
+
+def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, monkeypatch):
+    titles = []
+    original_set_title = Axes.set_title
+
+    def spy_set_title(self, label, *args, **kwargs):
+        titles.append(label)
+        return original_set_title(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_title", spy_set_title)
+
+    plot_stellar_variability(
+        [
+            {
+                "time": 2450000.1,
+                "mag": 12.34,
+                "mag_err": 0.05,
+                "cmag": 99.99,
+                "cmag_err": 99.99,
+                "comp_ra": 10.1,
+                "comp_dec": -20.2,
+                "mag_band": "V",
+                "observed_filter": "MObs CV",
+                "is_aavso_vsp": False,
+            }
+        ],
+        str(tmp_path),
+        "Host Star",
+        "NextAstro-123",
+    )
+
+    assert "Observed filter=MObs CV" in titles[-1]
+    assert "99.99" not in titles[-1]
+    assert "V=" not in titles[-1]
+
+
+def test_plot_stellar_variability_skips_over_30_measurements(tmp_path):
+    plot_stellar_variability(
+        [
+            {
+                "time": 2450000.1,
+                "mag": 99.99,
+                "mag_err": 0.05,
+                "cmag": 12.0,
+                "cmag_err": 0.05,
+                "mag_band": "V",
+            }
+        ],
+        str(tmp_path),
+        "Host Star",
+        "Comp",
+    )
+
+    assert not (tmp_path / "temp" / "Stellar_Variability.png").exists()
 
 
 def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):

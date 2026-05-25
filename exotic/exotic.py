@@ -180,9 +180,25 @@ except ImportError:  # package import
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
         plot_adaptive_aperture_diagnostics
 try:  # tools
-    from utils import filename_date_token, round_to_2, safe_output_filename, user_input
+    from utils import (
+        MAX_APPARENT_MAGNITUDE,
+        filename_date_token,
+        is_usable_apparent_magnitude,
+        magnitude_text,
+        round_to_2,
+        safe_output_filename,
+        user_input,
+    )
 except ImportError: # package import
-    from .utils import filename_date_token, round_to_2, safe_output_filename, user_input
+    from .utils import (
+        MAX_APPARENT_MAGNITUDE,
+        filename_date_token,
+        is_usable_apparent_magnitude,
+        magnitude_text,
+        round_to_2,
+        safe_output_filename,
+        user_input,
+    )
 try:  # simple version
     from .version import __version__
 except ImportError:  # package import
@@ -9771,12 +9787,15 @@ def row_nextastro_magnitude(row, band_candidates):
     for priority, (mag_column, error_column, band_label) in enumerate(band_candidates):
         magnitude = _finite_float(row.get(mag_column))
         magnitude_error = _finite_float(row.get(error_column))
-        if magnitude is None or magnitude_error is None:
+        if not is_usable_apparent_magnitude(magnitude) or magnitude_error is None:
+            continue
+        magnitude_error = abs(magnitude_error)
+        if not is_usable_apparent_magnitude(magnitude_error):
             continue
         return {
             'priority': priority,
             'mag': magnitude,
-            'error': abs(magnitude_error),
+            'error': magnitude_error,
             'mag_band': band_label,
             'mag_column': mag_column,
             'mag_error_column': error_column,
@@ -9941,9 +9960,10 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
         calibration_stars[unique_label] = match
         existing_positions.add(tuple(comp_pos))
         added_count += 1
+        mag_text = magnitude_text(match['mag_band'], match['mag'], match['error'])
         log_info(
             f"NextAstro photometry calibration for comparison star #{index + 1}: "
-            f"{match['mag_band']}={match['mag']:.5f} +/- {match['error']:.5f}, "
+            f"{mag_text}, "
             f"RA={comp_ra:.7f}, Dec={comp_dec:.7f}, "
             f"catalog separation={match['separation_arcsec']:.2f} arcsec."
         )
@@ -9978,9 +9998,10 @@ def nextastro_prereduced_calibration_star(phot_comp_star, obs_filter):
         'observed_filter': obs_filter,
     })
     label = nextastro_calibration_label(match)
+    mag_text = magnitude_text(match['mag_band'], match['mag'], match['error'])
     log_info(
         "NextAstro photometry calibration for pre-reduced comparison star: "
-        f"{match['mag_band']}={match['mag']:.5f} +/- {match['error']:.5f}, "
+        f"{mag_text}, "
         f"RA={comp_ra:.7f}, Dec={comp_dec:.7f}, "
         f"catalog separation={match['separation_arcsec']:.2f} arcsec."
     )
@@ -12257,7 +12278,14 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
                                               observed_filter=None):
     comp_mag = _finite_float(comp_star.get('mag'))
     comp_mag_error = _finite_float(comp_star.get('error'))
-    if comp_mag is None or comp_mag_error is None:
+    if (
+        comp_mag is None
+        or comp_mag_error is None
+        or not is_usable_apparent_magnitude(comp_mag)
+    ):
+        raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
+    comp_mag_error = abs(comp_mag_error)
+    if not is_usable_apparent_magnitude(comp_mag_error):
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
     observed_filter = observed_filter or comp_star.get('observed_filter')
 
@@ -12304,6 +12332,8 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
         & np.isfinite(selected_airmass)
         & np.isfinite(target_mag)
         & np.isfinite(target_mag_error)
+        & (target_mag <= MAX_APPARENT_MAGNITUDE)
+        & (target_mag_error <= MAX_APPARENT_MAGNITUDE)
     )
     if np.count_nonzero(valid) == 0:
         raise RuntimeError("No finite stellar variability magnitude points were produced.")

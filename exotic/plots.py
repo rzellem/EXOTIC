@@ -8,9 +8,19 @@ import numpy as np
 from pathlib import Path
 
 try:
-    from utils import filename_date_token, safe_output_filename
+    from utils import (
+        filename_date_token,
+        is_usable_apparent_magnitude,
+        magnitude_text,
+        safe_output_filename,
+    )
 except ImportError:
-    from .utils import filename_date_token, safe_output_filename
+    from .utils import (
+        filename_date_token,
+        is_usable_apparent_magnitude,
+        magnitude_text,
+        safe_output_filename,
+    )
 
 plt.style.use(astropy_mpl_style)
 
@@ -537,8 +547,6 @@ def _finite_plot_float(value):
 def _stellar_variability_reference_label(vsp_param, comparison_label):
     band = vsp_param.get('mag_band') or 'V'
     observed_filter = vsp_param.get('observed_filter')
-    cmag = _finite_plot_float(vsp_param.get('cmag'))
-    cmag_err = _finite_plot_float(vsp_param.get('cmag_err'))
     comp_ra = _finite_plot_float(vsp_param.get('comp_ra'))
     comp_dec = _finite_plot_float(vsp_param.get('comp_dec'))
 
@@ -555,12 +563,9 @@ def _stellar_variability_reference_label(vsp_param, comparison_label):
     if observed_filter not in (None, ''):
         detail_parts.append(f"Observed filter={observed_filter}")
 
-    if cmag is not None and cmag_err is not None:
-        detail_parts.append(f"{band}={cmag:.5f} +/- {cmag_err:.5f}")
-    elif cmag is not None:
-        detail_parts.append(f"{band}={cmag:.5f}")
-    else:
-        detail_parts.append(f"{band}=na")
+    mag_text = magnitude_text(band, vsp_param.get('cmag'), vsp_param.get('cmag_err'))
+    if mag_text is not None:
+        detail_parts.append(mag_text)
 
     label_lines = []
     if comparison_parts:
@@ -576,8 +581,21 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
         return
 
     fig, ax = plt.subplots(figsize=(8, 5))
+    plotted_points = 0
     for vsp_p in vsp_params:
-        ax.errorbar(vsp_p['time'], vsp_p['mag'], yerr=vsp_p['mag_err'], color="tomato", fmt='.')
+        if not is_usable_apparent_magnitude(vsp_p.get('mag')):
+            continue
+        mag_err = _finite_plot_float(vsp_p.get('mag_err'))
+        if mag_err is not None:
+            mag_err = abs(mag_err)
+            if not is_usable_apparent_magnitude(mag_err):
+                mag_err = None
+        ax.errorbar(vsp_p['time'], vsp_p['mag'], yerr=mag_err, color="tomato", fmt='.')
+        plotted_points += 1
+
+    if plotted_points == 0:
+        plt.close(fig)
+        return
 
     first_param = vsp_params[0]
     band = first_param.get('mag_band') or 'V'

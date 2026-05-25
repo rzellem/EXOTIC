@@ -5,9 +5,23 @@ from pathlib import Path
 import numpy as np
 
 try:
-    from utils import filename_date_token, round_to_2, safe_output_filename
+    from utils import (
+        filename_date_token,
+        format_magnitude,
+        magnitude_text,
+        round_to_2,
+        rounded_magnitude_value,
+        safe_output_filename,
+    )
 except ImportError:
-    from .utils import filename_date_token, round_to_2, safe_output_filename
+    from .utils import (
+        filename_date_token,
+        format_magnitude,
+        magnitude_text,
+        round_to_2,
+        rounded_magnitude_value,
+        safe_output_filename,
+    )
 try:
     from version import __version__
 except ImportError:
@@ -96,8 +110,6 @@ def stellar_variability_reference_summary(vsp_param):
         return "na"
 
     cname = vsp_param.get('cname', 'na')
-    cmag = finite_float(vsp_param.get('cmag'))
-    cmag_err = finite_float(vsp_param.get('cmag_err'))
     band = vsp_param.get('mag_band') or 'V'
     if vsp_param.get('is_aavso_vsp', True):
         return f"AAVSO Label: {cname}, Position: {vsp_param.get('pos')}"
@@ -105,13 +117,11 @@ def stellar_variability_reference_summary(vsp_param):
     source = vsp_param.get('catalog_source') or 'NextAstro photometry catalog'
     comp_ra = format_optional_float(vsp_param.get('comp_ra'))
     comp_dec = format_optional_float(vsp_param.get('comp_dec'))
-    if np.isfinite(cmag) and np.isfinite(cmag_err):
-        mag_text = f"{band}={cmag:.5f} +/- {cmag_err:.5f}"
-    elif np.isfinite(cmag):
-        mag_text = f"{band}={cmag:.5f}"
-    else:
-        mag_text = f"{band}=na"
-    return f"{source}: RA={comp_ra}, Dec={comp_dec}, {mag_text}"
+    details = [f"{source}: RA={comp_ra}", f"Dec={comp_dec}"]
+    mag_text = magnitude_text(band, vsp_param.get('cmag'), vsp_param.get('cmag_err'))
+    if mag_text is not None:
+        details.append(mag_text)
+    return ", ".join(details)
 
 
 def aid_comparison_metadata(vsp_param):
@@ -130,8 +140,8 @@ def aid_comparison_metadata(vsp_param):
         'catalog_id': vsp_param.get('catalog_id'),
         'catalog_match_separation_arcsec': vsp_param.get('separation_arcsec'),
         'magnitude_band': vsp_param.get('mag_band'),
-        'apparent_magnitude': vsp_param.get('cmag'),
-        'apparent_magnitude_error': vsp_param.get('cmag_err'),
+        'apparent_magnitude': rounded_magnitude_value(vsp_param.get('cmag')),
+        'apparent_magnitude_error': rounded_magnitude_value(abs(finite_float(vsp_param.get('cmag_err')))),
     })
 
 
@@ -1212,9 +1222,14 @@ class AIDOutputFiles:
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:
+                mag = format_magnitude(vsp_p.get('mag'), default=None)
+                if mag is None:
+                    continue
+                mag_err = format_magnitude(abs(finite_float(vsp_p.get('mag_err'))))
+                cmag = format_magnitude(vsp_p.get('cmag'))
                 chart_id = self.chart_id or vsp_p.get('chart_id') or 'na'
-                f.write(f"{variable_name},{round(vsp_p['time'], 5)},{round(vsp_p['mag'], 5)},{round(vsp_p['mag_err'], 5)},"
-                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{round(vsp_p['cmag'], 5)},na,na,"
+                f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"
+                        f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{cmag},na,na,"
                         f"{round(vsp_p['airmass'], 7)},na,{chart_id},na\n")
 
 

@@ -429,6 +429,7 @@ def test_save_selected_photometry_debug_series_writes_stage_masks(tmp_path):
             "comp_flux": np.array([5.0, 5.0, 6.0], dtype=float),
             "raw_ratio": np.array([2.0, 2.2, 2.0], dtype=float),
             "initial_sigma_keep_mask": np.array([True, False, True], dtype=bool),
+            "prefit_raw_ratio_keep_mask": np.array([True, True, True], dtype=bool),
             "phase_clip_keep_mask_on_sigma_filtered": np.array([True, False], dtype=bool),
         }
     )
@@ -439,9 +440,10 @@ def test_save_selected_photometry_debug_series_writes_stage_masks(tmp_path):
     assert output_path.exists()
 
     rows = np.loadtxt(output_path, delimiter=",", skiprows=1)
-    assert rows.shape == (3, 6)
+    assert rows.shape == (3, 7)
     assert rows[:, 4].astype(int).tolist() == [1, 0, 1]
-    assert rows[:, 5].astype(int).tolist() == [1, 0, 0]
+    assert rows[:, 5].astype(int).tolist() == [1, 1, 1]
+    assert rows[:, 6].astype(int).tolist() == [1, 0, 0]
 
 
 def test_finalize_comparison_candidate_phase_clips_before_nested_fit(monkeypatch):
@@ -1804,8 +1806,36 @@ def test_comparison_star_stability_summary_rejects_shared_bad_frame():
     assert summary["image_outlier_rejected_count"] == 1
     assert summary["image_outlier_required_valid_pairs"] == 2
     assert summary["image_outlier_available_pairs"] == 3
-    assert summary["image_outlier_valid_pair_counts"][-1] == 2
-    assert summary["image_outlier_outlier_pair_counts"][-1] == 2
+    assert summary["image_outlier_valid_pair_counts"][-1] == 3
+    assert summary["image_outlier_outlier_pair_counts"][-1] == 3
+
+
+def test_comparison_star_stability_summary_flags_candidate_specific_bad_frame():
+    airmass = np.linspace(1.0, 1.5, 12)
+    comp1 = np.full(12, 100.0, dtype=float)
+    comp2 = np.full(12, 80.0, dtype=float)
+    comp3 = np.full(12, 120.0, dtype=float)
+    comp4 = np.full(12, 90.0, dtype=float)
+    comp1[7] = 60.0
+
+    summary = comparison_star_stability_summary(
+        {
+            "comp1": comp1,
+            "comp2": comp2,
+            "comp3": comp3,
+            "comp4": comp4,
+        },
+        airmass,
+    )
+
+    assert summary["field_image_keep_mask"].all()
+    comp1_summary = summary["comp_summaries"][0]
+    comp2_summary = summary["comp_summaries"][1]
+    assert comp1_summary["ensemble_frame_rejected_indices"] == [7]
+    assert comp1_summary["ensemble_frame_rejected_count"] == 1
+    assert comp1_summary["ensemble_frame_valid_pair_counts"][7] == 3
+    assert comp1_summary["ensemble_frame_outlier_pair_counts"][7] == 3
+    assert comp2_summary["ensemble_frame_rejected_count"] == 0
 
 
 def test_cheap_lightcurve_prescore_treats_large_ratio_flag_as_noop():
@@ -2570,7 +2600,7 @@ def test_fit_lightcurve_preserves_explicit_plot_time_range(monkeypatch):
     assert myfit.plot_time_range == pytest.approx(plot_time_range)
 
 
-def test_fit_lightcurve_centers_vertical_flux_bound_on_raw_flux_ratio(monkeypatch):
+def test_fit_lightcurve_centers_vertical_flux_bound_on_normalized_flux(monkeypatch):
     captured = {}
 
     def fake_lc_fitter(
@@ -2620,9 +2650,9 @@ def test_fit_lightcurve_centers_vertical_flux_bound_on_raw_flux_ratio(monkeypatc
     myfit, _, _ = fit_lightcurve(times, tflux, cflux, airmass, ld, p_dict, jd_times)
 
     assert myfit is captured["fit"]
-    assert captured["prior"]["a0"] == pytest.approx(0.05)
-    assert captured["prior"]["a1"] == pytest.approx(0.05)
-    assert captured["bounds"]["a0"] == pytest.approx([0.0375, 0.0625])
+    assert captured["prior"]["a0"] == pytest.approx(1.0)
+    assert captured["prior"]["a1"] == pytest.approx(1.0)
+    assert captured["bounds"]["a0"] == pytest.approx([0.95, 1.05])
 
 
 def test_fit_lightcurve_rejects_undersampled_series(monkeypatch):
@@ -2866,6 +2896,7 @@ def test_fit_lightcurve_attaches_frame_filter_diagnostics(monkeypatch):
     assert [diagnostic["stage"] for diagnostic in diagnostics] == [
         "Target/reference ratio filter",
         "Initial sigma clip",
+        "Pre-fit raw-ratio outlier clip",
         "Finite/positive photometry filter",
     ]
     assert diagnostics[0]["dropped_point_count"] == 1
@@ -2873,6 +2904,7 @@ def test_fit_lightcurve_attaches_frame_filter_diagnostics(monkeypatch):
     assert diagnostics[1]["dropped_point_count"] == 1
     assert diagnostics[1]["first_dropped_time"] == pytest.approx(11.0)
     assert diagnostics[2]["dropped_point_count"] == 0
+    assert diagnostics[3]["dropped_point_count"] == 0
 
 
 def test_evaluate_transit_detection_qc_prefers_transit_model():
@@ -4003,6 +4035,107 @@ def test_fit_ranked_comparison_calibration_candidates_applies_field_image_clip(m
     assert result["attempts"][0]["fit_point_count"] == 4
 
 
+def test_fit_ranked_comparison_calibration_candidates_applies_candidate_ensemble_clip(monkeypatch):
+    observed_lengths = []
+
+    def fake_diagnostics(times, *args, **kwargs):
+        observed_lengths.append(("diagnostics", len(times)))
+        return {"usable_point_count": len(times), "failure_reason": None}
+
+    def fake_preflight(*args, **kwargs):
+        return {"coverage_priority": 1, "prepared_series": None}
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        observed_lengths.append(("finalize", len(times)))
+        fit = types.SimpleNamespace(
+            residuals=np.full(len(times), 0.01, dtype=float),
+            data=np.ones(len(times), dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc={"status": "pass", "summary": "ok", "ktmf_metric": 4.2},
+            transit_qc_status="pass",
+            transit_qc_summary="ok",
+            transit_qc_ktmf_metric=4.2,
+            transit_qc_delta_bic=16.0,
+            frame_filter_diagnostics=[],
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.build_comparison_candidate_preflight", fake_preflight)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    times = np.linspace(0.0, 0.05, 6)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, 6)
+    comparison_calibration = {
+        "method": "aperture",
+        "method_label": "Aperture photometry (aper=5.00px, annulus=12.00px)",
+        "a": 0,
+        "an": 0,
+        "aper": 5.0,
+        "annulus": 12.0,
+        "field_image_keep_mask": np.ones(6, dtype=bool),
+        "comp_summaries": [
+            {
+                "label": "Comp 1",
+                "position": (10.0, 10.0),
+                "aggregate_score": 0.01,
+                "coverage_count": 6,
+                "coverage_total_frame_count": 6,
+                "coverage_reference_count": 6.0,
+                "coverage_min_required_count": 5,
+                "coverage_rejected": False,
+                "suitability_outlier_rejected": False,
+                "comp_index": 0,
+                "ensemble_frame_keep_mask": np.array([True, True, False, True, True, True], dtype=bool),
+                "ensemble_frame_required_valid_pairs": 2,
+                "ensemble_frame_sigma": 4.25,
+            },
+        ],
+    }
+    aper_data = {
+        "target": np.full((6, 1, 1), 100.0, dtype=float),
+        "comp1": np.full((6, 1, 1), 50.0, dtype=float),
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data={},
+        aper_data=aper_data,
+        target_psf_flux=np.full(6, 100.0, dtype=float),
+    )
+
+    assert observed_lengths == [("diagnostics", 5), ("finalize", 5)]
+    diagnostic = result["attempts"][0]["fit"].frame_filter_diagnostics[0]
+    assert diagnostic["stage"] == "Comparison-candidate ensemble clip"
+    assert diagnostic["dropped_point_count"] == 1
+    assert result["attempts"][0]["fit_point_count"] == 5
+
+
 def test_fit_ranked_comparison_calibration_candidates_saves_outputs_for_completed_candidates(
     monkeypatch, tmp_path
 ):
@@ -5038,6 +5171,40 @@ def test_prepare_lightcurve_fit_input_series_normalizes_ratio_around_unity():
     assert np.nanmedian(prepared["debug_raw_ratio"]) == pytest.approx(3.0)
     assert prepared["approximate_baseline_level"] == pytest.approx(3.0)
     assert np.nanmedian(prepared["flux"]) == pytest.approx(1.0)
+
+
+def test_prepare_lightcurve_fit_input_series_clips_prefit_raw_ratio_outliers(monkeypatch):
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
+    )
+
+    times = np.linspace(0.0, 0.08, 21)
+    comp_flux = np.full(times.shape, 1000.0, dtype=float)
+    raw_ratio = np.ones(times.shape, dtype=float)
+    raw_ratio[8:13] = 0.98
+    raw_ratio[15] = 1.55
+    raw_ratio[16] = 0.72
+    target_flux = raw_ratio * comp_flux
+
+    prepared = prepare_lightcurve_fit_input_series(
+        times,
+        target_flux,
+        comp_flux,
+        np.linspace(1.0, 1.4, times.shape[0]),
+        expected_transit_depth=0.02,
+    )
+
+    assert prepared["applied"] is True
+    assert prepared["initial_sigma_keep_mask"].all()
+    assert prepared["prefit_raw_ratio_keep_mask"].tolist()[15:17] == [False, False]
+    assert np.any(np.isclose(prepared["time"], times[10]))
+    assert not np.any(np.isclose(prepared["time"], times[15]))
+    assert any(
+        diagnostic["stage"] == "Pre-fit raw-ratio outlier clip"
+        and diagnostic["dropped_point_count"] == 2
+        for diagnostic in prepared["filter_diagnostics"]
+    )
 
 
 def test_run_target_driven_photometry_search_returns_failed_candidate_summaries(monkeypatch):

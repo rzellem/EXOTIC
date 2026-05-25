@@ -223,6 +223,7 @@ COMPARISON_IMAGE_OUTLIER_SIGMA = COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA
 COMPARISON_IMAGE_OUTLIER_MIN_ACTIVE_STARS = 3
 COMPARISON_IMAGE_OUTLIER_MIN_VALID_PAIRS = 2
 COMPARISON_IMAGE_OUTLIER_MIN_SCATTER = 1e-4
+COMPARISON_CANDIDATE_FRAME_OUTLIER_MIN_VALID_PAIRS = 2
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
@@ -511,19 +512,28 @@ def annotate_selected_photometry_debug(
     comp_flux,
     raw_ratio,
     initial_sigma_keep_mask,
+    prefit_raw_ratio_keep_mask=None,
     phase_clip_keep_mask_on_sigma_filtered=None,
 ):
     if fit is None:
         return
 
     sigma_keep_mask = np.asarray(initial_sigma_keep_mask, dtype=bool)
-    sigma_kept_count = int(np.count_nonzero(sigma_keep_mask))
+    if prefit_raw_ratio_keep_mask is None:
+        raw_ratio_keep_mask = np.ones(sigma_keep_mask.shape, dtype=bool)
+    else:
+        raw_ratio_keep_mask = np.asarray(prefit_raw_ratio_keep_mask, dtype=bool)
+        if raw_ratio_keep_mask.shape != sigma_keep_mask.shape:
+            raw_ratio_keep_mask = np.ones(sigma_keep_mask.shape, dtype=bool)
+
+    prefit_keep_mask = sigma_keep_mask & raw_ratio_keep_mask
+    prefit_kept_count = int(np.count_nonzero(prefit_keep_mask))
     if phase_clip_keep_mask_on_sigma_filtered is None:
-        phase_keep_mask = np.ones(sigma_kept_count, dtype=bool)
+        phase_keep_mask = np.ones(prefit_kept_count, dtype=bool)
     else:
         phase_keep_mask = np.asarray(phase_clip_keep_mask_on_sigma_filtered, dtype=bool)
-        if phase_keep_mask.shape[0] != sigma_kept_count:
-            phase_keep_mask = np.ones(sigma_kept_count, dtype=bool)
+        if phase_keep_mask.shape[0] != prefit_kept_count:
+            phase_keep_mask = np.ones(prefit_kept_count, dtype=bool)
 
     fit.selected_photometry_debug = {
         'times': np.asarray(times, dtype=float).copy(),
@@ -531,6 +541,7 @@ def annotate_selected_photometry_debug(
         'comp_flux': np.asarray(comp_flux, dtype=float).copy(),
         'raw_ratio': np.asarray(raw_ratio, dtype=float).copy(),
         'initial_sigma_keep_mask': sigma_keep_mask.copy(),
+        'prefit_raw_ratio_keep_mask': raw_ratio_keep_mask.copy(),
         'phase_clip_keep_mask_on_sigma_filtered': phase_keep_mask.copy(),
     }
 
@@ -1829,7 +1840,8 @@ def build_comparison_candidate_transit_prior(p_dict, ld):
 
 
 def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_flux, airmass,
-                                                       jd_times=None, adaptive_summary=None):
+                                                       jd_times=None, adaptive_summary=None,
+                                                       expected_transit_depth=None):
     result = {
         'applied': False,
         'failure_reason': "the raw comparison-candidate photometry did not yield a usable light curve.",
@@ -1839,6 +1851,7 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'debug_comp_flux': np.array([], dtype=float),
         'debug_raw_ratio': np.array([], dtype=float),
         'initial_sigma_keep_mask': np.array([], dtype=bool),
+        'prefit_raw_ratio_keep_mask': np.array([], dtype=bool),
         'time': np.array([], dtype=float),
         'flux': np.array([], dtype=float),
         'unc': np.array([], dtype=float),
@@ -1855,9 +1868,17 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         comp_flux,
         airmass,
         jd_times=jd_times,
+        expected_transit_depth=expected_transit_depth,
     )
     result['filter_diagnostics'] = prepared.get('filter_diagnostics', [])
-    for key in ('debug_times', 'debug_target_flux', 'debug_comp_flux', 'debug_raw_ratio', 'initial_sigma_keep_mask'):
+    for key in (
+        'debug_times',
+        'debug_target_flux',
+        'debug_comp_flux',
+        'debug_raw_ratio',
+        'initial_sigma_keep_mask',
+        'prefit_raw_ratio_keep_mask',
+    ):
         if key in prepared:
             result[key] = prepared[key]
     if not prepared.get('applied'):
@@ -2066,6 +2087,7 @@ def build_comparison_candidate_preflight(times, jd_times, airmass, ld, p_dict, t
         airmass,
         jd_times=jd_times,
         adaptive_summary=adaptive_summary,
+        expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
     )
     try:
         prior = build_comparison_candidate_transit_prior(p_dict, ld)
@@ -2265,6 +2287,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             airmass,
             jd_times=jd_times,
             adaptive_summary=adaptive_summary,
+            expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
         )
     else:
         prepared = precomputed_candidate_series
@@ -2470,6 +2493,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         prepared['debug_comp_flux'],
         prepared['debug_raw_ratio'],
         prepared['initial_sigma_keep_mask'],
+        prefit_raw_ratio_keep_mask=prepared.get('prefit_raw_ratio_keep_mask'),
         phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
     )
 
@@ -2991,8 +3015,15 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
     comp_flux = np.asarray(debug.get('comp_flux'), dtype=float)
     raw_ratio = np.asarray(debug.get('raw_ratio'), dtype=float)
     initial_sigma_keep_mask = np.asarray(debug.get('initial_sigma_keep_mask'), dtype=bool)
+    prefit_raw_ratio_keep_mask = np.asarray(
+        debug.get('prefit_raw_ratio_keep_mask', np.ones(initial_sigma_keep_mask.shape)),
+        dtype=bool,
+    )
     phase_clip_keep_mask = np.asarray(
-        debug.get('phase_clip_keep_mask_on_sigma_filtered', np.ones(np.count_nonzero(initial_sigma_keep_mask))),
+        debug.get(
+            'phase_clip_keep_mask_on_sigma_filtered',
+            np.ones(np.count_nonzero(initial_sigma_keep_mask & prefit_raw_ratio_keep_mask)),
+        ),
         dtype=bool,
     )
 
@@ -3000,13 +3031,15 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
         times.shape == target_flux.shape == comp_flux.shape == raw_ratio.shape == initial_sigma_keep_mask.shape
     ):
         return None
+    if prefit_raw_ratio_keep_mask.shape != initial_sigma_keep_mask.shape:
+        prefit_raw_ratio_keep_mask = np.ones(initial_sigma_keep_mask.shape, dtype=bool)
 
     phase_keep_full = np.zeros(times.shape[0], dtype=bool)
-    sigma_kept_indices = np.flatnonzero(initial_sigma_keep_mask)
-    if sigma_kept_indices.size:
-        if phase_clip_keep_mask.shape[0] != sigma_kept_indices.size:
-            phase_clip_keep_mask = np.ones(sigma_kept_indices.size, dtype=bool)
-        phase_keep_full[sigma_kept_indices] = phase_clip_keep_mask
+    prefit_kept_indices = np.flatnonzero(initial_sigma_keep_mask & prefit_raw_ratio_keep_mask)
+    if prefit_kept_indices.size:
+        if phase_clip_keep_mask.shape[0] != prefit_kept_indices.size:
+            phase_clip_keep_mask = np.ones(prefit_kept_indices.size, dtype=bool)
+        phase_keep_full[prefit_kept_indices] = phase_clip_keep_mask
 
     output_dir = Path(save_dir) / "temp"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3024,6 +3057,7 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
             comp_flux,
             raw_ratio,
             initial_sigma_keep_mask.astype(int),
+            prefit_raw_ratio_keep_mask.astype(int),
             phase_keep_full.astype(int),
         ]
     )
@@ -3033,10 +3067,11 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
         delimiter=",",
         header=(
             "BJD_TDB,Target Flux,Comp Flux,Raw Ratio,"
-            "Kept After Initial Sigma Clip,Kept After Phase Residual Clip"
+            "Kept After Initial Sigma Clip,Kept After Pre-Fit Raw Ratio Clip,"
+            "Kept After Phase Residual Clip"
         ),
         comments="",
-        fmt=["%.8f", "%.8f", "%.8f", "%.8f", "%d", "%d"],
+        fmt=["%.8f", "%.8f", "%.8f", "%.8f", "%d", "%d", "%d"],
     )
     return output_path
 
@@ -7962,6 +7997,120 @@ def robust_scatter(data):
     return np.nan
 
 
+def expected_transit_depth_from_planet_dict(p_dict):
+    if not isinstance(p_dict, dict):
+        return np.nan
+
+    try:
+        rprs = float(p_dict.get('rprs', np.nan))
+    except (TypeError, ValueError):
+        return np.nan
+
+    if not np.isfinite(rprs) or rprs < 0:
+        return np.nan
+    return float(rprs ** 2)
+
+
+def prefit_raw_ratio_outlier_mask(
+    values,
+    times=None,
+    sigma=4.0,
+    window=11,
+    min_points=5,
+    max_iters=2,
+    expected_transit_depth=None,
+    min_fractional_deviation=0.05,
+    use_global=True,
+):
+    values = np.asarray(values, dtype=float).reshape(-1)
+    outlier_mask = ~np.isfinite(values) | (values <= 0)
+    valid_indices = np.flatnonzero(~outlier_mask)
+    if valid_indices.size < max(int(min_points), 3):
+        return outlier_mask
+
+    if times is not None:
+        times = np.asarray(times, dtype=float).reshape(-1)
+        if times.shape == values.shape:
+            order = np.argsort(times[valid_indices])
+            valid_indices = valid_indices[order]
+
+    try:
+        sigma = float(sigma)
+    except (TypeError, ValueError):
+        sigma = 4.0
+    if not np.isfinite(sigma) or sigma <= 0:
+        sigma = 4.0
+
+    try:
+        expected_depth = float(expected_transit_depth)
+    except (TypeError, ValueError):
+        expected_depth = np.nan
+    if not np.isfinite(expected_depth) or expected_depth < 0:
+        expected_depth = 0.0
+
+    fractional_floor = max(float(min_fractional_deviation), 2.0 * expected_depth)
+    if not np.isfinite(fractional_floor) or fractional_floor <= 0:
+        fractional_floor = 0.05
+    min_log_deviation = np.log1p(fractional_floor)
+
+    window = max(int(window), 2 * int(min_points) + 1)
+    if window % 2 == 0:
+        window += 1
+    half_window = window // 2
+    min_points = max(int(min_points), 3)
+    max_iters = max(int(max_iters), 1)
+
+    log_values = np.log(values[valid_indices])
+    keep = np.ones(valid_indices.size, dtype=bool)
+
+    for _ in range(max_iters):
+        newly_rejected = np.zeros(valid_indices.size, dtype=bool)
+        kept_positions = np.flatnonzero(keep)
+        if kept_positions.size < min_points:
+            break
+
+        for position in kept_positions:
+            lower = max(0, int(position) - half_window)
+            upper = min(valid_indices.size, int(position) + half_window + 1)
+            local_positions = np.arange(lower, upper)
+            local_positions = local_positions[(local_positions != position) & keep[local_positions]]
+
+            if local_positions.size < min_points:
+                local_positions = kept_positions[kept_positions != position]
+            if local_positions.size < min_points:
+                continue
+
+            local_values = log_values[local_positions]
+            center = bn.nanmedian(local_values)
+            scatter = robust_scatter(local_values - center)
+            if not np.isfinite(scatter) or scatter <= 0:
+                continue
+
+            deviation = abs(log_values[position] - center)
+            if deviation > sigma * scatter and deviation > min_log_deviation:
+                newly_rejected[position] = True
+
+        if use_global:
+            kept_values = log_values[kept_positions]
+            global_center = bn.nanmedian(kept_values)
+            global_scatter = robust_scatter(kept_values - global_center)
+            if np.isfinite(global_scatter) and global_scatter > 0:
+                global_deviation = np.abs(log_values - global_center)
+                global_outliers = (
+                    keep
+                    & (global_deviation > sigma * global_scatter)
+                    & (global_deviation > min_log_deviation)
+                )
+                newly_rejected |= global_outliers
+
+        if not np.any(newly_rejected):
+            break
+        keep[newly_rejected] = False
+
+    outlier_mask[valid_indices] = ~keep
+    return outlier_mask
+
+
 def phase_bin_sigma_clip(values, phase, sigma=3, bins=10, min_points=5, max_iters=3):
     values = np.asarray(values, dtype=float)
     phase = np.asarray(phase, dtype=float)
@@ -12794,6 +12943,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         cFlux,
         airmass,
         jd_times=jd_times,
+        expected_transit_depth=expected_transit_depth_from_planet_dict(pDict),
     )
     if not prepared.get('applied'):
         return None, None, None
@@ -12804,6 +12954,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     debug_comp_flux = prepared['debug_comp_flux']
     debug_raw_ratio = prepared['debug_raw_ratio']
     debug_initial_sigma_keep_mask = prepared['initial_sigma_keep_mask']
+    debug_prefit_raw_ratio_keep_mask = prepared['prefit_raw_ratio_keep_mask']
     arrayFinalFlux = prepared['flux']
     f1 = prepared['target_flux']
     f2 = prepared['comp_flux']
@@ -12942,7 +13093,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             annotate_lightcurve_tmid_search(myfit, tmid_search_summary)
             annotate_lightcurve_eebls_diagnostic(myfit, eebls_search_summary)
 
-    debug_phase_clip_keep_mask = np.ones(np.count_nonzero(debug_initial_sigma_keep_mask), dtype=bool)
+    debug_prefit_keep_mask = debug_initial_sigma_keep_mask & debug_prefit_raw_ratio_keep_mask
+    debug_phase_clip_keep_mask = np.ones(np.count_nonzero(debug_prefit_keep_mask), dtype=bool)
     if final_fit_mode == 'ns' and myfit is not None:
         duration_prior = build_single_transit_duration_prior(pDict)
         pre_ultranest_coverage_assessment = build_expected_transit_coverage_assessment(
@@ -12998,6 +13150,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             debug_comp_flux,
             debug_raw_ratio,
             debug_initial_sigma_keep_mask,
+            prefit_raw_ratio_keep_mask=debug_prefit_raw_ratio_keep_mask,
             phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
         )
         annotate_transit_qc_expected_values(myfit, pDict)
@@ -13006,7 +13159,14 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     return myfit, f1, f2
 
 
-def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relative_flux_max=True):
+def diagnose_lightcurve_fit_inputs(
+    times,
+    tflux,
+    cflux,
+    airmass,
+    enforce_relative_flux_max=True,
+    expected_transit_depth=None,
+):
     times = np.asarray(times, dtype=float)
     tflux = np.asarray(tflux, dtype=float)
     cflux = np.asarray(cflux, dtype=float)
@@ -13017,6 +13177,7 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relativ
         'has_reference_flux': False,
         'relative_flux_point_count': 0,
         'sigma_clip_point_count': 0,
+        'prefit_raw_ratio_clip_point_count': 0,
         'usable_point_count': 0,
         'failed_stage': None,
         'failure_reason': None,
@@ -13104,6 +13265,27 @@ def diagnose_lightcurve_fit_inputs(times, tflux, cflux, airmass, enforce_relativ
         })
         return diagnostics
 
+    sigma_kept_indices = np.flatnonzero(valid_mask)
+    if sigma_kept_indices.size:
+        raw_ratio_outlier_mask = prefit_raw_ratio_outlier_mask(
+            flux_ratio_sorted[sigma_kept_indices],
+            times=times_sorted[sigma_kept_indices],
+            expected_transit_depth=expected_transit_depth,
+            use_global=has_reference_flux,
+        )
+        valid_mask[sigma_kept_indices] &= ~raw_ratio_outlier_mask
+    diagnostics['prefit_raw_ratio_clip_point_count'] = int(np.count_nonzero(valid_mask))
+    if diagnostics['prefit_raw_ratio_clip_point_count'] <= 1:
+        diagnostics.update({
+            'failed_stage': 'prefit_raw_ratio_clip',
+            'failure_reason': (
+                "pre-fit raw target/reference-ratio outlier clipping left "
+                f"{diagnostics['prefit_raw_ratio_clip_point_count']} usable point(s); not enough data remained "
+                "for a lightcurve fit."
+            ),
+        })
+        return diagnostics
+
     arrayFinalFlux = flux_ratio_sorted[valid_mask]
     f1 = tflux_sorted[valid_mask]
     sigf1 = f1 ** 0.5
@@ -13158,6 +13340,7 @@ def prepare_lightcurve_fit_input_series(
     comp_flux,
     airmass,
     jd_times=None,
+    expected_transit_depth=None,
 ):
     times = np.asarray(times, dtype=float)
     target_flux = np.asarray(target_flux, dtype=float)
@@ -13174,6 +13357,7 @@ def prepare_lightcurve_fit_input_series(
         'debug_comp_flux': np.array([], dtype=float),
         'debug_raw_ratio': np.array([], dtype=float),
         'initial_sigma_keep_mask': np.array([], dtype=bool),
+        'prefit_raw_ratio_keep_mask': np.array([], dtype=bool),
         'time': np.array([], dtype=float),
         'flux': np.array([], dtype=float),
         'unc': np.array([], dtype=float),
@@ -13254,6 +13438,39 @@ def prepare_lightcurve_fit_input_series(
         note="Dropped 3-sigma target/reference-ratio outliers before the first lightcurve fit.",
     ))
 
+    prefit_raw_ratio_keep_mask = np.asarray(initial_sigma_keep_mask, dtype=bool).copy()
+    sigma_kept_indices = np.flatnonzero(initial_sigma_keep_mask)
+    if sigma_kept_indices.size:
+        raw_ratio_outlier_mask = prefit_raw_ratio_outlier_mask(
+            flux_ratio_sorted[sigma_kept_indices],
+            times=times_sorted[sigma_kept_indices],
+            expected_transit_depth=expected_transit_depth,
+            use_global=has_reference_flux,
+        )
+        raw_ratio_keep_on_sigma_kept = ~np.asarray(raw_ratio_outlier_mask, dtype=bool)
+        prefit_raw_ratio_keep_mask[sigma_kept_indices] = raw_ratio_keep_on_sigma_kept
+        filter_diagnostics.append(build_time_rejection_diagnostic(
+            "Pre-fit raw-ratio outlier clip",
+            times_sorted[sigma_kept_indices],
+            raw_ratio_keep_on_sigma_kept,
+            note=(
+                "Dropped local log target/reference-ratio outliers before fitting "
+                "baseline or airmass terms."
+            ),
+        ))
+    else:
+        filter_diagnostics.append(build_time_rejection_diagnostic(
+            "Pre-fit raw-ratio outlier clip",
+            times_sorted,
+            np.zeros(times_sorted.shape, dtype=bool),
+            note=(
+                "Dropped local log target/reference-ratio outliers before fitting "
+                "baseline or airmass terms."
+            ),
+        ))
+
+    valid_mask = prefit_raw_ratio_keep_mask
+
     flux = flux_ratio_sorted[valid_mask]
     filtered_target_flux = target_flux_sorted[valid_mask]
     filtered_comp_flux = comp_flux_sorted[valid_mask]
@@ -13286,6 +13503,7 @@ def prepare_lightcurve_fit_input_series(
             'debug_comp_flux': debug_comp_flux,
             'debug_raw_ratio': debug_raw_ratio,
             'initial_sigma_keep_mask': initial_sigma_keep_mask,
+            'prefit_raw_ratio_keep_mask': prefit_raw_ratio_keep_mask,
         })
         return prepared
 
@@ -13302,6 +13520,7 @@ def prepare_lightcurve_fit_input_series(
         'debug_comp_flux': debug_comp_flux,
         'debug_raw_ratio': debug_raw_ratio,
         'initial_sigma_keep_mask': initial_sigma_keep_mask,
+        'prefit_raw_ratio_keep_mask': prefit_raw_ratio_keep_mask,
         'time': fit_times[~nanmask],
         'flux': normalized_flux,
         'unc': normalized_unc,
@@ -13359,6 +13578,7 @@ def evaluate_lightcurve_candidate(task):
         cflux,
         airmass,
         enforce_relative_flux_max=False,
+        expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
     )
     myfit, tflux_fit, cflux_fit = fit_lightcurve(
         times,
@@ -14169,6 +14389,7 @@ def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, 
     suitability_score = comp_summary.get('aggregate_score', np.nan)
     suitability_text = "n/a" if not np.isfinite(suitability_score) else f"{suitability_score * 100.0:.4f}%"
     usable_point_count = 0 if fit_diagnostics is None else fit_diagnostics.get('usable_point_count', 0)
+    ensemble_frame_rejected_count = int(comp_summary.get('ensemble_frame_rejected_count', 0) or 0)
 
     log_info(
         f"\nStarting comparison-star target-fit evaluation for {label} ({position_text}) "
@@ -14178,6 +14399,11 @@ def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, 
         f"  Candidate inputs: suitability={suitability_text}, coverage={coverage_text}, "
         f"usable_after_filters={usable_point_count}."
     )
+    if ensemble_frame_rejected_count > 0:
+        log_info(
+            "  Candidate ensemble clipping rejects "
+            f"{ensemble_frame_rejected_count} comparison-unstable frame(s) before target fitting."
+        )
     log_info("  Preparing comparison-candidate light curve for the full reduction.")
 
 
@@ -14778,6 +15004,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 comp_flux_series[fit_mask],
                 airmass[fit_mask],
                 enforce_relative_flux_max=False,
+                expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
             )
         if not coverage_rejected and coverage_count > 1 and fit_diagnostics['failure_reason'] is None:
             fit_result, target_fit_flux, comp_fit_flux = fit_lightcurve(
@@ -15082,6 +15309,160 @@ def comparison_star_image_outlier_summary(
     return summary
 
 
+def comparison_pairwise_log_ratio_outlier_flags(
+    ratio,
+    sigma=COMPARISON_IMAGE_OUTLIER_SIGMA,
+    min_points=LIGHTCURVE_MIN_VALID_POINTS,
+    scatter_floor=COMPARISON_IMAGE_OUTLIER_MIN_SCATTER,
+):
+    ratio = np.asarray(ratio, dtype=float).reshape(-1)
+    valid_mask = np.isfinite(ratio) & (ratio > 0)
+    outlier_mask = np.zeros(ratio.shape, dtype=bool)
+    direction = np.zeros(ratio.shape, dtype=int)
+
+    if np.count_nonzero(valid_mask) < max(int(min_points), 3):
+        return valid_mask, outlier_mask, direction
+
+    try:
+        sigma = float(sigma)
+    except (TypeError, ValueError):
+        sigma = COMPARISON_IMAGE_OUTLIER_SIGMA
+    if not np.isfinite(sigma) or sigma <= 0:
+        sigma = COMPARISON_IMAGE_OUTLIER_SIGMA
+
+    valid_indices = np.flatnonzero(valid_mask)
+    log_ratio = np.log(ratio[valid_indices])
+    center, _ = sigma_clipped_nanmedian(log_ratio, sigma=4.0, max_iters=3)
+    if not np.isfinite(center):
+        center = bn.nanmedian(log_ratio)
+    if not np.isfinite(center):
+        return valid_mask, outlier_mask, direction
+
+    residuals = log_ratio - center
+    finite_residuals = residuals[np.isfinite(residuals)]
+    residual_center = bn.nanmedian(finite_residuals) if finite_residuals.size else np.nan
+    mad = bn.nanmedian(np.abs(finite_residuals - residual_center)) if finite_residuals.size else np.nan
+    scatter = 1.4826 * mad if np.isfinite(mad) and mad > 0 else np.nan
+    if np.isfinite(scatter_floor) and scatter_floor > 0:
+        if not np.isfinite(scatter) or scatter <= 0:
+            scatter = float(scatter_floor)
+        else:
+            scatter = max(float(scatter), float(scatter_floor))
+    if not np.isfinite(scatter) or scatter <= 0:
+        return valid_mask, outlier_mask, direction
+
+    pair_outliers = np.abs(residuals) > sigma * scatter
+    outlier_indices = valid_indices[pair_outliers]
+    outlier_mask[outlier_indices] = True
+    direction[outlier_indices] = np.sign(residuals[pair_outliers]).astype(int)
+    return valid_mask, outlier_mask, direction
+
+
+def comparison_star_candidate_frame_outlier_summary(
+    normalized_flux_map,
+    candidate_key,
+    active_keys,
+    field_image_keep_mask=None,
+    sigma=COMPARISON_IMAGE_OUTLIER_SIGMA,
+    min_valid_pairs=COMPARISON_CANDIDATE_FRAME_OUTLIER_MIN_VALID_PAIRS,
+):
+    active_keys = [key for key in active_keys if key in normalized_flux_map]
+    series_length = 0
+    if candidate_key in normalized_flux_map:
+        candidate_flux = np.asarray(normalized_flux_map[candidate_key], dtype=float)
+        if candidate_flux.ndim == 1:
+            series_length = candidate_flux.shape[0]
+        else:
+            candidate_flux = np.asarray([], dtype=float)
+    else:
+        candidate_flux = np.asarray([], dtype=float)
+
+    keep_mask = np.ones(series_length, dtype=bool)
+    summary = {
+        'frame_keep_mask': keep_mask,
+        'rejected_frame_indices': [],
+        'rejected_frame_count': 0,
+        'valid_pair_counts': np.zeros(series_length, dtype=int),
+        'outlier_pair_counts': np.zeros(series_length, dtype=int),
+        'positive_outlier_pair_counts': np.zeros(series_length, dtype=int),
+        'negative_outlier_pair_counts': np.zeros(series_length, dtype=int),
+        'available_pair_count': 0,
+        'required_valid_pair_count': max(int(min_valid_pairs), 1),
+        'sigma': float(sigma),
+    }
+
+    if series_length == 0 or candidate_key not in active_keys:
+        return summary
+
+    if field_image_keep_mask is None:
+        field_image_keep_mask = np.ones(series_length, dtype=bool)
+    else:
+        field_image_keep_mask = np.asarray(field_image_keep_mask, dtype=bool).reshape(-1)
+        if field_image_keep_mask.shape[0] != series_length:
+            field_image_keep_mask = np.ones(series_length, dtype=bool)
+
+    peer_keys = [key for key in active_keys if key != candidate_key]
+    required_valid_pair_count = max(int(min_valid_pairs), 1)
+    summary['required_valid_pair_count'] = required_valid_pair_count
+    if len(peer_keys) < required_valid_pair_count:
+        return summary
+
+    pairwise_valid_flags = []
+    pairwise_outlier_flags = []
+    pairwise_positive_flags = []
+    pairwise_negative_flags = []
+
+    for peer_key in peer_keys:
+        peer_flux = np.asarray(normalized_flux_map.get(peer_key), dtype=float)
+        if peer_flux.ndim != 1 or peer_flux.shape[0] != series_length:
+            continue
+
+        ratio = normalized_ratio_series(candidate_flux, peer_flux)
+        ratio[~field_image_keep_mask] = np.nan
+        valid_mask, outlier_mask, direction = comparison_pairwise_log_ratio_outlier_flags(
+            ratio,
+            sigma=sigma,
+        )
+        valid_mask &= field_image_keep_mask
+        outlier_mask &= valid_mask
+        if np.count_nonzero(valid_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+            continue
+
+        pairwise_valid_flags.append(valid_mask)
+        pairwise_outlier_flags.append(outlier_mask)
+        pairwise_positive_flags.append(outlier_mask & (direction > 0))
+        pairwise_negative_flags.append(outlier_mask & (direction < 0))
+
+    available_pair_count = len(pairwise_valid_flags)
+    summary['available_pair_count'] = available_pair_count
+    if available_pair_count < required_valid_pair_count:
+        return summary
+
+    valid_pair_counts = np.sum(np.vstack(pairwise_valid_flags), axis=0).astype(int)
+    outlier_pair_counts = np.sum(np.vstack(pairwise_outlier_flags), axis=0).astype(int)
+    positive_outlier_pair_counts = np.sum(np.vstack(pairwise_positive_flags), axis=0).astype(int)
+    negative_outlier_pair_counts = np.sum(np.vstack(pairwise_negative_flags), axis=0).astype(int)
+    directional_outlier_counts = np.maximum(positive_outlier_pair_counts, negative_outlier_pair_counts)
+    rejected_mask = (
+        field_image_keep_mask
+        & (valid_pair_counts >= required_valid_pair_count)
+        & (directional_outlier_counts >= required_valid_pair_count)
+        & (directional_outlier_counts > (valid_pair_counts / 2.0))
+    )
+    keep_mask = ~rejected_mask
+
+    summary.update({
+        'frame_keep_mask': keep_mask,
+        'rejected_frame_indices': np.flatnonzero(rejected_mask).astype(int).tolist(),
+        'rejected_frame_count': int(np.count_nonzero(rejected_mask)),
+        'valid_pair_counts': valid_pair_counts,
+        'outlier_pair_counts': outlier_pair_counts,
+        'positive_outlier_pair_counts': positive_outlier_pair_counts,
+        'negative_outlier_pair_counts': negative_outlier_pair_counts,
+    })
+    return summary
+
+
 def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_rejection=False,
                                       validity_mask_func=valid_comparison_frame_mask):
     if not comp_flux_map:
@@ -15275,6 +15656,21 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
             summary['suitability_reference_score'] = final_reference_score
             summary['suitability_scatter'] = final_scatter
             summary['suitability_high_threshold'] = final_high_threshold
+
+        candidate_frame_summary = comparison_star_candidate_frame_outlier_summary(
+            normalized_flux_map,
+            summary['key'],
+            active_keys,
+            field_image_keep_mask=field_image_keep_mask,
+        )
+        summary['ensemble_frame_keep_mask'] = candidate_frame_summary['frame_keep_mask']
+        summary['ensemble_frame_rejected_indices'] = candidate_frame_summary['rejected_frame_indices']
+        summary['ensemble_frame_rejected_count'] = candidate_frame_summary['rejected_frame_count']
+        summary['ensemble_frame_valid_pair_counts'] = candidate_frame_summary['valid_pair_counts']
+        summary['ensemble_frame_outlier_pair_counts'] = candidate_frame_summary['outlier_pair_counts']
+        summary['ensemble_frame_required_valid_pairs'] = candidate_frame_summary['required_valid_pair_count']
+        summary['ensemble_frame_available_pairs'] = candidate_frame_summary['available_pair_count']
+        summary['ensemble_frame_sigma'] = candidate_frame_summary['sigma']
 
     finite_comp_scores = [
         summary['aggregate_score']
@@ -15707,7 +16103,32 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         else:
             comp_flux = aper_data[ckey][:, aperture_index, annulus_index]
 
-        fit_mask = field_image_keep_mask.copy()
+        candidate_frame_keep_mask = np.asarray(
+            comp_summary.get('ensemble_frame_keep_mask', np.ones(times.shape[0], dtype=bool)),
+            dtype=bool,
+        )
+        if candidate_frame_keep_mask.shape != times.shape:
+            candidate_frame_keep_mask = np.ones(times.shape[0], dtype=bool)
+        candidate_frame_clip_diagnostic = None
+        candidate_frame_diagnostic_keep_mask = candidate_frame_keep_mask | ~field_image_keep_mask
+        if np.any(~candidate_frame_diagnostic_keep_mask):
+            required_pairs = comp_summary.get(
+                'ensemble_frame_required_valid_pairs',
+                COMPARISON_CANDIDATE_FRAME_OUTLIER_MIN_VALID_PAIRS,
+            )
+            sigma_threshold = comp_summary.get('ensemble_frame_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
+            candidate_frame_clip_diagnostic = build_time_rejection_diagnostic(
+                "Comparison-candidate ensemble clip",
+                times,
+                candidate_frame_diagnostic_keep_mask,
+                note=(
+                    "Dropped frames where this comparison star disagreed with the comparison-star ensemble "
+                    f"before target fitting; same-direction pairwise majority exceeded {sigma_threshold:.2f} sigma "
+                    f"(min confirming pair count={required_pairs})."
+                ),
+            )
+
+        fit_mask = field_image_keep_mask & candidate_frame_keep_mask
         if method == 'psf':
             fit_mask &= robust_target_reference_flux_mask(target_flux, comp_flux)
 
@@ -15717,6 +16138,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             comp_flux[fit_mask],
             airmass[fit_mask],
             enforce_relative_flux_max=False,
+            expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
         )
         preflight = build_comparison_candidate_preflight(
             times[fit_mask],
@@ -15735,6 +16157,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'ckey': ckey,
             'comp_flux': comp_flux,
             'fit_mask': fit_mask,
+            'candidate_frame_clip_diagnostic': candidate_frame_clip_diagnostic,
             'fit_diagnostics': fit_diagnostics,
             'preflight': preflight,
         })
@@ -15751,6 +16174,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         ckey = plan['ckey']
         comp_flux = plan['comp_flux']
         fit_mask = plan['fit_mask']
+        candidate_frame_clip_diagnostic = plan.get('candidate_frame_clip_diagnostic')
         fit_diagnostics = plan['fit_diagnostics']
         preflight = plan.get('preflight') or {}
         log_comparison_candidate_evaluation_start(
@@ -15808,13 +16232,19 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 'failed_stage': 'transit_qc',
                 'failure_reason': transit_qc_failure_reason,
             })
+        external_filter_diagnostics = []
         if field_image_clip_diagnostic is not None:
+            external_filter_diagnostics.append(field_image_clip_diagnostic)
+        if candidate_frame_clip_diagnostic is not None:
+            external_filter_diagnostics.append(candidate_frame_clip_diagnostic)
+        if external_filter_diagnostics:
             attached_fit_ids = set()
             for fit_candidate in (fit_result, final_reduction.get('fit'), selection_fit):
                 if fit_candidate is None or id(fit_candidate) in attached_fit_ids:
                     continue
                 attached_fit_ids.add(id(fit_candidate))
-                prepend_lightcurve_filter_diagnostic(fit_candidate, field_image_clip_diagnostic)
+                for diagnostic in reversed(external_filter_diagnostics):
+                    prepend_lightcurve_filter_diagnostic(fit_candidate, diagnostic)
 
         attempt = {
             'rank': rank,
@@ -15829,6 +16259,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'coverage_reference_count': comp_summary.get('coverage_reference_count', np.nan),
             'coverage_min_required_count': comp_summary.get('coverage_min_required_count', 0),
             'coverage_rejected': comp_summary.get('coverage_rejected', False),
+            'ensemble_frame_rejected_count': comp_summary.get('ensemble_frame_rejected_count', 0),
+            'ensemble_frame_required_valid_pairs': comp_summary.get('ensemble_frame_required_valid_pairs', 0),
             'fit': selection_fit,
             'provisional_fit': None,
             'full_reduction_fit': final_reduction.get('fit'),
@@ -17389,10 +17821,15 @@ def _main_impl():
                         coverage_text += " [rejected: low coverage]"
                     if summary.get('suitability_outlier_rejected'):
                         coverage_text += " [rejected: high suitability outlier]"
+                    ensemble_frame_text = ""
+                    if summary.get('ensemble_frame_rejected_count', 0) > 0:
+                        ensemble_frame_text = (
+                            f", ensemble_frame_rejects={summary['ensemble_frame_rejected_count']}"
+                        )
                     log_info(
                         f"  {summary['label']}{selected_label} ({position_text}): suitability={aggregate_text}, "
                         f"ensemble={ensemble_text}, pairwise_median={pairwise_text}, "
-                        f"valid_pairs={summary['valid_pair_count']}, {coverage_text}, "
+                        f"valid_pairs={summary['valid_pair_count']}, {coverage_text}{ensemble_frame_text}, "
                         f"reason={summary['selection_reason']}"
                     )
 

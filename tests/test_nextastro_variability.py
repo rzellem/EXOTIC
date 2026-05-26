@@ -239,6 +239,28 @@ def test_nextastro_photometry_catalog_match_prefers_requested_filter():
     assert match['separation_arcsec'] > 0
 
 
+def test_nextastro_photometry_catalog_match_floors_zero_magnitude_error():
+    catalog = {
+        'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
+        'count': 1,
+        'row_format': 'objects',
+        'rows': [
+            {
+                'id': 1,
+                'source_id': 111,
+                'ra': 10.0001,
+                'dec': 20.0001,
+                'Vmag': 12.3,
+                'err_Vmag': 0.0,
+            },
+        ],
+    }
+
+    match = exotic_module.nextastro_photometry_catalog_match(catalog, 10.0, 20.0, 'CV')
+
+    assert match['error'] == pytest.approx(0.001)
+
+
 def test_nextastro_photometry_catalog_match_ignores_over_30_magnitudes():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],

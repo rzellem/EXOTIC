@@ -207,6 +207,7 @@ class Inputs:
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': False, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
+            'prefer_pixel_values_over_wcs_for_target': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
@@ -430,6 +431,11 @@ class Inputs:
                 'Ignore WCS in Header and Do Manual Alignment',
                 'Ignore WCS in header and do manual alignment',
                 'ignore_header_wcs',
+            ),
+            'prefer_pixel_values_over_wcs_for_target': (
+                'prefer_pixel_values_over_wcs_for_target',
+                'Prefer Pixel Coordinates to WCS Coordinates if there is a conflict',
+                'Prefer Pixel Coordinates to WCS Coordinates if there is a conflict? (y/n)',
             ),
             'disable_vertical_flux_normalization': (
                 'disable vertical flux normalization',

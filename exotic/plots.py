@@ -12,6 +12,7 @@ try:
         filename_date_token,
         is_usable_apparent_magnitude,
         magnitude_text,
+        normalized_magnitude_error,
         safe_output_filename,
     )
 except ImportError:
@@ -19,6 +20,7 @@ except ImportError:
         filename_date_token,
         is_usable_apparent_magnitude,
         magnitude_text,
+        normalized_magnitude_error,
         safe_output_filename,
     )
 
@@ -591,11 +593,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     for vsp_p in vsp_params:
         if not is_usable_apparent_magnitude(vsp_p.get('mag')):
             continue
-        mag_err = _finite_plot_float(vsp_p.get('mag_err'))
-        if mag_err is not None:
-            mag_err = abs(mag_err)
-            if not is_usable_apparent_magnitude(mag_err):
-                mag_err = None
+        mag_err = normalized_magnitude_error(vsp_p.get('mag_err'))
         ax.errorbar(vsp_p['time'], vsp_p['mag'], yerr=mag_err, color="tomato", fmt='.')
         plotted_points += 1
 

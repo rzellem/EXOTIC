@@ -7,18 +7,22 @@ import numpy as np
 try:
     from utils import (
         filename_date_token,
+        format_magnitude_error,
         format_magnitude,
         magnitude_text,
         round_to_2,
+        rounded_magnitude_error,
         rounded_magnitude_value,
         safe_output_filename,
     )
 except ImportError:
     from .utils import (
         filename_date_token,
+        format_magnitude_error,
         format_magnitude,
         magnitude_text,
         round_to_2,
+        rounded_magnitude_error,
         rounded_magnitude_value,
         safe_output_filename,
     )
@@ -141,7 +145,7 @@ def aid_comparison_metadata(vsp_param):
         'catalog_match_separation_arcsec': vsp_param.get('separation_arcsec'),
         'magnitude_band': vsp_param.get('mag_band'),
         'apparent_magnitude': rounded_magnitude_value(vsp_param.get('cmag')),
-        'apparent_magnitude_error': rounded_magnitude_value(abs(finite_float(vsp_param.get('cmag_err')))),
+        'apparent_magnitude_error': rounded_magnitude_error(vsp_param.get('cmag_err')),
     })
 
 
@@ -1225,7 +1229,7 @@ class AIDOutputFiles:
                 mag = format_magnitude(vsp_p.get('mag'), default=None)
                 if mag is None:
                     continue
-                mag_err = format_magnitude(abs(finite_float(vsp_p.get('mag_err'))))
+                mag_err = format_magnitude_error(vsp_p.get('mag_err'))
                 cmag = format_magnitude(vsp_p.get('cmag'))
                 chart_id = self.chart_id or vsp_p.get('chart_id') or 'na'
                 f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"

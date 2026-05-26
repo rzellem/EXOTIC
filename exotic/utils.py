@@ -25,6 +25,7 @@ _WINDOWS_RESERVED_FILENAME_STEMS = {
 _WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 MAX_APPARENT_MAGNITUDE = 30.0
 MAGNITUDE_DECIMAL_PLACES = 3
+MINIMUM_MAGNITUDE_ERROR = 0.001
 
 
 def sanitize_filename_component(value, fallback='output'):
@@ -90,13 +91,51 @@ def rounded_magnitude_value(value, default=None, digits=MAGNITUDE_DECIMAL_PLACES
     return round(parsed, digits)
 
 
+def normalized_magnitude_error(value, default=None, minimum=MINIMUM_MAGNITUDE_ERROR,
+                               max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    if parsed is None:
+        return default
+    parsed = abs(parsed)
+    if parsed > max_magnitude:
+        return default
+    return max(parsed, minimum)
+
+
+def format_magnitude_error(value, default="na", digits=MAGNITUDE_DECIMAL_PLACES,
+                           minimum=MINIMUM_MAGNITUDE_ERROR,
+                           max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = normalized_magnitude_error(
+        value,
+        default=None,
+        minimum=minimum,
+        max_magnitude=max_magnitude,
+    )
+    if parsed is None:
+        return default
+    return f"{parsed:.{digits}f}"
+
+
+def rounded_magnitude_error(value, default=None, digits=MAGNITUDE_DECIMAL_PLACES,
+                            minimum=MINIMUM_MAGNITUDE_ERROR,
+                            max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = normalized_magnitude_error(
+        value,
+        default=None,
+        minimum=minimum,
+        max_magnitude=max_magnitude,
+    )
+    if parsed is None:
+        return default
+    return round(parsed, digits)
+
+
 def magnitude_text(band, magnitude, magnitude_error=None):
     formatted_mag = format_magnitude(magnitude, default=None)
     if formatted_mag is None:
         return None
 
-    parsed_error = parse_finite_float(magnitude_error)
-    formatted_error = format_magnitude(abs(parsed_error), default=None) if parsed_error is not None else None
+    formatted_error = format_magnitude_error(magnitude_error, default=None)
     if formatted_error is None:
         return f"{band}={formatted_mag}"
     return f"{band}={formatted_mag} +/- {formatted_error}"

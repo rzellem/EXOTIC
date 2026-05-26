@@ -83,6 +83,21 @@ def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):
     assert inputs.info_dict["ignore_header_wcs"] == "n"
 
 
+def test_comp_params_defaults_prefer_pixel_values_over_wcs_for_target_to_no(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["prefer_pixel_values_over_wcs_for_target"] == "n"
+
+
 def test_comp_params_defaults_bad_wcs_threshold_percent_to_three(tmp_path):
     init_data = {
         "user_info": {},
@@ -426,6 +441,21 @@ def test_comp_params_reads_ignore_header_wcs_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ignore_header_wcs"] == "y"
+
+
+def test_comp_params_reads_prefer_pixel_values_over_wcs_for_target_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"prefer_pixel_values_over_wcs_for_target": "y"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["prefer_pixel_values_over_wcs_for_target"] == "y"
 
 
 def test_comp_params_reads_bad_wcs_threshold_percent_from_optional_info(tmp_path):

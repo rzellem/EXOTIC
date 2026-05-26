@@ -159,6 +159,7 @@ from exotic.exotic import (
     save_final_triangle_plot,
     save_selected_photometry_debug_series,
     should_keep_header_wcs_alignment,
+    should_prefer_pixel_values_over_wcs_for_target,
     sigma_clip,
     summarize_adaptive_aperture_usage,
     summarize_prior_transit_coverage,
@@ -774,6 +775,31 @@ def test_check_coordinates_non_interactive_uses_wcs_pixel_when_centroid_is_nan()
 
     assert x_pixel == 100
     assert y_pixel == 201
+
+
+def test_check_coordinates_can_prefer_input_pixels_over_wcs_conflict():
+    x_pixel, y_pixel = check_coordinates(
+        input_x_pixel=5,
+        input_y_pixel=5,
+        centroid_x=100.25,
+        centroid_y=200.75,
+        sigma_x=1.0,
+        sigma_y=1.0,
+        calculated_x_pixel=100,
+        calculated_y_pixel=201,
+        non_interactive_run=True,
+        prefer_pixel_values_over_wcs_for_target="y",
+    )
+
+    assert x_pixel == 5
+    assert y_pixel == 5
+
+
+def test_should_prefer_pixel_values_over_wcs_for_target_parses_values():
+    assert should_prefer_pixel_values_over_wcs_for_target(None) is False
+    assert should_prefer_pixel_values_over_wcs_for_target("n") is False
+    assert should_prefer_pixel_values_over_wcs_for_target("y") is True
+    assert should_prefer_pixel_values_over_wcs_for_target(True) is True
 
 
 def test_is_comp_star_required_parses_values():

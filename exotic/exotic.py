@@ -185,6 +185,7 @@ try:  # tools
         filename_date_token,
         is_usable_apparent_magnitude,
         magnitude_text,
+        normalized_magnitude_error,
         round_to_2,
         safe_output_filename,
         user_input,
@@ -195,6 +196,7 @@ except ImportError: # package import
         filename_date_token,
         is_usable_apparent_magnitude,
         magnitude_text,
+        normalized_magnitude_error,
         round_to_2,
         safe_output_filename,
         user_input,
@@ -5086,6 +5088,25 @@ def should_ignore_header_wcs(config_value):
     return False
 
 
+def should_prefer_pixel_values_over_wcs_for_target(config_value):
+    if config_value is None:
+        return False
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info("Warning: Invalid 'prefer_pixel_values_over_wcs_for_target' value; "
+             "using WCS target coordinates.", warn=True)
+    return False
+
+
 def get_bad_wcs_threshold_fraction(config_value):
     default_fraction = SPARSE_MISSING_WCS_DROP_THRESHOLD
     default_percent = default_fraction * 100.0
@@ -9546,7 +9567,8 @@ def any_projected_coord_out_of_frame(coords, image_shape):
 
 
 def check_target_pixel_wcs(input_x_pixel, input_y_pixel, info_dict, ra_list, dec_list, image_data, obs_time,
-                           non_interactive_run=False, wcs_header=None):
+                           non_interactive_run=False, wcs_header=None,
+                           prefer_pixel_values_over_wcs_for_target=False):
     """
     Verify the provided pixel coordinates match the target's right ascension and declination.
     """
@@ -9570,7 +9592,8 @@ def check_target_pixel_wcs(input_x_pixel, input_y_pixel, info_dict, ra_list, dec
     centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, calculated_x_pixel, calculated_y_pixel)
 
     return check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
-                             calculated_x_pixel, calculated_y_pixel, non_interactive_run=non_interactive_run)
+                             calculated_x_pixel, calculated_y_pixel, non_interactive_run=non_interactive_run,
+                             prefer_pixel_values_over_wcs_for_target=prefer_pixel_values_over_wcs_for_target)
 
 
 def get_psf_parameters(image_data, x_pixel, y_pixel):
@@ -9583,12 +9606,17 @@ def get_psf_parameters(image_data, x_pixel, y_pixel):
 
 
 def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
-                      calculated_x_pixel, calculated_y_pixel, non_interactive_run=False):
+                      calculated_x_pixel, calculated_y_pixel, non_interactive_run=False,
+                      prefer_pixel_values_over_wcs_for_target=False):
     while True:
         try:
             validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y)
             return input_x_pixel, input_y_pixel
         except ValueError:
+            if should_prefer_pixel_values_over_wcs_for_target(prefer_pixel_values_over_wcs_for_target):
+                log_info("Proceeding with provided target pixel coordinates because "
+                         "prefer_pixel_values_over_wcs_for_target is enabled.", warn=True)
+                return input_x_pixel, input_y_pixel
             if non_interactive_run:
                 if np.isfinite(centroid_x) and np.isfinite(centroid_y):
                     log_info("Proceeding with WCS-derived centroided target coordinates due to "
@@ -9957,11 +9985,8 @@ def nextastro_catalog_rows(catalog_response):
 def row_nextastro_magnitude(row, band_candidates):
     for priority, (mag_column, error_column, band_label) in enumerate(band_candidates):
         magnitude = _finite_float(row.get(mag_column))
-        magnitude_error = _finite_float(row.get(error_column))
+        magnitude_error = normalized_magnitude_error(row.get(error_column))
         if not is_usable_apparent_magnitude(magnitude) or magnitude_error is None:
-            continue
-        magnitude_error = abs(magnitude_error)
-        if not is_usable_apparent_magnitude(magnitude_error):
             continue
         return {
             'priority': priority,
@@ -12927,15 +12952,12 @@ def stellar_variability_label(comp_label, comp_star):
 def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name,
                                               observed_filter=None):
     comp_mag = _finite_float(comp_star.get('mag'))
-    comp_mag_error = _finite_float(comp_star.get('error'))
+    comp_mag_error = normalized_magnitude_error(comp_star.get('error'))
     if (
         comp_mag is None
         or comp_mag_error is None
         or not is_usable_apparent_magnitude(comp_mag)
     ):
-        raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
-    comp_mag_error = abs(comp_mag_error)
-    if not is_usable_apparent_magnitude(comp_mag_error):
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
     observed_filter = observed_filter or comp_star.get('observed_filter')
 
@@ -17768,12 +17790,21 @@ def _main_impl():
                 wcs_header = get_first_image_header(wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header, image_shape=reference_image.shape)
 
-                exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(exotic_UIprevTPX, exotic_UIprevTPY,
-                                                                            pDict, ra_wcs, dec_wcs,
-                                                                            reference_image,
-                                                                            jd_times[0],
-                                                                            non_interactive_run=args.non_interactive_run,
-                                                                            wcs_header=wcs_header)
+                prefer_input_target_pixels = exotic_infoDict.get(
+                    'prefer_pixel_values_over_wcs_for_target', 'n'
+                )
+                exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(
+                    exotic_UIprevTPX,
+                    exotic_UIprevTPY,
+                    pDict,
+                    ra_wcs,
+                    dec_wcs,
+                    reference_image,
+                    jd_times[0],
+                    non_interactive_run=args.non_interactive_run,
+                    wcs_header=wcs_header,
+                    prefer_pixel_values_over_wcs_for_target=prefer_input_target_pixels,
+                )
                 ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
                              dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 

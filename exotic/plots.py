@@ -99,7 +99,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         if sky_inner_radius is None or sky_outer_radius is None:
             local_sky_inner_radius = abs(aper) + 2.0
             if np.isfinite(sigma) and sigma > 0:
-                local_sky_inner_radius = max(local_sky_inner_radius, 2.0 * 2.355 * float(sigma))
+                local_sky_inner_radius = max(local_sky_inner_radius, 3.0 * 2.355 * float(sigma))
             local_sky_outer_radius = max(
                 local_sky_inner_radius + annulus,
                 np.sqrt(local_sky_inner_radius ** 2 + 250.0 / np.pi),

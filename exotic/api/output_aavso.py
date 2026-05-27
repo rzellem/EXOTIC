@@ -37,6 +37,7 @@
 # ########################################################################### #
 import hashlib
 from json import dump, dumps
+import math
 from numpy import mean, median, std
 from pathlib import Path
 import re
@@ -49,6 +50,85 @@ try:
     from .version import __version__
 except ImportError:
     from version import __version__
+try:
+    from ..transit_depth import (
+        AREA_DEPTH_LABEL,
+        OBSERVABLE_DEPTH_DELTA_LABEL,
+        OBSERVABLE_DEPTH_LABEL,
+        PRIOR_OBSERVABLE_DEPTH_LABEL,
+        fit_transit_depth_summary,
+        planet_dict_transit_errors,
+        planet_dict_transit_parameters,
+    )
+except ImportError:
+    from exotic.transit_depth import (
+        AREA_DEPTH_LABEL,
+        OBSERVABLE_DEPTH_DELTA_LABEL,
+        OBSERVABLE_DEPTH_LABEL,
+        PRIOR_OBSERVABLE_DEPTH_LABEL,
+        fit_transit_depth_summary,
+        planet_dict_transit_errors,
+        planet_dict_transit_parameters,
+    )
+
+
+def _format_depth(value, error):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    try:
+        error = float(error)
+    except (TypeError, ValueError):
+        error = math.nan
+    if math.isfinite(error) and error >= 0:
+        return f"{round_to_2(value, error)} +/- {round_to_2(error)} [%]"
+    return f"{round_to_2(value)} +/- n/a [%]"
+
+
+def _depth_final_params(fit, planet_dict=None, limb_darkening=None):
+    depth_summary = fit_transit_depth_summary(
+        fit,
+        prior_parameters=planet_dict_transit_parameters(
+            planet_dict,
+            limb_darkening=limb_darkening,
+            fallback=getattr(fit, 'prior', None),
+        ),
+        prior_errors=planet_dict_transit_errors(planet_dict, limb_darkening=limb_darkening),
+    )
+    entries = {}
+    for label, value_key, error_key in (
+        (AREA_DEPTH_LABEL, 'area_depth', 'area_depth_error'),
+        (OBSERVABLE_DEPTH_LABEL, 'observable_depth', 'observable_depth_error'),
+        (PRIOR_OBSERVABLE_DEPTH_LABEL, 'prior_observable_depth', 'prior_observable_depth_error'),
+        (OBSERVABLE_DEPTH_DELTA_LABEL, 'observable_depth_prior_delta', 'observable_depth_prior_delta_error'),
+    ):
+        text = _format_depth(depth_summary.get(value_key), depth_summary.get(error_key))
+        if text is not None:
+            entries[label] = text
+    return entries
+
+
+def _depth_result_entry(value, error):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    try:
+        error = float(error)
+    except (TypeError, ValueError):
+        error = math.nan
+    entry = {
+        'value': str(round_to_2(value, error)) if math.isfinite(error) else str(round_to_2(value)),
+        'units': "percent",
+    }
+    if math.isfinite(error):
+        entry['uncertainty'] = str(round_to_2(error))
+    return entry
 
 
 class OutputFiles:
@@ -81,8 +161,6 @@ class OutputFiles:
                                        f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
             "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
                                                          f"{round_to_2(self.fit.errors['rprs'])}",
-            "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
-                                       f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
             "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- "
                                                   f"{round_to_2(self.fit.errors['ars'])} ",
             "Airmass coefficient 1 (a1)": f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
@@ -90,6 +168,16 @@ class OutputFiles:
             "Airmass coefficient 2 (a2)": f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
                                           f"{round_to_2(self.fit.errors['a2'])}",
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * std(self.fit.residuals / median(self.fit.data)))} %",
+        }
+        depth_params = _depth_final_params(self.fit, self.p_dict)
+        params_num = {
+            "Mid-Transit Time (Tmid)": params_num["Mid-Transit Time (Tmid)"],
+            "Ratio of Planet to Stellar Radius (Rp/Rs)": params_num["Ratio of Planet to Stellar Radius (Rp/Rs)"],
+            **depth_params,
+            "Semi Major Axis/Star Radius (a/Rs)": params_num["Semi Major Axis/Star Radius (a/Rs)"],
+            "Airmass coefficient 1 (a1)": params_num["Airmass coefficient 1 (a1)"],
+            "Airmass coefficient 2 (a2)": params_num["Airmass coefficient 2 (a2)"],
+            "Scatter in the residuals of the lightcurve fit is": params_num["Scatter in the residuals of the lightcurve fit is"],
         }
 
         if phot_opt:
@@ -337,5 +425,25 @@ def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
             'uncertainty': str(round_to_2(fit.errors['inc'])),
             'units': "degrees"
         }
+
+    limb_darkening = (ld0, ld1, ld2, ld3)
+    depth_summary = fit_transit_depth_summary(
+        fit,
+        prior_parameters=planet_dict_transit_parameters(
+            planet_dict,
+            limb_darkening=limb_darkening,
+            fallback=getattr(fit, 'prior', None),
+        ),
+        prior_errors=planet_dict_transit_errors(planet_dict, limb_darkening=limb_darkening),
+    )
+    for label, value_key, error_key in (
+        (AREA_DEPTH_LABEL, 'area_depth', 'area_depth_error'),
+        (OBSERVABLE_DEPTH_LABEL, 'observable_depth', 'observable_depth_error'),
+        (PRIOR_OBSERVABLE_DEPTH_LABEL, 'prior_observable_depth', 'prior_observable_depth_error'),
+        (OBSERVABLE_DEPTH_DELTA_LABEL, 'observable_depth_prior_delta', 'observable_depth_prior_delta_error'),
+    ):
+        entry = _depth_result_entry(depth_summary.get(value_key), depth_summary.get(error_key))
+        if entry is not None:
+            results[label] = entry
 
     return priors, filter_type, results

@@ -3,7 +3,17 @@ import json
 import numpy as np
 import pytest
 
-from exotic.output_files import AIDOutputFiles, OutputFiles, fit_impact_parameter_value_error, save_comp_star_calibration_summary
+from exotic.output_files import (
+    AREA_DEPTH_LABEL,
+    OBSERVABLE_DEPTH_DELTA_LABEL,
+    OBSERVABLE_DEPTH_LABEL,
+    PRIOR_OBSERVABLE_DEPTH_LABEL,
+    AIDOutputFiles,
+    OutputFiles,
+    fit_impact_parameter_value_error,
+    save_comp_star_calibration_summary,
+)
+from exotic.transit_depth import observable_depth_percent, radius_ratio_area_depth_percent
 
 
 class DummyFit:
@@ -12,9 +22,14 @@ class DummyFit:
             "tmid": 2450000.123456,
             "rprs": 0.1234,
             "ars": 12.0,
+            "per": 2.15,
             "inc": 88.5,
             "ecc": 0.0,
             "omega": 90.0,
+            "u0": 0.0,
+            "u1": 0.0,
+            "u2": 0.0,
+            "u3": 0.0,
             "a1": 1.0,
             "a2": 0.0,
         }
@@ -27,10 +42,27 @@ class DummyFit:
             "a2": 0.1,
         }
         self.time = [2450000.123456]
+        self.time_upsample = np.linspace(2450000.0, 2450000.2, 128)
         self.data = [1.0]
         self.dataerr = [0.01]
         self.residuals = 0.01
         self.airmass_model = [1.0]
+        self.transit = [1.0 - self.parameters["rprs"] ** 2]
+        self.transit_upsample = np.ones_like(self.time_upsample)
+        self.transit_upsample[64] = 1.0 - self.parameters["rprs"] ** 2
+        self.prior = {
+            "tmid": 2450000.123456,
+            "rprs": 0.1,
+            "ars": 12.0,
+            "per": 2.15,
+            "inc": 88.5,
+            "ecc": 0.0,
+            "omega": 90.0,
+            "u0": 0.0,
+            "u1": 0.0,
+            "u2": 0.0,
+            "u3": 0.0,
+        }
 
 
 def aavso_json_header(output_text, header_name):
@@ -39,6 +71,31 @@ def aavso_json_header(output_text, header_name):
         if line.startswith(prefix):
             return json.loads(line[len(prefix):])
     raise AssertionError(f"Missing {header_name} header")
+
+
+def test_observable_depth_is_separate_from_area_depth_for_grazing_geometry():
+    parameters = {
+        "tmid": 0.0,
+        "rprs": 0.2,
+        "per": 3.0,
+        "ars": 10.0,
+        "inc": np.degrees(np.arccos(1.1 / 10.0)),
+        "ecc": 0.0,
+        "omega": 90.0,
+        "u0": 0.0,
+        "u1": 0.0,
+        "u2": 0.0,
+        "u3": 0.0,
+    }
+    errors = {"rprs": 0.01, "ars": 0.1, "inc": 0.1}
+
+    area_depth, area_error = radius_ratio_area_depth_percent(parameters["rprs"], errors["rprs"])
+    observable_depth, observable_error = observable_depth_percent(parameters, errors)
+
+    assert area_depth == pytest.approx(4.0)
+    assert area_error == pytest.approx(0.4)
+    assert 0.0 < observable_depth < area_depth
+    assert observable_error > 0.0
 
 
 def test_aavso_output_includes_observatory_location_headers(tmp_path):
@@ -429,6 +486,11 @@ def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertaintie
 
     assert final_params["Mid-Transit Time (Tmid)"].endswith("+/- 0.0001 BJD_TDB")
     assert final_params["Ratio of Planet to Stellar Radius (Rp/R*)"] == "0.1234 +/- 0.001"
+    assert "Transit depth (Rp/Rs)^2" not in final_params
+    assert AREA_DEPTH_LABEL in final_params
+    assert OBSERVABLE_DEPTH_LABEL in final_params
+    assert PRIOR_OBSERVABLE_DEPTH_LABEL in final_params
+    assert OBSERVABLE_DEPTH_DELTA_LABEL in final_params
     assert final_params["Orbital Inclination (inc)"] == "88.5 +/- 0.2 "
     assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.0 +/- 0.4"
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
@@ -942,7 +1004,11 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     results = aavso_json_header(output_text, "RESULTS-XC")
     assert "a/R*" in results
     assert "Impact Parameter (b)" in results
-    assert results["Transit depth (Rp/R*)^2"]["units"] == "percent"
+    assert "Transit depth (Rp/R*)^2" not in results
+    assert results[AREA_DEPTH_LABEL]["units"] == "percent"
+    assert results[OBSERVABLE_DEPTH_LABEL]["units"] == "percent"
+    assert results[PRIOR_OBSERVABLE_DEPTH_LABEL]["units"] == "percent"
+    assert results[OBSERVABLE_DEPTH_DELTA_LABEL]["units"] == "percent"
     assert results["Residual scatter around full model fit"]["value"] == "0.32"
 
     qc = aavso_json_header(output_text, "QC-XC")

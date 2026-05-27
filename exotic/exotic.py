@@ -153,6 +153,7 @@ try:  # output files
         AIDOutputFiles,
         fit_impact_parameter_value_error,
         format_parameter_with_error,
+        formatted_transit_depth_parameters,
         save_comp_star_calibration_summary,
     )
 except ImportError:  # package import
@@ -161,8 +162,13 @@ except ImportError:  # package import
         AIDOutputFiles,
         fit_impact_parameter_value_error,
         format_parameter_with_error,
+        formatted_transit_depth_parameters,
         save_comp_star_calibration_summary,
     )
+try:
+    from transit_depth import fit_transit_depth_summary
+except ImportError:
+    from .transit_depth import fit_transit_depth_summary
 try:
     from plate_status import PlateStatus
 except ImportError:
@@ -15458,13 +15464,15 @@ def summarize_lightcurve_fit_parameters(fit):
         f"Rp/R*={format_fit_parameter_with_uncertainty(parameters.get('rprs'), errors.get('rprs'))}",
     ]
 
-    rprs = parameters.get('rprs')
-    rprs_err = errors.get('rprs')
-    depth = None if rprs is None else 100.0 * float(rprs) ** 2
-    depth_err = None
-    if rprs is not None and rprs_err is not None and np.isfinite(rprs) and np.isfinite(rprs_err):
-        depth_err = 200.0 * float(rprs) * float(rprs_err)
-    summary_parts.append(f"depth={format_fit_parameter_with_uncertainty(depth, depth_err, suffix='%')}")
+    depth_summary = fit_transit_depth_summary(fit)
+    summary_parts.append(
+        "area_depth="
+        f"{format_fit_parameter_with_uncertainty(depth_summary.get('area_depth'), depth_summary.get('area_depth_error'), suffix='%')}"
+    )
+    summary_parts.append(
+        "observable_depth="
+        f"{format_fit_parameter_with_uncertainty(depth_summary.get('observable_depth'), depth_summary.get('observable_depth_error'), suffix='%')}"
+    )
     summary_parts.append(f"inc={format_fit_parameter_with_uncertainty(parameters.get('inc'), errors.get('inc'))}")
 
     if getattr(fit, 'airmass_fit_skipped', False):
@@ -19444,7 +19452,8 @@ def _main_impl():
         log_info("FINAL PLANETARY PARAMETERS\n")
         log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
-        log_info(f"           Transit depth [(Rp/R*)^2]: {round_to_2(100. * (myfit.parameters['rprs'] ** 2.))} +/- {round_to_2(100. * 2. * myfit.parameters['rprs'] * myfit.errors['rprs'])} [%]")
+        for depth_label, depth_text in formatted_transit_depth_parameters(myfit, pDict).items():
+            log_info(f"                         {depth_label}: {depth_text}")
         log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
         ars_text = format_parameter_with_error(myfit.parameters.get('ars'), myfit.errors.get('ars'))
         if ars_text is not None:

@@ -3009,7 +3009,7 @@ class lc_fitter(object):
 
         rprs2 = self.parameters['rprs'] ** 2
         rprs2err = 2 * self.parameters['rprs'] * self.errors['rprs']
-        lclabel1 = r"$R^{2}_{p}/R^{2}_{s}$ = %s $\pm$ %s" % (
+        lclabel1 = r"Area ratio $(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" % (
             str(round_to_2(rprs2, rprs2err)),
             str(round_to_2(rprs2err))
         )
@@ -3536,7 +3536,7 @@ class glc_fitter(lc_fitter):
             rprs2 = self.lc_data[0]['priors']['rprs']**2
             rprs2err = 2*self.lc_data[0]['priors']['rprs']*self.lc_data[0]['errors']['rprs']
 
-        lclabel1 = r"$R^{2}_{p}/R^{2}_{s}$ = %s $\pm$ %s" %(
+        lclabel1 = r"Area ratio $(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
             str(round_to_2(rprs2, rprs2err)),
             str(round_to_2(rprs2err))
         )
@@ -3679,7 +3679,7 @@ class glc_fitter(lc_fitter):
 
         rprs2 = self.parameters['rprs']**2
         rprs2err = 2*self.parameters['rprs']*self.errors['rprs']
-        lclabel1 = r"$R^{2}_{p}/R^{2}_{s}$ = %s $\pm$ %s" %(
+        lclabel1 = r"Area ratio $(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
             str(round_to_2(rprs2, rprs2err)),
             str(round_to_2(rprs2err))
         )

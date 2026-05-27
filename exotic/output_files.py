@@ -34,6 +34,26 @@ try:
     from plate_status import PlateStatus
 except ImportError:
     from .plate_status import PlateStatus
+try:
+    from transit_depth import (
+        AREA_DEPTH_LABEL,
+        OBSERVABLE_DEPTH_DELTA_LABEL,
+        OBSERVABLE_DEPTH_LABEL,
+        PRIOR_OBSERVABLE_DEPTH_LABEL,
+        fit_transit_depth_summary,
+        planet_dict_transit_errors,
+        planet_dict_transit_parameters,
+    )
+except ImportError:
+    from .transit_depth import (
+        AREA_DEPTH_LABEL,
+        OBSERVABLE_DEPTH_DELTA_LABEL,
+        OBSERVABLE_DEPTH_LABEL,
+        PRIOR_OBSERVABLE_DEPTH_LABEL,
+        fit_transit_depth_summary,
+        planet_dict_transit_errors,
+        planet_dict_transit_parameters,
+    )
 
 
 def aavso_airmass_results(fit):
@@ -816,6 +836,37 @@ def format_parameter_with_error(value, error):
     return f"{round_to_2(value)} +/- n/a"
 
 
+def format_percent_parameter_with_error(value, error):
+    text = format_parameter_with_error(value, error)
+    return f"{text} [%]" if text is not None else None
+
+
+def formatted_transit_depth_parameters(fit, planet_dict=None, limb_darkening=None):
+    prior_parameters = planet_dict_transit_parameters(
+        planet_dict,
+        limb_darkening=limb_darkening,
+        fallback=getattr(fit, 'prior', None),
+    )
+    prior_errors = planet_dict_transit_errors(planet_dict, limb_darkening=limb_darkening)
+    summary = fit_transit_depth_summary(
+        fit,
+        prior_parameters=prior_parameters,
+        prior_errors=prior_errors,
+    )
+
+    entries = {}
+    for label, value_key, error_key in (
+        (AREA_DEPTH_LABEL, 'area_depth', 'area_depth_error'),
+        (OBSERVABLE_DEPTH_LABEL, 'observable_depth', 'observable_depth_error'),
+        (PRIOR_OBSERVABLE_DEPTH_LABEL, 'prior_observable_depth', 'prior_observable_depth_error'),
+        (OBSERVABLE_DEPTH_DELTA_LABEL, 'observable_depth_prior_delta', 'observable_depth_prior_delta_error'),
+    ):
+        text = format_percent_parameter_with_error(summary.get(value_key), summary.get(error_key))
+        if text is not None:
+            entries[label] = text
+    return entries
+
+
 def fit_impact_parameter_value_error(fit):
     parameters = getattr(fit, 'parameters', {}) or {}
     errors = getattr(fit, 'errors', {}) or {}
@@ -920,10 +971,15 @@ class OutputFiles:
                                        f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
             "Ratio of Planet to Stellar Radius (Rp/R*)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
                                                          f"{round_to_2(self.fit.errors['rprs'])}",
-            "Transit depth (Rp/Rs)^2": f"{round_to_2(100. * (self.fit.parameters['rprs'] ** 2.))} +/- "
-                                       f"{round_to_2(100. * 2. * self.fit.parameters['rprs'] * self.fit.errors['rprs'])} [%]",
             "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
-                                                   f"{round_to_2(self.fit.errors['inc'])} ",
+                                                    f"{round_to_2(self.fit.errors['inc'])} ",
+        }
+        depth_params = formatted_transit_depth_parameters(self.fit, self.p_dict)
+        params_num = {
+            "Mid-Transit Time (Tmid)": params_num["Mid-Transit Time (Tmid)"],
+            "Ratio of Planet to Stellar Radius (Rp/R*)": params_num["Ratio of Planet to Stellar Radius (Rp/R*)"],
+            **depth_params,
+            "Orbital Inclination (inc)": params_num["Orbital Inclination (inc)"],
         }
         ars_text = format_parameter_with_error(
             self.fit.parameters.get('ars'),
@@ -1333,12 +1389,27 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     impact_parameter, impact_error = fit_impact_parameter_value_error(fit)
     optional_results['Impact Parameter (b)'] = aavso_result_entry(impact_parameter, impact_error)
 
-    rprs = finite_float(fit.parameters.get('rprs'))
-    rprs_error = finite_float(fit.errors.get('rprs'))
-    if np.isfinite(rprs):
-        optional_results['Transit depth (Rp/R*)^2'] = aavso_result_entry(
-            100.0 * (rprs ** 2.0),
-            100.0 * 2.0 * rprs * rprs_error if np.isfinite(rprs_error) else np.nan,
+    limb_darkening = (ld0, ld1, ld2, ld3)
+    prior_parameters = planet_dict_transit_parameters(
+        planet_dict,
+        limb_darkening=limb_darkening,
+        fallback=getattr(fit, 'prior', None),
+    )
+    prior_errors = planet_dict_transit_errors(planet_dict, limb_darkening=limb_darkening)
+    depth_summary = fit_transit_depth_summary(
+        fit,
+        prior_parameters=prior_parameters,
+        prior_errors=prior_errors,
+    )
+    for label, value_key, error_key in (
+        (AREA_DEPTH_LABEL, 'area_depth', 'area_depth_error'),
+        (OBSERVABLE_DEPTH_LABEL, 'observable_depth', 'observable_depth_error'),
+        (PRIOR_OBSERVABLE_DEPTH_LABEL, 'prior_observable_depth', 'prior_observable_depth_error'),
+        (OBSERVABLE_DEPTH_DELTA_LABEL, 'observable_depth_prior_delta', 'observable_depth_prior_delta_error'),
+    ):
+        optional_results[label] = aavso_result_entry(
+            depth_summary.get(value_key),
+            depth_summary.get(error_key),
             units="percent",
         )
 

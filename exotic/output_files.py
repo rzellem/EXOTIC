@@ -427,7 +427,9 @@ def build_aavso_qc_metadata(fit):
         'use_deviation_from_expected_transit_in_qc', 'deviation_sigma_threshold',
         'expected_tmid', 'expected_tmid_unc', 'fitted_tmid',
         'expected_rprs', 'expected_rprs_unc', 'fitted_rprs', 'fitted_rprs_unc',
-        'rprs_deviation_fit_unc', 'rprs_deviation_sigma', 'rprs_deviation_score',
+        'rprs_deviation_fit_unc', 'rprs_deviation_expected_unc',
+        'rprs_deviation_systematic_floor', 'rprs_deviation_unc',
+        'rprs_deviation_sigma', 'rprs_deviation_score',
         'deviation_from_expected_value', 'ktmf_metric', 'ktmf_contributions',
         'notes',
     )

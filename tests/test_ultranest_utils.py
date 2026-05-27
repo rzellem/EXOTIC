@@ -4,6 +4,7 @@ import sys
 import types
 
 import numpy as np
+import pytest
 
 import exotic.api.ultranest_utils as ultranest_utils
 from exotic.api.ultranest_utils import run_reactive_sampler
@@ -113,6 +114,38 @@ def test_run_reactive_sampler_silent_mode(monkeypatch):
     assert sampler.kwargs["show_status"] is False
     assert sampler.kwargs["viz_callback"] is False
     assert stream.getvalue() == ""
+
+
+def test_run_reactive_sampler_translates_ultranest_degenerate_region_value_error(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        def run(self, **kwargs):
+            exec(
+                compile(
+                    'raise ValueError("Buffer has wrong number of dimensions (expected 2, got 0)")',
+                    "ultranest/mlfriends.pyx",
+                    "exec",
+                ),
+                {},
+            )
+
+    with pytest.raises(np.linalg.LinAlgError) as excinfo:
+        run_reactive_sampler(FakeSampler(), verbose=False)
+
+    assert "degenerate sampling region" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, ValueError)
+
+
+def test_run_reactive_sampler_preserves_unrelated_value_error(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        def run(self, **kwargs):
+            raise ValueError("not an ultranest region error")
+
+    with pytest.raises(ValueError, match="not an ultranest region error"):
+        run_reactive_sampler(FakeSampler(), verbose=False)
 
 
 def test_run_reactive_sampler_applies_fast_defaults(monkeypatch):

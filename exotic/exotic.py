@@ -342,6 +342,7 @@ TRANSIT_QC_DURATION_RATIO_MAX = 2.0
 TRANSIT_QC_DEFAULT_A2_BOUNDS = (-3.0, 3.0)
 TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT = True
 TRANSIT_QC_DEVIATION_SIGMA_DEFAULT = 5.0
+TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION = 0.05
 TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS = {
     'model_evidence': 0.8,
     'deviation_from_expected_value': 1.5,
@@ -704,6 +705,28 @@ def transit_qc_deviation_score_from_sigma(sigma_offset, sigma_threshold):
     return float(max(0.0, 1.0 - sigma_offset / sigma_threshold))
 
 
+def transit_qc_rprs_deviation_uncertainty(fitted_rprs_unc, expected_rprs_unc, expected_rprs):
+    terms = []
+    for value in (fitted_rprs_unc, expected_rprs_unc):
+        value = coerce_finite_transit_qc_scalar(value)
+        if np.isfinite(value) and value > 0:
+            terms.append(float(value))
+
+    systematic_floor = np.nan
+    expected_rprs = coerce_finite_transit_qc_scalar(expected_rprs)
+    if np.isfinite(expected_rprs) and expected_rprs > 0:
+        systematic_floor = float(
+            TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION * abs(expected_rprs)
+        )
+        if systematic_floor > 0:
+            terms.append(systematic_floor)
+
+    if not terms:
+        return np.nan, systematic_floor
+
+    return float(np.sqrt(np.sum(np.square(terms)))), systematic_floor
+
+
 def transit_qc_duration_score(duration_ratio):
     try:
         duration_ratio = float(duration_ratio)
@@ -892,6 +915,9 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         'tmid_deviation_threshold_minutes': np.nan,
         'tmid_deviation_sigma': np.nan,
         'rprs_deviation_fit_unc': np.nan,
+        'rprs_deviation_expected_unc': np.nan,
+        'rprs_deviation_systematic_floor': np.nan,
+        'rprs_deviation_unc': np.nan,
         'rprs_deviation_sigma': np.nan,
         'tmid_deviation_score': np.nan,
         'rprs_deviation_score': np.nan,
@@ -916,19 +942,30 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         return summary
 
     expected_rprs = expected.get('expected_rprs', np.nan)
+    expected_rprs_unc = expected.get('expected_rprs_unc', np.nan)
     fitted_rprs = parameters.get('rprs', np.nan)
     errors = getattr(fit, 'errors', {}) or {}
     fitted_rprs_unc = errors.get('rprs', np.nan)
+    comparison_unc, systematic_floor = transit_qc_rprs_deviation_uncertainty(
+        fitted_rprs_unc,
+        expected_rprs_unc,
+        expected_rprs,
+    )
+    summary['expected_rprs'] = expected_rprs
+    summary['expected_rprs_unc'] = expected_rprs_unc
     summary['fitted_rprs'] = fitted_rprs
     summary['fitted_rprs_unc'] = fitted_rprs_unc
+    summary['rprs_deviation_fit_unc'] = fitted_rprs_unc
+    summary['rprs_deviation_expected_unc'] = expected_rprs_unc
+    summary['rprs_deviation_systematic_floor'] = systematic_floor
+    summary['rprs_deviation_unc'] = comparison_unc
     if (
         np.isfinite(expected_rprs)
         and np.isfinite(fitted_rprs)
-        and np.isfinite(fitted_rprs_unc)
-        and fitted_rprs_unc > 0
+        and np.isfinite(comparison_unc)
+        and comparison_unc > 0
     ):
-        rprs_sigma = float(abs(fitted_rprs - expected_rprs) / fitted_rprs_unc)
-        summary['rprs_deviation_fit_unc'] = fitted_rprs_unc
+        rprs_sigma = float(abs(fitted_rprs - expected_rprs) / comparison_unc)
         summary['rprs_deviation_sigma'] = rprs_sigma
         summary['rprs_deviation_score'] = transit_qc_deviation_score_from_sigma(rprs_sigma, sigma_threshold)
 
@@ -941,8 +978,10 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
             "Expected-value Rp/R* deviation: "
             f"{summary['rprs_deviation_sigma']:.2f} sigma "
             f"(fit={summary['fitted_rprs']:.6f} +/- {summary['fitted_rprs_unc']:.6f}, "
-            f"expected={expected_rprs:.6f}; "
-            f"fit uncertainty={summary['rprs_deviation_fit_unc']:.6f})."
+            f"expected={expected_rprs:.6f} +/- {expected_rprs_unc:.6f}; "
+            f"comparison uncertainty={summary['rprs_deviation_unc']:.6f}, "
+            f"including {100.0 * TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION:.1f}% "
+            f"Rp/R* floor={summary['rprs_deviation_systematic_floor']:.6f})."
         )
 
     rprs_sigma = summary['rprs_deviation_sigma']
@@ -980,6 +1019,15 @@ def compute_transit_qc_ktmf(summary):
         rprs_fit_unc = summary.get('rprs_deviation_fit_unc', np.nan)
         if np.isfinite(rprs_fit_unc):
             deviation_detail_parts.append(f"fit uncertainty={rprs_fit_unc:.6f}")
+        expected_unc = summary.get('rprs_deviation_expected_unc', summary.get('expected_rprs_unc', np.nan))
+        if np.isfinite(expected_unc):
+            deviation_detail_parts.append(f"expected uncertainty={expected_unc:.6f}")
+        comparison_unc = summary.get('rprs_deviation_unc', np.nan)
+        if np.isfinite(comparison_unc):
+            deviation_detail_parts.append(f"comparison uncertainty={comparison_unc:.6f}")
+        systematic_floor = summary.get('rprs_deviation_systematic_floor', np.nan)
+        if np.isfinite(systematic_floor):
+            deviation_detail_parts.append(f"systematic floor={systematic_floor:.6f}")
         deviation_detail = ", ".join(deviation_detail_parts)
     else:
         deviation_detail = "expected-value deviation disabled or unavailable"
@@ -1265,6 +1313,9 @@ def evaluate_transit_detection_qc(fit):
         'tmid_deviation_threshold_minutes': np.nan,
         'tmid_deviation_sigma': np.nan,
         'rprs_deviation_fit_unc': np.nan,
+        'rprs_deviation_expected_unc': np.nan,
+        'rprs_deviation_systematic_floor': np.nan,
+        'rprs_deviation_unc': np.nan,
         'rprs_deviation_sigma': np.nan,
         'tmid_deviation_score': np.nan,
         'rprs_deviation_score': np.nan,
@@ -1403,6 +1454,9 @@ def evaluate_transit_detection_qc(fit):
         'tmid_deviation_threshold_minutes': deviation_summary.get('tmid_deviation_threshold_minutes', np.nan),
         'tmid_deviation_sigma': deviation_summary.get('tmid_deviation_sigma', np.nan),
         'rprs_deviation_fit_unc': deviation_summary.get('rprs_deviation_fit_unc', np.nan),
+        'rprs_deviation_expected_unc': deviation_summary.get('rprs_deviation_expected_unc', np.nan),
+        'rprs_deviation_systematic_floor': deviation_summary.get('rprs_deviation_systematic_floor', np.nan),
+        'rprs_deviation_unc': deviation_summary.get('rprs_deviation_unc', np.nan),
         'rprs_deviation_sigma': deviation_summary.get('rprs_deviation_sigma', np.nan),
         'tmid_deviation_score': deviation_summary.get('tmid_deviation_score', np.nan),
         'rprs_deviation_score': deviation_summary.get('rprs_deviation_score', np.nan),
@@ -1558,6 +1612,9 @@ def annotate_transit_detection_qc(fit, summary=None):
     fit.transit_qc_tmid_deviation_threshold_minutes = summary.get('tmid_deviation_threshold_minutes')
     fit.transit_qc_tmid_deviation_sigma = summary.get('tmid_deviation_sigma')
     fit.transit_qc_rprs_deviation_fit_unc = summary.get('rprs_deviation_fit_unc')
+    fit.transit_qc_rprs_deviation_expected_unc = summary.get('rprs_deviation_expected_unc')
+    fit.transit_qc_rprs_deviation_systematic_floor = summary.get('rprs_deviation_systematic_floor')
+    fit.transit_qc_rprs_deviation_unc = summary.get('rprs_deviation_unc')
     fit.transit_qc_rprs_deviation_sigma = summary.get('rprs_deviation_sigma')
     fit.transit_qc_expected_rprs_deviation_sigma = summary.get('rprs_deviation_sigma')
     fit.transit_qc_ktmf_metric = summary.get('ktmf_metric')

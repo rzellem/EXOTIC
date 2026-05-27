@@ -37,13 +37,54 @@ def planet_dict_transit_parameters(planet_dict, limb_darkening=None, fallback=No
     planet_dict = planet_dict or {}
 
     aliases = {
-        "rprs": ("rprs", "pl_ratror"),
-        "per": ("pPer", "pl_orbper", "per", "period"),
-        "ars": ("aRs", "pl_ratdor", "ars"),
-        "inc": ("inc", "pl_orbincl"),
-        "ecc": ("ecc", "pl_orbeccen"),
-        "omega": ("omega", "pl_orblper"),
-        "tmid": ("midT", "pl_tranmid", "tmid"),
+        "rprs": (
+            "rprs",
+            "pl_ratror",
+            "Rp/Rs",
+            "Rp/R*",
+            "Ratio of Planet to Stellar Radius (Rp/Rs)",
+            "Ratio of Planet to Stellar Radius (Rp/R*)",
+        ),
+        "per": (
+            "pPer",
+            "pl_orbper",
+            "per",
+            "period",
+            "Orbital Period (days)",
+        ),
+        "ars": (
+            "aRs",
+            "pl_ratdor",
+            "ars",
+            "a/Rs",
+            "a/R*",
+            "Ratio of Distance to Stellar Radius (a/Rs)",
+            "Ratio of Distance to Stellar Radius (a/R*)",
+        ),
+        "inc": (
+            "inc",
+            "pl_orbincl",
+            "Orbital Inclination (deg)",
+        ),
+        "ecc": (
+            "ecc",
+            "pl_orbeccen",
+            "Orbital Eccentricity",
+            "Orbital Eccentricity (0 if null)",
+        ),
+        "omega": (
+            "omega",
+            "pl_orblper",
+            "Argument of Periastron (deg)",
+        ),
+        "tmid": (
+            "midT",
+            "pl_tranmid",
+            "tmid",
+            "Published Mid-Transit Time",
+            "Published Mid-Transit Time (BJD-UTC)",
+            "Published Mid-Transit Time (BJD_UTC)",
+        ),
     }
     for target, names in aliases.items():
         for name in names:
@@ -79,11 +120,38 @@ def planet_dict_transit_errors(planet_dict, limb_darkening=None, fallback=None):
     planet_dict = planet_dict or {}
 
     aliases = {
-        "rprs": ("rprsUnc", "pl_ratrorerr1"),
-        "per": ("pPerUnc", "pl_orbpererr1"),
-        "ars": ("aRsUnc", "pl_ratdorerr1"),
-        "inc": ("incUnc", "pl_orbinclerr1"),
-        "tmid": ("midTUnc", "pl_tranmiderr1"),
+        "rprs": (
+            "rprsUnc",
+            "pl_ratrorerr1",
+            "Rp/Rs Uncertainty",
+            "Rp/R* Uncertainty",
+            "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty",
+            "Ratio of Planet to Stellar Radius (Rp/R*) Uncertainty",
+        ),
+        "per": (
+            "pPerUnc",
+            "pl_orbpererr1",
+            "Orbital Period Uncertainty",
+        ),
+        "ars": (
+            "aRsUnc",
+            "pl_ratdorerr1",
+            "a/Rs Uncertainty",
+            "a/R* Uncertainty",
+            "Ratio of Distance to Stellar Radius (a/Rs) Uncertainty",
+            "Ratio of Distance to Stellar Radius (a/R*) Uncertainty",
+        ),
+        "inc": (
+            "incUnc",
+            "pl_orbinclerr1",
+            "Orbital Inclination Uncertainty",
+            "Orbital Inclination (deg) Uncertainty",
+        ),
+        "tmid": (
+            "midTUnc",
+            "pl_tranmiderr1",
+            "Mid-Transit Time Uncertainty",
+        ),
     }
     for target, names in aliases.items():
         for name in names:
@@ -111,6 +179,10 @@ def complete_transit_parameters(parameters):
     if "per" not in values and "period" in values:
         values["per"] = values["period"]
     return values
+
+
+def complete_transit_errors(errors):
+    return planet_dict_transit_errors(errors, fallback=errors)
 
 
 def transit_duration_days(parameters):
@@ -282,7 +354,7 @@ def _perturbed_value(key, value):
 
 def observable_depth_uncertainty_fraction(parameters, errors):
     values = complete_transit_parameters(parameters)
-    errors = errors or {}
+    errors = complete_transit_errors(errors or {})
     contributions = []
     for key in _DEPTH_ERROR_KEYS:
         center = finite_float(values.get(key))
@@ -338,6 +410,13 @@ def fit_transit_depth_summary(fit, prior_parameters=None, prior_errors=None):
     prior_error = np.nan
     if prior_parameters:
         prior_depth, prior_error = observable_depth_percent(prior_parameters, prior_errors or {})
+        if not np.isfinite(prior_depth):
+            prior_values = complete_transit_parameters(prior_parameters)
+            prior_errors = complete_transit_errors(prior_errors or {})
+            prior_depth, prior_error = radius_ratio_area_depth_percent(
+                prior_values.get("rprs"),
+                prior_errors.get("rprs"),
+            )
 
     delta = np.nan
     delta_error = np.nan

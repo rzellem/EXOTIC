@@ -3371,7 +3371,10 @@ def test_evaluate_transit_detection_qc_marks_large_expected_value_deviation_marg
 
     assert summary["computed"] is True
     assert summary["status"] == "marginal"
-    assert summary["rprs_deviation_sigma"] == pytest.approx(8.0)
+    expected_comparison_unc = np.sqrt(0.01 ** 2 + 0.01 ** 2 + (0.05 * 0.10) ** 2)
+    assert summary["rprs_deviation_unc"] == pytest.approx(expected_comparison_unc)
+    assert summary["rprs_deviation_systematic_floor"] == pytest.approx(0.05 * 0.10)
+    assert summary["rprs_deviation_sigma"] == pytest.approx(abs(0.18 - 0.10) / expected_comparison_unc)
     assert summary["deviation_from_expected_value"] == pytest.approx(0.0)
     assert summary["ktmf_metric"] <= 5.0
     assert summary["ktmf_metric"] < 3.5
@@ -3474,7 +3477,7 @@ def test_evaluate_transit_detection_qc_does_not_calculate_tmid_expected_value_de
     assert "not supported strongly enough against a flat/null model" not in summary["summary"]
 
 
-def test_expected_value_rprs_deviation_uses_fit_uncertainty_not_prior_uncertainty():
+def test_expected_value_rprs_deviation_uses_combined_uncertainty_with_systematic_floor():
     transit_model = np.ones(21, dtype=float)
     transit_model[9:12] -= 0.0287
     data = transit_model.copy()
@@ -3499,8 +3502,12 @@ def test_expected_value_rprs_deviation_uses_fit_uncertainty_not_prior_uncertaint
 
     summary = evaluate_transit_detection_qc(fit)
 
+    expected_comparison_unc = np.sqrt(0.0046 ** 2 + 0.0001 ** 2 + (0.05 * 0.1589) ** 2)
     assert summary["rprs_deviation_fit_unc"] == pytest.approx(0.0046)
-    assert summary["rprs_deviation_sigma"] == pytest.approx(abs(0.1694 - 0.1589) / 0.0046)
+    assert summary["rprs_deviation_expected_unc"] == pytest.approx(0.0001)
+    assert summary["rprs_deviation_systematic_floor"] == pytest.approx(0.05 * 0.1589)
+    assert summary["rprs_deviation_unc"] == pytest.approx(expected_comparison_unc)
+    assert summary["rprs_deviation_sigma"] == pytest.approx(abs(0.1694 - 0.1589) / expected_comparison_unc)
     assert summary["deviation_from_expected_value"] == pytest.approx(
         1.0 - summary["rprs_deviation_sigma"] / 5.0
     )
@@ -3602,8 +3609,12 @@ def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch
         duration_prior={"duration": 0.1},
     )
 
+    expected_comparison_unc = np.sqrt(0.0046 ** 2 + 0.0001 ** 2 + (0.05 * 0.1589) ** 2)
     assert refit.transit_qc_rprs_deviation_fit_unc == pytest.approx(0.0046)
-    assert refit.transit_qc_rprs_deviation_sigma == pytest.approx(abs(0.1694 - 0.1589) / 0.0046)
+    assert refit.transit_qc_rprs_deviation_expected_unc == pytest.approx(0.0001)
+    assert refit.transit_qc_rprs_deviation_systematic_floor == pytest.approx(0.05 * 0.1589)
+    assert refit.transit_qc_rprs_deviation_unc == pytest.approx(expected_comparison_unc)
+    assert refit.transit_qc_rprs_deviation_sigma == pytest.approx(abs(0.1694 - 0.1589) / expected_comparison_unc)
     contribution = next(
         item for item in refit.transit_qc_ktmf_contributions
         if item["label"] == "Deviation From Expected Value"
@@ -3611,6 +3622,9 @@ def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch
     assert contribution["score"] > 0.0
     assert contribution["max_points"] > 0.0
     assert "fit uncertainty=0.004600" in contribution["detail"]
+    assert "expected uncertainty=0.000100" in contribution["detail"]
+    assert "comparison uncertainty=" in contribution["detail"]
+    assert "systematic floor=" in contribution["detail"]
     assert "Tmid" not in contribution["detail"]
 
 

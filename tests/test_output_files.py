@@ -13,7 +13,11 @@ from exotic.output_files import (
     fit_impact_parameter_value_error,
     save_comp_star_calibration_summary,
 )
-from exotic.transit_depth import observable_depth_percent, radius_ratio_area_depth_percent
+from exotic.transit_depth import (
+    fit_transit_depth_summary,
+    observable_depth_percent,
+    radius_ratio_area_depth_percent,
+)
 
 
 class DummyFit:
@@ -63,6 +67,57 @@ class DummyFit:
             "u2": 0.0,
             "u3": 0.0,
         }
+
+
+def test_prior_depth_uses_available_gj436_geometry():
+    fit = DummyFit()
+    prior = {
+        "Published Mid-Transit Time": 2454510.80162,
+        "Rp/Rs": 0.0822,
+        "a/Rs": 13.73,
+        "Orbital Period (days)": 2.64388312,
+        "Orbital Inclination (deg)": 86.44,
+        "Orbital Eccentricity": 0.13827,
+        "Argument of Periastron (deg)": 351.0,
+        "u0": 0.0,
+        "u1": 0.0,
+        "u2": 0.0,
+        "u3": 0.0,
+    }
+
+    summary = fit_transit_depth_summary(
+        fit,
+        prior_parameters=prior,
+        prior_errors={
+            "Rp/Rs Uncertainty": 0.001,
+            "a/Rs Uncertainty": 0.46,
+            "Orbital Inclination Uncertainty": 0.17,
+        },
+    )
+
+    assert summary["prior_observable_depth"] == pytest.approx(0.675684, abs=1.0e-5)
+    assert summary["prior_observable_depth_error"] == pytest.approx(0.01644, abs=1.0e-6)
+
+
+def test_prior_depth_respects_inclination_for_non_transiting_geometry():
+    fit = DummyFit()
+    prior = {
+        "tmid": 2454510.80162,
+        "rprs": 0.0822,
+        "ars": 13.73,
+        "per": 2.64388312,
+        "inc": 0.0,
+        "ecc": 0.13827,
+        "omega": 351.0,
+        "u0": 0.0,
+        "u1": 0.0,
+        "u2": 0.0,
+        "u3": 0.0,
+    }
+
+    summary = fit_transit_depth_summary(fit, prior_parameters=prior)
+
+    assert summary["prior_observable_depth"] == pytest.approx(0.0)
 
 
 def aavso_json_header(output_text, header_name):

@@ -488,6 +488,39 @@ def _mute_ultranest_logging(sampler):
             logger.disabled = disabled
 
 
+def _traceback_mentions_ultranest_mlfriends(exc):
+    traceback = exc.__traceback__
+    while traceback is not None:
+        filename = str(traceback.tb_frame.f_code.co_filename).replace("\\", "/")
+        if "ultranest/mlfriends" in filename:
+            return True
+        traceback = traceback.tb_next
+    return False
+
+
+def _is_ultranest_degenerate_region_error(exc):
+    if not isinstance(exc, ValueError):
+        return False
+
+    message = str(exc)
+    if "Buffer has wrong number of dimensions" not in message:
+        return False
+    if "expected 2" not in message or "got 0" not in message:
+        return False
+    return _traceback_mentions_ultranest_mlfriends(exc)
+
+
+def _run_sampler_with_degenerate_region_guard(sampler, kwargs):
+    try:
+        return sampler.run(**kwargs)
+    except ValueError as exc:
+        if not _is_ultranest_degenerate_region_error(exc):
+            raise
+        raise np.linalg.LinAlgError(
+            "UltraNest failed while building a degenerate sampling region."
+        ) from exc
+
+
 def _read_float(mapping, *keys):
     for key in keys:
         if key not in mapping:
@@ -660,11 +693,11 @@ def run_reactive_sampler(
             kwargs["show_status"] = False
             kwargs["viz_callback"] = False
             with _mute_ultranest_logging(sampler):
-                return sampler.run(**kwargs)
+                return _run_sampler_with_degenerate_region_guard(sampler, kwargs)
 
         if mode == "rich":
             kwargs.setdefault("show_status", True)
-            return sampler.run(**kwargs)
+            return _run_sampler_with_degenerate_region_guard(sampler, kwargs)
 
         progress = _UltraNestSimpleProgress(stream=stream, interval_seconds=interval_seconds)
         upstream_callback = kwargs.get("viz_callback")
@@ -681,7 +714,7 @@ def run_reactive_sampler(
         progress.start()
         try:
             with _mute_ultranest_logging(sampler):
-                result = sampler.run(**kwargs)
+                result = _run_sampler_with_degenerate_region_guard(sampler, kwargs)
         finally:
             progress.finish()
         return result

@@ -1765,20 +1765,21 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
     assert "Model Evidence" in contributions_by_label
     assert "Delta BIC" not in contributions_by_label
     assert "Delta chi2" not in contributions_by_label
-    assert contributions_by_label["Model Evidence"]["max_points"] == pytest.approx(0.8)
-    assert contributions_by_label["Deviation From Expected Value"]["max_points"] == pytest.approx(1.5)
-    assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7)
-    assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75)
-    assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(0.75)
+    scale = 5.0 / (0.8 + 1.5 + 0.7 + 0.75 + 0.75)
+    assert contributions_by_label["Model Evidence"]["max_points"] == pytest.approx(0.8 * scale)
+    assert contributions_by_label["Deviation From Expected Value"]["max_points"] == pytest.approx(1.5 * scale)
+    assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7 * scale)
+    assert "Rp/R* Significance" not in contributions_by_label
+    assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75 * scale)
+    assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(0.75 * scale)
     assert "Rp/R* sigma=2.00" in contributions_by_label["Deviation From Expected Value"]["detail"]
     assert "Tmid" not in contributions_by_label["Deviation From Expected Value"]["detail"]
 
     model_evidence_score = ((1.0 - np.exp(-1.0)) + (1.0 - np.exp(-2.0))) / 2.0
-    expected_ktmf = (
+    expected_ktmf = scale * (
         0.8 * model_evidence_score
         + 1.5 * 0.6
         + 0.7 * 0.5
-        + 0.5 * (1.0 - np.exp(-2.0))
         + 0.75 * 1.0
         + 0.75 * (1.0 - np.exp(-2.0))
     )
@@ -1953,6 +1954,27 @@ def test_comparison_star_coverage_summary_iteratively_rejects_low_count_tail():
     assert coverage["comp1"]["coverage_min_required_count"] == 8
 
 
+def test_comparison_star_coverage_summary_keeps_nearly_complete_candidates():
+    frame_count = 146
+    coverage = comparison_star_coverage_summary(
+        {
+            **{
+                f"comp{comp_index + 1}": np.ones(frame_count, dtype=float)
+                for comp_index in range(8)
+            },
+            "comp9": np.concatenate([np.ones(145, dtype=float), [np.nan]]),
+            "comp10": np.concatenate([np.ones(142, dtype=float), np.full(4, np.nan)]),
+        }
+    )
+
+    assert coverage["comp9"]["coverage_count"] == 145
+    assert coverage["comp10"]["coverage_count"] == 142
+    assert coverage["comp9"]["coverage_min_required_count"] == 117
+    assert coverage["comp10"]["coverage_min_required_count"] == 117
+    assert coverage["comp9"]["coverage_rejected"] is False
+    assert coverage["comp10"]["coverage_rejected"] is False
+
+
 def test_comparison_star_stability_summary_rejects_low_coverage_candidates():
     airmass = np.linspace(1.0, 1.5, 6)
     summary = comparison_star_stability_summary(
@@ -1968,6 +1990,40 @@ def test_comparison_star_stability_summary_rejects_low_coverage_candidates():
     assert summary["best_comp_index"] in (0, 1)
     assert summary["comp_summaries"][2]["coverage_rejected"]
     assert np.isinf(summary["comp_summaries"][2]["aggregate_score"])
+
+
+def test_comparison_star_stability_summary_rejects_noisy_nearly_complete_candidates_as_outliers():
+    frame_count = 146
+    airmass = np.linspace(1.0, 1.5, frame_count)
+    phase = np.linspace(0.0, 4.0 * np.pi, frame_count)
+    stable_flux = 100.0 * (1.0 + 0.001 * np.sin(phase))
+    comp_flux_map = {
+        f"comp{comp_index + 1}": stable_flux * (1.0 + 0.0001 * comp_index)
+        for comp_index in range(8)
+    }
+    noisy_flux = 100.0 * (1.0 + 0.35 * np.sin(np.linspace(0.0, 14.0 * np.pi, frame_count)))
+    noisy_flux[-1] = np.nan
+    choppy_flux = 100.0 * (1.0 + 0.25 * np.sign(np.sin(np.linspace(0.0, 20.0 * np.pi, frame_count))))
+    choppy_flux[-4:] = np.nan
+    comp_flux_map["comp9"] = noisy_flux
+    comp_flux_map["comp10"] = choppy_flux
+
+    summary = comparison_star_stability_summary(comp_flux_map, airmass)
+    comp9_summary = summary["comp_summaries"][8]
+    comp10_summary = summary["comp_summaries"][9]
+
+    assert comp9_summary["coverage_count"] == 145
+    assert comp10_summary["coverage_count"] == 142
+    assert comp9_summary["coverage_rejected"] is False
+    assert comp10_summary["coverage_rejected"] is False
+    assert comp9_summary["suitability_outlier_rejected"] is True
+    assert comp10_summary["suitability_outlier_rejected"] is True
+    reason = comparison_calibration_selection_reason(
+        comp9_summary,
+        summary["best_comp_score"],
+    )
+    assert "high-side sigma clipping" in reason
+    assert "low coverage" not in reason
 
 
 def test_comparison_star_stability_summary_rejects_shared_bad_frame():
@@ -2142,6 +2198,100 @@ def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened
     assert fit.oot_baseline_detrending_applied is True
     assert fit.oot_baseline_pre_points == 3
     assert fit.oot_baseline_post_points == 3
+
+
+def test_fit_final_lightcurve_linear_detrend_does_not_reapply_fixed_airmass_baseline(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    times = np.array([-2.0, -1.0, -0.25, 0.0, 0.25, 1.0, 2.0])
+    transit_profile = np.array([1.0, 1.0, 1.0, 0.99, 1.0, 1.0, 1.0])
+    flux = (1.03 + 0.02 * times) * transit_profile
+    fluxerr = np.full_like(times, 0.01)
+    airmass = np.linspace(1.0, 1.3, times.size)
+    prior = {"rprs": 0.1, "tmid": 0.0, "inc": 89.0, "a0": 1.03, "a1": 1.03, "a2": 0.2}
+    bounds = {
+        "rprs": [0.0, 0.2],
+        "tmid": [-0.1, 0.1],
+        "inc": [84.0, 90.0],
+        "a0": [0.95, 1.05],
+        "a2": [-3.0, 3.0],
+    }
+    captured = {"calls": []}
+
+    def fake_run_nested(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        **kwargs,
+    ):
+        captured["calls"].append({
+            "flux": np.asarray(call_flux, dtype=float),
+            "prior": dict(call_prior),
+            "bounds": dict(call_bounds),
+            "fixed_flux_baseline": kwargs.get("fixed_flux_baseline"),
+        })
+        return types.SimpleNamespace(
+            time=np.asarray(call_times, dtype=float),
+            data=np.asarray(call_flux, dtype=float),
+            dataerr=np.asarray(call_fluxerr, dtype=float),
+            airmass=np.asarray(call_airmass, dtype=float),
+            transit=transit_profile.copy(),
+            parameters={"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a0": call_prior.get("a0", 1.0), "a2": 0.2},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.001, "a2": 0.01},
+            residuals=np.zeros_like(call_flux, dtype=float),
+            duration_expected=0.5,
+            duration_measured=0.5,
+        )
+
+    monkeypatch.setattr(exotic_module, "run_nested_lightcurve_fit_with_rprs_posterior_retry", fake_run_nested)
+    monkeypatch.setattr(
+        exotic_module,
+        "build_final_fit_prefit_refinement_plan",
+        lambda call_times, call_flux, call_fluxerr, call_airmass, call_prior, call_bounds, fit, **kwargs: {
+            "applied": False,
+            "note": "test no prefit refinement",
+            "times": np.asarray(call_times, dtype=float),
+            "flux": np.asarray(call_flux, dtype=float),
+            "unc": np.asarray(call_fluxerr, dtype=float),
+            "airmass": np.asarray(call_airmass, dtype=float),
+            "jd_times": None,
+            "prior": dict(call_prior),
+            "bounds": dict(call_bounds),
+            "duration": 0.5,
+            "original_point_count": len(call_times),
+            "refined_point_count": len(call_times),
+            "trimmed_pre_points": 0,
+            "trimmed_post_points": 0,
+            "original_tmid_bounds": call_bounds["tmid"],
+            "refined_tmid_bounds": call_bounds["tmid"],
+        },
+    )
+    monkeypatch.setattr(exotic_module, "annotate_transit_detection_qc", lambda fit: None)
+
+    fit, refit_flux, _ = fit_final_lightcurve_with_oot_baseline_detrending(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+        detrend_on_outoftransit_baseline=True,
+        extend_sparse_posterior_live_points=False,
+    )
+
+    assert len(captured["calls"]) == 2
+    final_call = captured["calls"][1]
+    assert final_call["fixed_flux_baseline"] is False
+    assert "a0" in final_call["bounds"]
+    assert "a2" in final_call["bounds"]
+    assert np.allclose(final_call["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
+    assert final_call["flux"][3] == pytest.approx(0.99, abs=1e-8)
+    assert np.allclose(refit_flux, final_call["flux"])
+    assert fit.oot_baseline_parameter_fit_applied is False
+    assert "already flattened" in fit.oot_baseline_parameter_fit_note
 
 
 def test_fit_final_lightcurve_uses_oot_baseline_parameter_refit_when_linear_detrend_skips(monkeypatch):
@@ -3122,6 +3272,39 @@ def test_evaluate_transit_detection_qc_prefers_transit_model():
     assert summary["delta_chi2"] > 0.0
 
 
+def test_evaluate_transit_detection_qc_passes_strong_model_with_low_rprs_precision():
+    transit_model = np.ones(21, dtype=float)
+    transit_model[8:13] = 0.99
+    data = transit_model + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, -0.0001, 0.0002, -0.0002, 0.0001,
+            0.0000, -0.0001, 0.0002, -0.0001, 0.0001, 0.0000, -0.0001,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.20, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["computed"] is True
+    assert summary["status"] == "pass"
+    assert summary["rprs_sigma"] == pytest.approx(0.5)
+    assert summary["ktmf_metric"] >= 3.5
+    assert "not used as a transit-detection veto" in " ".join(summary["notes"])
+
+
 def test_evaluate_transit_detection_qc_fails_when_flat_model_is_better():
     transit_model = np.ones(21, dtype=float)
     transit_model[8:13] = 0.99
@@ -3154,7 +3337,7 @@ def test_evaluate_transit_detection_qc_fails_when_flat_model_is_better():
     assert summary["delta_chi2"] < 0.0
 
 
-def test_evaluate_transit_detection_qc_rejects_large_expected_value_deviation():
+def test_evaluate_transit_detection_qc_marks_large_expected_value_deviation_marginal_via_ktmf():
     transit_model = np.ones(21, dtype=float)
     transit_model[8:13] = 0.99
     data = transit_model + np.array(
@@ -3187,10 +3370,11 @@ def test_evaluate_transit_detection_qc_rejects_large_expected_value_deviation():
     summary = evaluate_transit_detection_qc(fit)
 
     assert summary["computed"] is True
-    assert summary["status"] == "fail"
+    assert summary["status"] == "marginal"
     assert summary["rprs_deviation_sigma"] == pytest.approx(8.0)
     assert summary["deviation_from_expected_value"] == pytest.approx(0.0)
     assert summary["ktmf_metric"] <= 5.0
+    assert summary["ktmf_metric"] < 3.5
     assert np.isnan(summary["tmid_deviation_sigma"])
     assert np.isnan(summary["tmid_deviation_minutes"])
     assert summary["rprs_deviation_fit_unc"] == pytest.approx(0.01)

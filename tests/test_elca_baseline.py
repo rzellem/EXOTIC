@@ -1387,6 +1387,34 @@ def test_plot_triangle_accepts_zoom_sigma(monkeypatch, tmp_path):
     assert captured["range"][1][1] < 1.2
 
 
+def test_triangle_payload_recenter_uses_visible_zoom_peak(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    ars_values = np.concatenate([
+        np.linspace(5.22, 5.30, 60),
+        np.linspace(6.45, 6.55, 20),
+        np.linspace(8.0, 9.0, 20),
+    ])
+    payload = {
+        "sampled_keys": ["ars"],
+        "display_points": ars_values[:, None],
+        "display_weights": None,
+        "ranges": [[5.0, 7.0]],
+        "titles": ["6.0 +/- 1.0"],
+        "truths": [6.0],
+        "mask_centers": [6.0],
+        "mask_errors": [1.0],
+        "display_spec": None,
+        "geometry_summary": {},
+    }
+
+    updated = fit._recenter_triangle_plot_payload_for_visible_ranges(payload)
+
+    assert updated["truths"][0] == pytest.approx(5.3)
+    assert updated["mask_centers"][0] == pytest.approx(5.3)
+    assert updated["titles"][0].startswith("5.3 +/-")
+
+
 def test_triangle_payload_expands_degenerate_error_ranges_to_sample_cloud(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)

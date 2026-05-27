@@ -1703,6 +1703,8 @@ class lc_fitter(object):
         plot_range=None,
         weights=None,
         min_informative_peak_ratio=1.5,
+        bins=None,
+        force_histogram_mode=False,
     ):
         sample_values = np.asarray(sample_values, dtype=float)
         finite_mask = np.isfinite(sample_values)
@@ -1734,7 +1736,10 @@ class lc_fitter(object):
                 bounds = [float(np.nanmin(finite_values)), float(np.nanmax(finite_values))]
 
         if np.all(np.isfinite(bounds)) and bounds[0] < bounds[1]:
-            bins = int(np.clip(np.sqrt(finite_values.size), 10, 80))
+            if bins is None:
+                bins = int(np.clip(np.sqrt(finite_values.size), 10, 80))
+            else:
+                bins = max(1, int(bins))
             counts, edges = np.histogram(
                 finite_values,
                 bins=max(1, bins),
@@ -1746,15 +1751,21 @@ class lc_fitter(object):
                 peak = float(np.nanmax(positive_counts))
                 typical = float(np.nanmedian(positive_counts))
                 total = float(np.nansum(positive_counts))
-                if (
+                informative_peak = (
                     np.isfinite(peak)
                     and np.isfinite(typical)
                     and np.isfinite(total)
                     and total > 0
-                    and typical > 0
-                    and peak >= min_informative_peak_ratio * typical
-                    and peak >= 0.05 * total
-                ):
+                    and (
+                        force_histogram_mode
+                        or (
+                            typical > 0
+                            and peak >= min_informative_peak_ratio * typical
+                            and peak >= 0.05 * total
+                        )
+                    )
+                )
+                if informative_peak:
                     mode_index = int(np.argmax(counts))
                     estimate = float(0.5 * (edges[mode_index] + edges[mode_index + 1]))
 
@@ -1784,6 +1795,25 @@ class lc_fitter(object):
             error = np.nan
 
         return float(estimate), error
+
+    def _visible_triangle_plot_values(self, values, plot_range, weights=None):
+        values = np.asarray(values, dtype=float)
+        try:
+            lower, upper = [float(value) for value in np.asarray(plot_range, dtype=float).reshape(-1)[:2]]
+        except (TypeError, ValueError, IndexError):
+            finite_mask = np.isfinite(values)
+            return values[finite_mask], None
+
+        finite_mask = np.isfinite(values)
+        if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+            finite_mask &= (values >= lower) & (values <= upper)
+
+        visible_weights = None
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float)
+            if weights.shape == values.shape:
+                visible_weights = weights[finite_mask]
+        return values[finite_mask], visible_weights
 
     def get_parameter_posterior_recenter_diagnostics(self, key, sigma_scale=5.0, bins=None):
         diagnostics = {
@@ -2489,6 +2519,86 @@ class lc_fitter(object):
 
         return zoomed_ranges
 
+    def _recenter_triangle_plot_payload_for_visible_ranges(self, payload):
+        display_points = np.asarray(payload.get('display_points', []), dtype=float)
+        if display_points.ndim != 2 or display_points.shape[1] == 0:
+            return payload
+
+        updated = dict(payload)
+        titles = list(payload.get('titles', []))
+        truths = list(payload.get('truths', []))
+        mask_centers = list(payload.get('mask_centers', []))
+        mask_errors = list(payload.get('mask_errors', []))
+        ranges = list(payload.get('ranges', []))
+        sampled_keys = list(payload.get('sampled_keys', []))
+
+        display_weights = payload.get('display_weights')
+        if display_weights is not None:
+            display_weights = np.asarray(display_weights, dtype=float)
+            if display_weights.ndim != 1 or display_weights.shape[0] != display_points.shape[0]:
+                display_weights = None
+
+        plot_bins = int(max(1, np.sqrt(display_points.shape[0])))
+        display_spec = payload.get('display_spec')
+        geometry_summary = payload.get('geometry_summary') or {}
+
+        for i, key in enumerate(sampled_keys):
+            if i >= display_points.shape[1] or i >= len(ranges):
+                continue
+            if (
+                display_spec is not None
+                and key == display_spec.get('key')
+                and display_spec.get('mirror', False)
+            ):
+                continue
+
+            visible_values, visible_weights = self._visible_triangle_plot_values(
+                display_points[:, i],
+                ranges[i],
+                weights=display_weights,
+            )
+            if visible_values.size < 2:
+                continue
+
+            fallback_center = truths[i] if i < len(truths) else np.nan
+            if fallback_center is None or not np.isfinite(fallback_center):
+                fallback_center = mask_centers[i] if i < len(mask_centers) else np.nan
+            fallback_error = mask_errors[i] if i < len(mask_errors) else np.nan
+            center, error = self._triangle_plot_display_estimate(
+                visible_values,
+                fallback_center,
+                fallback_error,
+                plot_range=ranges[i],
+                weights=visible_weights,
+                bins=plot_bins,
+                force_histogram_mode=True,
+            )
+            if not np.isfinite(center):
+                continue
+
+            if i < len(truths):
+                truths[i] = center
+            if i < len(mask_centers):
+                mask_centers[i] = center
+            if i < len(mask_errors):
+                mask_errors[i] = error
+            if i < len(titles):
+                if display_spec is not None and key == display_spec.get('key'):
+                    inc_center = geometry_summary.get('inc_center')
+                    inc_error = geometry_summary.get('inc_error')
+                    titles[i] = (
+                        f"b={self._format_triangle_plot_geometry_value(center, error)}\n"
+                        f"i={self._format_triangle_plot_geometry_value(inc_center, inc_error, ' deg')}"
+                    )
+                else:
+                    titles[i] = self._format_triangle_plot_parameter_title(center, error)
+
+        updated['titles'] = titles
+        updated['truths'] = truths
+        updated['mask_centers'] = mask_centers
+        updated['mask_errors'] = mask_errors
+        return updated
+
     def _triangle_contour_levels(self, chi2, mask1, mask2, mask3):
         raw_levels = np.array([
             np.percentile(chi2[mask1], 95),
@@ -3118,6 +3228,7 @@ class lc_fitter(object):
         if zoom_sigma is not None:
             payload = dict(payload)
             payload['ranges'] = self._triangle_plot_sigma_window_ranges(payload, zoom_sigma)
+            payload = self._recenter_triangle_plot_payload_for_visible_ranges(payload)
 
         chi2 = payload['display_logl'] * -2
         parameter_count = max(1, len(payload['sampled_keys']))

@@ -238,7 +238,7 @@ AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
 LIGHTCURVE_MIN_VALID_POINTS = 5
 COMPARISON_STAR_MIN_COVERAGE_FRACTION = 0.8
 COMPARISON_STAR_MIN_VALID_FRAMES = 5
-COMPARISON_STAR_COVERAGE_SIGMA = 3.0
+COMPARISON_STAR_COVERAGE_SIGMA = 3.0  # Legacy constant; coverage rejection is fraction-based.
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA = 4.25
 COMPARISON_STAR_SUITABILITY_MIN_CANDIDATES = 5
@@ -334,8 +334,8 @@ BAD_PIXEL_NEIGHBOR_FOOTPRINT = np.array(
 )
 TRANSIT_QC_DELTA_BIC_FAIL_THRESHOLD = 6.0
 TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD = 10.0
-TRANSIT_QC_MIN_RPRS_SIGMA = 3.0
-TRANSIT_QC_MARGINAL_RPRS_SIGMA = 5.0
+TRANSIT_QC_KTMF_FAIL_THRESHOLD = 2.5
+TRANSIT_QC_KTMF_PASS_THRESHOLD = 3.5
 TRANSIT_QC_MIN_EEBLS_SNR = 4.0
 TRANSIT_QC_DURATION_RATIO_MIN = 0.5
 TRANSIT_QC_DURATION_RATIO_MAX = 2.0
@@ -346,7 +346,6 @@ TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS = {
     'model_evidence': 0.8,
     'deviation_from_expected_value': 1.5,
     'residual_scatter': 0.7,
-    'rprs_significance': 0.5,
     'duration_consistency': 0.75,
     'eebls_depth_snr': 0.75,
 }
@@ -1009,16 +1008,6 @@ def compute_transit_qc_ktmf(summary):
             ),
         },
         {
-            'key': 'rprs_significance',
-            'label': 'Rp/R* Significance',
-            'score': transit_qc_saturating_score(summary.get('rprs_sigma', np.nan), TRANSIT_QC_MIN_RPRS_SIGMA),
-            'detail': (
-                f"{summary.get('rprs_sigma', np.nan):.2f} sigma"
-                if np.isfinite(summary.get('rprs_sigma', np.nan))
-                else "n/a"
-            ),
-        },
-        {
             'key': 'duration_consistency',
             'label': 'Duration Consistency',
             'score': transit_qc_duration_score(summary.get('duration_ratio', np.nan)),
@@ -1453,34 +1442,21 @@ def evaluate_transit_detection_qc(fit):
         notes.append("The transit model is strongly preferred over the flat/null model.")
 
     if np.isfinite(summary['rprs_sigma']):
-        if summary['rprs_sigma'] < TRANSIT_QC_MIN_RPRS_SIGMA:
-            status = 'fail'
-            notes.append(
-                f"The fitted transit depth is only {summary['rprs_sigma']:.2f}-sigma."
-            )
-            failure_reasons.append(
-                f"the fitted transit depth is only {summary['rprs_sigma']:.2f}-sigma"
-            )
-        elif summary['rprs_sigma'] < TRANSIT_QC_MARGINAL_RPRS_SIGMA and status == 'pass':
-            status = 'marginal'
-            notes.append(
-                f"The fitted transit depth is only {summary['rprs_sigma']:.2f}-sigma."
-            )
+        notes.append(
+            f"Rp/R* fit precision diagnostic: {summary['rprs_sigma']:.2f}-sigma "
+            "(not used as a transit-detection veto)."
+        )
 
     if np.isfinite(summary['duration_ratio']):
         if (
             summary['duration_ratio'] < TRANSIT_QC_DURATION_RATIO_MIN
             or summary['duration_ratio'] > TRANSIT_QC_DURATION_RATIO_MAX
         ):
-            if status == 'pass':
-                status = 'marginal'
             notes.append(
                 f"The measured transit duration is {summary['duration_ratio']:.2f}x the modeled duration."
             )
 
     if np.isfinite(summary['eebls_depth_snr']) and summary['eebls_depth_snr'] < TRANSIT_QC_MIN_EEBLS_SNR:
-        if status == 'pass':
-            status = 'marginal'
         notes.append(
             f"EEBLS only found a weak box-like event (depth SNR={summary['eebls_depth_snr']:.2f})."
         )
@@ -1488,24 +1464,37 @@ def evaluate_transit_detection_qc(fit):
     if use_deviation_from_expected_transit_in_qc:
         notes.extend(deviation_summary.get('notes', []))
         if deviation_summary.get('failed'):
-            status = 'fail'
-            detailed_reasons = [
-                reason for reason in deviation_summary.get('failure_reasons', [])
-                if isinstance(reason, str) and reason.strip()
-            ]
-            if detailed_reasons:
-                failure_reasons.extend(detailed_reasons)
-            else:
-                notes.append(
-                    "The fit deviates too far from the expected published Rp/R* value."
-                )
-                failure_reasons.append(
-                    "the fit deviates too far from the expected published Rp/R* value"
-                )
+            notes.append(
+                "The fit deviates far from the expected published Rp/R* value; "
+                "this now contributes through KTMF rather than acting as a hard QC veto."
+            )
 
     ktmf_metric, ktmf_contributions = compute_transit_qc_ktmf(summary)
     summary['ktmf_metric'] = ktmf_metric
     summary['ktmf_contributions'] = ktmf_contributions
+
+    if np.isfinite(ktmf_metric):
+        if status != 'fail' and ktmf_metric < TRANSIT_QC_KTMF_FAIL_THRESHOLD:
+            status = 'fail'
+            notes.append(
+                f"KTMF is {ktmf_metric:.2f}/5.00, below the fail threshold "
+                f"of {TRANSIT_QC_KTMF_FAIL_THRESHOLD:.2f}."
+            )
+            failure_reasons.append(
+                f"KTMF is {ktmf_metric:.2f}/5.00, below the fail threshold "
+                f"of {TRANSIT_QC_KTMF_FAIL_THRESHOLD:.2f}"
+            )
+        elif status == 'pass' and ktmf_metric < TRANSIT_QC_KTMF_PASS_THRESHOLD:
+            status = 'marginal'
+            notes.append(
+                f"KTMF is {ktmf_metric:.2f}/5.00, below the pass threshold "
+                f"of {TRANSIT_QC_KTMF_PASS_THRESHOLD:.2f}."
+            )
+        elif status == 'marginal' and ktmf_metric < TRANSIT_QC_KTMF_PASS_THRESHOLD:
+            notes.append(
+                f"KTMF is {ktmf_metric:.2f}/5.00, below the pass threshold "
+                f"of {TRANSIT_QC_KTMF_PASS_THRESHOLD:.2f}."
+            )
 
     if status == 'pass':
         summary_text = f"Transit model strongly preferred over flat/null model ({comparison_text})."
@@ -2688,8 +2677,17 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         if detrend_result.get('applied'):
             fit_flux = np.asarray(detrend_result['flux'], dtype=float)
             fit_unc = np.asarray(detrend_result['unc'], dtype=float)
+            prior['a0'] = 1.0
+            prior['a1'] = 1.0
+            prior['a2'] = 0.0
 
     fixed_errors = baseline_fixed_errors_from_fit(previous_fit)
+    if detrend_result.get('applied'):
+        fixed_errors = {
+            'a0': fixed_errors.get('a0', 0.0),
+            'a1': fixed_errors.get('a1', fixed_errors.get('a0', 0.0)),
+            'a2': fixed_errors.get('a2', 0.0),
+        }
     base_live_points, target_live_points = selected_final_live_point_target(
         sparse_live_point_extension_enabled,
     )
@@ -2713,9 +2711,14 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     )
     log_expected_transit_coverage_assessment(pre_ultranest_coverage_assessment)
 
+    fixed_baseline_source = (
+        "with a flat fixed baseline after out-of-transit detrending"
+        if detrend_result.get('applied')
+        else "with fixed a0/a2 from the previous fast UltraNest fit"
+    )
     log_info(
         "Running the selected comparison-star final UltraNest fit on the full-resolution light curve "
-        f"with fixed a0/a2 from the previous fast UltraNest fit at {min_live_points} minimum live points."
+        f"{fixed_baseline_source} at {min_live_points} minimum live points."
     )
     fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         times,
@@ -2739,10 +2742,16 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
+    baseline_parameter_note = (
+        "Full-resolution out-of-transit linear detrending flattened the final-fit light curve; "
+        "fixed the final baseline to a0=1 and a2=0 instead of reusing the previous fast-fit baseline scale."
+        if detrend_result.get('applied')
+        else "Used a0 and a2 from the previous fast UltraNest fit for the full-resolution final run."
+    )
     annotate_out_of_transit_baseline_parameter_fit(
         fit,
-        True,
-        note="Used a0 and a2 from the previous fast UltraNest fit for the full-resolution final run.",
+        not bool(detrend_result.get('applied')),
+        note=baseline_parameter_note,
         pre_points=0,
         post_points=0,
         a0=prior.get('a0'),
@@ -2777,8 +2786,8 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             True,
             note=(
                 "Applied full-resolution selected comparison-star final UltraNest run "
-                f"({base_live_points}->{target_live_points} minimum live points) using fixed a0/a2 "
-                "from the previous fast UltraNest fit."
+                f"({base_live_points}->{target_live_points} minimum live points) "
+                f"{fixed_baseline_source}."
             ),
             diagnostics=diagnostics,
             post_extension_diagnostics=diagnostics,
@@ -7532,7 +7541,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     baseline_constrained_prior = dict(working_prior)
     baseline_constrained_bounds = clone_lightcurve_bounds(working_bounds)
     if baseline_parameter_result.get('applied'):
-        log_info("Prepared out-of-transit airmass/baseline parameter constraints for the final transit refit.")
+        log_info("Prepared out-of-transit airmass/baseline parameter constraints for a fallback final transit refit.")
         log_info(baseline_parameter_result['note'])
         baseline_fit_mask = np.asarray(baseline_parameter_result['oot_mask'], dtype=bool)
         baseline_fixed_errors = {
@@ -7669,13 +7678,15 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         detrend_result['flux'],
         disable_vertical_flux_normalization,
     )
+    if 'a2' not in refit_bounds:
+        refit_prior['a2'] = 0.0
+    baseline_parameter_fit_note = baseline_parameter_result.get('note')
+    baseline_parameter_fit_used = False
     if baseline_parameter_result.get('applied'):
-        refit_prior['a0'] = baseline_parameter_result['a0']
-        refit_prior['a1'] = baseline_parameter_result['a0']
-        refit_prior['a2'] = baseline_parameter_result['a2']
-        refit_bounds.pop('a0', None)
-        refit_bounds.pop('a1', None)
-        refit_bounds.pop('a2', None)
+        baseline_parameter_fit_note = (
+            "Not used in the final refit because the out-of-transit linear detrending "
+            "already flattened the final-fit flux baseline."
+        )
 
     refit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         working_times,
@@ -7690,7 +7701,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
         baseline_fit_mask=baseline_fit_mask,
         fixed_parameter_errors=baseline_fixed_errors,
-        fixed_flux_baseline=bool(baseline_parameter_result.get('applied')),
+        fixed_flux_baseline=baseline_parameter_fit_used,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
@@ -7726,14 +7737,14 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     )
     annotate_out_of_transit_baseline_parameter_fit(
         refit,
-        bool(baseline_parameter_result.get('applied')),
-        note=baseline_parameter_result.get('note'),
+        baseline_parameter_fit_used,
+        note=baseline_parameter_fit_note,
         pre_points=baseline_parameter_result.get('pre_points', 0),
         post_points=baseline_parameter_result.get('post_points', 0),
-        a0=baseline_parameter_result.get('a0'),
-        a0_error=baseline_parameter_result.get('a0_error'),
-        a2=baseline_parameter_result.get('a2'),
-        a2_error=baseline_parameter_result.get('a2_error'),
+        a0=baseline_parameter_result.get('a0') if baseline_parameter_fit_used else None,
+        a0_error=baseline_parameter_result.get('a0_error') if baseline_parameter_fit_used else None,
+        a2=baseline_parameter_result.get('a2') if baseline_parameter_fit_used else None,
+        a2_error=baseline_parameter_result.get('a2_error') if baseline_parameter_fit_used else None,
     )
     annotate_transit_detection_qc(refit)
     if extend_sparse_posterior_live_points:
@@ -14637,6 +14648,42 @@ def format_comp_star_coverage_text(summary):
     return coverage_text
 
 
+def format_comp_star_coverage_rejection_detail(summary):
+    coverage_count = int(summary.get('coverage_count', 0) or 0)
+    threshold_values = []
+    for threshold in (
+        summary.get('coverage_rejection_threshold_count'),
+        summary.get('coverage_min_required_count'),
+    ):
+        try:
+            numeric_threshold = float(threshold)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(numeric_threshold):
+            threshold_values.append(int(np.ceil(numeric_threshold)))
+
+    threshold_count = max(threshold_values) if threshold_values else None
+    if threshold_count is None:
+        detail_parts = [f"{coverage_count} valid frame(s)"]
+    elif coverage_count < threshold_count:
+        detail_parts = [f"{coverage_count} < {threshold_count} valid frame(s)"]
+    else:
+        detail_parts = [f"{coverage_count} valid frame(s); rejection threshold={threshold_count}"]
+
+    coverage_median = summary.get(
+        'coverage_rejection_reference_count',
+        summary.get('coverage_reference_count', np.nan),
+    )
+    try:
+        numeric_coverage_median = float(coverage_median)
+    except (TypeError, ValueError):
+        numeric_coverage_median = np.nan
+    if np.isfinite(numeric_coverage_median):
+        detail_parts.append(f"peer median={numeric_coverage_median:.1f}")
+
+    return "; ".join(detail_parts)
+
+
 def format_eebls_snr(value):
     if value is None:
         return "n/a"
@@ -15306,7 +15353,7 @@ def comparison_calibration_selection_reason(summary, best_comp_score):
     if summary.get('coverage_rejected'):
         return (
             "not selected: low coverage "
-            f"({summary['coverage_count']} < {summary['coverage_min_required_count']} valid frames)"
+            f"({format_comp_star_coverage_rejection_detail(summary)})"
         )
 
     if summary.get('suitability_outlier_rejected'):
@@ -15580,6 +15627,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         coverage_reference_count = coverage_summary[ckey]['coverage_reference_count']
         coverage_min_required_count = coverage_summary[ckey]['coverage_min_required_count']
         coverage_rejected = coverage_summary[ckey]['coverage_rejected']
+        coverage_rejection_detail = format_comp_star_coverage_rejection_detail(coverage_summary[ckey])
         fit_result, target_fit_flux, comp_fit_flux = None, None, None
         fit_diagnostics = {
             'input_point_count': int(times.shape[0]),
@@ -15595,8 +15643,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         if coverage_rejected:
             fit_diagnostics['failure_reason'] = (
                 "comparison candidate rejected after iterative low-coverage clipping "
-                f"({coverage_count} < {coverage_min_required_count} valid frame(s); "
-                f"peer median={coverage_reference_count:.1f})."
+                f"({coverage_rejection_detail})."
             )
         elif coverage_count > 1:
             fit_diagnostics = diagnose_lightcurve_fit_inputs(
@@ -15650,6 +15697,10 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
             'coverage_reference_count': coverage_reference_count,
             'coverage_min_required_count': coverage_min_required_count,
             'coverage_rejected': coverage_rejected,
+            'coverage_rejection_threshold_count': coverage_summary[ckey].get('coverage_rejection_threshold_count'),
+            'coverage_rejection_reference_count': coverage_summary[ckey].get('coverage_rejection_reference_count'),
+            'coverage_rejection_scatter': coverage_summary[ckey].get('coverage_rejection_scatter'),
+            'coverage_rejection_iteration': coverage_summary[ckey].get('coverage_rejection_iteration'),
             'fit_point_count': fit_point_count,
             'fit_diagnostics': fit_diagnostics,
             'failure_reason': fit_diagnostics.get('failure_reason'),
@@ -15719,32 +15770,42 @@ def comparison_star_coverage_summary(comp_flux_map,
     coverage_reference_count = float(np.nanmedian([coverage_counts[key] for key in active_keys]))
     coverage_min_required_count = max(effective_min_points, 0)
     coverage_scatter = np.nan
+    coverage_rejection_info = {}
 
-    for _ in range(COMPARISON_STAR_COVERAGE_MAX_ITERS):
+    for iteration_index in range(COMPARISON_STAR_COVERAGE_MAX_ITERS):
         active_counts = np.asarray([coverage_counts[key] for key in active_keys], dtype=float)
         if active_counts.size == 0:
             break
 
         coverage_reference_count = float(np.nanmedian(active_counts))
         coverage_scatter = robust_scatter(active_counts)
-        threshold_candidates = [
+        # Coverage is only an availability gate. High-scatter comparison stars
+        # are handled by the suitability outlier pass after coverage-qualified
+        # stars have been scored.
+        coverage_min_required_count = max(
             effective_min_points,
             int(np.ceil(float(min_fraction) * coverage_reference_count)),
-        ]
-        if np.isfinite(coverage_scatter) and coverage_scatter > 0:
-            threshold_candidates.append(
-                int(np.ceil(coverage_reference_count - COMPARISON_STAR_COVERAGE_SIGMA * coverage_scatter))
-            )
-        coverage_min_required_count = max(threshold_candidates)
+        )
 
         kept_keys = [key for key in active_keys if coverage_counts[key] >= coverage_min_required_count]
         if len(kept_keys) == len(active_keys):
             break
+        kept_key_set = set(kept_keys)
+        for key in active_keys:
+            if key in kept_key_set or key in coverage_rejection_info:
+                continue
+            coverage_rejection_info[key] = {
+                'coverage_rejection_threshold_count': coverage_min_required_count,
+                'coverage_rejection_reference_count': coverage_reference_count,
+                'coverage_rejection_scatter': coverage_scatter,
+                'coverage_rejection_iteration': iteration_index + 1,
+            }
         active_keys = kept_keys
 
     coverage_summary = {}
     active_key_set = set(active_keys)
     for key in comp_keys:
+        rejection_info = coverage_rejection_info.get(key, {})
         coverage_summary[key] = {
             'coverage_count': coverage_counts[key],
             'coverage_total_frame_count': total_frame_count,
@@ -15753,6 +15814,10 @@ def comparison_star_coverage_summary(comp_flux_map,
             'coverage_scatter': coverage_scatter,
             'coverage_min_required_count': coverage_min_required_count,
             'coverage_rejected': False if skip_rejection else key not in active_key_set,
+            'coverage_rejection_threshold_count': rejection_info.get('coverage_rejection_threshold_count'),
+            'coverage_rejection_reference_count': rejection_info.get('coverage_rejection_reference_count'),
+            'coverage_rejection_scatter': rejection_info.get('coverage_rejection_scatter'),
+            'coverage_rejection_iteration': rejection_info.get('coverage_rejection_iteration'),
         }
 
     return coverage_summary
@@ -16179,6 +16244,10 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
                 'coverage_reference_count': coverage_summary[key]['coverage_reference_count'],
                 'coverage_min_required_count': coverage_summary[key]['coverage_min_required_count'],
                 'coverage_rejected': coverage_summary[key]['coverage_rejected'],
+                'coverage_rejection_threshold_count': coverage_summary[key].get('coverage_rejection_threshold_count'),
+                'coverage_rejection_reference_count': coverage_summary[key].get('coverage_rejection_reference_count'),
+                'coverage_rejection_scatter': coverage_summary[key].get('coverage_rejection_scatter'),
+                'coverage_rejection_iteration': coverage_summary[key].get('coverage_rejection_iteration'),
                 'suitability_outlier_rejected': False,
                 'suitability_reference_score': np.nan,
                 'suitability_scatter': np.nan,

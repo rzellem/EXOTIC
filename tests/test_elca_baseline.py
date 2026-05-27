@@ -714,6 +714,68 @@ def test_internal_impact_parameter_samples_grazing_range_beyond_one(monkeypatch,
     assert fit._get_sample_bounds()["b"] == pytest.approx([0.0, 1.12])
 
 
+def test_internal_impact_parameter_transform_does_not_deepcopy_prior(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.prior = make_prior()
+    fit.bounds = {
+        "rprs": [0.08, 0.12],
+        "ars": [10.0, 14.0],
+        "inc": [87.0, 90.0],
+        "tmid": [-0.005, 0.005],
+    }
+
+    def fail_deepcopy(value, memo=None):
+        raise AssertionError("sampling transforms should not deepcopy parameter dictionaries")
+
+    monkeypatch.setattr(elca.copy, "deepcopy", fail_deepcopy)
+
+    sample_point = fit._sample_point_from_unit_cube(np.array([0.25, 0.5, 0.4, 0.75]))
+    unit_points = np.array([
+        [0.25, 0.5, 0.4, 0.75],
+        [1.0, 0.25, 0.9, 0.5],
+    ])
+    sample_points = fit._sample_point_from_unit_cube(unit_points)
+    physical = fit._physical_values_from_sample_point(sample_point)
+    sample_bounds = fit._get_sample_bounds()
+
+    assert sample_point[0] == pytest.approx(0.09)
+    np.testing.assert_allclose(
+        sample_points,
+        np.vstack([fit._sample_point_from_unit_cube(row) for row in unit_points]),
+    )
+    assert physical["b"] == pytest.approx(sample_point[2])
+    assert "b" in sample_bounds
+
+
+def test_unit_cube_transform_vectorizes_simple_bounds(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = False
+    fit.prior = make_prior()
+    fit.bounds = {
+        "rprs": [0.08, 0.12],
+        "inc": [87.0, 90.0],
+        "tmid": [-0.005, 0.005],
+    }
+
+    unit_points = np.array([
+        [0.0, 0.5, 1.0],
+        [1.0, 0.25, 0.0],
+    ])
+
+    np.testing.assert_allclose(
+        fit._sample_point_from_unit_cube(unit_points),
+        np.array([
+            [0.08, 88.5, 0.005],
+            [0.12, 87.75, -0.005],
+        ]),
+    )
+
+
 def test_nested_fit_can_keep_inclination_parameterization_when_requested(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)

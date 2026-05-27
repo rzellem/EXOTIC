@@ -316,6 +316,13 @@ NEXTASTRO_PHOTOMETRY_COLUMNS = (
 )
 NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
 NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 2.0
+REFERENCE_FALLBACK_COMPARISON_LIMIT = 10
+REFERENCE_FALLBACK_DETECTION_MAX_STARS = 60
+REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS = 12
+REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS = 4
+REFERENCE_FALLBACK_DETECTION_MIN_AREA_PIXELS = 3
+REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS = 10.0
+REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS = 50.0
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
 BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
@@ -4119,6 +4126,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
     def build_fit(local_prior, local_bounds):
         local_bounds = sanitize_retry_search_bounds(local_bounds)
+        if fixed_flux_baseline:
+            local_bounds = clone_lightcurve_bounds(local_bounds)
+            for key in ('a0', 'a1', 'a2'):
+                local_bounds.pop(key, None)
         local_prior = clamp_retry_priors_to_bounds(local_prior, local_bounds)
         fit_kwargs = {
             'jd_times': jd_times,
@@ -7724,19 +7735,20 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     log_info(detrend_result['note'])
 
     refit_prior = dict(working_prior)
-    for key in ('rprs', 'ars', 'tmid', 'inc', 'a2'):
+    for key in ('rprs', 'ars', 'tmid', 'inc'):
         if key in refit_prior and key in fit.parameters:
             refit_prior[key] = fit.parameters[key]
+    refit_prior['a0'] = 1.0
+    refit_prior['a1'] = 1.0
+    refit_prior['a2'] = 0.0
 
     refit_bounds = clone_lightcurve_bounds(working_bounds)
-    apply_vertical_flux_normalization_bound(
-        refit_prior,
-        refit_bounds,
-        detrend_result['flux'],
-        disable_vertical_flux_normalization,
-    )
-    if 'a2' not in refit_bounds:
-        refit_prior['a2'] = 0.0
+    for key in ('a0', 'a1', 'a2'):
+        refit_bounds.pop(key, None)
+    refit_fixed_parameter_errors = dict(baseline_fixed_errors)
+    refit_fixed_parameter_errors.setdefault('a0', 0.0)
+    refit_fixed_parameter_errors.setdefault('a1', refit_fixed_parameter_errors.get('a0', 0.0))
+    refit_fixed_parameter_errors['a2'] = 0.0
     baseline_parameter_fit_note = baseline_parameter_result.get('note')
     baseline_parameter_fit_used = False
     if baseline_parameter_result.get('applied'):
@@ -7757,8 +7769,8 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         duration_prior=duration_prior,
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
         baseline_fit_mask=baseline_fit_mask,
-        fixed_parameter_errors=baseline_fixed_errors,
-        fixed_flux_baseline=baseline_parameter_fit_used,
+        fixed_parameter_errors=refit_fixed_parameter_errors,
+        fixed_flux_baseline=True,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
@@ -9087,15 +9099,15 @@ def leading_rejected_reference_prefix(ordered_inputfiles, dropped_files):
     return leading_rejected, next_candidate
 
 
-def abort_if_reference_frame_rejected(reference_file, dropped_files, ordered_inputfiles=None,
-                                      rejection_label="Pointing precheck"):
+def reference_frame_rejection_fallback_info(reference_file, dropped_files, ordered_inputfiles=None,
+                                            rejection_label="Pointing precheck"):
     if reference_file is None or not dropped_files:
-        return False
+        return None
 
     reference_file = str(reference_file)
     dropped_files = [str(file_name) for file_name in dropped_files]
     if reference_file not in dropped_files:
-        return False
+        return None
 
     other_dropped_files = [file_name for file_name in dropped_files if file_name != reference_file]
     leading_rejected_files, next_reference_candidate = leading_rejected_reference_prefix(
@@ -9106,50 +9118,61 @@ def abort_if_reference_frame_rejected(reference_file, dropped_files, ordered_inp
         leading_rejected_files = [reference_file]
 
     log_info(
-        f"Error: {rejection_label} rejected the first usable image "
-        f"({_display_filename(reference_file)}). EXOTIC uses that frame as the reference image for "
-        "the supplied target and comparison-star pixel coordinates, so it is not safe to continue "
-        "with a different reference image.",
-        error=True,
+        f"WARNING: {rejection_label} rejected the original reference image "
+        f"({_display_filename(reference_file)}). EXOTIC is automatically removing the leading rejected "
+        "frame(s) and continuing with a new reference image.",
+        warn=True,
+    )
+    log_info(
+        "IMPORTANT: the supplied target and comparison-star pixel coordinates were tied to the rejected "
+        "reference image. EXOTIC will estimate the target pixel position from the target RA/Dec on the "
+        "new reference image and will replace the supplied comparison-star pixels with a new "
+        "image-detected comparison-star set using the same FITS-image criteria as nextastro_archive.",
+        warn=True,
     )
     if other_dropped_files:
         log_info(
             f"{rejection_label} also rejected {len(other_dropped_files)} other frame(s): "
             f"{format_file_preview_for_user(other_dropped_files)}",
-            error=True,
+            warn=True,
         )
 
     leading_preview = format_file_preview_for_user(leading_rejected_files)
-    if len(leading_rejected_files) == 1:
-        removal_instruction = (
-            f"Please remove or move this rejected frame and run again: {leading_preview}."
-        )
-    else:
-        removal_instruction = (
-            f"Please remove or move these leading rejected frames and run again: {leading_preview}."
-        )
+    removal_instruction = (
+        f"Automatically removed leading rejected frame(s) from this reduction: {leading_preview}."
+    )
 
     if next_reference_candidate is not None:
         removal_instruction += (
-            f" The next remaining frame would be "
+            f" Continuing from new reference image "
             f"{_display_filename(next_reference_candidate)}."
         )
     else:
         removal_instruction += (
-            " No non-rejected frame remains after that prefix, so this dataset still would not "
-            "have a usable reference image."
+            " No non-rejected frame remains after that prefix, so this dataset does not have a usable "
+            "reference image."
         )
 
     log_info(
         removal_instruction,
-        error=True,
+        warn=True,
     )
-    log_info(
-        "If you need to keep those frames, reorder the dataset so a good reference image comes first, "
-        "or set optional_info 'pointing_rejection_sigma' to 0 to disable this precheck.",
-        error=True,
-    )
-    return True
+    return {
+        'reference_file': reference_file,
+        'leading_rejected_files': leading_rejected_files,
+        'next_reference_candidate': next_reference_candidate,
+        'other_dropped_files': other_dropped_files,
+    }
+
+
+def abort_if_reference_frame_rejected(reference_file, dropped_files, ordered_inputfiles=None,
+                                      rejection_label="Pointing precheck"):
+    return reference_frame_rejection_fallback_info(
+        reference_file,
+        dropped_files,
+        ordered_inputfiles=ordered_inputfiles,
+        rejection_label=rejection_label,
+    ) is not None
 
 
 def collect_wcs_frame_center_pointings(inputfiles):
@@ -10181,6 +10204,317 @@ def nextastro_calibration_label(match):
     return f"RA{match['ra']:.6f}_DEC{match['dec']:.6f}"
 
 
+def unique_nextastro_calibration_label(calibration_stars, match):
+    label = nextastro_calibration_label(match)
+    unique_label = label
+    duplicate_index = 2
+    while unique_label in calibration_stars:
+        unique_label = f"{label}-{duplicate_index}"
+        duplicate_index += 1
+    return unique_label
+
+
+def estimate_target_pixel_from_ra_dec(info_dict, wcs_header, image_data, obs_time,
+                                      centroid_margin=7.5):
+    target_ra, target_dec = update_coordinates_with_proper_motion(info_dict, obs_time)
+    try:
+        x_pixel, y_pixel = WCS(wcs_header).all_world2pix(target_ra, target_dec, 0)
+    except Exception as exc:
+        log_info(
+            "Warning: Could not project target RA/Dec onto the new reference image "
+            f"({exc}).",
+            warn=True,
+        )
+        return None
+
+    x_pixel = float(np.asarray(x_pixel).reshape(-1)[0])
+    y_pixel = float(np.asarray(y_pixel).reshape(-1)[0])
+    if not pixel_within_image(x_pixel, y_pixel, image_data.shape):
+        log_info(
+            "Warning: target RA/Dec projects outside the new reference image; "
+            "the rejected-reference fallback cannot re-estimate target pixels.",
+            warn=True,
+        )
+        return None
+
+    centroid_x, centroid_y, sigma_x, sigma_y = np.nan, np.nan, np.nan, np.nan
+    if pixel_within_image(x_pixel, y_pixel, image_data.shape, margin=centroid_margin):
+        centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, x_pixel, y_pixel)
+
+    if np.isfinite(centroid_x) and np.isfinite(centroid_y):
+        log_info(
+            "Reference fallback target position: "
+            f"RA={float(target_ra):.7f}, Dec={float(target_dec):.7f} projected to "
+            f"[{x_pixel:.2f}, {y_pixel:.2f}] and centroided to "
+            f"[{centroid_x:.2f}, {centroid_y:.2f}].",
+            warn=True,
+        )
+        return float(centroid_x), float(centroid_y), float(target_ra), float(target_dec)
+
+    log_info(
+        "Reference fallback target position: "
+        f"RA={float(target_ra):.7f}, Dec={float(target_dec):.7f} projected to "
+        f"[{x_pixel:.2f}, {y_pixel:.2f}]; centroid fit was unavailable, so the WCS-projected "
+        "pixel position will be used.",
+        warn=True,
+    )
+    return x_pixel, y_pixel, float(target_ra), float(target_dec)
+
+
+def connected_component_sizes(mask):
+    mask = np.asarray(mask, dtype=bool)
+    if mask.ndim != 2 or not np.any(mask):
+        return None, []
+
+    labels = np.full(mask.shape, -1, dtype=int)
+    component_sizes = []
+    component_id = 0
+    height, width = mask.shape
+
+    for start_y, start_x in np.argwhere(mask):
+        if labels[start_y, start_x] != -1:
+            continue
+
+        stack = [(int(start_y), int(start_x))]
+        labels[start_y, start_x] = component_id
+        size = 0
+        while stack:
+            y_pos, x_pos = stack.pop()
+            size += 1
+            for neighbor_y in range(max(0, y_pos - 1), min(height, y_pos + 2)):
+                for neighbor_x in range(max(0, x_pos - 1), min(width, x_pos + 2)):
+                    if not mask[neighbor_y, neighbor_x]:
+                        continue
+                    if labels[neighbor_y, neighbor_x] != -1:
+                        continue
+                    labels[neighbor_y, neighbor_x] = component_id
+                    stack.append((neighbor_y, neighbor_x))
+        component_sizes.append(size)
+        component_id += 1
+
+    return labels, component_sizes
+
+
+def detect_reference_fallback_bright_stars(
+        image_data,
+        max_stars=REFERENCE_FALLBACK_DETECTION_MAX_STARS,
+        min_sep=REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS,
+        aperture_radius=REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
+        min_area=REFERENCE_FALLBACK_DETECTION_MIN_AREA_PIXELS):
+    if image_data is None:
+        return []
+
+    data = np.array(image_data, dtype=np.float64, copy=True)
+    if data.ndim != 2:
+        return []
+
+    finite = np.isfinite(data)
+    if not finite.any():
+        return []
+
+    median = float(np.nanmedian(data[finite]))
+    data[~finite] = median
+    signal = data - median
+    signal[signal < 0] = 0
+    if not np.any(signal > 0):
+        return []
+
+    threshold = float(np.percentile(signal, 99.7))
+    if threshold <= 0:
+        threshold = float(np.percentile(signal, 99.0))
+    if threshold <= 0:
+        positive_signal = signal[signal > 0]
+        if positive_signal.size == 0:
+            return []
+        threshold = float(np.nanmin(positive_signal))
+
+    height, width = signal.shape
+    margin = max(int(min_sep), int(aperture_radius) + 2)
+    flat_order = np.argsort(signal, axis=None)[::-1]
+    yy, xx = np.indices(signal.shape)
+    source_labels, source_sizes = connected_component_sizes(signal >= threshold)
+    stars = []
+
+    for flat_index in flat_order:
+        y_pos, x_pos = np.unravel_index(int(flat_index), signal.shape)
+        peak = float(signal[y_pos, x_pos])
+        if peak < threshold:
+            break
+        if source_labels is not None:
+            component_id = int(source_labels[y_pos, x_pos])
+            if component_id < 0:
+                continue
+            if int(source_sizes[component_id]) < max(int(min_area), 1):
+                continue
+        if x_pos < margin or y_pos < margin or x_pos >= (width - margin) or y_pos >= (height - margin):
+            continue
+        if any((star['x'] - x_pos) ** 2 + (star['y'] - y_pos) ** 2 < (float(min_sep) ** 2)
+               for star in stars):
+            continue
+
+        r2 = (xx - x_pos) ** 2 + (yy - y_pos) ** 2
+        flux = float(signal[r2 <= (float(aperture_radius) ** 2)].sum())
+        if flux <= 0:
+            continue
+        stars.append({'x': float(x_pos), 'y': float(y_pos), 'flux': flux})
+        if len(stars) >= max_stars:
+            break
+
+    stars.sort(key=lambda star: star['flux'], reverse=True)
+    return stars
+
+
+def dedupe_reference_fallback_stars(stars, dedupe_radius=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS):
+    deduped_stars = []
+    for star in sorted(stars or [], key=lambda value: float(value.get('flux', 0.0)), reverse=True):
+        x_pos = _finite_float(star.get('x'))
+        y_pos = _finite_float(star.get('y'))
+        if x_pos is None or y_pos is None:
+            continue
+        if any(
+            abs(float(existing.get('x', 0.0)) - x_pos) <= dedupe_radius
+            and abs(float(existing.get('y', 0.0)) - y_pos) <= dedupe_radius
+            for existing in deduped_stars
+        ):
+            continue
+        normalized = dict(star)
+        normalized['x'] = float(x_pos)
+        normalized['y'] = float(y_pos)
+        flux = _finite_float(star.get('flux'))
+        if flux is not None:
+            normalized['flux'] = float(flux)
+        deduped_stars.append(normalized)
+    return deduped_stars
+
+
+def filter_reference_fallback_stars_to_middle_fifty_percent(stars, image_shape):
+    try:
+        height, width = image_shape[:2]
+        width = float(width)
+        height = float(height)
+    except Exception:
+        return list(stars or [])
+
+    if width <= 1.0 or height <= 1.0:
+        return list(stars or [])
+
+    center_x = (width - 1.0) / 2.0
+    center_y = (height - 1.0) / 2.0
+    half_width = (width - 1.0) * 0.25
+    half_height = (height - 1.0) * 0.25
+
+    filtered = []
+    for star in stars or []:
+        x_pos = _finite_float(star.get('x'))
+        y_pos = _finite_float(star.get('y'))
+        if x_pos is None or y_pos is None:
+            continue
+        if abs(x_pos - center_x) > half_width or abs(y_pos - center_y) > half_height:
+            continue
+        filtered.append(star)
+    return filtered
+
+
+def nearest_reference_fallback_star_by_pixels(stars, x_value, y_value, max_sep_pixels=None, used_ids=None):
+    target_x = _finite_float(x_value)
+    target_y = _finite_float(y_value)
+    if target_x is None or target_y is None:
+        return None
+
+    best_star = None
+    best_dist2 = None
+    for star in stars or []:
+        if used_ids and id(star) in used_ids:
+            continue
+        star_x = _finite_float(star.get('x'))
+        star_y = _finite_float(star.get('y'))
+        if star_x is None or star_y is None:
+            continue
+        dist2 = ((star_x - target_x) ** 2) + ((star_y - target_y) ** 2)
+        if best_dist2 is None or dist2 < best_dist2:
+            best_star = star
+            best_dist2 = dist2
+
+    if best_star is None:
+        return None
+    if max_sep_pixels is not None and best_dist2 is not None and best_dist2 > (float(max_sep_pixels) ** 2):
+        return None
+    return best_star
+
+
+def select_reference_fallback_comparison_stars(
+        image_data,
+        image_shape,
+        target_pixel,
+        comp_count=REFERENCE_FALLBACK_COMPARISON_LIMIT,
+        min_comp_target_sep=REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS):
+    max_count = max(0, int(comp_count))
+    if max_count == 0 or image_data is None or image_shape is None:
+        return [], []
+
+    target_pixel = np.asarray(target_pixel, dtype=float).reshape(-1)
+    if target_pixel.size < 2 or not np.all(np.isfinite(target_pixel[:2])):
+        return [], []
+    target_x, target_y = float(target_pixel[0]), float(target_pixel[1])
+
+    stars = detect_reference_fallback_bright_stars(image_data)
+    comp_pool = filter_reference_fallback_stars_to_middle_fifty_percent(
+        dedupe_reference_fallback_stars(stars),
+        image_shape,
+    )
+    detected_target = nearest_reference_fallback_star_by_pixels(
+        comp_pool,
+        target_x,
+        target_y,
+        max_sep_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+    )
+
+    used_ids = set()
+    if detected_target is not None:
+        used_ids.add(id(detected_target))
+
+    comp_candidates = []
+    min_sep2 = max(float(min_comp_target_sep), 0.0) ** 2
+    for star in comp_pool:
+        if id(star) in used_ids:
+            continue
+        dx = float(star.get('x', 0.0)) - target_x
+        dy = float(star.get('y', 0.0)) - target_y
+        if min_sep2 > 0.0 and ((dx * dx) + (dy * dy)) < min_sep2:
+            continue
+        comp_candidates.append(star)
+        if len(comp_candidates) >= max_count:
+            break
+
+    comp_stars = [[float(star['x']), float(star['y'])] for star in comp_candidates]
+    return comp_stars, comp_candidates
+
+
+def log_reference_fallback_comparison_candidates(comp_stars, detected_candidates):
+    if not comp_stars:
+        log_info(
+            "Warning: the nextastro_archive-style bright-star picker did not find any usable replacement "
+            "comparison stars on the new reference image.",
+            warn=True,
+        )
+        return
+
+    log_info(
+        f"Reference fallback replaced supplied comparison-star pixels with {len(comp_stars)} "
+        "image-detected bright-star candidate(s) selected like nextastro_archive "
+        "(central 50% of the frame, de-duplicated detections, at least "
+        f"{REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS:g} px from the target, brightest-first).",
+        warn=True,
+    )
+    for index, star in enumerate(detected_candidates, start=1):
+        log_info(
+            f"Reference fallback comparison candidate #{index}: "
+            f"pixels=[{float(star['x']):.2f}, {float(star['y']):.2f}], "
+            f"aperture flux={float(star.get('flux', np.nan)):.3g}.",
+            warn=True,
+        )
+
+
 def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, existing_comp_stars=None,
                                       field_catalog=None):
     calibration_stars = dict(existing_comp_stars or {})
@@ -10228,12 +10562,7 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
             'is_aavso_vsp': False,
             'observed_filter': obs_filter,
         })
-        label = nextastro_calibration_label(match)
-        unique_label = label
-        duplicate_index = 2
-        while unique_label in calibration_stars:
-            unique_label = f"{label}-{duplicate_index}"
-            duplicate_index += 1
+        unique_label = unique_nextastro_calibration_label(calibration_stars, match)
         calibration_stars[unique_label] = match
         existing_positions.add(tuple(comp_pos))
         added_count += 1
@@ -13232,26 +13561,23 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         multiprocess_transformations=multiprocess_transformations,
     )
     if dropped_pointing_files:
-        if abort_if_reference_frame_rejected(
+        reference_fallback = reference_frame_rejection_fallback_info(
             pointing_reference_file,
             dropped_pointing_files,
             ordered_inputfiles=pointing_precheck_inputfiles,
-        ):
-            ax.clear()
-            ax.set_title(target_name)
-            ax.set_ylabel('Normalized Flux')
-            ax.set_xlabel('Time (JD)')
-            ax.text(
-                0.5,
-                0.5,
-                "Reference image rejected by pointing precheck.\nSee log for details.",
-                transform=ax.transAxes,
-                ha='center',
-                va='center',
-            )
-            plt.close(ax.figure)
-            return
+        )
         plateStatus.initializeFilenames(list(inputfiles))
+    else:
+        reference_fallback = None
+    if reference_fallback is not None and reference_fallback.get('next_reference_candidate') is None:
+        log_info(
+            "Error: all leading reference candidates were rejected by the pointing precheck; no usable "
+            "realtime reference image remains.",
+            error=True,
+        )
+        return
+    if reference_fallback is not None:
+        pointing_alignment_transforms = {}
 
     bad_pixel_reference = None
     if detect_bad_pixels_before_photometry:
@@ -13271,6 +13597,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     exotic_UIprevTPY = info_dict['tar_coords'][1]
 
     plateStatus.setCurrentFilename(inputfiles[0])
+    header = get_first_image_header(inputfiles[0])
     wcs_file = check_wcs(inputfiles[0], info_dict['save'], info_dict['plate_opt'], rt=True,
                          use_nextastro_astrometry=use_nextastro_astrometry,
                          ra=p_dict.get('ra'), dec=p_dict.get('dec'), pixel_scale=info_dict.get('pixel_scale'),
@@ -13283,13 +13610,59 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         wcs_header = get_first_image_header(wcs_file)
 
         ra_file, dec_file = get_ra_dec(wcs_header, image_shape=first_image.shape)
-        tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
-                     dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
+        if reference_fallback is not None:
+            target_projection = estimate_target_pixel_from_ra_dec(
+                p_dict,
+                wcs_header,
+                first_image,
+                timeList[0] if timeList else img_time_bjd_tdb(header, p_dict, info_dict),
+            )
+            if target_projection is None:
+                log_info(
+                    "Error: could not estimate target coordinates from RA/Dec after removing the rejected "
+                    "reference image.",
+                    error=True,
+                )
+                return
+            exotic_UIprevTPX, exotic_UIprevTPY, target_ra, target_dec = target_projection
+            info_dict['tar_coords'] = [exotic_UIprevTPX, exotic_UIprevTPY]
+            tar_radec = (target_ra, target_dec)
+            fallback_comp_stars, fallback_candidates = select_reference_fallback_comparison_stars(
+                first_image,
+                first_image.shape,
+                [exotic_UIprevTPX, exotic_UIprevTPY],
+                comp_count=1,
+            )
+            log_reference_fallback_comparison_candidates(
+                fallback_comp_stars,
+                fallback_candidates,
+            )
+            if fallback_comp_stars:
+                comp_star = fallback_comp_stars[0]
+                info_dict['comp_stars'] = comp_star
+            else:
+                log_info(
+                    "Error: no replacement image-detected comparison star was available after removing "
+                    "the rejected realtime reference image.",
+                    error=True,
+                )
+                return
+        else:
+            tar_radec = (ra_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
+                         dec_file[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
         ra = ra_file[int(comp_star[1])][int(comp_star[0])]
         dec = dec_file[int(comp_star[1])][int(comp_star[0])]
 
         comp_radec.append((ra, dec))
+    elif reference_fallback is not None:
+        log_info(
+            "Error: the original realtime reference image was removed, but the new reference image does not "
+            "have a usable WCS. EXOTIC cannot estimate target coordinates from RA/Dec or choose a replacement "
+            "image-detected comparison star without a new reference WCS.",
+            error=True,
+        )
+        return
 
     target_and_comp_radec = None
     if tar_radec is not None and comp_radec:
@@ -17819,12 +18192,11 @@ def _main_impl():
                 demosaic_mult=demosaic_mult,
             )
             if dropped_pointing_files:
-                if abort_if_reference_frame_rejected(
+                reference_fallback = reference_frame_rejection_fallback_info(
                     pointing_reference_file,
                     dropped_pointing_files,
                     ordered_inputfiles=pointing_precheck_inputfiles,
-                ):
-                    return
+                )
                 times = times[pointing_keep_mask]
                 jd_times = jd_times[pointing_keep_mask]
                 finite_plot_times = times[np.isfinite(times)]
@@ -17832,6 +18204,17 @@ def _main_impl():
                 if finite_plot_times.size:
                     full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
                 plateStatus.initializeFilenames(list(inputfiles))
+            else:
+                reference_fallback = None
+            if reference_fallback is not None and reference_fallback.get('next_reference_candidate') is None:
+                log_info(
+                    "Error: all leading reference candidates were rejected by the pointing precheck; no usable "
+                    "reference image remains.",
+                    error=True,
+                )
+                return
+            if reference_fallback is not None:
+                pointing_alignment_transforms = {}
             post_pointing_inputfile_count = int(len(inputfiles))
 
             bad_pixel_reference = None
@@ -17868,31 +18251,38 @@ def _main_impl():
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
-            for ifile in inputfiles:
-                plateStatus.setCurrentFilename(ifile)
-                if bad_pixel_reference is not None:
-                    first_image = load_calibrated_reduction_image(
-                        ifile,
-                        generalDark,
-                        generalBias,
-                        generalFlat,
-                        demosaic_fmt,
-                        demosaic_out,
-                        demosaic_mult,
-                        bad_pixel_reference=bad_pixel_reference,
-                    )
-                else:
-                    first_image = fits.getdata(ifile)
-                try:
-                    initial_centroid = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
-                    if np.isnan(initial_centroid[0]):
-                        inc += 1
+            if reference_fallback is None:
+                for ifile in inputfiles:
+                    plateStatus.setCurrentFilename(ifile)
+                    if bad_pixel_reference is not None:
+                        first_image = load_calibrated_reduction_image(
+                            ifile,
+                            generalDark,
+                            generalBias,
+                            generalFlat,
+                            demosaic_fmt,
+                            demosaic_out,
+                            demosaic_mult,
+                            bad_pixel_reference=bad_pixel_reference,
+                        )
                     else:
-                        break
-                except Exception:
-                    inc += 1
-                finally:
-                    del first_image
+                        first_image = fits.getdata(ifile)
+                    try:
+                        initial_centroid = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
+                        if np.isnan(initial_centroid[0]):
+                            inc += 1
+                        else:
+                            break
+                    except Exception:
+                        inc += 1
+                    finally:
+                        del first_image
+            else:
+                log_info(
+                    "Skipping the old-pixel target precheck because the original reference image was "
+                    "removed; the target will be projected from RA/Dec after the new reference WCS is ready.",
+                    warn=True,
+                )
 
             if inc > 0:
                 log_info(f"Skipping first {inc} files - Target star not found")
@@ -17924,35 +18314,97 @@ def _main_impl():
                 wcs_header = get_first_image_header(wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header, image_shape=reference_image.shape)
 
-                prefer_input_target_pixels = exotic_infoDict.get(
-                    'prefer_pixel_values_over_wcs_for_target', 'n'
-                )
-                exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(
-                    exotic_UIprevTPX,
-                    exotic_UIprevTPY,
-                    pDict,
-                    ra_wcs,
-                    dec_wcs,
-                    reference_image,
-                    jd_times[0],
-                    non_interactive_run=args.non_interactive_run,
-                    wcs_header=wcs_header,
-                    prefer_pixel_values_over_wcs_for_target=prefer_input_target_pixels,
-                )
-                ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
-                             dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
+                if reference_fallback is not None:
+                    target_projection = estimate_target_pixel_from_ra_dec(
+                        pDict,
+                        wcs_header,
+                        reference_image,
+                        jd_times[0],
+                    )
+                    if target_projection is None:
+                        log_info(
+                            "Error: could not estimate target coordinates from RA/Dec after removing the "
+                            "rejected reference image.",
+                            error=True,
+                        )
+                        return
+                    exotic_UIprevTPX, exotic_UIprevTPY, target_ra, target_dec = target_projection
+                    exotic_infoDict['tar_coords'] = [exotic_UIprevTPX, exotic_UIprevTPY]
+                    ra_dec_tar = (target_ra, target_dec)
+                else:
+                    prefer_input_target_pixels = exotic_infoDict.get(
+                        'prefer_pixel_values_over_wcs_for_target', 'n'
+                    )
+                    exotic_UIprevTPX, exotic_UIprevTPY = check_target_pixel_wcs(
+                        exotic_UIprevTPX,
+                        exotic_UIprevTPY,
+                        pDict,
+                        ra_wcs,
+                        dec_wcs,
+                        reference_image,
+                        jd_times[0],
+                        non_interactive_run=args.non_interactive_run,
+                        wcs_header=wcs_header,
+                        prefer_pixel_values_over_wcs_for_target=prefer_input_target_pixels,
+                    )
+                    ra_dec_tar = (ra_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)],
+                                 dec_wcs[int(exotic_UIprevTPY)][int(exotic_UIprevTPX)])
 
                 auid = vsx_auid(ra_dec_tar[0], ra_dec_tar[1])
 
-                check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
-                                         use_nextastro_variability_server=args.use_nextastro_variability_server)
+                if reference_fallback is not None:
+                    old_comp_count = len(exotic_infoDict['comp_stars'])
+                    exotic_infoDict['comp_stars'] = []
+                    log_info(
+                        f"Reference fallback discarded {old_comp_count} supplied comparison-star pixel "
+                        "coordinate(s) because they were tied to the rejected reference image.",
+                        warn=True,
+                    )
 
-                if exotic_infoDict['aavso_comp'] == 'y':
+                if exotic_infoDict['aavso_comp'] == 'y' and reference_fallback is None:
                     vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
                                                          exotic_infoDict['filter'], img_scale,
                                                          user_comp_stars=exotic_infoDict['comp_stars'],
                                                          user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
+
+                nextastro_field_catalog = None
+                try:
+                    nextastro_field_catalog = nextastro_photometry_catalog_for_wcs(
+                        wcs_file,
+                        [header['NAXIS1'], header['NAXIS2']],
+                        img_scale,
+                        exotic_infoDict['filter'],
+                    )
+                except Exception as exc:
+                    log_info(
+                        "\nWarning: NextAstro full-field photometry catalog lookup failed "
+                        f"({describe_retry_exception(exc)}). Will try per-comparison catalog lookups.",
+                        warn=True,
+                    )
+
+                if reference_fallback is not None:
+                    fallback_comp_stars, fallback_candidates = select_reference_fallback_comparison_stars(
+                        reference_image,
+                        reference_image.shape,
+                        target_pixel=[exotic_UIprevTPX, exotic_UIprevTPY],
+                    )
+                    log_reference_fallback_comparison_candidates(
+                        fallback_comp_stars,
+                        fallback_candidates,
+                    )
+                    if fallback_comp_stars:
+                        exotic_infoDict['comp_stars'] = fallback_comp_stars
+                    else:
+                        log_info(
+                            "Error: no replacement image-detected comparison stars were available after "
+                            "removing the rejected reference image.",
+                            error=True,
+                        )
+                        return
+
+                check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
+                                         use_nextastro_variability_server=args.use_nextastro_variability_server)
 
                 while not exotic_infoDict['comp_stars']:
                     log_info("\nThere are no comparison stars left as all of them were indicated as variable stars."
@@ -17969,20 +18421,6 @@ def _main_impl():
 
                 # Build RA/Dec for comp after list is finalized (avoid off by one issues, etc
                 ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
-                nextastro_field_catalog = None
-                try:
-                    nextastro_field_catalog = nextastro_photometry_catalog_for_wcs(
-                        wcs_file,
-                        [header['NAXIS1'], header['NAXIS2']],
-                        img_scale,
-                        exotic_infoDict['filter'],
-                    )
-                except Exception as exc:
-                    log_info(
-                        "\nWarning: NextAstro full-field photometry catalog lookup failed "
-                        f"({describe_retry_exception(exc)}). Will try per-comparison catalog lookups.",
-                        warn=True,
-                    )
                 vsp_comp_stars = merge_nextastro_calibration_stars(
                     exotic_infoDict['comp_stars'],
                     ra_dec_wcs,
@@ -17993,6 +18431,14 @@ def _main_impl():
                 vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             else:
+                if reference_fallback is not None:
+                    log_info(
+                        "Error: the original reference image was removed, but the new reference image does not "
+                        "have a usable WCS. EXOTIC cannot estimate target coordinates from RA/Dec or choose "
+                        "replacement image-detected comparison stars without a new reference WCS.",
+                        error=True,
+                    )
+                    return
                 exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
                     exotic_infoDict['comp_stars']
                 )

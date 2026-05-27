@@ -2239,7 +2239,13 @@ def test_fit_final_lightcurve_linear_detrend_does_not_reapply_fixed_airmass_base
             dataerr=np.asarray(call_fluxerr, dtype=float),
             airmass=np.asarray(call_airmass, dtype=float),
             transit=transit_profile.copy(),
-            parameters={"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a0": call_prior.get("a0", 1.0), "a2": 0.2},
+            parameters={
+                "tmid": 0.0,
+                "rprs": 0.1,
+                "inc": 89.0,
+                "a0": call_prior.get("a0", 1.0),
+                "a2": call_prior.get("a2", 0.2),
+            },
             errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.001, "a2": 0.01},
             residuals=np.zeros_like(call_flux, dtype=float),
             duration_expected=0.5,
@@ -2284,9 +2290,11 @@ def test_fit_final_lightcurve_linear_detrend_does_not_reapply_fixed_airmass_base
 
     assert len(captured["calls"]) == 2
     final_call = captured["calls"][1]
-    assert final_call["fixed_flux_baseline"] is False
-    assert "a0" in final_call["bounds"]
-    assert "a2" in final_call["bounds"]
+    assert final_call["fixed_flux_baseline"] is True
+    assert final_call["prior"]["a0"] == pytest.approx(1.0)
+    assert final_call["prior"]["a2"] == pytest.approx(0.0)
+    assert "a0" not in final_call["bounds"]
+    assert "a2" not in final_call["bounds"]
     assert np.allclose(final_call["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
     assert final_call["flux"][3] == pytest.approx(0.99, abs=1e-8)
     assert np.allclose(refit_flux, final_call["flux"])

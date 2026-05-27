@@ -361,7 +361,10 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000, mask=None
     n = int(n)
     a2 = np.random.normal(m_a2, sig_a2, n)
     reference = get_airmass_reference(airmass)
-    model = transit * airmass_trend_grid(a2, airmass, reference=reference)
+    transit = np.asarray(transit, dtype=float)
+    data = np.asarray(data, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    centered_airmass = center_airmass(airmass, reference=reference)
     weights = np.ones(transit.shape[0], dtype=float)
     fit_mask = normalized_optional_fit_mask(mask, transit.shape)
 
@@ -371,7 +374,7 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000, mask=None
         valid_err = np.isfinite(dataerr) & (dataerr > 0)
         weights[valid_err] = 1.0 / (dataerr[valid_err] ** 2)
 
-    mask = np.isfinite(data) & np.isfinite(transit) & np.isfinite(airmass)
+    mask = np.isfinite(data) & np.isfinite(transit) & np.isfinite(centered_airmass)
     if fit_mask is not None:
         mask &= fit_mask
     if dataerr is not None:
@@ -380,12 +383,19 @@ def mc_a1(m_a2, sig_a2, transit, airmass, data, dataerr=None, n=10000, mask=None
     if not np.any(mask):
         return fallback_flux_baseline(), 0.0
 
-    masked_model = model[:, mask]
-    masked_data = np.asarray(data, dtype=float)[mask]
+    masked_transit = transit[mask]
+    masked_airmass = centered_airmass[mask]
+    masked_data = data[mask]
     masked_weights = weights[mask]
+    numer = np.empty(n, dtype=float)
+    denom = np.empty(n, dtype=float)
+    chunk_size = 1024
 
-    numer = np.sum(masked_weights * masked_data * masked_model, axis=1)
-    denom = np.sum(masked_weights * masked_model ** 2, axis=1)
+    for start in range(0, n, chunk_size):
+        stop = min(start + chunk_size, n)
+        masked_model = masked_transit * np.exp(np.outer(a2[start:stop], masked_airmass))
+        numer[start:stop] = np.sum(masked_weights * masked_data * masked_model, axis=1)
+        denom[start:stop] = np.sum(masked_weights * masked_model ** 2, axis=1)
     valid = np.isfinite(numer) & np.isfinite(denom) & (denom > 0)
 
     if not np.any(valid):
@@ -578,7 +588,9 @@ class lc_fitter(object):
             self.quantiles[key] = [-error, error]
 
     def _get_airmass_reference(self):
-        return getattr(self, 'airmass_reference', get_airmass_reference(self.airmass))
+        if hasattr(self, 'airmass_reference'):
+            return self.airmass_reference
+        return get_airmass_reference(self.airmass)
 
     def _get_plot_time_range(self):
         plot_time_range = normalize_time_range(getattr(self, 'plot_time_range', None))
@@ -1005,7 +1017,7 @@ class lc_fitter(object):
         return ['b' if key == 'inc' else key for key in bound_keys]
 
     def _get_impact_parameter_scale_upper_bound(self, values):
-        values = copy.deepcopy(values)
+        values = dict(values)
         scale_keys = ('ars', 'ecc', 'omega')
         endpoint_sets = []
         for key in scale_keys:
@@ -1020,7 +1032,7 @@ class lc_fitter(object):
 
         scales = []
         for candidate_values in product(*[endpoints for _, endpoints in endpoint_sets]):
-            candidate = copy.deepcopy(values)
+            candidate = dict(values)
             for key, value in zip([key for key, _ in endpoint_sets], candidate_values):
                 candidate[key] = value
             try:
@@ -1033,8 +1045,9 @@ class lc_fitter(object):
         return float(max(scales)) if scales else np.nan
 
     def _get_impact_parameter_sampling_bounds(self, values=None, use_search_bounds=False):
-        values = copy.deepcopy(self.prior if values is None else values)
+        values = self.prior if values is None else values
         if use_search_bounds and 'rprs' in self.bounds:
+            values = dict(values)
             rprs_bounds = np.asarray(self.bounds['rprs'], dtype=float).reshape(-1)[:2]
             finite_rprs = rprs_bounds[np.isfinite(rprs_bounds) & (rprs_bounds >= 0)]
             if finite_rprs.size > 0:
@@ -1057,6 +1070,44 @@ class lc_fitter(object):
         upper = min(upper_candidates) if upper_candidates else 1.0
         return [0.0, float(max(0.0, upper))]
 
+    def _get_impact_parameter_upper_bounds_for_sample_points(self, sample_points, bound_keys):
+        sample_points = np.atleast_2d(np.asarray(sample_points, dtype=float))
+        bound_index = {key: index for index, key in enumerate(bound_keys)}
+        sample_count = sample_points.shape[0]
+
+        def values_for(key, default):
+            if key in bound_index:
+                return sample_points[:, bound_index[key]]
+            value = np.asarray(self.prior.get(key, default), dtype=float)
+            if value.shape == ():
+                return np.full(sample_count, float(value), dtype=float)
+            return np.broadcast_to(value, (sample_count,)).astype(float)
+
+        rprs = values_for('rprs', np.nan)
+        grazing_upper = np.where(np.isfinite(rprs) & (rprs >= 0), 1.0 + rprs, np.nan)
+
+        ars = values_for('ars', np.nan)
+        ecc = values_for('ecc', 0.0)
+        omega = np.deg2rad(values_for('omega', 0.0))
+        denom = 1.0 + ecc * np.sin(omega)
+        denom = np.where(np.isclose(denom, 0.0), np.finfo(float).eps, denom)
+        scale_upper = ars * (1.0 - ecc ** 2) / denom
+
+        valid_grazing = np.isfinite(grazing_upper) & (grazing_upper > 0)
+        valid_scale = np.isfinite(scale_upper) & (scale_upper > 0)
+        upper = np.full(sample_count, 1.0, dtype=float)
+
+        both_valid = valid_grazing & valid_scale
+        upper[both_valid] = np.minimum(grazing_upper[both_valid], scale_upper[both_valid])
+
+        grazing_only = valid_grazing & ~valid_scale
+        upper[grazing_only] = grazing_upper[grazing_only]
+
+        scale_only = valid_scale & ~valid_grazing
+        upper[scale_only] = scale_upper[scale_only]
+
+        return np.maximum(0.0, upper)
+
     def _get_sample_bounds(self, bound_keys=None, values=None):
         bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
         sampled_keys = self._get_sampled_keys(bound_keys)
@@ -1075,44 +1126,69 @@ class lc_fitter(object):
     def _sample_point_from_unit_cube(self, upars, bound_keys=None):
         bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
         upars_array = np.asarray(upars, dtype=float)
-        if upars_array.ndim == 2:
-            return np.asarray([
-                self._sample_point_from_unit_cube(row, bound_keys)
-                for row in upars_array
-            ], dtype=float)
-
         boundarray = np.array([self.bounds[k] for k in bound_keys], dtype=float)
-        physical = copy.deepcopy(self.prior)
-        sample_point = np.zeros(len(bound_keys), dtype=float)
+        lower_bounds = boundarray[:, 0]
+        bound_widths = boundarray[:, 1] - lower_bounds
+        uses_internal_impact_parameter = self._uses_internal_impact_parameter()
+        inc_indices = [i for i, key in enumerate(bound_keys) if key == 'inc']
 
-        for i, key in enumerate(bound_keys):
-            if key == 'inc' and self._uses_internal_impact_parameter():
-                continue
-            physical[key] = boundarray[i, 0] + (boundarray[i, 1] - boundarray[i, 0]) * upars_array[i]
+        sample_point = lower_bounds + bound_widths * upars_array
+        if not uses_internal_impact_parameter or not inc_indices:
+            return sample_point
 
+        if len(inc_indices) == 1:
+            inc_index = inc_indices[0]
+            if upars_array.ndim == 2:
+                upper_bounds = self._get_impact_parameter_upper_bounds_for_sample_points(
+                    sample_point,
+                    bound_keys,
+                )
+                sample_point[:, inc_index] = upper_bounds * upars_array[:, inc_index]
+                return sample_point
+
+            upper_bound = self._get_impact_parameter_upper_bounds_for_sample_points(
+                sample_point.reshape(1, -1),
+                bound_keys,
+            )[0]
+            sample_point[inc_index] = upper_bound * upars_array[inc_index]
+            return sample_point
+
+        if upars_array.ndim == 2:
+            for row_index, row_sample_point in enumerate(sample_point):
+                physical = dict(self.prior)
+                for i, key in enumerate(bound_keys):
+                    if i not in inc_indices:
+                        physical[key] = row_sample_point[i]
+                for i in inc_indices:
+                    b_lower, b_upper = self._get_impact_parameter_sampling_bounds(physical)
+                    row_sample_point[i] = b_lower + (b_upper - b_lower) * upars_array[row_index, i]
+            return sample_point
+
+        physical = dict(self.prior)
         for i, key in enumerate(bound_keys):
-            if key == 'inc' and self._uses_internal_impact_parameter():
-                b_lower, b_upper = self._get_impact_parameter_sampling_bounds(physical)
-                sample_point[i] = b_lower + (b_upper - b_lower) * upars_array[i]
-            else:
-                sample_point[i] = physical[key]
+            if i not in inc_indices:
+                physical[key] = sample_point[i]
+        for i in inc_indices:
+            b_lower, b_upper = self._get_impact_parameter_sampling_bounds(physical)
+            sample_point[i] = b_lower + (b_upper - b_lower) * upars_array[i]
 
         return sample_point
 
     def _physical_values_from_sample_point(self, sample_point, bound_keys=None, sampled_keys=None):
         bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
         sampled_keys = self._get_sampled_keys(bound_keys) if sampled_keys is None else list(sampled_keys)
-        physical = copy.deepcopy(self.prior)
+        physical = dict(self.prior)
+        impact_parameter = None
 
         for value, bound_key, sampled_key in zip(sample_point, bound_keys, sampled_keys):
             if sampled_key == 'b' and bound_key == 'inc':
+                impact_parameter = value
                 continue
             physical[bound_key] = value
 
-        for value, bound_key, sampled_key in zip(sample_point, bound_keys, sampled_keys):
-            if sampled_key == 'b' and bound_key == 'inc':
-                physical['b'] = value
-                physical['inc'] = float(inclination_from_impact_parameter(physical, value))
+        if impact_parameter is not None:
+            physical['b'] = impact_parameter
+            physical['inc'] = float(inclination_from_impact_parameter(physical, impact_parameter))
 
         return physical
 
@@ -1138,8 +1214,9 @@ class lc_fitter(object):
             return None, None
         return points, logl
 
-    def _loglike_neighborhood_uncertainty(self, parameter_index, center, minimum_count=8):
-        points, logl = self._get_ultranest_weighted_sample_arrays()
+    def _loglike_neighborhood_uncertainty(self, parameter_index, center, minimum_count=8, points=None, logl=None):
+        if points is None or logl is None:
+            points, logl = self._get_ultranest_weighted_sample_arrays()
         if points is None or parameter_index >= points.shape[1]:
             return None
 
@@ -1184,8 +1261,9 @@ class lc_fitter(object):
             'delta_chi2': float(selected_delta),
         }
 
-    def _ultranest_error_needs_sample_fallback(self, parameter_index, center, reported_error):
-        points, _ = self._get_ultranest_weighted_sample_arrays()
+    def _ultranest_error_needs_sample_fallback(self, parameter_index, center, reported_error, points=None):
+        if points is None:
+            points, _ = self._get_ultranest_weighted_sample_arrays()
         if points is None or parameter_index >= points.shape[1]:
             return False
 
@@ -2880,10 +2958,12 @@ class lc_fitter(object):
         tdur = (self.transit < 1).sum() * np.median(np.diff(np.sort(self.time)))
 
         # test for partial transit
-        newtime = np.linspace(self.parameters['tmid'] - 0.2, self.parameters['tmid'] + 0.2, 10000)
-        newtran = transit(newtime, self.parameters)
-        masktran = newtran < 1
-        newdur = np.diff(newtime).mean() * masktran.sum()
+        newdur = transit_duration(self.parameters)
+        if not np.isfinite(newdur) or newdur <= 0:
+            newtime = np.linspace(self.parameters['tmid'] - 0.2, self.parameters['tmid'] + 0.2, 10000)
+            newtran = transit(newtime, self.parameters)
+            masktran = newtran < 1
+            newdur = np.diff(newtime).mean() * masktran.sum()
 
         self.duration_measured = tdur
         self.duration_expected = newdur
@@ -2899,6 +2979,7 @@ class lc_fitter(object):
         ml_point = self.results['maximum_likelihood']['point']
         self.sample_bounds = self._get_sample_bounds(bound_keys, physical_from_sample_point(ml_point))
         self.ultranest_error_fallbacks = {}
+        weighted_points, weighted_logl = self._get_ultranest_weighted_sample_arrays()
 
         for i, key in enumerate(sampled_keys):
             self.sample_parameters[key] = ml_point[i]
@@ -2906,13 +2987,28 @@ class lc_fitter(object):
             reported_quantiles = [
                 self.results['posterior']['errlo'][i],
                 self.results['posterior']['errup'][i]]
-            if self._ultranest_error_needs_sample_fallback(i, ml_point[i], reported_error):
-                fallback = self._loglike_neighborhood_uncertainty(i, ml_point[i])
+            if self._ultranest_error_needs_sample_fallback(
+                i,
+                ml_point[i],
+                reported_error,
+                points=weighted_points,
+            ):
+                fallback = self._loglike_neighborhood_uncertainty(
+                    i,
+                    ml_point[i],
+                    points=weighted_points,
+                    logl=weighted_logl,
+                )
                 if fallback is not None:
                     fallback['reason'] = 'degenerate_posterior_summary'
             else:
                 fallback = None
-                local_uncertainty = self._loglike_neighborhood_uncertainty(i, ml_point[i])
+                local_uncertainty = self._loglike_neighborhood_uncertainty(
+                    i,
+                    ml_point[i],
+                    points=weighted_points,
+                    logl=weighted_logl,
+                )
                 if self._ultranest_error_is_inflated_relative_to_local_fit(reported_error, local_uncertainty):
                     fallback = local_uncertainty
                     fallback['reported_error'] = float(reported_error)
@@ -2934,11 +3030,26 @@ class lc_fitter(object):
             self.errors[bound_key] = self.sample_errors[sampled_key]
             self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
 
-        if 'inc' in bound_keys and 'b' in sampled_keys:
-            inc_samples = np.array([
-                physical_from_sample_point(point)['inc']
-                for point in self.results['weighted_samples']['points']
-            ])
+        if 'inc' in bound_keys and 'b' in sampled_keys and weighted_points is not None:
+            bound_index = {key: index for index, key in enumerate(bound_keys)}
+
+            def weighted_sample_values(key, default=0.0):
+                index = bound_index.get(key)
+                if index is not None and index < weighted_points.shape[1] and sampled_keys[index] != 'b':
+                    return weighted_points[:, index]
+                value = physical_ml.get(key, self.prior.get(key, default))
+                return np.full(weighted_points.shape[0], float(value), dtype=float)
+
+            b_index = sampled_keys.index('b')
+            scale_values = {
+                'ars': weighted_sample_values('ars', np.nan),
+                'ecc': weighted_sample_values('ecc', 0.0),
+                'omega': weighted_sample_values('omega', 0.0),
+            }
+            inc_samples = np.asarray(
+                inclination_from_impact_parameter(scale_values, weighted_points[:, b_index]),
+                dtype=float,
+            )
             center, std, quantiles = self._summarize_derived_parameter(inc_samples, physical_ml['inc'])
             self.parameters['inc'] = center
             self.errors['inc'] = std
@@ -2993,71 +3104,213 @@ class lc_fitter(object):
         self.quantiles = {}
         self.parameters = copy.deepcopy(self.prior)
 
+        base_physical = dict(self.prior)
+        direct_sample_assignments = [
+            (bound_key, index)
+            for index, (bound_key, sampled_key) in enumerate(zip(bound_keys, sampled_keys))
+            if not (sampled_key == 'b' and bound_key == 'inc')
+        ]
+        impact_parameter_index = next(
+            (
+                index
+                for index, (bound_key, sampled_key) in enumerate(zip(bound_keys, sampled_keys))
+                if sampled_key == 'b' and bound_key == 'inc'
+            ),
+            None,
+        )
+        time = self.time
+        data = np.asarray(self.data, dtype=float)
+        dataerr = np.asarray(self.dataerr, dtype=float)
+        data_shape = data.shape
+        dataerr_shape_matches = dataerr.shape == data_shape
+        finite_dataerr = np.isfinite(dataerr) & (dataerr > 0) if dataerr_shape_matches else False
+        observed_values_valid = (
+            dataerr_shape_matches
+            and np.all(np.isfinite(data))
+            and np.all(finite_dataerr)
+        )
+        inverse_dataerr = np.zeros(data_shape, dtype=float)
+        baseline_weights = np.zeros(data_shape, dtype=float)
+        baseline_static_mask = np.isfinite(data)
+        if dataerr_shape_matches:
+            inverse_dataerr[finite_dataerr] = 1.0 / dataerr[finite_dataerr]
+            baseline_weights[finite_dataerr] = inverse_dataerr[finite_dataerr] ** 2
+            baseline_static_mask &= np.isfinite(baseline_weights) & (baseline_weights > 0)
+        else:
+            baseline_static_mask &= False
+
+        baseline_fit_mask = self._get_baseline_fit_mask()
+        if baseline_fit_mask is not None:
+            baseline_static_mask &= baseline_fit_mask
+
+        centered_airmass = center_airmass(self.airmass, reference=self._get_airmass_reference())
+        has_free_flux_baseline = self._has_free_flux_baseline()
+        uses_fixed_flux_baseline = self._uses_fixed_flux_baseline()
+        sampled_key_index = {key: index for index, key in enumerate(sampled_keys)}
+        sampled_a2_index = sampled_key_index.get('a2')
+        fixed_airmass_scale = None
+        if sampled_a2_index is None:
+            try:
+                fixed_a2 = float(base_physical.get('a2', 0.0))
+            except (TypeError, ValueError):
+                fixed_a2 = np.nan
+            if not np.isfinite(fixed_a2):
+                observed_values_valid = False
+            elif fixed_a2 != 0.0:
+                fixed_airmass_scale = np.exp(fixed_a2 * centered_airmass)
+
+        free_flux_baseline_index = next(
+            (sampled_key_index[key] for key in ('a0', 'a1') if key in sampled_key_index),
+            None,
+        )
+        fixed_flux_baseline_value = None
+        if free_flux_baseline_index is None and uses_fixed_flux_baseline:
+            fixed_flux_baseline_value = get_flux_baseline(base_physical)
+
+        duration_prior = self.duration_prior if isinstance(self.duration_prior, dict) else None
+        duration_prior_applied = bool(duration_prior and duration_prior.get('applied'))
+        try:
+            expected_duration = float(duration_prior.get('expected_duration', np.nan)) if duration_prior else np.nan
+            sigma_log_duration = float(duration_prior.get('sigma_log_duration', np.nan)) if duration_prior else np.nan
+        except (TypeError, ValueError):
+            expected_duration = np.nan
+            sigma_log_duration = np.nan
+        duration_prior_valid = (
+            duration_prior_applied
+            and np.isfinite(expected_duration)
+            and expected_duration > 0
+            and np.isfinite(sigma_log_duration)
+            and sigma_log_duration > 0
+        )
+
+        def solve_flux_baseline_for_model(model):
+            mask = baseline_static_mask & np.isfinite(model) & (model != 0)
+            if not np.any(mask):
+                return fallback_flux_baseline()
+
+            masked_model = model[mask]
+            masked_data = data[mask]
+            masked_weights = baseline_weights[mask]
+            denom = np.sum(masked_weights * masked_model ** 2)
+
+            if not np.isfinite(denom) or denom <= 0:
+                ratio = masked_data / masked_model
+                ratio = ratio[np.isfinite(ratio)]
+                if ratio.size == 0:
+                    return fallback_flux_baseline()
+                baseline = np.nanmedian(ratio)
+                return baseline if np.isfinite(baseline) else fallback_flux_baseline()
+
+            baseline = np.sum(masked_weights * masked_data * masked_model) / denom
+            return baseline if np.isfinite(baseline) else fallback_flux_baseline()
+
         def physical_from_sample_point(sample_point):
-            return self._physical_values_from_sample_point(sample_point, bound_keys, sampled_keys)
+            physical = base_physical.copy()
+            for bound_key, index in direct_sample_assignments:
+                physical[bound_key] = sample_point[index]
+            if impact_parameter_index is not None:
+                impact_parameter = sample_point[impact_parameter_index]
+                physical['b'] = impact_parameter
+                physical['inc'] = float(inclination_from_impact_parameter(physical, impact_parameter))
+            return physical
 
         def single_loglike(pars):
+            if not observed_values_valid:
+                return BAD_LOG_LIKELIHOOD
+
             physical = physical_from_sample_point(pars)
-            duration_prior = self.duration_prior if isinstance(self.duration_prior, dict) else None
             duration_loglike = 0.0
-            if duration_prior and duration_prior.get('applied'):
-                expected_duration = duration_prior.get('expected_duration', np.nan)
-                sigma_log_duration = duration_prior.get('sigma_log_duration', np.nan)
-                if (
-                    np.isfinite(expected_duration)
-                    and expected_duration > 0
-                    and np.isfinite(sigma_log_duration)
-                    and sigma_log_duration > 0
-                ):
-                    duration = transit_duration(physical)
-                    if not np.isfinite(duration) or duration <= 0:
-                        return BAD_LOG_LIKELIHOOD
-                    duration_log_residual = np.log(duration / expected_duration)
-                    duration_loglike = -0.5 * (duration_log_residual / sigma_log_duration) ** 2
+            if duration_prior_valid:
+                duration = transit_duration(physical)
+                if not np.isfinite(duration) or duration <= 0:
+                    return BAD_LOG_LIKELIHOOD
+                duration_log_residual = np.log(duration / expected_duration)
+                duration_loglike = -0.5 * (duration_log_residual / sigma_log_duration) ** 2
             try:
-                model = np.asarray(transit(self.time, physical), dtype=float)
-                model *= airmass_trend(
-                    physical.get('a2', 0),
-                    self.airmass,
-                    reference=self._get_airmass_reference(),
-                )
-                if self._has_free_flux_baseline():
-                    model *= get_flux_baseline(physical)
-                elif self._uses_fixed_flux_baseline():
+                model = np.asarray(transit(time, physical), dtype=float)
+                if sampled_a2_index is not None:
+                    model *= np.exp(float(pars[sampled_a2_index]) * centered_airmass)
+                elif fixed_airmass_scale is not None:
+                    model *= fixed_airmass_scale
+
+                if free_flux_baseline_index is not None:
+                    model *= pars[free_flux_baseline_index]
+                elif fixed_flux_baseline_value is not None:
+                    model *= fixed_flux_baseline_value
+                elif has_free_flux_baseline:
                     model *= get_flux_baseline(physical)
                 else:
-                    model *= solve_flux_baseline(
-                        model,
-                        self.data,
-                        self.dataerr,
-                        mask=self._get_baseline_fit_mask(),
-                    )
+                    model *= solve_flux_baseline_for_model(model)
             except Exception:
                 return BAD_LOG_LIKELIHOOD
 
-            if (
-                model.shape != np.asarray(self.data).shape
-                or not np.all(np.isfinite(model))
-                or not np.all(np.isfinite(self.data))
-                or not np.all(np.isfinite(self.dataerr))
-                or np.any(np.asarray(self.dataerr) <= 0)
-            ):
+            if model.shape != data_shape or not np.all(np.isfinite(model)):
                 return BAD_LOG_LIKELIHOOD
 
-            residuals = (self.data - model) / self.dataerr
-            chi2 = np.sum(residuals ** 2)
+            residuals = (data - model) * inverse_dataerr
+            chi2 = np.sum(residuals * residuals)
             logl = -0.5 * chi2 + duration_loglike
             return float(logl) if np.isfinite(logl) else BAD_LOG_LIKELIHOOD
 
         def loglike(pars):
             pars_array = np.asarray(pars, dtype=float)
             if pars_array.ndim == 2:
-                return np.asarray([single_loglike(row) for row in pars_array], dtype=float)
+                return np.fromiter(
+                    (single_loglike(row) for row in pars_array),
+                    dtype=float,
+                    count=pars_array.shape[0],
+                )
             return single_loglike(pars_array)
 
+        prior_boundarray = np.array([self.bounds[k] for k in bound_keys], dtype=float)
+        prior_lower_bounds = prior_boundarray[:, 0]
+        prior_bound_widths = prior_boundarray[:, 1] - prior_lower_bounds
+        prior_bound_index = {key: index for index, key in enumerate(bound_keys)}
+        prior_inc_index = prior_bound_index.get('inc')
+
+        def prior_values_for(sample_points, key, default):
+            if key in prior_bound_index:
+                return sample_points[:, prior_bound_index[key]]
+            value = np.asarray(base_physical.get(key, default), dtype=float)
+            if value.shape == ():
+                return np.full(sample_points.shape[0], float(value), dtype=float)
+            return np.broadcast_to(value, (sample_points.shape[0],)).astype(float)
+
+        def prior_impact_upper_bounds(sample_points):
+            rprs = prior_values_for(sample_points, 'rprs', np.nan)
+            grazing_upper = np.where(np.isfinite(rprs) & (rprs >= 0), 1.0 + rprs, np.nan)
+
+            ars = prior_values_for(sample_points, 'ars', np.nan)
+            ecc = prior_values_for(sample_points, 'ecc', 0.0)
+            omega = np.deg2rad(prior_values_for(sample_points, 'omega', 0.0))
+            denom = 1.0 + ecc * np.sin(omega)
+            denom = np.where(np.isclose(denom, 0.0), np.finfo(float).eps, denom)
+            scale_upper = ars * (1.0 - ecc ** 2) / denom
+
+            valid_grazing = np.isfinite(grazing_upper) & (grazing_upper > 0)
+            valid_scale = np.isfinite(scale_upper) & (scale_upper > 0)
+            upper = np.full(sample_points.shape[0], 1.0, dtype=float)
+
+            both_valid = valid_grazing & valid_scale
+            upper[both_valid] = np.minimum(grazing_upper[both_valid], scale_upper[both_valid])
+            upper[valid_grazing & ~valid_scale] = grazing_upper[valid_grazing & ~valid_scale]
+            upper[valid_scale & ~valid_grazing] = scale_upper[valid_scale & ~valid_grazing]
+            return np.maximum(0.0, upper)
+
         def prior_transform(upars):
-            # transform unit cube to prior volume
-            return self._sample_point_from_unit_cube(upars, bound_keys)
+            upars_array = np.asarray(upars, dtype=float)
+            sample_points = prior_lower_bounds + prior_bound_widths * upars_array
+            if not self.impact_parameter_sampled_directly or prior_inc_index is None:
+                return sample_points
+
+            if upars_array.ndim == 2:
+                upper_bounds = prior_impact_upper_bounds(sample_points)
+                sample_points[:, prior_inc_index] = upper_bounds * upars_array[:, prior_inc_index]
+                return sample_points
+
+            upper_bound = prior_impact_upper_bounds(sample_points.reshape(1, -1))[0]
+            sample_points[prior_inc_index] = upper_bound * upars_array[prior_inc_index]
+            return sample_points
 
         self.ns_type = 'ultranest'
         test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)

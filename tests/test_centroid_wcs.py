@@ -908,7 +908,7 @@ def test_filter_pointing_outlier_frames_falls_back_to_transform_when_wcs_is_inco
     assert set(cached_transforms) == set(frames[:-1])
 
 
-def test_abort_if_reference_frame_rejected_reports_error_and_removal_recommendation(monkeypatch):
+def test_reference_frame_rejection_fallback_reports_automatic_removal_and_reprojection(monkeypatch):
     messages = []
 
     monkeypatch.setattr(
@@ -917,7 +917,7 @@ def test_abort_if_reference_frame_rejected_reports_error_and_removal_recommendat
         lambda message, error=False, warn=False: messages.append((message, error, warn)),
     )
 
-    result = exotic_module.abort_if_reference_frame_rejected(
+    result = exotic_module.reference_frame_rejection_fallback_info(
         "frame_0001.fits",
         ["frame_0001.fits", "frame_0002.fits", "frame_0003.fits"],
         ordered_inputfiles=[
@@ -928,19 +928,20 @@ def test_abort_if_reference_frame_rejected_reports_error_and_removal_recommendat
         ],
     )
 
-    assert result is True
-    assert any("first usable image" in message and error for message, error, _ in messages)
-    assert any("frame_0002.fits" in message and error for message, error, _ in messages)
+    assert result["leading_rejected_files"] == ["frame_0001.fits", "frame_0002.fits", "frame_0003.fits"]
+    assert result["next_reference_candidate"] == "frame_0004.fits"
+    assert any("automatically removing" in message and warn for message, _, warn in messages)
+    assert any("target RA/Dec" in message and "nextastro_archive" in message and warn for message, _, warn in messages)
     assert any(
-        "remove or move these leading rejected frames" in message
+        "Automatically removed leading rejected frame(s)" in message
         and "frame_0001.fits, frame_0002.fits, frame_0003.fits" in message
-        and "frame_0004.fits" in message
-        and error
-        for message, error, _ in messages
+        and "Continuing from new reference image frame_0004.fits" in message
+        and warn
+        for message, _, warn in messages
     )
 
 
-def test_abort_if_reference_frame_rejected_only_recommends_consecutive_leading_rejections(monkeypatch):
+def test_reference_frame_rejection_fallback_only_reports_consecutive_leading_rejections(monkeypatch):
     messages = []
 
     monkeypatch.setattr(
@@ -949,7 +950,7 @@ def test_abort_if_reference_frame_rejected_only_recommends_consecutive_leading_r
         lambda message, error=False, warn=False: messages.append((message, error, warn)),
     )
 
-    result = exotic_module.abort_if_reference_frame_rejected(
+    result = exotic_module.reference_frame_rejection_fallback_info(
         "frame_0001.fits",
         ["frame_0001.fits", "frame_0003.fits"],
         ordered_inputfiles=[
@@ -960,18 +961,19 @@ def test_abort_if_reference_frame_rejected_only_recommends_consecutive_leading_r
         ],
     )
 
-    assert result is True
+    assert result["leading_rejected_files"] == ["frame_0001.fits"]
+    assert result["next_reference_candidate"] == "frame_0002.fits"
     assert any(
-        "remove or move this rejected frame" in message
+        "Automatically removed leading rejected frame(s)" in message
         and "frame_0001.fits" in message
-        and "frame_0002.fits" in message
+        and "Continuing from new reference image frame_0002.fits" in message
         and "frame_0003.fits" not in message
-        and error
-        for message, error, _ in messages
+        and warn
+        for message, _, warn in messages
     )
 
 
-def test_abort_if_reference_frame_rejected_ignores_non_reference_rejections(monkeypatch):
+def test_reference_frame_rejection_fallback_ignores_non_reference_rejections(monkeypatch):
     messages = []
 
     monkeypatch.setattr(
@@ -980,10 +982,37 @@ def test_abort_if_reference_frame_rejected_ignores_non_reference_rejections(monk
         lambda message, error=False, warn=False: messages.append((message, error, warn)),
     )
 
-    result = exotic_module.abort_if_reference_frame_rejected(
+    result = exotic_module.reference_frame_rejection_fallback_info(
         "frame_0001.fits",
         ["frame_0002.fits", "frame_0003.fits"],
     )
 
-    assert result is False
+    assert result is None
     assert messages == []
+
+
+def test_reference_fallback_comparison_stars_use_nextastro_archive_image_criteria():
+    image = np.zeros((300, 300), dtype=float)
+
+    def add_blob(x_pos, y_pos, value):
+        image[y_pos - 1:y_pos + 2, x_pos - 1:x_pos + 2] = value * 0.5
+        image[y_pos, x_pos] = value
+
+    add_blob(150, 150, 2000.0)  # target location, excluded by detected-target match
+    add_blob(220, 220, 1200.0)
+    add_blob(80, 80, 900.0)
+    add_blob(180, 180, 1600.0)  # within 50 px of target, excluded
+    add_blob(25, 25, 5000.0)    # outside the central 50% frame, excluded
+
+    comp_stars, candidates = exotic_module.select_reference_fallback_comparison_stars(
+        image,
+        image.shape,
+        target_pixel=[150, 150],
+        comp_count=2,
+    )
+
+    assert comp_stars == [[220.0, 220.0], [80.0, 80.0]]
+    assert [candidate["flux"] for candidate in candidates] == sorted(
+        [candidate["flux"] for candidate in candidates],
+        reverse=True,
+    )

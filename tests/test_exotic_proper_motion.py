@@ -3313,6 +3313,98 @@ def test_evaluate_transit_detection_qc_passes_strong_model_with_low_rprs_precisi
     assert "not used as a transit-detection veto" in " ".join(summary["notes"])
 
 
+def test_evaluate_transit_detection_qc_uses_midpoint_anchored_duration_for_partial():
+    times = np.linspace(0.0, 3.0, 13)
+    transit_model = np.ones(times.shape[0], dtype=float)
+    transit_model[times <= 2.25] = 0.99
+    data = transit_model + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, -0.0001, 0.0002, -0.0002,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        time=times,
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        transit=transit_model,
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.0, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [-0.1, 0.1], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=2.5,
+        pre_ultranest_transit_coverage={
+            "valid": True,
+            "covers_ingress": False,
+            "covers_mid_transit": True,
+            "covers_egress": True,
+            "observed_segment": "mid-transit to egress",
+            "expected_tmid": 0.0,
+        },
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+    contributions_by_label = {
+        contribution["label"]: contribution
+        for contribution in summary["ktmf_contributions"]
+    }
+
+    assert summary["duration_measured_for_qc"] == pytest.approx(4.75)
+    assert summary["duration_ratio"] == pytest.approx(0.95)
+    assert contributions_by_label["Duration Consistency"]["available"] is True
+    assert "midpoint-anchored partial estimate" in contributions_by_label["Duration Consistency"]["detail"]
+
+
+def test_evaluate_transit_detection_qc_skips_duration_for_edge_only_partial():
+    times = np.linspace(-3.0, -0.25, 12)
+    transit_model = np.ones(times.shape[0], dtype=float)
+    transit_model[times >= -2.5] = 0.99
+    data = transit_model + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001,
+            -0.0001, 0.0002, -0.0002, 0.0001, -0.0001, 0.0002,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        time=times,
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        transit=transit_model,
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.0, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [-0.1, 0.1], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=2.75,
+        pre_ultranest_transit_coverage={
+            "valid": True,
+            "covers_ingress": True,
+            "covers_mid_transit": False,
+            "covers_egress": False,
+            "observed_segment": "ingress-only partial",
+            "expected_tmid": 0.0,
+        },
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+    contributions_by_label = {
+        contribution["label"]: contribution
+        for contribution in summary["ktmf_contributions"]
+    }
+
+    assert np.isnan(summary["duration_ratio"])
+    assert summary["duration_consistency_applicable"] is False
+    assert contributions_by_label["Duration Consistency"]["available"] is False
+    assert "only partially observed" in contributions_by_label["Duration Consistency"]["detail"]
+
+
 def test_evaluate_transit_detection_qc_fails_when_flat_model_is_better():
     transit_model = np.ones(21, dtype=float)
     transit_model[8:13] = 0.99

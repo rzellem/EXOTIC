@@ -751,6 +751,85 @@ def transit_qc_duration_score(duration_ratio):
     return float(np.clip(score, 0.0, 1.0))
 
 
+def estimate_midpoint_anchored_partial_duration(fit, assessment):
+    times = np.asarray(getattr(fit, 'time', []), dtype=float)
+    transit_model = np.asarray(getattr(fit, 'transit', []), dtype=float)
+    if times.shape != transit_model.shape or times.size < 2:
+        return np.nan
+
+    parameters = getattr(fit, 'parameters', {}) or {}
+    tmid = coerce_finite_transit_qc_scalar(parameters.get('tmid', assessment.get('expected_tmid', np.nan)))
+    if not np.isfinite(tmid):
+        return np.nan
+
+    finite_times = np.sort(times[np.isfinite(times)])
+    if finite_times.size < 2:
+        return np.nan
+    cadence = float(np.nanmedian(np.diff(finite_times)))
+    if not np.isfinite(cadence) or cadence <= 0:
+        return np.nan
+
+    in_transit = np.isfinite(times) & np.isfinite(transit_model) & (transit_model < 1.0)
+    if not np.any(in_transit):
+        return np.nan
+
+    covers_ingress = bool(assessment.get('covers_ingress', False))
+    covers_egress = bool(assessment.get('covers_egress', False))
+    if covers_ingress and not covers_egress:
+        side_times = times[in_transit & (times <= tmid)]
+        if side_times.size == 0:
+            return np.nan
+        half_duration = tmid - float(np.nanmin(side_times)) + 0.5 * cadence
+    elif covers_egress and not covers_ingress:
+        side_times = times[in_transit & (times >= tmid)]
+        if side_times.size == 0:
+            return np.nan
+        half_duration = float(np.nanmax(side_times)) - tmid + 0.5 * cadence
+    else:
+        return np.nan
+
+    if not np.isfinite(half_duration) or half_duration <= 0:
+        return np.nan
+    return float(2.0 * half_duration)
+
+
+def transit_qc_duration_consistency_measurement(fit):
+    duration_measured = getattr(fit, 'duration_measured', np.nan)
+    assessment = getattr(fit, 'pre_ultranest_transit_coverage', None)
+    if not isinstance(assessment, dict) or not assessment.get('valid', False):
+        return duration_measured, True, None
+
+    covers_ingress = bool(assessment.get('covers_ingress', False))
+    covers_mid_transit = bool(assessment.get('covers_mid_transit', False))
+    covers_egress = bool(assessment.get('covers_egress', False))
+    if covers_ingress and covers_egress:
+        return duration_measured, True, None
+
+    observed_segment = assessment.get('observed_segment') or 'partial transit'
+    if covers_mid_transit and (covers_ingress or covers_egress):
+        partial_duration = estimate_midpoint_anchored_partial_duration(fit, assessment)
+        if np.isfinite(partial_duration) and partial_duration > 0:
+            edge = 'ingress' if covers_ingress else 'egress'
+            note = (
+                "Duration consistency used a midpoint-anchored partial estimate: fitted Tmid to "
+                f"observed {edge}, doubled to estimate the full duration ({observed_segment})."
+            )
+            return partial_duration, True, note
+
+        note = (
+            "Duration consistency was not scored because the expected transit was only partially "
+            f"observed ({observed_segment}) and the midpoint-to-edge duration could not be measured."
+        )
+        return np.nan, False, note
+
+    note = (
+        "Duration consistency was not scored because the expected transit was only partially "
+        f"observed ({observed_segment}); either both ingress and egress, or mid-transit plus "
+        "one transit edge, are needed to estimate duration."
+    )
+    return np.nan, False, note
+
+
 def transit_qc_saturating_score(value, scale):
     try:
         value = float(value)
@@ -1039,6 +1118,14 @@ def compute_transit_qc_ktmf(summary):
     else:
         deviation_detail = "expected-value deviation disabled or unavailable"
 
+    duration_note = summary.get('duration_consistency_note')
+    if np.isfinite(summary.get('duration_ratio', np.nan)):
+        duration_detail = f"{summary.get('duration_ratio', np.nan):.2f}x expected duration"
+        if duration_note:
+            duration_detail = f"{duration_detail}; {duration_note}"
+    else:
+        duration_detail = duration_note or "n/a"
+
     raw_components = [
         {
             'key': 'model_evidence',
@@ -1066,11 +1153,7 @@ def compute_transit_qc_ktmf(summary):
             'key': 'duration_consistency',
             'label': 'Duration Consistency',
             'score': transit_qc_duration_score(summary.get('duration_ratio', np.nan)),
-            'detail': (
-                f"{summary.get('duration_ratio', np.nan):.2f}x expected duration"
-                if np.isfinite(summary.get('duration_ratio', np.nan))
-                else "n/a"
-            ),
+            'detail': duration_detail,
         },
         {
             'key': 'eebls_depth_snr',
@@ -1303,6 +1386,9 @@ def evaluate_transit_detection_qc(fit):
         'flat_model_note': None,
         'rprs_sigma': np.nan,
         'duration_ratio': np.nan,
+        'duration_measured_for_qc': np.nan,
+        'duration_consistency_applicable': True,
+        'duration_consistency_note': None,
         'eebls_depth_snr': np.nan,
         'residual_scatter': np.nan,
         'use_deviation_from_expected_transit_in_qc': bool(use_deviation_from_expected_transit_in_qc),
@@ -1433,9 +1519,13 @@ def evaluate_transit_detection_qc(fit):
         summary['rprs_sigma'] = float(abs(rprs) / rprs_err)
 
     duration_expected = getattr(fit, 'duration_expected', np.nan)
-    duration_measured = getattr(fit, 'duration_measured', np.nan)
+    duration_measured, duration_applicable, duration_note = transit_qc_duration_consistency_measurement(fit)
+    summary['duration_consistency_applicable'] = bool(duration_applicable)
+    summary['duration_consistency_note'] = duration_note
+    summary['duration_measured_for_qc'] = duration_measured
     if (
-        np.isfinite(duration_expected)
+        duration_applicable
+        and np.isfinite(duration_expected)
         and duration_expected > 0
         and np.isfinite(duration_measured)
         and duration_measured >= 0
@@ -1509,6 +1599,8 @@ def evaluate_transit_detection_qc(fit):
         )
 
     if np.isfinite(summary['duration_ratio']):
+        if summary.get('duration_consistency_note'):
+            notes.append(summary['duration_consistency_note'])
         if (
             summary['duration_ratio'] < TRANSIT_QC_DURATION_RATIO_MIN
             or summary['duration_ratio'] > TRANSIT_QC_DURATION_RATIO_MAX
@@ -1516,6 +1608,8 @@ def evaluate_transit_detection_qc(fit):
             notes.append(
                 f"The measured transit duration is {summary['duration_ratio']:.2f}x the modeled duration."
             )
+    elif summary.get('duration_consistency_note'):
+        notes.append(summary['duration_consistency_note'])
 
     if np.isfinite(summary['eebls_depth_snr']) and summary['eebls_depth_snr'] < TRANSIT_QC_MIN_EEBLS_SNR:
         notes.append(

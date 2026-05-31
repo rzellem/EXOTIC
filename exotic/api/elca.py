@@ -991,16 +991,35 @@ class lc_fitter(object):
         x_sorted = x_values[sort_index]
         lower_sorted = np.asarray(lower, dtype=float)[sort_index]
         upper_sorted = np.asarray(upper, dtype=float)[sort_index]
-        return ax.fill_between(
+        band = ax.fill_between(
             x_sorted,
             lower_sorted,
             upper_sorted,
             color='gold',
-            alpha=0.28,
+            alpha=0.32,
             linewidth=0,
-            zorder=1.7,
+            zorder=2.1,
             label=label,
         )
+        ax.plot(
+            x_sorted,
+            lower_sorted,
+            color='gold',
+            linestyle='--',
+            linewidth=0.9,
+            alpha=0.78,
+            zorder=3.2,
+        )
+        ax.plot(
+            x_sorted,
+            upper_sorted,
+            color='gold',
+            linestyle='--',
+            linewidth=0.9,
+            alpha=0.78,
+            zorder=3.2,
+        )
+        return band
 
     def _uses_internal_impact_parameter(self):
         return (

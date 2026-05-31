@@ -2232,6 +2232,7 @@ def test_fit_final_lightcurve_linear_detrend_does_not_reapply_fixed_airmass_base
             "prior": dict(call_prior),
             "bounds": dict(call_bounds),
             "fixed_flux_baseline": kwargs.get("fixed_flux_baseline"),
+            "fixed_parameter_errors": dict(kwargs.get("fixed_parameter_errors", {})),
         })
         return types.SimpleNamespace(
             time=np.asarray(call_times, dtype=float),
@@ -2293,6 +2294,11 @@ def test_fit_final_lightcurve_linear_detrend_does_not_reapply_fixed_airmass_base
     assert final_call["fixed_flux_baseline"] is True
     assert final_call["prior"]["a0"] == pytest.approx(1.0)
     assert final_call["prior"]["a2"] == pytest.approx(0.0)
+    assert final_call["fixed_parameter_errors"]["a0"] > 0
+    assert final_call["fixed_parameter_errors"]["a1"] == pytest.approx(
+        final_call["fixed_parameter_errors"]["a0"],
+    )
+    assert final_call["fixed_parameter_errors"]["a2"] == pytest.approx(0.0)
     assert "a0" not in final_call["bounds"]
     assert "a2" not in final_call["bounds"]
     assert np.allclose(final_call["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
@@ -2371,6 +2377,10 @@ def test_fit_final_lightcurve_uses_oot_baseline_parameter_refit_when_linear_detr
     assert captured["calls"][1]["baseline_fit_mask"].tolist() == [False, False, False, False, True, True, True]
     assert "a0" not in captured["calls"][1]["bounds"]
     assert "a2" not in captured["calls"][1]["bounds"]
+    assert captured["calls"][1]["fixed_parameter_errors"]["a0"] > 0
+    assert captured["calls"][1]["fixed_parameter_errors"]["a1"] == pytest.approx(
+        captured["calls"][1]["fixed_parameter_errors"]["a0"],
+    )
     assert "a2" in captured["calls"][1]["fixed_parameter_errors"]
     assert fit.oot_baseline_parameter_fit_applied is True
     assert fit.oot_baseline_detrending_applied is False

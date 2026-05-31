@@ -553,35 +553,13 @@ def _finite_plot_float(value):
 
 
 def _stellar_variability_reference_label(vsp_param, comparison_label):
-    band = vsp_param.get('mag_band') or 'V'
-    observed_filter = vsp_param.get('observed_filter')
     comp_ra = _finite_plot_float(vsp_param.get('comp_ra'))
     comp_dec = _finite_plot_float(vsp_param.get('comp_dec'))
 
-    comparison_parts = []
-    if vsp_param.get('is_aavso_vsp', True) and comparison_label:
-        comparison_parts.append(f"Label={comparison_label}")
     if comp_ra is not None and comp_dec is not None:
-        comparison_parts.append(f"RA={comp_ra:.7f}")
-        comparison_parts.append(f"Dec={comp_dec:.7f}")
-    elif comparison_label:
-        comparison_parts.append(str(comparison_label))
+        return f"RA={comp_ra:.6f}, Dec={comp_dec:.6f}"
 
-    detail_parts = []
-    if observed_filter not in (None, ''):
-        detail_parts.append(f"Observed filter={observed_filter}")
-
-    mag_text = magnitude_text(band, vsp_param.get('cmag'), vsp_param.get('cmag_err'))
-    if mag_text is not None:
-        detail_parts.append(mag_text)
-
-    label_lines = []
-    if comparison_parts:
-        label_lines.append(", ".join(comparison_parts))
-    if detail_parts:
-        label_lines.append(", ".join(detail_parts))
-
-    return "\n".join(label_lines)
+    return str(comparison_label) if comparison_label else ""
 
 
 def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
@@ -604,7 +582,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     first_param = vsp_params[0]
     band = first_param.get('mag_band') or 'V'
     reference_label = _stellar_variability_reference_label(first_param, vsp_auid_comp)
-    ax.set_title(f"{s_name}\nComparison: {reference_label}")
+    ax.set_title(f"{s_name}\n{reference_label}" if reference_label else s_name)
     ax.set_ylabel(f"Magnitude ({band})")
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()

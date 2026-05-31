@@ -2717,20 +2717,43 @@ def selected_final_live_point_target(enabled=None):
     return base_live_points, target_live_points
 
 
+def coerce_fixed_baseline_error(value, default=None):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+    if np.isfinite(value) and value >= 0:
+        return value
+    return default
+
+
 def baseline_fixed_errors_from_fit(fit):
     errors = getattr(fit, 'errors', {}) if fit is not None else {}
     fixed_errors = {}
     if isinstance(errors, dict):
         for key in ('a0', 'a1', 'a2'):
-            value = errors.get(key)
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                continue
-            if np.isfinite(value) and value >= 0:
+            value = coerce_fixed_baseline_error(errors.get(key))
+            if value is not None:
                 fixed_errors[key] = value
     if 'a0' in fixed_errors and 'a1' not in fixed_errors:
         fixed_errors['a1'] = fixed_errors['a0']
+    return fixed_errors
+
+
+def baseline_fixed_errors_from_oot_parameter_result(result):
+    fixed_errors = {}
+    if not isinstance(result, dict):
+        return fixed_errors
+
+    a0_error = coerce_fixed_baseline_error(result.get('a0_error'))
+    if a0_error is not None:
+        fixed_errors['a0'] = a0_error
+        fixed_errors['a1'] = a0_error
+
+    a2_error = coerce_fixed_baseline_error(result.get('a2_error'))
+    if a2_error is not None:
+        fixed_errors['a2'] = a2_error
+
     return fixed_errors
 
 
@@ -7706,9 +7729,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         log_info("Prepared out-of-transit airmass/baseline parameter constraints for a fallback final transit refit.")
         log_info(baseline_parameter_result['note'])
         baseline_fit_mask = np.asarray(baseline_parameter_result['oot_mask'], dtype=bool)
-        baseline_fixed_errors = {
-            'a2': baseline_parameter_result.get('a2_error', 0.0),
-        }
+        baseline_fixed_errors = baseline_fixed_errors_from_oot_parameter_result(baseline_parameter_result)
         baseline_constrained_prior['a0'] = baseline_parameter_result['a0']
         baseline_constrained_prior['a1'] = baseline_parameter_result['a0']
         baseline_constrained_prior['a2'] = baseline_parameter_result['a2']

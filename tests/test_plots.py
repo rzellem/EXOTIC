@@ -176,7 +176,7 @@ def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
     assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.pdf").exists()
 
 
-def test_plot_stellar_variability_labels_reference_band_and_coordinates(tmp_path, monkeypatch):
+def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeypatch):
     titles = []
     ylabels = []
     original_set_title = Axes.set_title
@@ -213,11 +213,10 @@ def test_plot_stellar_variability_labels_reference_band_and_coordinates(tmp_path
         "NextAstro-123",
     )
 
-    assert "RA=10.1000000" in titles[-1]
-    assert "Dec=-20.2000000" in titles[-1]
-    assert "Observed filter=CV" in titles[-1]
-    assert "r=12.345 +/- 0.067" in titles[-1]
-    assert "Dec=-20.2000000\nObserved filter=CV" in titles[-1]
+    assert titles[-1] == "Host Star\nRA=10.100000, Dec=-20.200000"
+    assert "Comparison:" not in titles[-1]
+    assert "Observed filter" not in titles[-1]
+    assert "r=12.345 +/- 0.067" not in titles[-1]
     assert ylabels[-1] == "Magnitude (r)"
     assert (tmp_path / "temp" / "Stellar_Variability.png").exists()
 
@@ -252,7 +251,8 @@ def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, m
         "NextAstro-123",
     )
 
-    assert "Observed filter=MObs CV" in titles[-1]
+    assert titles[-1] == "Host Star\nRA=10.100000, Dec=-20.200000"
+    assert "Observed filter" not in titles[-1]
     assert "99.99" not in titles[-1]
     assert "V=" not in titles[-1]
 

@@ -523,9 +523,15 @@ def test_plot_bestfit_can_draw_baseline_uncertainty_band(monkeypatch, tmp_path):
     fig, axes = fit.plot_bestfit(show_baseline_uncertainty=True)
     labels = [artist.get_label() for artist in axes[0].collections]
     legend_text = "\n".join(text.get_text() for text in axes[0].get_legend().get_texts())
+    baseline_line_count = sum(
+        1
+        for line in axes[0].lines
+        if line.get_linestyle() == "--" and line.get_color() == "gold"
+    )
 
     assert "_nolegend_" in labels
     assert r'$a_0/a_2$ 1-$\sigma$ baseline uncertainty' not in legend_text
+    assert baseline_line_count == 2
     plt.close(fig)
 
 

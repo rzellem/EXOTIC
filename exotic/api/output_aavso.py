@@ -43,9 +43,9 @@ from pathlib import Path
 import re
 
 try:
-    from .utils import round_to_2
+    from .utils import round_to_2, safe_output_filename
 except ImportError:
-    from utils import round_to_2
+    from utils import round_to_2, safe_output_filename
 try:
     from .version import __version__
 except ImportError:
@@ -142,7 +142,12 @@ class OutputFiles:
         self.dir = Path(planetdir)
         
     def final_lightcurve(self, phase):
-        params_file = self.dir / f"FinalLightCurve_{self.plname}_TESS.csv"
+        params_file = self.dir / safe_output_filename(
+            "FinalLightCurve",
+            self.plname,
+            "TESS",
+            extension="csv",
+        )
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pl_name']}\n")
@@ -154,7 +159,12 @@ class OutputFiles:
                 f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
 
     def final_planetary_params(self, phot_opt, comp_star=None, comp_coords=None, min_aper=None, min_annul=None):
-        params_file = self.dir / f"FinalParams_{self.plname}_TESS.json"
+        params_file = self.dir / safe_output_filename(
+            "FinalParams",
+            self.plname,
+            "TESS",
+            extension="json",
+        )
 
         params_num = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
@@ -211,7 +221,13 @@ class OutputFiles:
         hash_id = hash_object.hexdigest()[:32]
 
         #params_file = self.dir / f"TESS_{hash_id}_{self.plname}_{tmidstr}_AAVSO.txt"
-        params_file = self.dir / f"{tmidstr}_{hash_id}_{self.plname}_AAVSO.txt"
+        params_file = self.dir / safe_output_filename(
+            tmidstr,
+            hash_id,
+            self.plname,
+            "AAVSO",
+            extension="txt",
+        )
         # 2459642_61_5164d266e1755aead98dbec0f26e7b7c_gj436b_AAVSO
 
         with params_file.open('w') as f:
@@ -278,7 +294,13 @@ class OutputFiles:
             gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
             gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
-            params_file = self.dir / f"TESS_{tmidstr}_{self.p_dict['pl_name']}_lightcurve.csv"
+            params_file = self.dir / safe_output_filename(
+                "TESS",
+                tmidstr,
+                self.p_dict['pl_name'],
+                "lightcurve",
+                extension="csv",
+            )
 
             with params_file.open('w') as f:
                 f.write("#TYPE=EXOPLANET\n"  # fixed

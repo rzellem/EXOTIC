@@ -200,7 +200,7 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         None,
     )
 
-    output_file = tmp_path / "AAVSO_HAT-P-32 b_2020-01-01.txt"
+    output_file = tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "#OBSDATE=2020-01-01" in output_text
@@ -260,7 +260,7 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
         None,
     )
 
-    output_file = tmp_path / "AAVSO_HAT-P-32 b_2020-01-01.txt"
+    output_file = tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "#OBSNAME=" not in output_text
@@ -450,7 +450,7 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Airmass correction" in output_text
@@ -481,7 +481,7 @@ def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path
         vsp_params=vsp_params,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     reference = final_params["Variable Reference Star"]
@@ -503,7 +503,7 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
     keys = list(final_params)
@@ -536,7 +536,7 @@ def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertaintie
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert final_params["Mid-Transit Time (Tmid)"].endswith("+/- 0.0001 BJD_TDB")
@@ -564,8 +564,8 @@ def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
         publish_to_root=True,
     )
 
-    temp_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
-    root_file = tmp_path / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    temp_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    root_file = tmp_path / "FinalParams_HAT-P-32b_2020-01-01.json"
 
     assert temp_file.exists()
     assert root_file.exists()
@@ -601,7 +601,7 @@ def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
         adaptive_summary=adaptive_summary,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Adaptive Aperture Scale" in output_text
@@ -662,7 +662,7 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Transit detection QC" in output_text
@@ -755,7 +755,7 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
         photometry_info=photometry_info,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
 
@@ -786,7 +786,7 @@ def test_final_planetary_params_reports_absolute_fit_quality(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32 b_2020-01-01.json"
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
 
@@ -849,7 +849,7 @@ def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_p
         None,
     )
 
-    output_file = tmp_path / "AAVSO_HAT-P-32 b_2020-01-01.txt"
+    output_file = tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Am1=0 +/- 0" in output_text
@@ -1054,7 +1054,7 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
         },
     )
 
-    output_text = (tmp_path / "AAVSO_HAT-P-32 b_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt").read_text(encoding="utf-8")
 
     results = aavso_json_header(output_text, "RESULTS-XC")
     assert "a/R*" in results

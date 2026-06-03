@@ -11,12 +11,30 @@ def test_filename_date_token_uses_date_only_for_iso_timestamp():
 def test_safe_output_filename_sanitizes_filename_chars():
     filename = safe_output_filename(
         "BestFit",
-        "XO-1/b",
+        "XO-1/b ",
         filename_date_token("2026-05-06T19:51:13.964-0700"),
-        extension="png",
+        extension=" png",
     )
 
     assert filename == "BestFit_XO-1-b_2026-05-06.png"
+
+
+def test_safe_output_filename_removes_spaces_from_planet_names():
+    filename = safe_output_filename(
+        "FinalLightCurve",
+        "Kepler-12 b",
+        "03-JUN-2026",
+        extension="png",
+    )
+
+    assert filename == "FinalLightCurve_Kepler-12b_03-JUN-2026.png"
+    assert " " not in filename
+
+
+def test_sanitize_filename_component_cleans_fallback():
+    filename = sanitize_filename_component("   ", fallback="bad fallback")
+
+    assert filename == "badfallback"
 
 
 class TestUserInput:

@@ -23,18 +23,26 @@ _WINDOWS_RESERVED_FILENAME_STEMS = {
     *(f'LPT{i}' for i in range(1, 10)),
 }
 _WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_FILENAME_WHITESPACE_RE = re.compile(r'\s+')
 MAX_APPARENT_MAGNITUDE = 30.0
 MAGNITUDE_DECIMAL_PLACES = 3
 MINIMUM_MAGNITUDE_ERROR = 0.001
 
 
+def _clean_filename_text(value):
+    cleaned = _WINDOWS_ILLEGAL_FILENAME_CHARS_RE.sub('-', str(value or ''))
+    cleaned = _FILENAME_WHITESPACE_RE.sub('', cleaned)
+    return cleaned.rstrip(' .')
+
+
 def sanitize_filename_component(value, fallback='output'):
     """Return one filename component that is safe on Windows, macOS, and Linux."""
 
-    cleaned = _WINDOWS_ILLEGAL_FILENAME_CHARS_RE.sub('-', str(value or ''))
-    cleaned = cleaned.rstrip(' .')
+    cleaned = _clean_filename_text(value)
     if cleaned in {'', '.', '..'}:
-        cleaned = fallback
+        cleaned = _clean_filename_text(fallback)
+        if cleaned in {'', '.', '..'}:
+            cleaned = 'output'
     device_stem = cleaned.split('.', 1)[0].upper()
     if device_stem in _WINDOWS_RESERVED_FILENAME_STEMS:
         cleaned = f'_{cleaned}'
@@ -56,7 +64,7 @@ def safe_output_filename(prefix, *parts, extension):
 
     stem_parts = [str(prefix), *(str(part) for part in parts)]
     safe_stem = sanitize_filename_component('_'.join(stem_parts), fallback=str(prefix or 'output'))
-    ext = str(extension or '')
+    ext = _FILENAME_WHITESPACE_RE.sub('', str(extension or ''))
     if ext and not ext.startswith('.'):
         ext = f'.{ext}'
     return f'{safe_stem}{ext}'

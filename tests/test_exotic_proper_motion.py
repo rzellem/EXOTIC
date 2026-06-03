@@ -200,7 +200,7 @@ def test_save_final_triangle_plot_regenerates_even_when_selected_candidate_artif
     final_dir = tmp_path / "final"
     source_temp = source_dir / "temp"
     source_temp.mkdir(parents=True)
-    source_plot = source_temp / f"Triangle_{planet_name}_{observation_date}.png"
+    source_plot = source_temp / "Triangle_TOI-1728b_2024-12-14.png"
     source_plot.write_bytes(b"stale-selected-comp-6")
 
     fit = DummyFit()
@@ -212,9 +212,9 @@ def test_save_final_triangle_plot_regenerates_even_when_selected_candidate_artif
         source_dir=source_dir,
     )
 
-    assert output_path == final_dir / f"FinalTriangle_{planet_name}_{observation_date}.png"
+    assert output_path == final_dir / "FinalTriangle_TOI-1728b_2024-12-14.png"
     assert output_path.read_bytes() == b"regenerated-final"
-    assert (final_dir / "temp" / f"Triangle_{planet_name}_{observation_date}.png").read_bytes() == b"regenerated-final"
+    assert (final_dir / "temp" / "Triangle_TOI-1728b_2024-12-14.png").read_bytes() == b"regenerated-final"
     assert fit.called is True
 
 
@@ -226,7 +226,7 @@ def test_comparison_candidate_triangle_plot_uses_candidate_specific_name(tmp_pat
         6,
     )
 
-    assert output_path.name == "Comp7_Triangle_WASP-80 b_2025-06-22.png"
+    assert output_path.name == "Comp7_Triangle_WASP-80b_2025-06-22.png"
     assert output_path.parent == tmp_path / "comp7" / "temp"
 
 
@@ -315,12 +315,12 @@ def test_save_final_triangle_plot_regenerates_when_selected_artifact_missing(tmp
     assert fit.called is True
     assert output_path.read_bytes() == b"regenerated"
     assert output_path.parent == tmp_path / "final"
-    assert output_path.name == "FinalTriangle_TOI-1728 b_2024-12-14.png"
+    assert output_path.name == "FinalTriangle_TOI-1728b_2024-12-14.png"
     assert (
         tmp_path
         / "final"
         / "temp"
-        / "Triangle_TOI-1728 b_2024-12-14.png"
+        / "Triangle_TOI-1728b_2024-12-14.png"
     ).read_bytes() == b"regenerated"
 
 
@@ -5443,7 +5443,7 @@ def test_fit_ranked_comparison_calibration_candidates_archives_qc_failed_run_and
     assert result["attempts"][0]["fit_diagnostics"]["failed_stage"] == "transit_qc"
     failed_run_dir = result["attempts"][0]["failed_run_dir"]
     assert failed_run_dir is not None
-    assert (tmp_path / "comp_1_failed" / "temp" / "FailedFitSummary_HAT-P-32 b_2026-04-28.json").exists()
+    assert (tmp_path / "comp_1_failed" / "temp" / "FailedFitSummary_HAT-P-32b_2026-04-28.json").exists()
     assert Path(failed_run_dir).exists()
 
 

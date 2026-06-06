@@ -823,6 +823,94 @@ def test_filter_sparse_missing_wcs_frames_keeps_files_at_three_percent_or_higher
     assert dropped == []
 
 
+def test_filter_wcs_target_out_of_frame_frames_drops_only_projected_misses(monkeypatch):
+    def make_wcs_header(center_ra):
+        wcs = WCS(naxis=2)
+        wcs.wcs.crpix = [60.0, 50.0]
+        wcs.wcs.crval = [center_ra, 54.0]
+        wcs.wcs.cdelt = np.array([-0.01, 0.01])
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        header = wcs.to_header()
+        header["NAXIS"] = 2
+        header["NAXIS1"] = 120
+        header["NAXIS2"] = 100
+        return header
+
+    no_wcs_header = fits.Header()
+    no_wcs_header["NAXIS"] = 2
+    no_wcs_header["NAXIS1"] = 120
+    no_wcs_header["NAXIS2"] = 100
+
+    headers = {
+        "target_in_frame.fits": make_wcs_header(210.0),
+        "target_off_frame.fits": make_wcs_header(212.0),
+        "no_wcs.fits": no_wcs_header,
+    }
+    messages = []
+
+    monkeypatch.setattr(exotic_module, "get_first_image_header", lambda file_name: headers[file_name])
+    monkeypatch.setattr(
+        exotic_module,
+        "update_coordinates_with_proper_motion",
+        lambda info_dict, obs_time: (210.0, 54.0),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, warn=False, error=False: messages.append((message, warn, error)),
+    )
+
+    frames = list(headers)
+    filtered, keep_mask, dropped = exotic_module.filter_wcs_target_out_of_frame_frames(
+        frames,
+        {"ra": 210.0, "dec": 54.0},
+        obs_times=[2461196.5, 2461196.6, 2461196.7],
+    )
+
+    assert filtered.tolist() == ["target_in_frame.fits", "no_wcs.fits"]
+    assert keep_mask.tolist() == [True, False, True]
+    assert dropped == ["target_off_frame.fits"]
+    assert any("Target WCS precheck" in message for message, _, _ in messages)
+
+
+def test_maybe_reinterpret_decimal_ra_hours_from_wcs_when_only_ra_times_fifteen_matches(monkeypatch):
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [60.0, 50.0]
+    wcs.wcs.crval = [16.18494, 74.3313]
+    wcs.wcs.cdelt = np.array([-0.01, 0.01])
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    header = wcs.to_header()
+    header["NAXIS"] = 2
+    header["NAXIS1"] = 120
+    header["NAXIS2"] = 100
+    messages = []
+
+    monkeypatch.setattr(exotic_module, "get_first_image_header", lambda _file_name: header)
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, warn=False, error=False: messages.append((message, warn, error)),
+    )
+
+    info = {"ra": 1.078996153, "dec": 74.3313055}
+
+    corrected = exotic_module.maybe_reinterpret_decimal_ra_hours_from_wcs(["frame.fits"], info)
+
+    assert corrected is True
+    assert info["ra"] == pytest.approx(16.184942295)
+    assert any("interpreted decimal target RA as hours" in message and warn for message, warn, _ in messages)
+
+    already_degrees = {"ra": 16.184942295, "dec": 74.3313055}
+
+    corrected_again = exotic_module.maybe_reinterpret_decimal_ra_hours_from_wcs(
+        ["frame.fits"],
+        already_degrees,
+    )
+
+    assert corrected_again is False
+    assert already_degrees["ra"] == pytest.approx(16.184942295)
+
+
 def test_filter_pointing_outlier_frames_uses_wcs_when_all_frames_have_wcs(monkeypatch):
     frames = [f"frame_{i}.fits" for i in range(6)]
     wcs_positions = np.array(

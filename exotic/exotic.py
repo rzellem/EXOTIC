@@ -9778,6 +9778,174 @@ def any_projected_coord_out_of_frame(coords, image_shape):
     return False
 
 
+def project_ra_dec_to_wcs_pixel(ra, dec, wcs_header):
+    x_pixel, y_pixel = WCS(wcs_header).all_world2pix(ra, dec, 0)
+    x_pixel = float(np.asarray(x_pixel).reshape(-1)[0])
+    y_pixel = float(np.asarray(y_pixel).reshape(-1)[0])
+    return x_pixel, y_pixel
+
+
+def _representative_obs_time(obs_times):
+    if obs_times is None:
+        return None
+
+    try:
+        obs_times = np.asarray(obs_times, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return None
+
+    finite_obs_times = obs_times[np.isfinite(obs_times)]
+    if finite_obs_times.size == 0:
+        return None
+    return float(np.nanmedian(finite_obs_times))
+
+
+def target_ra_dec_for_wcs_filter(info_dict, obs_times=None):
+    obs_time = _representative_obs_time(obs_times)
+    if obs_time is not None:
+        target_ra, target_dec = update_coordinates_with_proper_motion(info_dict, obs_time)
+        return float(target_ra), float(target_dec)
+
+    return float(info_dict['ra']), float(info_dict['dec'])
+
+
+def wcs_target_projection_status(image_header, target_ra, target_dec):
+    wcs = search_wcs_from_header(image_header)
+    if not wcs.is_celestial:
+        return None, None
+
+    x_pixel, y_pixel = project_ra_dec_to_wcs_pixel(target_ra, target_dec, image_header)
+    width, height = _resolve_wcs_image_dimensions(image_header)
+    image_shape = (height, width)
+    return pixel_within_image(x_pixel, y_pixel, image_shape), (x_pixel, y_pixel)
+
+
+def collect_wcs_target_coverage(inputfiles, info_dict, obs_times=None):
+    keep_mask = np.ones(len(inputfiles), dtype=bool)
+    dropped_files = []
+
+    try:
+        target_ra, target_dec = target_ra_dec_for_wcs_filter(info_dict, obs_times=obs_times)
+    except Exception as exc:
+        log_info(
+            "Warning: target WCS precheck could not determine target RA/Dec "
+            f"({exc}); skipping target-in-frame filtering.",
+            warn=True,
+        )
+        return keep_mask, dropped_files
+
+    for index, file_name in enumerate(inputfiles):
+        try:
+            image_header = get_first_image_header(file_name)
+            projection_inside, _ = wcs_target_projection_status(image_header, target_ra, target_dec)
+        except Exception:
+            projection_inside = False
+
+        if projection_inside is False:
+            keep_mask[index] = False
+            dropped_files.append(str(file_name))
+
+    return keep_mask, dropped_files
+
+
+def count_wcs_target_projection_hits(inputfiles, target_ra, target_dec):
+    celestial_count = 0
+    inside_count = 0
+
+    for file_name in inputfiles:
+        try:
+            image_header = get_first_image_header(file_name)
+            projection_inside, _ = wcs_target_projection_status(image_header, target_ra, target_dec)
+        except Exception:
+            continue
+
+        if projection_inside is None:
+            continue
+
+        celestial_count += 1
+        if projection_inside:
+            inside_count += 1
+
+    return inside_count, celestial_count
+
+
+def maybe_reinterpret_decimal_ra_hours_from_wcs(inputfiles, info_dict, obs_times=None):
+    if len(inputfiles) == 0:
+        return False
+
+    try:
+        original_ra = float(info_dict['ra'])
+        float(info_dict['dec'])
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    if not (0.0 <= original_ra <= 24.0):
+        return False
+
+    try:
+        target_ra, target_dec = target_ra_dec_for_wcs_filter(info_dict, obs_times=obs_times)
+    except Exception:
+        return False
+
+    primary_inside_count, celestial_count = count_wcs_target_projection_hits(
+        inputfiles,
+        target_ra,
+        target_dec,
+    )
+    if celestial_count == 0 or primary_inside_count > 0:
+        return False
+
+    alternate_info_dict = dict(info_dict)
+    alternate_info_dict['ra'] = original_ra * 15.0
+    try:
+        alternate_ra, alternate_dec = target_ra_dec_for_wcs_filter(
+            alternate_info_dict,
+            obs_times=obs_times,
+        )
+    except Exception:
+        return False
+
+    alternate_inside_count, _ = count_wcs_target_projection_hits(
+        inputfiles,
+        alternate_ra,
+        alternate_dec,
+    )
+    if alternate_inside_count <= primary_inside_count:
+        return False
+
+    info_dict['ra'] = alternate_info_dict['ra']
+    log_info(
+        "Target WCS precheck: interpreted decimal target RA as hours because the supplied RA projected "
+        f"into 0/{celestial_count} WCS frame(s), while RA*15 projected into "
+        f"{alternate_inside_count}/{celestial_count} frame(s). Using RA={info_dict['ra']:.7f} deg.",
+        warn=True,
+    )
+    return True
+
+
+def filter_wcs_target_out_of_frame_frames(inputfiles, info_dict, obs_times=None, ignore_header_wcs=False):
+    inputfiles = np.array(inputfiles)
+    keep_mask = np.ones(len(inputfiles), dtype=bool)
+    if ignore_header_wcs or len(inputfiles) == 0:
+        return inputfiles, keep_mask, []
+
+    keep_mask, dropped_files = collect_wcs_target_coverage(
+        inputfiles,
+        info_dict,
+        obs_times=obs_times,
+    )
+    if not dropped_files:
+        return inputfiles, keep_mask, []
+
+    retained_files = inputfiles[keep_mask]
+    log_info(
+        f"Target WCS precheck: {len(retained_files)}/{len(inputfiles)} frame(s) remain after dropping "
+        f"{len(dropped_files)} file(s) where the target RA/Dec projects outside the image."
+    )
+    log_file_preview(dropped_files, "Target WCS precheck dropped files")
+    return retained_files, keep_mask, dropped_files
+
+
 def check_target_pixel_wcs(input_x_pixel, input_y_pixel, info_dict, ra_list, dec_list, image_data, obs_time,
                            non_interactive_run=False, wcs_header=None,
                            prefer_pixel_values_over_wcs_for_target=False):
@@ -10333,7 +10501,7 @@ def estimate_target_pixel_from_ra_dec(info_dict, wcs_header, image_data, obs_tim
                                       centroid_margin=7.5):
     target_ra, target_dec = update_coordinates_with_proper_motion(info_dict, obs_time)
     try:
-        x_pixel, y_pixel = WCS(wcs_header).all_world2pix(target_ra, target_dec, 0)
+        x_pixel, y_pixel = project_ra_dec_to_wcs_pixel(target_ra, target_dec, wcs_header)
     except Exception as exc:
         log_info(
             "Warning: Could not project target RA/Dec onto the new reference image "
@@ -10342,8 +10510,6 @@ def estimate_target_pixel_from_ra_dec(info_dict, wcs_header, image_data, obs_tim
         )
         return None
 
-    x_pixel = float(np.asarray(x_pixel).reshape(-1)[0])
-    y_pixel = float(np.asarray(y_pixel).reshape(-1)[0])
     if not pixel_within_image(x_pixel, y_pixel, image_data.shape):
         log_info(
             "Warning: target RA/Dec projects outside the new reference image; "
@@ -13644,6 +13810,8 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 
     plateStatus.initializeFilenames(info_dict['images'])
     inputfiles = corruption_check(info_dict['images'])
+    if not ignore_header_wcs:
+        maybe_reinterpret_decimal_ra_hours_from_wcs(inputfiles, p_dict)
     # time sort images
     times = []
     for ifile in inputfiles:
@@ -13658,14 +13826,42 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         plateStatus.setObsTime(obsTime)
 
     si = np.argsort(times)
+    times = np.array(times)[si]
     inputfiles = np.array(inputfiles)[si]
-    inputfiles, _, dropped_wcs_files = filter_sparse_missing_wcs_frames(
+    inputfiles, wcs_keep_mask, dropped_wcs_files = filter_sparse_missing_wcs_frames(
         inputfiles,
         ignore_header_wcs=ignore_header_wcs,
         max_missing_fraction=bad_wcs_threshold_fraction,
     )
     if dropped_wcs_files:
+        times = times[wcs_keep_mask]
         plateStatus.initializeFilenames(list(inputfiles))
+    target_wcs_precheck_inputfiles = np.array(inputfiles, copy=True)
+    target_wcs_reference_file = inputfiles[0] if len(inputfiles) else None
+    inputfiles, target_wcs_keep_mask, dropped_target_wcs_files = filter_wcs_target_out_of_frame_frames(
+        inputfiles,
+        p_dict,
+        obs_times=times,
+        ignore_header_wcs=ignore_header_wcs,
+    )
+    if dropped_target_wcs_files:
+        target_reference_fallback = reference_frame_rejection_fallback_info(
+            target_wcs_reference_file,
+            dropped_target_wcs_files,
+            ordered_inputfiles=target_wcs_precheck_inputfiles,
+            rejection_label="Target WCS precheck",
+        )
+        times = times[target_wcs_keep_mask]
+        plateStatus.initializeFilenames(list(inputfiles))
+    else:
+        target_reference_fallback = None
+    if len(inputfiles) == 0:
+        log_info(
+            "Error: target WCS precheck removed every frame because the target RA/Dec projects outside "
+            "each image.",
+            error=True,
+        )
+        return
     pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
     pointing_reference_file = inputfiles[0] if len(inputfiles) else None
     inputfiles, _, dropped_pointing_files, pointing_alignment_transforms = filter_pointing_outlier_frames(
@@ -13676,14 +13872,15 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         multiprocess_transformations=multiprocess_transformations,
     )
     if dropped_pointing_files:
-        reference_fallback = reference_frame_rejection_fallback_info(
+        pointing_reference_fallback = reference_frame_rejection_fallback_info(
             pointing_reference_file,
             dropped_pointing_files,
             ordered_inputfiles=pointing_precheck_inputfiles,
         )
+        reference_fallback = pointing_reference_fallback or target_reference_fallback
         plateStatus.initializeFilenames(list(inputfiles))
     else:
-        reference_fallback = None
+        reference_fallback = target_reference_fallback
     if reference_fallback is not None and reference_fallback.get('next_reference_candidate') is None:
         log_info(
             "Error: all leading reference candidates were rejected by the pointing precheck; no usable "
@@ -18005,8 +18202,10 @@ def _main_impl():
         demosaic_out = None
         precheck_inputfile_count = None
         post_wcs_inputfile_count = None
+        post_target_wcs_inputfile_count = None
         post_pointing_inputfile_count = None
         dropped_wcs_files = []
+        dropped_target_wcs_files = []
         dropped_pointing_files = []
         ignore_header_wcs = False
         bad_wcs_threshold_fraction = np.nan
@@ -18203,6 +18402,10 @@ def _main_impl():
 
             plateStatus.initializeFilenames(exotic_infoDict['images'])
             inputfiles = corruption_check(exotic_infoDict['images'])
+            early_ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
+            if not early_ignore_header_wcs and maybe_reinterpret_decimal_ra_hours_from_wcs(inputfiles, pDict):
+                userpDict['ra'] = pDict['ra']
+                userpDict['dec'] = pDict['dec']
             # time sort images
             times, jd_times = [], []
             log_info(f"Reading FITS timestamps and converting to BJD_TDB for {len(inputfiles)} frame(s).")
@@ -18282,6 +18485,38 @@ def _main_impl():
                 jd_times = jd_times[wcs_keep_mask]
                 plateStatus.initializeFilenames(list(inputfiles))
             post_wcs_inputfile_count = int(len(inputfiles))
+            target_wcs_precheck_inputfiles = np.array(inputfiles, copy=True)
+            target_wcs_reference_file = inputfiles[0] if len(inputfiles) else None
+            inputfiles, target_wcs_keep_mask, dropped_target_wcs_files = filter_wcs_target_out_of_frame_frames(
+                inputfiles,
+                pDict,
+                obs_times=jd_times,
+                ignore_header_wcs=ignore_header_wcs,
+            )
+            if dropped_target_wcs_files:
+                target_reference_fallback = reference_frame_rejection_fallback_info(
+                    target_wcs_reference_file,
+                    dropped_target_wcs_files,
+                    ordered_inputfiles=target_wcs_precheck_inputfiles,
+                    rejection_label="Target WCS precheck",
+                )
+                times = times[target_wcs_keep_mask]
+                jd_times = jd_times[target_wcs_keep_mask]
+                finite_plot_times = times[np.isfinite(times)]
+                full_plot_time_range = None
+                if finite_plot_times.size:
+                    full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
+                plateStatus.initializeFilenames(list(inputfiles))
+            else:
+                target_reference_fallback = None
+            if len(inputfiles) == 0:
+                log_info(
+                    "Error: target WCS precheck removed every frame because the target RA/Dec projects outside "
+                    "each image.",
+                    error=True,
+                )
+                return
+            post_target_wcs_inputfile_count = int(len(inputfiles))
             pointing_precheck_inputfiles = np.array(inputfiles, copy=True)
             pointing_reference_file = inputfiles[0] if len(inputfiles) else None
             inputfiles, pointing_keep_mask, dropped_pointing_files, pointing_alignment_transforms = filter_pointing_outlier_frames(
@@ -18307,11 +18542,12 @@ def _main_impl():
                 demosaic_mult=demosaic_mult,
             )
             if dropped_pointing_files:
-                reference_fallback = reference_frame_rejection_fallback_info(
+                pointing_reference_fallback = reference_frame_rejection_fallback_info(
                     pointing_reference_file,
                     dropped_pointing_files,
                     ordered_inputfiles=pointing_precheck_inputfiles,
                 )
+                reference_fallback = pointing_reference_fallback or target_reference_fallback
                 times = times[pointing_keep_mask]
                 jd_times = jd_times[pointing_keep_mask]
                 finite_plot_times = times[np.isfinite(times)]
@@ -18320,7 +18556,7 @@ def _main_impl():
                     full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
                 plateStatus.initializeFilenames(list(inputfiles))
             else:
-                reference_fallback = None
+                reference_fallback = target_reference_fallback
             if reference_fallback is not None and reference_fallback.get('next_reference_candidate') is None:
                 log_info(
                     "Error: all leading reference candidates were rejected by the pointing precheck; no usable "
@@ -20135,8 +20371,24 @@ def _main_impl():
         # print final extracted planetary parameters
         #######################################################################
 
+        transit_qc = getattr(myfit, 'transit_qc', None)
+        qc_status = None
+        qc_summary = None
+        qc_ktmf_metric = np.nan
+        if isinstance(transit_qc, dict) and transit_qc:
+            qc_status = str(transit_qc.get('status', 'unknown')).upper()
+            qc_summary = transit_qc.get('summary')
+            qc_ktmf_metric = _finite_float(transit_qc.get('ktmf_metric'), default=np.nan)
+
         log_info("\n*********************************************************")
         log_info("FINAL PLANETARY PARAMETERS\n")
+        if qc_status:
+            if qc_summary:
+                log_info(f"                Transit detection QC: {qc_status} - {qc_summary}")
+            else:
+                log_info(f"                Transit detection QC: {qc_status}")
+        if np.isfinite(qc_ktmf_metric):
+            log_info(f"                             KTMF: {qc_ktmf_metric:.2f} / 5.00")
         log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
         log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
         for depth_label, depth_text in formatted_transit_depth_parameters(myfit, pDict).items():
@@ -20154,17 +20406,10 @@ def _main_impl():
         else:
             log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
             log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
-        transit_qc = getattr(myfit, 'transit_qc', None)
-        if transit_qc:
+        if isinstance(transit_qc, dict) and transit_qc:
             residual_scatter = transit_qc.get('residual_scatter', np.nan)
             if np.isfinite(residual_scatter):
                 log_info(f"Residual scatter around full model fit: {residual_scatter * 100.0:.4f}%")
-            qc_status = str(transit_qc.get('status', 'unknown')).upper()
-            qc_summary = transit_qc.get('summary')
-            if qc_summary:
-                log_info(f"                Transit detection QC: {qc_status} - {qc_summary}")
-            else:
-                log_info(f"                Transit detection QC: {qc_status}")
             if np.isfinite(transit_qc.get('deviation_from_expected_value', np.nan)):
                 log_info(
                     f"      Deviation From Expected Value: {transit_qc['deviation_from_expected_value']:.2f} / 1.00"
@@ -20173,8 +20418,6 @@ def _main_impl():
                 log_info(
                     f"         Expected-value Rp/R* sigma: {transit_qc['rprs_deviation_sigma']:.2f}"
                 )
-            if np.isfinite(transit_qc.get('ktmf_metric', np.nan)):
-                log_info(f"                             KTMF: {transit_qc['ktmf_metric']:.2f} / 5.00")
             for contribution in transit_qc.get('ktmf_contributions', []):
                 log_info(f"      {format_ktmf_contribution(contribution)}")
         if fitsortext == 1:
@@ -20258,6 +20501,7 @@ def _main_impl():
                 aavso_frame_filtering_info = {
                     'initial_frame_count': precheck_inputfile_count,
                     'after_missing_wcs_filter_frame_count': post_wcs_inputfile_count,
+                    'after_target_wcs_filter_frame_count': post_target_wcs_inputfile_count,
                     'final_prephotometry_frame_count': post_pointing_inputfile_count,
                     'ignore_header_wcs': ignore_header_wcs,
                     'bad_wcs_threshold_percent': (
@@ -20267,6 +20511,7 @@ def _main_impl():
                     ),
                     'pointing_rejection_sigma': pointing_rejection_sigma,
                     'dropped_missing_wcs_files': dropped_wcs_files,
+                    'dropped_target_wcs_files': dropped_target_wcs_files,
                     'dropped_pointing_files': dropped_pointing_files,
                 }
                 aavso_astrometry_info = {

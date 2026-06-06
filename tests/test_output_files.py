@@ -758,7 +758,11 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
     output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
+    final_param_keys = list(final_params)
 
+    assert final_param_keys[:2] == ["Transit detection QC", "KTMF"]
+    assert final_params["Transit detection QC"] == "PASS"
+    assert final_params["KTMF"] == "4.63 / 5.00"
     assert final_params["KTMF target-fit decision"] == "PASS: KTMF=4.63 / 5.00"
     assert final_params["KTMF comparison selection mode"] == "basis=comparison_field_retry, metric=ktmf"
     assert "selected: highest KTMF" in final_params["KTMF selected comparison decision"]
@@ -1029,11 +1033,13 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
         frame_filtering_info={
             "initial_frame_count": 5,
             "after_missing_wcs_filter_frame_count": 4,
+            "after_target_wcs_filter_frame_count": 3,
             "final_prephotometry_frame_count": 3,
             "ignore_header_wcs": False,
             "bad_wcs_threshold_percent": 3.0,
             "pointing_rejection_sigma": 3.0,
             "dropped_missing_wcs_files": [tmp_path / "missing_wcs.fits"],
+            "dropped_target_wcs_files": [tmp_path / "target_off_frame.fits"],
             "dropped_pointing_files": [tmp_path / "bad_pointing.fits"],
         },
         astrometry_info={
@@ -1097,6 +1103,7 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
 
     frame_filtering = aavso_json_header(output_text, "FRAME_FILTERING-XC")
     assert frame_filtering["missing_wcs_rejections"]["files"] == ["missing_wcs.fits"]
+    assert frame_filtering["target_wcs_rejections"]["files"] == ["target_off_frame.fits"]
     assert frame_filtering["pointing_rejections"]["files"] == ["bad_pointing.fits"]
     assert frame_filtering["lightcurve_dropped_point_count"] == 1
 

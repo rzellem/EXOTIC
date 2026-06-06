@@ -549,6 +549,22 @@ def format_ktmf_metric(value):
     return f"{value:.2f} / 5.00" if np.isfinite(value) else "n/a"
 
 
+def format_transit_qc_headline_final_params(transit_qc):
+    params = {}
+    if not isinstance(transit_qc, dict) or not transit_qc:
+        return params
+
+    qc_status = transit_qc.get('status')
+    if qc_status:
+        params["Transit detection QC"] = str(qc_status).upper()
+
+    qc_ktmf = finite_float(transit_qc.get('ktmf_metric'))
+    if np.isfinite(qc_ktmf):
+        params["KTMF"] = f"{qc_ktmf:.2f} / 5.00"
+
+    return params
+
+
 def format_optional_metric(label, value, precision=2):
     value = finite_float(value)
     if not np.isfinite(value):
@@ -793,6 +809,7 @@ def build_aavso_frame_filtering_metadata(fit, frame_filtering_info):
 
     for source_key, target_key in (
         ('dropped_missing_wcs_files', 'missing_wcs_rejections'),
+        ('dropped_target_wcs_files', 'target_wcs_rejections'),
         ('dropped_pointing_files', 'pointing_rejections'),
     ):
         if source_key in payload:
@@ -968,7 +985,8 @@ class OutputFiles:
                     if np.isfinite(median_flux) and median_flux != 0:
                         qc_residual_scatter = float(abs(residuals.reshape(-1)[0]) / median_flux)
 
-        params_num = {
+        headline_params = format_transit_qc_headline_final_params(transit_qc)
+        core_params = {
             "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
                                        f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
             "Ratio of Planet to Stellar Radius (Rp/R*)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
@@ -978,10 +996,11 @@ class OutputFiles:
         }
         depth_params = formatted_transit_depth_parameters(self.fit, self.p_dict)
         params_num = {
-            "Mid-Transit Time (Tmid)": params_num["Mid-Transit Time (Tmid)"],
-            "Ratio of Planet to Stellar Radius (Rp/R*)": params_num["Ratio of Planet to Stellar Radius (Rp/R*)"],
+            **headline_params,
+            "Mid-Transit Time (Tmid)": core_params["Mid-Transit Time (Tmid)"],
+            "Ratio of Planet to Stellar Radius (Rp/R*)": core_params["Ratio of Planet to Stellar Radius (Rp/R*)"],
             **depth_params,
-            "Orbital Inclination (inc)": params_num["Orbital Inclination (inc)"],
+            "Orbital Inclination (inc)": core_params["Orbital Inclination (inc)"],
         }
         ars_text = format_parameter_with_error(
             self.fit.parameters.get('ars'),

@@ -448,9 +448,9 @@ def test_get_bad_wcs_threshold_fraction_falls_back_for_invalid_values():
     assert exotic_module.get_bad_wcs_threshold_fraction(101) == pytest.approx(0.03)
 
 
-def test_get_pointing_rejection_sigma_defaults_to_four():
-    assert exotic_module.get_pointing_rejection_sigma(None) == pytest.approx(4.0)
-    assert exotic_module.get_pointing_rejection_sigma("") == pytest.approx(4.0)
+def test_get_pointing_rejection_sigma_defaults_to_disabled():
+    assert exotic_module.get_pointing_rejection_sigma(None) is None
+    assert exotic_module.get_pointing_rejection_sigma("") is None
 
 
 def test_get_pointing_rejection_sigma_reads_positive_numeric_values():
@@ -458,10 +458,11 @@ def test_get_pointing_rejection_sigma_reads_positive_numeric_values():
     assert exotic_module.get_pointing_rejection_sigma("2.75") == pytest.approx(2.75)
 
 
-def test_get_pointing_rejection_sigma_uses_default_for_invalid_text_and_zero_disables():
-    assert exotic_module.get_pointing_rejection_sigma("not-a-number") == pytest.approx(4.0)
-    assert exotic_module.get_pointing_rejection_sigma(-1) == pytest.approx(4.0)
+def test_get_pointing_rejection_sigma_disables_for_invalid_text_and_zero():
+    assert exotic_module.get_pointing_rejection_sigma("not-a-number") is None
+    assert exotic_module.get_pointing_rejection_sigma(-1) is None
     assert exotic_module.get_pointing_rejection_sigma(0) is None
+    assert exotic_module.get_pointing_rejection_sigma("off") is None
 
 
 def test_display_filename_returns_basename_for_unix_and_windows_paths():

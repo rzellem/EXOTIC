@@ -544,16 +544,51 @@ class lc_fitter(object):
             raise ValueError("Use only one of 'a0' or 'a1' as a free baseline parameter.")
 
     def _has_free_flux_baseline(self):
-        return has_explicit_flux_baseline(self.bounds)
+        return has_explicit_flux_baseline(getattr(self, 'bounds', {}))
 
     def _uses_fixed_flux_baseline(self):
         return bool(getattr(self, 'fixed_flux_baseline', False))
+
+    def _uses_analytic_flux_baseline(self):
+        return (
+            np.ndim(getattr(self, 'airmass', np.array([]))) != 2
+            and not self._has_free_flux_baseline()
+            and not self._uses_fixed_flux_baseline()
+            and hasattr(self, 'time')
+            and hasattr(self, 'data')
+            and hasattr(self, 'dataerr')
+        )
 
     def _set_flux_baseline(self, value, error=0.0):
         self.parameters['a0'] = value
         self.errors['a0'] = error
         self.parameters['a1'] = value
         self.errors['a1'] = error
+
+    def _values_with_analytic_flux_baseline(self, values):
+        values = copy.deepcopy(values)
+        if not self._uses_analytic_flux_baseline():
+            return values
+
+        try:
+            model = transit(self.time, values)
+            model = np.asarray(model, dtype=float) * airmass_trend(
+                values.get('a2', 0),
+                self.airmass,
+                reference=self._get_airmass_reference(),
+            )
+            flux_scale = solve_flux_baseline(
+                model,
+                self.data,
+                self.dataerr,
+                mask=self._get_baseline_fit_mask(),
+            )
+        except Exception:
+            return values
+
+        values['a0'] = flux_scale
+        values['a1'] = flux_scale
+        return values
 
     def _coerce_baseline_fit_mask(self, baseline_fit_mask):
         fit_mask = normalized_optional_fit_mask(baseline_fit_mask, np.asarray(self.time).shape)
@@ -670,6 +705,7 @@ class lc_fitter(object):
         return value
 
     def _normalized_model_for_plot_times(self, times, values):
+        values = self._values_with_analytic_flux_baseline(values)
         model = np.asarray(transit(times, values), dtype=float)
         if np.ndim(self.airmass) == 2:
             return model
@@ -867,6 +903,140 @@ class lc_fitter(object):
             return None
         return model - model_uncertainty, model + model_uncertainty
 
+    def _posterior_baseline_model_uncertainty(self, times, sigma=1.0):
+        if getattr(self, 'results', None) is None or np.ndim(getattr(self, 'airmass', np.array([]))) == 2:
+            return None
+
+        try:
+            sample_points, sample_logl, sample_weights = self._get_triangle_plot_samples()
+        except Exception:
+            return None
+
+        sample_points = np.asarray(sample_points, dtype=float)
+        if sample_points.ndim != 2 or sample_points.shape[0] < 2:
+            return None
+
+        finite_rows = np.all(np.isfinite(sample_points), axis=1)
+        if sample_logl is not None:
+            sample_logl = np.asarray(sample_logl, dtype=float)
+            if sample_logl.shape[0] == sample_points.shape[0]:
+                finite_rows &= np.isfinite(sample_logl)
+
+        if np.count_nonzero(finite_rows) < 2:
+            return None
+
+        row_indices = np.flatnonzero(finite_rows)
+        if row_indices.size > MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT:
+            if sample_weights is not None:
+                weights_array = np.asarray(sample_weights, dtype=float)
+                if weights_array.shape[0] == sample_points.shape[0]:
+                    row_weights = np.where(np.isfinite(weights_array[row_indices]), weights_array[row_indices], 0.0)
+                    order = np.argsort(row_weights)[-MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT:]
+                    row_indices = row_indices[np.sort(order)]
+                else:
+                    row_indices = row_indices[
+                        np.linspace(0, row_indices.size - 1, MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT).astype(int)
+                    ]
+            else:
+                row_indices = row_indices[
+                    np.linspace(0, row_indices.size - 1, MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT).astype(int)
+                ]
+
+        selected_points = sample_points[row_indices]
+        selected_weights = None
+        if sample_weights is not None:
+            weights_array = np.asarray(sample_weights, dtype=float)
+            if weights_array.shape[0] == sample_points.shape[0]:
+                selected_weights = weights_array[row_indices]
+                selected_weights = np.where(
+                    np.isfinite(selected_weights) & (selected_weights >= 0),
+                    selected_weights,
+                    0.0,
+                )
+                if np.sum(selected_weights) <= 0:
+                    selected_weights = None
+
+        try:
+            best_parameters = self._values_with_analytic_flux_baseline(self.parameters)
+            best_systematics = self._build_systematics_model_at(best_parameters, times)
+        except Exception:
+            return None
+
+        best_systematics = np.asarray(best_systematics, dtype=float)
+        if best_systematics.shape != times.shape or not np.all(np.isfinite(best_systematics)):
+            return None
+
+        bound_keys = list(getattr(self, 'bounds', {}).keys())
+        sampled_keys = getattr(self, 'sampled_keys', None)
+        if sampled_keys is None:
+            sampled_keys = self._get_sampled_keys(bound_keys)
+
+        ratios = []
+        ratio_weights = []
+        for index, point in enumerate(selected_points):
+            try:
+                values = copy.deepcopy(self.parameters)
+                values.update(self._physical_values_from_sample_point(point, bound_keys, sampled_keys))
+                values = self._values_with_analytic_flux_baseline(values)
+                sample_systematics = self._build_systematics_model_at(values, times)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio = np.asarray(sample_systematics, dtype=float) / best_systematics
+            except Exception:
+                continue
+            if ratio.shape != times.shape or not np.all(np.isfinite(ratio)):
+                continue
+            ratios.append(ratio)
+            if selected_weights is not None:
+                ratio_weights.append(selected_weights[index])
+
+        if len(ratios) < 2:
+            return None
+
+        ratio_grid = np.asarray(ratios, dtype=float)
+        if selected_weights is not None:
+            selected_weights = np.asarray(ratio_weights, dtype=float)
+            if selected_weights.shape[0] != ratio_grid.shape[0] or np.sum(selected_weights) <= 0:
+                selected_weights = None
+
+        try:
+            sigma = float(sigma)
+        except (TypeError, ValueError):
+            sigma = 1.0
+        if not np.isfinite(sigma) or sigma <= 0:
+            sigma = 1.0
+        coverage = math.erf(sigma / np.sqrt(2.0))
+        q_lower = 0.5 * (1.0 - coverage)
+        q_upper = 1.0 - q_lower
+
+        if selected_weights is None:
+            lower, median, upper = np.nanpercentile(
+                ratio_grid,
+                [100.0 * q_lower, 50.0, 100.0 * q_upper],
+                axis=0,
+            )
+        else:
+            lower = np.array([
+                self._weighted_quantiles(ratio_grid[:, i], [q_lower], weights=selected_weights)[0]
+                for i in range(ratio_grid.shape[1])
+            ])
+            median = np.array([
+                self._weighted_quantiles(ratio_grid[:, i], [0.5], weights=selected_weights)[0]
+                for i in range(ratio_grid.shape[1])
+            ])
+            upper = np.array([
+                self._weighted_quantiles(ratio_grid[:, i], [q_upper], weights=selected_weights)[0]
+                for i in range(ratio_grid.shape[1])
+            ])
+
+        lower_width = median - lower
+        upper_width = upper - median
+        lower = 1.0 - np.maximum(lower_width, 0.0)
+        upper = 1.0 + np.maximum(upper_width, 0.0)
+        finite = np.isfinite(lower) & np.isfinite(upper) & (lower <= upper)
+        if not np.any(finite):
+            return None
+        return lower, upper
+
     def baseline_model_uncertainty(self, times=None, sigma=1.0):
         if times is None:
             times = getattr(self, 'time_upsample', self.time)
@@ -874,8 +1044,13 @@ class lc_fitter(object):
         if times.size == 0 or np.ndim(getattr(self, 'airmass', np.array([]))) == 2:
             return None
 
+        posterior_envelope = self._posterior_baseline_model_uncertainty(times, sigma=sigma)
+        if posterior_envelope is not None:
+            return posterior_envelope
+
         try:
-            best_systematics = self._build_systematics_model_at(self.parameters, times)
+            best_parameters = self._values_with_analytic_flux_baseline(self.parameters)
+            best_systematics = self._build_systematics_model_at(best_parameters, times)
         except Exception:
             return None
 
@@ -893,8 +1068,16 @@ class lc_fitter(object):
             sigma = 1.0
 
         variance = np.zeros_like(times, dtype=float)
+        uses_analytic_flux_baseline = self._uses_analytic_flux_baseline()
+        a2_error = self.errors.get('a2')
+        try:
+            a2_error = float(a2_error)
+        except (TypeError, ValueError):
+            a2_error = 0.0
         for key in ('a0', 'a1', 'a2'):
             if key == 'a1' and 'a0' in self.parameters:
+                continue
+            if key in ('a0', 'a1') and uses_analytic_flux_baseline and a2_error > 0:
                 continue
             if key not in self.parameters:
                 continue
@@ -920,6 +1103,8 @@ class lc_fitter(object):
             upper_parameters = copy.deepcopy(self.parameters)
             lower_parameters[key] = lower_value
             upper_parameters[key] = upper_value
+            lower_parameters = self._values_with_analytic_flux_baseline(lower_parameters)
+            upper_parameters = self._values_with_analytic_flux_baseline(upper_parameters)
             try:
                 lower_systematics = self._build_systematics_model_at(lower_parameters, times)
                 upper_systematics = self._build_systematics_model_at(upper_parameters, times)

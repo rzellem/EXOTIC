@@ -222,7 +222,7 @@ class Inputs:
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
             'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0,
             'use_aperture_corrections_and_full_image_fwhm': False,
-            'pointing_rejection_sigma': 4.0,
+            'pointing_rejection_sigma': None,
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,

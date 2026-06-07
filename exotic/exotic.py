@@ -5338,14 +5338,13 @@ def get_bad_wcs_threshold_fraction(config_value):
 
 
 def get_pointing_rejection_sigma(config_value):
-    default_sigma = 4.0
     if config_value is None:
-        return default_sigma
+        return None
 
     if isinstance(config_value, str):
         normalized = config_value.strip()
-        if normalized == "":
-            return default_sigma
+        if normalized.lower() in ("", "0", "n", "no", "false", "off"):
+            return None
     else:
         normalized = config_value
 
@@ -5353,24 +5352,24 @@ def get_pointing_rejection_sigma(config_value):
         sigma = float(normalized)
     except (TypeError, ValueError):
         log_info(
-            f"Warning: Invalid 'pointing_rejection_sigma' value; using default {default_sigma:g}.",
+            "Warning: Invalid 'pointing_rejection_sigma' value; disabling pointing precheck.",
             warn=True,
         )
-        return default_sigma
+        return None
 
     if not np.isfinite(sigma):
         log_info(
-            f"Warning: Invalid 'pointing_rejection_sigma' value; using default {default_sigma:g}.",
+            "Warning: Invalid 'pointing_rejection_sigma' value; disabling pointing precheck.",
             warn=True,
         )
-        return default_sigma
+        return None
 
     if sigma < 0:
         log_info(
-            f"Warning: Invalid 'pointing_rejection_sigma' value; using default {default_sigma:g}.",
+            "Warning: Invalid 'pointing_rejection_sigma' value; disabling pointing precheck.",
             warn=True,
         )
-        return default_sigma
+        return None
 
     if sigma == 0:
         return None

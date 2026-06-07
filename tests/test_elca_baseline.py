@@ -498,6 +498,73 @@ def test_baseline_model_uncertainty_is_centered_on_unity_and_includes_a2(monkeyp
     assert width[0] > width[len(width) // 2]
 
 
+def test_baseline_model_uncertainty_does_not_double_count_analytic_a0(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+    airmass = np.linspace(1.0, 2.0, time.size)
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.data = elca.transit(time, prior)
+    fit.dataerr = np.full_like(time, 1e-3)
+    fit.airmass = airmass
+    fit.airmass_reference = elca.get_airmass_reference(fit.airmass)
+    fit.prior = prior.copy()
+    fit.bounds = {"a2": [-1.0, 1.0]}
+    fit.fixed_flux_baseline = False
+    fit.mode = "ns"
+    fit.parameters = prior.copy()
+    fit.parameters["a0"] = 1.0
+    fit.parameters["a1"] = 1.0
+    fit.parameters["a2"] = 0.0
+    fit.errors = {"a0": 0.5, "a1": 0.5, "a2": 0.02}
+    fit.results = None
+
+    lower, upper = fit.baseline_model_uncertainty(time)
+    half_width = np.nanmax(np.maximum(1.0 - lower, upper - 1.0))
+
+    assert half_width < 0.03
+
+
+def test_baseline_model_uncertainty_prefers_posterior_samples(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+    sample_count = 41
+    a0_samples = 1.0 + np.linspace(-0.004, 0.004, sample_count)
+    a2_samples = np.linspace(-0.02, 0.02, sample_count)
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.data = elca.transit(time, prior)
+    fit.dataerr = np.full_like(time, 1e-3)
+    fit.airmass = np.linspace(1.0, 2.0, time.size)
+    fit.airmass_reference = elca.get_airmass_reference(fit.airmass)
+    fit.prior = prior.copy()
+    fit.bounds = {"a0": [0.5, 1.5], "a2": [-1.0, 1.0]}
+    fit.sampled_keys = ["a0", "a2"]
+    fit.mode = "ns"
+    fit.ns_type = "ultranest"
+    fit.parameters = prior.copy()
+    fit.parameters["a0"] = 1.0
+    fit.parameters["a1"] = 1.0
+    fit.parameters["a2"] = 0.0
+    fit.errors = {"a0": 0.5, "a1": 0.5, "a2": 0.5}
+    fit.results = {
+        "weighted_samples": {
+            "points": np.column_stack([a0_samples, a2_samples]),
+            "logl": np.zeros(sample_count, dtype=float),
+            "weights": np.ones(sample_count, dtype=float),
+        }
+    }
+
+    lower, upper = fit.baseline_model_uncertainty(time)
+    half_width = np.nanmax(np.maximum(1.0 - lower, upper - 1.0))
+
+    assert half_width < 0.02
+
+
 def test_plot_bestfit_can_draw_baseline_uncertainty_band(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()

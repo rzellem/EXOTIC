@@ -113,7 +113,7 @@ def test_comp_params_defaults_bad_wcs_threshold_percent_to_three(tmp_path):
     assert inputs.info_dict["bad_wcs_threshold_percent"] == 3.0
 
 
-def test_comp_params_defaults_pointing_rejection_sigma_to_four(tmp_path):
+def test_comp_params_defaults_pointing_rejection_sigma_to_none(tmp_path):
     init_data = {
         "user_info": {},
         "optional_info": {},
@@ -125,7 +125,7 @@ def test_comp_params_defaults_pointing_rejection_sigma_to_four(tmp_path):
     inputs = Inputs(init_opt="y")
     inputs.comp_params(init_file, {})
 
-    assert inputs.info_dict["pointing_rejection_sigma"] == pytest.approx(4.0)
+    assert inputs.info_dict["pointing_rejection_sigma"] is None
 
 
 def test_comp_params_defaults_skip_low_comparison_coverage_rejection_to_no(tmp_path):

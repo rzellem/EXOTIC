@@ -316,6 +316,7 @@ NEXTASTRO_PHOTOMETRY_COLUMNS = (
 )
 NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
 NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 2.0
+CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX = 0.05
 REFERENCE_FALLBACK_COMPARISON_LIMIT = 10
 REFERENCE_FALLBACK_DETECTION_MAX_STARS = 60
 REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS = 12
@@ -10264,6 +10265,18 @@ def _finite_float(value, default=None):
     return parsed if np.isfinite(parsed) else default
 
 
+def usable_catalog_reference_magnitude(magnitude, magnitude_error):
+    parsed_magnitude = _finite_float(magnitude)
+    parsed_error = normalized_magnitude_error(magnitude_error)
+    if (
+        not is_usable_apparent_magnitude(parsed_magnitude)
+        or parsed_error is None
+        or parsed_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
+    ):
+        return None
+    return parsed_magnitude, parsed_error
+
+
 def normalize_nextastro_filter_key(obs_filter):
     return re.sub(r"[^a-z0-9]", "", str(obs_filter or "").lower())
 
@@ -10363,10 +10376,10 @@ def nextastro_catalog_rows(catalog_response):
 
 def row_nextastro_magnitude(row, band_candidates):
     for priority, (mag_column, error_column, band_label) in enumerate(band_candidates):
-        magnitude = _finite_float(row.get(mag_column))
-        magnitude_error = normalized_magnitude_error(row.get(error_column))
-        if not is_usable_apparent_magnitude(magnitude) or magnitude_error is None:
+        usable_magnitude = usable_catalog_reference_magnitude(row.get(mag_column), row.get(error_column))
+        if usable_magnitude is None:
             continue
+        magnitude, magnitude_error = usable_magnitude
         return {
             'priority': priority,
             'mag': magnitude,
@@ -11015,11 +11028,18 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
 
                 if obs_filter in [band['band'] for band in star['bands']]:
                     star_info = next(band for band in star['bands'] if band['band'] == obs_filter)
+                    usable_magnitude = usable_catalog_reference_magnitude(
+                        star_info.get('mag'),
+                        star_info.get('error'),
+                    )
+                    if usable_magnitude is None:
+                        continue
+                    star_mag, star_mag_error = usable_magnitude
 
                     vsp_comp_stars_info[star['auid']] = {
                         'pos': vsp_star,
-                        'mag': star_info['mag'],
-                        'error': star_info['error'],
+                        'mag': star_mag,
+                        'error': star_mag_error,
                         'ra': ra_deg,
                         'dec': dec_deg,
                         'catalog_ra': ra_deg,
@@ -13639,6 +13659,7 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     if (
         comp_mag is None
         or comp_mag_error is None
+        or comp_mag_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
         or not is_usable_apparent_magnitude(comp_mag)
     ):
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
@@ -13667,19 +13688,15 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
         mask_ref = np.isfinite(detrended_all)
 
     detrended = detrended_all[mask_ref]
-    selected_airmass_model = fit_airmass_model[mask_ref]
-    selected_data = fit_data[mask_ref]
     selected_times = fit_times[mask_ref]
     selected_airmass = fit_airmass[mask_ref]
 
     oot_scatter = np.nanstd(detrended)
-    median_data = np.nanmedian(selected_data)
     with np.errstate(divide='ignore', invalid='ignore'):
-        norm_flux_unc = oot_scatter * selected_airmass_model / median_data
         target_mag = comp_mag - (2.5 * np.log10(detrended))
         target_mag_error = (
             comp_mag_error ** 2
-            + (-2.5 * norm_flux_unc / (detrended * np.log(10))) ** 2
+            + (-2.5 * oot_scatter / (detrended * np.log(10))) ** 2
         ) ** 0.5
 
     valid = (
@@ -13732,12 +13749,21 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
     info_comps = {}
 
     try:
-        if best_comp is None or (best_comp not in vsp_ind):
-            comp_pos = choose_comp_star_variability(fit_lc_refs, fit_lc_best, info_comps, comp_stars, vsp_comp_stars,
-                                                    save)
-        else:
-            comp_pos = comp_stars[best_comp]
-            info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+        if best_comp is None:
+            log_info(
+                "Skipping AID magnitude output because no transit-fit comparison star was selected.",
+                warn=True,
+            )
+            return []
+        if best_comp not in vsp_ind:
+            log_info(
+                "Skipping AID magnitude output because the transit-fit comparison star has no catalog "
+                f"magnitude with uncertainty <= {CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX:.3f} mag.",
+                warn=True,
+            )
+            return []
+        comp_pos = comp_stars[best_comp]
+        info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
     except Exception as e:
         log_info(f"Error selecting or calculating variability for comparison star: {e}", warn=True)
         return []
@@ -19751,10 +19777,10 @@ def _main_impl():
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] == 0:  # psf
-                log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
+                log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
                 log_info("Optimal Method: PSF photometry")
             elif photometry_info['min_aperture'] < 0:  # no comp star
-                log_info("Best Comparison Star: None")
+                log_info("Transit Fit Comparison Star: None")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {abs(display_aperture):.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -19766,7 +19792,7 @@ def _main_impl():
                     log_info(f"Optimal Aperture: {abs(np.round(display_aperture, 2))}")
                     log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             else:
-                log_info(f"Best Comparison Star: #{photometry_info['comp_star_num']}")
+                log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {display_aperture:.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -20077,18 +20103,17 @@ def _main_impl():
             # standardDev1 = np.std(goodFluxes)
 
             if vsp_comp_stars:
-                if not bestCompStar:
-                    vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
-                                                      vsp_comp_stars, vsp_num, None, exotic_infoDict['save'],
-                                                      pDict['sName'],
-                                                      observed_filter=exotic_infoDict.get('observed_filter',
-                                                                                          exotic_infoDict.get('filter')))
-                else:
+                if bestCompStar:
                     vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
                                                       vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                       pDict['sName'],
                                                       observed_filter=exotic_infoDict.get('observed_filter',
                                                                                           exotic_infoDict.get('filter')))
+                else:
+                    log_info(
+                        "Skipping AID magnitude output because no transit-fit comparison star was selected.",
+                        warn=True,
+                    )
 
             log_info("\n\nOutput File Saved")
         else:
@@ -20425,9 +20450,9 @@ def _main_impl():
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] >= 0:
-                log_info(f"                Best Comparison Star: #{bestCompStar} - {comp_coords}")
+                log_info(f"      Transit Fit Comparison Star: #{bestCompStar} - {comp_coords}")
             else:
-                log_info("                 Best Comparison Star: None")
+                log_info("       Transit Fit Comparison Star: None")
             if photometry_info['min_aperture'] == 0:
                 log_info("                       Optimal Method: PSF photometry")
             else:

@@ -491,6 +491,86 @@ def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path
     assert "V=12.345 +/- 0.067" in reference
 
 
+def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+    vsp_params = [
+        {
+            "cname": "000-BJX-718",
+            "cmag": 9.751,
+            "cmag_err": 0.018,
+            "pos": [616, 113],
+            "catalog_source": "AAVSO VSP",
+            "is_aavso_vsp": True,
+            "mag_band": "V",
+        },
+        {
+            "cname": "000-BJX-718",
+            "cmag": 9.751,
+            "cmag_err": 0.018,
+            "pos": [616, 113],
+            "catalog_source": "AAVSO VSP",
+            "is_aavso_vsp": True,
+            "mag_band": "V",
+        },
+    ]
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=True,
+        vsp_params=vsp_params,
+        comp_star=1,
+        comp_coords=[616, 113],
+        min_aper=2.7,
+        min_annul=10.15,
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Transit Fit Comparison Star"] == "#1 - [616, 113]"
+    assert "Best Comparison Star" not in final_params
+    assert final_params["Variable Reference Star"] == "AAVSO Label: 000-BJX-718, Position: [616, 113]"
+    assert "Remeasured 2 out-of-transit target/reference point(s)" in final_params["Variable Reference Measurement"]
+    assert "AID rows list the JD timestamps used" in final_params["Variable Reference Measurement"]
+    assert "transit-fit catalog reference" in final_params["Variable Reference Measurement"]
+
+
+def test_final_planetary_params_suppresses_variable_reference_without_transit_comparison(tmp_path):
+    fit = DummyFit()
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+    vsp_params = [{
+        "cname": "000-BJX-718",
+        "cmag": 9.751,
+        "cmag_err": 0.018,
+        "pos": [616, 113],
+        "catalog_source": "AAVSO VSP",
+        "is_aavso_vsp": True,
+        "mag_band": "V",
+    }]
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=True,
+        vsp_params=vsp_params,
+        comp_star=None,
+        comp_coords=None,
+        min_aper=-2.7,
+        min_annul=10.15,
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Transit Fit Comparison Star"] == "None"
+    assert "Variable Reference Star" not in final_params
+    assert "Variable Reference Measurement" not in final_params
+
+
 def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclination(tmp_path):
     fit = DummyFit()
     (tmp_path / "temp").mkdir()

@@ -261,6 +261,28 @@ def test_nextastro_photometry_catalog_match_floors_zero_magnitude_error():
     assert match['error'] == pytest.approx(0.001)
 
 
+def test_nextastro_photometry_catalog_match_rejects_high_magnitude_error():
+    catalog = {
+        'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
+        'count': 1,
+        'row_format': 'objects',
+        'rows': [
+            {
+                'id': 1,
+                'source_id': 111,
+                'ra': 10.0001,
+                'dec': 20.0001,
+                'Vmag': 12.3,
+                'err_Vmag': 0.051,
+            },
+        ],
+    }
+
+    match = exotic_module.nextastro_photometry_catalog_match(catalog, 10.0, 20.0, 'CV')
+
+    assert match is None
+
+
 def test_nextastro_photometry_catalog_match_ignores_over_30_magnitudes():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
@@ -347,6 +369,53 @@ def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
     assert calibration['observed_filter'] == 'V'
 
 
+def test_vsp_query_rejects_band_errors_over_limit(monkeypatch):
+    class DummyWCS:
+        def pixel_to_world_values(self, x_pixel, y_pixel):
+            return 10.0, 20.0
+
+        def world_to_pixel_values(self, ra_deg, dec_deg):
+            return np.array([40.0]), np.array([50.0])
+
+    payload = {
+        'chartid': 'X123',
+        'photometry': [
+            {
+                'auid': 'HIGH',
+                'ra': '00:00:00.0',
+                'dec': '+00:00:00.0',
+                'bands': [{'band': 'V', 'mag': 12.0, 'error': 0.051}],
+            },
+            {
+                'auid': 'LOW',
+                'ra': '00:00:00.0',
+                'dec': '+00:00:00.0',
+                'bands': [{'band': 'V', 'mag': 12.1, 'error': 0.05}],
+            },
+        ],
+    }
+    user_comp_stars = []
+
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda file: DummyWCS())
+    monkeypatch.setattr(exotic_module, 'radec_hours_to_degree', lambda ra, dec: (10.0, 20.0))
+    monkeypatch.setattr(exotic_module.requests, 'get', lambda url: DummyResponse(payload))
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    vsp_comp_stars, chart_id = exotic_module.vsp_query(
+        'frame.fits',
+        [100, 100],
+        'CV',
+        1.0,
+        user_comp_stars=user_comp_stars,
+        user_targ_star=[10, 10],
+    )
+
+    assert chart_id == 'X123'
+    assert list(vsp_comp_stars) == ['LOW']
+    assert vsp_comp_stars['LOW']['error'] == pytest.approx(0.05)
+    assert user_comp_stars == [[40, 50]]
+
+
 def test_build_stellar_variability_params_records_nextastro_reference(monkeypatch, tmp_path):
     captured = {}
 
@@ -397,6 +466,109 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
     assert params[0]['cmag'] == pytest.approx(12.0)
     assert params[0]['cmag_err'] == pytest.approx(0.05)
     assert params[0]['observed_filter'] == 'CV'
+
+
+def test_build_stellar_variability_params_keeps_magnitude_errors_in_flux_ratio_units(monkeypatch, tmp_path):
+    comp_mag = 9.751
+    comp_mag_error = 0.018
+    target_mag = 13.1
+    flux_ratio = 10 ** ((comp_mag - target_mag) / 2.5)
+    detrended = flux_ratio * np.array([0.94, 1.0, 1.06], dtype=float)
+
+    class DummyFit:
+        data = detrended
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.array([1.1, 1.2, 1.3], dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+
+    calibration_star = {
+        'mag': comp_mag,
+        'error': comp_mag_error,
+        'catalog_source': 'AAVSO VSP',
+        'is_aavso_vsp': True,
+        'mag_band': 'V',
+        'observed_filter': 'V',
+    }
+
+    params = exotic_module.build_stellar_variability_params_from_fit(
+        DummyFit(),
+        calibration_star,
+        [100, 200],
+        '000-BJX-718',
+        tmp_path,
+        'HAT-P-37',
+        observed_filter='CV',
+    )
+
+    expected_scatter = np.nanstd(detrended)
+    expected_mag_error = np.hypot(
+        comp_mag_error,
+        2.5 * expected_scatter / (flux_ratio * np.log(10)),
+    )
+
+    assert params[1]['mag'] == pytest.approx(target_mag)
+    assert params[1]['mag_err'] == pytest.approx(expected_mag_error)
+    assert params[1]['mag_err'] < 0.08
+
+
+def test_stellar_variability_requires_selected_transit_comparison(monkeypatch, tmp_path):
+    logged = []
+
+    class DummyFit:
+        data = np.array([1.0, 1.01, 0.99], dtype=float)
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.ones(3, dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+
+    params = exotic_module.stellar_variability(
+        {0: {'myfit': DummyFit(), 'pos': [100, 200]}},
+        DummyFit(),
+        [[100, 200]],
+        {'REF': {'pos': [100, 200], 'mag': 12.0, 'error': 0.02}},
+        [0],
+        None,
+        tmp_path,
+        'Host Star',
+    )
+
+    assert params == []
+    assert any('no transit-fit comparison star' in message for message in logged)
+
+
+def test_stellar_variability_requires_selected_comparison_catalog_match(monkeypatch, tmp_path):
+    logged = []
+
+    class DummyFit:
+        data = np.array([1.0, 1.01, 0.99], dtype=float)
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.ones(3, dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+
+    params = exotic_module.stellar_variability(
+        {
+            0: {'myfit': DummyFit(), 'pos': [100, 200]},
+            1: {'myfit': DummyFit(), 'pos': [300, 400]},
+        },
+        DummyFit(),
+        [[100, 200], [300, 400]],
+        {'REF': {'pos': [300, 400], 'mag': 12.0, 'error': 0.02}},
+        [1],
+        0,
+        tmp_path,
+        'Host Star',
+    )
+
+    assert params == []
+    assert any('has no catalog magnitude' in message for message in logged)
 
 
 def test_check_for_variable_stars_uses_nextastro_flags_to_filter(monkeypatch):

@@ -148,6 +148,20 @@ def stellar_variability_reference_summary(vsp_param):
     return ", ".join(details)
 
 
+def stellar_variability_measurement_summary(vsp_params, transit_fit_comp_star=None):
+    point_count = len(vsp_params or [])
+    if point_count == 0:
+        return None
+
+    if transit_fit_comp_star is None:
+        return None
+
+    return (
+        f"Remeasured {point_count} out-of-transit target/reference point(s) against the transit-fit catalog "
+        "reference for AID magnitudes; AID rows list the JD timestamps used."
+    )
+
+
 def aid_comparison_metadata(vsp_param):
     if not vsp_param:
         return {}
@@ -1109,11 +1123,21 @@ class OutputFiles:
             if qc_notes:
                 params_num["Transit QC notes"] = " ".join(str(note) for note in qc_notes)
 
-        if vsp_params:
+        if vsp_params and not (phot_opt and comp_star is None):
             params_num["Variable Reference Star"] = stellar_variability_reference_summary(vsp_params[0])
+            measurement_summary = stellar_variability_measurement_summary(vsp_params, comp_star)
+            if measurement_summary:
+                params_num["Variable Reference Measurement"] = measurement_summary
 
         if phot_opt:
-            phot_ext = {"Best Comparison Star": f"#{comp_star} - {comp_coords}" if min_aper >= 0 else str(comp_star)}
+            transit_fit_comp_text = (
+                f"#{comp_star} - {comp_coords}"
+                if comp_star is not None and min_aper >= 0
+                else str(comp_star)
+            )
+            phot_ext = {
+                "Transit Fit Comparison Star": transit_fit_comp_text
+            }
             if min_aper == 0:
                 phot_ext["Optimal Method"] = "PSF photometry"
             else:

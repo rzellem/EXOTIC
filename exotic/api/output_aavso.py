@@ -191,7 +191,14 @@ class OutputFiles:
         }
 
         if phot_opt:
-            phot_ext = {"Best Comparison Star": f"#{comp_star} - {comp_coords}" if min_aper >= 0 else str(comp_star)}
+            transit_fit_comp_text = (
+                f"#{comp_star} - {comp_coords}"
+                if comp_star is not None and min_aper >= 0
+                else str(comp_star)
+            )
+            phot_ext = {
+                "Transit Fit Comparison Star": transit_fit_comp_text
+            }
             if min_aper == 0:
                 phot_ext["Optimal Method"] = "PSF photometry"
             else:

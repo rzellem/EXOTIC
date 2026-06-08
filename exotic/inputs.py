@@ -257,6 +257,8 @@ class Inputs:
                 pass
             elif key in ('lat', 'long'):
                 self.info_dict[key] = self.params[key](self.info_dict[key], hdr)
+            elif key == 'pixel_bin':
+                self.info_dict[key] = self.params[key](self.info_dict[key], hdr)
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
             if key == 'save':
@@ -850,8 +852,37 @@ def camera(c_type):
     return "CCD"
 
 
-def pixel_bin(pix_bin):
-    if not pix_bin:
+def format_fits_binning_axis(value):
+    if is_blank_value(value):
+        return None
+
+    try:
+        binning_value = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(binning_value) or binning_value <= 0:
+        return None
+    if binning_value.is_integer():
+        return str(int(binning_value))
+    return str(binning_value)
+
+
+def fits_header_pixel_bin(hdr):
+    if hdr is None:
+        return None
+
+    x_binning = format_fits_binning_axis(find(hdr, ['XBINNING']))
+    y_binning = format_fits_binning_axis(find(hdr, ['YBINNING']))
+    if x_binning is None or y_binning is None:
+        return None
+    return f"{x_binning}x{y_binning}"
+
+
+def pixel_bin(pix_bin, hdr=None):
+    if is_blank_value(pix_bin):
+        pix_bin = fits_header_pixel_bin(hdr)
+    if is_blank_value(pix_bin):
         pix_bin = user_input("Please enter the pixel binning: ", type_=str)
     return pix_bin
 

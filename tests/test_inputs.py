@@ -1,6 +1,8 @@
 import json
 import requests
 import pytest
+import numpy as np
+from astropy.io import fits
 
 import exotic.inputs as inputs_module
 from exotic.inputs import Inputs, camera, parse_aavso_prereduced_overrides
@@ -66,6 +68,52 @@ def test_comp_params_defaults_aavso_comp_to_no(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["aavso_comp"] == "n"
+
+
+def test_complete_red_uses_fits_x_y_binning_when_pixel_bin_missing(tmp_path, monkeypatch):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    save_dir = tmp_path / "results"
+    save_dir.mkdir()
+
+    header = fits.Header()
+    header["XBINNING"] = 2
+    header["YBINNING"] = 3
+    fits.PrimaryHDU(data=np.zeros((2, 2)), header=header).writeto(image_dir / "frame.fits")
+
+    init_data = {
+        "user_info": {
+            "Directory with FITS files": str(image_dir),
+            "Directory to Save Plots": str(save_dir),
+            "AAVSO Observer Code (blank if none)": "",
+            "Secondary Observer Codes (blank if none)": "",
+            "Observation date": "2020-01-01",
+            "Obs. Latitude": "+32.0",
+            "Obs. Longitude": "-110.0",
+            "Obs. Elevation (meters)": 1000,
+            "Camera Type (CCD or DSLR)": "CCD",
+            "Observing Notes": "na",
+            "Plate Solution? (y/n)": "n",
+            "Add Comparison Stars from AAVSO? (y/n)": "n",
+            "Target Star X & Y Pixel": [1, 1],
+            "Comparison Star(s) X & Y Pixel": [[2, 2]],
+        },
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    def fail_on_prompt(prompt, type_, values=None, max_tries=1000):
+        raise AssertionError(f"Unexpected prompt: {prompt}")
+
+    monkeypatch.setattr(inputs_module, "user_input", fail_on_prompt)
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+    info_dict, _ = inputs.complete_red("HAT-P-32 b")
+
+    assert info_dict["pixel_bin"] == "2x3"
 
 
 def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):

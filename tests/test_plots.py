@@ -176,6 +176,40 @@ def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
     assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.pdf").exists()
 
 
+def test_plot_individual_comp_star_calibration_series_masks_rejected_frame_lines(tmp_path, monkeypatch):
+    captured_lines = {}
+    original_plot = Axes.plot
+
+    def spy_plot(self, x, y, *args, **kwargs):
+        label = kwargs.get("label")
+        if label in {"vs 2", "Ensemble"}:
+            captured_lines[label] = (np.asarray(x), np.asarray(y))
+        return original_plot(self, x, y, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", spy_plot)
+
+    plot_individual_comp_star_calibration_series(
+        times=np.array([1.0, 2.0, 3.0, 4.0]),
+        comp_summaries=[
+            {
+                "label": "Comp 1",
+                "selected": False,
+                "aggregate_score": 0.01,
+                "pairwise_ratio_series": {"vs 2": np.array([1.0, 0.05, 1.01, 0.99])},
+                "ensemble_ratio_series": np.array([1.0, 0.02, 1.005, 0.995]),
+                "ensemble_frame_keep_mask": np.array([True, False, True, True]),
+            },
+        ],
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+        method_label="Aperture photometry",
+    )
+
+    assert np.isnan(captured_lines["vs 2"][1][1])
+    assert np.isnan(captured_lines["Ensemble"][1][1])
+
+
 def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeypatch):
     titles = []
     ylabels = []

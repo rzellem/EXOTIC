@@ -243,6 +243,14 @@ COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA = 4.25
 COMPARISON_STAR_SUITABILITY_MIN_CANDIDATES = 5
 COMPARISON_STAR_SUITABILITY_MAX_ITERS = 10
+COMPARISON_STAR_PRESCORE_SIGMA_CLIP = 3.0
+COMPARISON_STAR_PRESCORE_MAX_CLIP_ITERS = 3
+COMPARISON_STAR_PRESCORE_SCATTER_FLOOR = 1e-4
+PSF_FRAME_QUALITY_SIGMA = 4.0
+PSF_FRAME_QUALITY_MAX_CLIP_ITERS = 3
+PSF_FRAME_QUALITY_SEEING_MIN_FRACTIONAL_DEVIATION = 0.5
+PSF_FRAME_QUALITY_AMPLITUDE_MIN_FRACTIONAL_DEVIATION = 0.25
+PSF_TARGET_QUALITY_MAX_COMP_SIGMA_RATIO = 3.0
 COMPARISON_IMAGE_OUTLIER_SIGMA = COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA
 COMPARISON_IMAGE_OUTLIER_MIN_ACTIVE_STARS = 3
 COMPARISON_IMAGE_OUTLIER_MIN_VALID_PAIRS = 2
@@ -303,6 +311,12 @@ ROBUST_FLUX_MIN_FRACTION_OF_MEDIAN = 0.02
 ROBUST_FLUX_MIN_POINTS = 20
 WCS_REFERENCE_GEOMETRY_TOLERANCE_PIXELS = 5.0
 WCS_MIN_GEOMETRY_MATCH_FRACTION = 0.5
+PSF_FIT_MAX_SEED_OFFSET_PIXELS = 6.0
+PSF_FIT_MAX_AXIS_RATIO = 4.0
+PSF_FIT_MAX_SIGMA_PIXELS = 8.0
+PSF_FIT_SELECTION_MARGIN = 0.35
+PSF_ALIGNMENT_TARGET_WIDTH_MAX_COMP_RATIO = 3.0
+PSF_ALIGNMENT_CANDIDATE_SELECTION_MARGIN = 0.20
 TIME_REJECTION_RANGE_DISPLAY_LIMIT = 6
 TIME_REJECTION_GROUP_GAP_CADENCE_MULTIPLIER = 2.5
 NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS = 5
@@ -4728,6 +4742,245 @@ def robust_target_reference_flux_mask(target_flux, reference_flux):
 
     reference_mask = robust_flux_floor_mask(reference_flux)
     return target_mask & reference_mask
+
+
+def psf_metric_outlier_mask(values, sigma=PSF_FRAME_QUALITY_SIGMA,
+                            max_iters=PSF_FRAME_QUALITY_MAX_CLIP_ITERS,
+                            min_points=LIGHTCURVE_MIN_VALID_POINTS,
+                            high=True, low=True, min_fractional_deviation=0.0):
+    values = np.asarray(values, dtype=float).reshape(-1)
+    outlier_mask = ~np.isfinite(values) | (values <= 0)
+    valid_indices = np.flatnonzero(~outlier_mask)
+    if valid_indices.size < max(int(min_points), 3):
+        return outlier_mask
+
+    try:
+        sigma = float(sigma)
+    except (TypeError, ValueError):
+        sigma = PSF_FRAME_QUALITY_SIGMA
+    if not np.isfinite(sigma) or sigma <= 0:
+        sigma = PSF_FRAME_QUALITY_SIGMA
+
+    try:
+        min_fractional_deviation = float(min_fractional_deviation)
+    except (TypeError, ValueError):
+        min_fractional_deviation = 0.0
+    if not np.isfinite(min_fractional_deviation) or min_fractional_deviation < 0:
+        min_fractional_deviation = 0.0
+    min_log_deviation = np.log1p(min_fractional_deviation)
+
+    log_values = np.log(values[valid_indices])
+    keep = np.ones(valid_indices.size, dtype=bool)
+    max_iters = max(int(max_iters), 1)
+    min_points = max(int(min_points), 3)
+
+    for _ in range(max_iters):
+        if np.count_nonzero(keep) < min_points:
+            break
+
+        kept_values = log_values[keep]
+        center = bn.nanmedian(kept_values)
+        if not np.isfinite(center):
+            break
+
+        scatter = robust_scatter(kept_values - center)
+        if not np.isfinite(scatter) or scatter <= 0:
+            break
+
+        deviation = log_values - center
+        direction_mask = np.zeros(deviation.shape, dtype=bool)
+        if high:
+            direction_mask |= deviation > 0
+        if low:
+            direction_mask |= deviation < 0
+
+        newly_rejected = (
+            keep
+            & direction_mask
+            & (np.abs(deviation) > sigma * scatter)
+            & (np.abs(deviation) > min_log_deviation)
+        )
+        if not np.any(newly_rejected):
+            break
+        if np.count_nonzero(keep & ~newly_rejected) < min_points:
+            break
+        keep[newly_rejected] = False
+
+    outlier_mask[valid_indices] = ~keep
+    return outlier_mask
+
+
+def psf_frame_quality_components(psf_rows):
+    psf_rows = np.asarray(psf_rows, dtype=float)
+    if psf_rows.ndim != 2 or psf_rows.shape[1] < 5:
+        frame_count = 0 if psf_rows.ndim == 0 else psf_rows.shape[0]
+        empty = np.zeros(frame_count, dtype=bool)
+        return {
+            'keep_mask': ~empty,
+            'invalid_mask': empty,
+            'seeing_outlier_mask': empty,
+            'amplitude_outlier_mask': empty,
+        }
+
+    amplitude = psf_rows[:, 2]
+    sigma_x = psf_rows[:, 3]
+    sigma_y = psf_rows[:, 4]
+    seeing = GAUSSIAN_SIGMA_TO_FWHM * 0.5 * (sigma_x + sigma_y)
+
+    invalid_mask = (
+        ~np.isfinite(psf_rows[:, 0])
+        | ~np.isfinite(psf_rows[:, 1])
+        | ~np.isfinite(amplitude)
+        | ~np.isfinite(sigma_x)
+        | ~np.isfinite(sigma_y)
+        | (amplitude <= 0)
+        | (sigma_x <= 0)
+        | (sigma_y <= 0)
+    )
+    seeing_outlier_mask = psf_metric_outlier_mask(
+        seeing,
+        high=True,
+        low=False,
+        min_fractional_deviation=PSF_FRAME_QUALITY_SEEING_MIN_FRACTIONAL_DEVIATION,
+    ) & ~invalid_mask
+    amplitude_outlier_mask = psf_metric_outlier_mask(
+        amplitude,
+        high=False,
+        low=True,
+        min_fractional_deviation=PSF_FRAME_QUALITY_AMPLITUDE_MIN_FRACTIONAL_DEVIATION,
+    ) & ~invalid_mask
+    keep_mask = ~(invalid_mask | seeing_outlier_mask | amplitude_outlier_mask)
+    return {
+        'keep_mask': keep_mask,
+        'invalid_mask': invalid_mask,
+        'seeing_outlier_mask': seeing_outlier_mask,
+        'amplitude_outlier_mask': amplitude_outlier_mask,
+    }
+
+
+def target_psf_shape_quality_components(target_rows, reference_rows=None):
+    target_rows = np.asarray(target_rows, dtype=float)
+    if target_rows.ndim != 2 or target_rows.shape[1] < 5:
+        frame_count = 0 if target_rows.ndim == 0 else target_rows.shape[0]
+        empty = np.zeros(frame_count, dtype=bool)
+        return {
+            'keep_mask': ~empty,
+            'invalid_mask': empty,
+            'seeing_outlier_mask': empty,
+            'axis_ratio_outlier_mask': empty,
+            'reference_width_outlier_mask': empty,
+        }
+
+    amplitude = target_rows[:, 2]
+    sigma_x = target_rows[:, 3]
+    sigma_y = target_rows[:, 4]
+    seeing = GAUSSIAN_SIGMA_TO_FWHM * 0.5 * (sigma_x + sigma_y)
+
+    invalid_mask = (
+        ~np.isfinite(target_rows[:, 0])
+        | ~np.isfinite(target_rows[:, 1])
+        | ~np.isfinite(amplitude)
+        | ~np.isfinite(sigma_x)
+        | ~np.isfinite(sigma_y)
+        | (amplitude <= 0)
+        | (sigma_x <= 0)
+        | (sigma_y <= 0)
+    )
+    seeing_outlier_mask = psf_metric_outlier_mask(
+        seeing,
+        high=True,
+        low=False,
+        min_fractional_deviation=PSF_FRAME_QUALITY_SEEING_MIN_FRACTIONAL_DEVIATION,
+    ) & ~invalid_mask
+
+    axis_ratio = np.full(target_rows.shape[0], np.nan, dtype=float)
+    valid_width = np.isfinite(sigma_x) & np.isfinite(sigma_y) & (sigma_x > 0) & (sigma_y > 0)
+    axis_ratio[valid_width] = (
+        np.maximum(sigma_x[valid_width], sigma_y[valid_width])
+        / np.maximum(np.minimum(sigma_x[valid_width], sigma_y[valid_width]), 1e-12)
+    )
+    axis_ratio_outlier_mask = (axis_ratio > PSF_FIT_MAX_AXIS_RATIO) & ~invalid_mask
+
+    reference_width_outlier_mask = np.zeros(target_rows.shape[0], dtype=bool)
+    if reference_rows is not None:
+        reference_rows = np.asarray(reference_rows, dtype=float)
+        if (
+            reference_rows.ndim == 2
+            and reference_rows.shape[0] == target_rows.shape[0]
+            and reference_rows.shape[1] >= 5
+        ):
+            reference_sigma_x = reference_rows[:, 3]
+            reference_sigma_y = reference_rows[:, 4]
+            reference_sigma = 0.5 * (reference_sigma_x + reference_sigma_y)
+            target_sigma = 0.5 * (sigma_x + sigma_y)
+            reference_valid = (
+                np.isfinite(reference_sigma)
+                & np.isfinite(target_sigma)
+                & (reference_sigma > 0)
+                & (target_sigma > 0)
+            )
+            reference_width_outlier_mask = (
+                reference_valid
+                & (
+                    target_sigma
+                    > PSF_TARGET_QUALITY_MAX_COMP_SIGMA_RATIO * reference_sigma
+                )
+            )
+            reference_width_outlier_mask &= ~invalid_mask
+
+    keep_mask = ~(
+        invalid_mask
+        | seeing_outlier_mask
+        | axis_ratio_outlier_mask
+        | reference_width_outlier_mask
+    )
+    return {
+        'keep_mask': keep_mask,
+        'invalid_mask': invalid_mask,
+        'seeing_outlier_mask': seeing_outlier_mask,
+        'axis_ratio_outlier_mask': axis_ratio_outlier_mask,
+        'reference_width_outlier_mask': reference_width_outlier_mask,
+    }
+
+
+def target_psf_shape_quality_mask(target_rows, reference_rows=None):
+    return target_psf_shape_quality_components(target_rows, reference_rows)['keep_mask']
+
+
+def psf_frame_quality_mask(psf_rows):
+    return psf_frame_quality_components(psf_rows)['keep_mask']
+
+
+def psf_quality_mask_for_key(psf_data, key, frame_count):
+    if not isinstance(psf_data, dict) or key not in psf_data:
+        return np.ones(int(frame_count), dtype=bool)
+
+    mask = psf_frame_quality_mask(psf_data[key])
+    if mask.shape[0] != int(frame_count):
+        return np.ones(int(frame_count), dtype=bool)
+    return mask
+
+
+def mask_series_with_quality(values, quality_mask):
+    masked = np.asarray(values, dtype=float).copy()
+    quality_mask = np.asarray(quality_mask, dtype=bool)
+    if masked.shape[0] == quality_mask.shape[0]:
+        masked[~quality_mask] = np.nan
+    return masked
+
+
+def psf_flux_series_from_rows(psf_rows, quality_mask=None):
+    psf_rows = np.asarray(psf_rows, dtype=float)
+    flux = 2 * np.pi * psf_rows[:, 2] * psf_rows[:, 3] * psf_rows[:, 4]
+    if quality_mask is not None:
+        flux = mask_series_with_quality(flux, quality_mask)
+    return flux
+
+
+def psf_flux_data_source(psf_data, psf_flux_data=None):
+    if isinstance(psf_flux_data, dict):
+        return psf_flux_data
+    return psf_data
 
 
 def is_fast_aperture_mask_enabled(config_value):
@@ -9969,25 +10222,49 @@ def check_target_pixel_wcs(input_x_pixel, input_y_pixel, info_dict, ra_list, dec
                  "centroid fitting; keeping the input target coordinates.", warn=True)
         return input_x_pixel, input_y_pixel
 
-    centroid_x, centroid_y, sigma_x, sigma_y = get_psf_parameters(image_data, calculated_x_pixel, calculated_y_pixel)
+    wcs_psf_row = get_psf_fit_row(image_data, calculated_x_pixel, calculated_y_pixel)
+    centroid_x, centroid_y = wcs_psf_row[0], wcs_psf_row[1]
+    sigma_x, sigma_y = wcs_psf_row[3], wcs_psf_row[4]
+    wcs_psf_quality_score = psf_solution_quality_score(
+        wcs_psf_row,
+        seed_pos=[calculated_x_pixel, calculated_y_pixel],
+    )
+
+    input_psf_quality_score = np.inf
+    if pixel_within_image(input_x_pixel, input_y_pixel, image_data.shape, margin=centroid_margin):
+        input_psf_row = get_psf_fit_row(image_data, input_x_pixel, input_y_pixel)
+        input_psf_quality_score = psf_solution_quality_score(
+            input_psf_row,
+            seed_pos=[input_x_pixel, input_y_pixel],
+        )
 
     return check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
                              calculated_x_pixel, calculated_y_pixel, non_interactive_run=non_interactive_run,
-                             prefer_pixel_values_over_wcs_for_target=prefer_pixel_values_over_wcs_for_target)
+                             prefer_pixel_values_over_wcs_for_target=prefer_pixel_values_over_wcs_for_target,
+                             wcs_psf_quality_score=wcs_psf_quality_score,
+                             input_psf_quality_score=input_psf_quality_score)
+
+
+def get_psf_fit_row(image_data, x_pixel, y_pixel):
+    try:
+        return fit_centroid(image_data, [x_pixel, y_pixel], 0)
+    except Exception as exc:
+        log.debug(f"Centroid fit failed while validating WCS target coordinates: {exc}")
+        return _nan_psf_result()
 
 
 def get_psf_parameters(image_data, x_pixel, y_pixel):
-    try:
-        psf_data = fit_centroid(image_data, [x_pixel, y_pixel], 0)
-    except Exception as exc:
-        log.debug(f"Centroid fit failed while validating WCS target coordinates: {exc}")
+    psf_data = get_psf_fit_row(image_data, x_pixel, y_pixel)
+    if not np.all(np.isfinite(psf_data[:5])):
         return np.nan, np.nan, np.nan, np.nan
     return psf_data[0], psf_data[1], psf_data[3], psf_data[4]
 
 
 def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y,
                       calculated_x_pixel, calculated_y_pixel, non_interactive_run=False,
-                      prefer_pixel_values_over_wcs_for_target=False):
+                      prefer_pixel_values_over_wcs_for_target=False,
+                      wcs_psf_quality_score=None,
+                      input_psf_quality_score=None):
     while True:
         try:
             validate_pixel_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigma_x, sigma_y)
@@ -9998,12 +10275,36 @@ def check_coordinates(input_x_pixel, input_y_pixel, centroid_x, centroid_y, sigm
                          "prefer_pixel_values_over_wcs_for_target is enabled.", warn=True)
                 return input_x_pixel, input_y_pixel
             if non_interactive_run:
-                if np.isfinite(centroid_x) and np.isfinite(centroid_y):
+                if wcs_psf_quality_score is None:
+                    wcs_psf_quality_score = psf_solution_quality_score(
+                        [centroid_x, centroid_y, 1.0, sigma_x, sigma_y, 0.0, 0.0],
+                        seed_pos=[calculated_x_pixel, calculated_y_pixel],
+                    )
+                try:
+                    wcs_score = float(wcs_psf_quality_score)
+                except (TypeError, ValueError):
+                    wcs_score = np.inf
+                try:
+                    input_score = float(input_psf_quality_score)
+                except (TypeError, ValueError):
+                    input_score = np.inf
+
+                if (
+                    np.isfinite(input_score)
+                ):
+                    log_info(
+                        "Proceeding with provided target pixel coordinates because they produce a plausible "
+                        "target PSF fit; the WCS-derived target fit points to a different source.",
+                        warn=True,
+                    )
+                    return input_x_pixel, input_y_pixel
+
+                if np.isfinite(wcs_score) and np.isfinite(centroid_x) and np.isfinite(centroid_y):
                     log_info("Proceeding with WCS-derived centroided target coordinates due to "
                              "--non-interactive-run.", warn=True)
                     return centroid_x, centroid_y
                 log_info("Proceeding with WCS-derived target pixel coordinates due to "
-                         "--non-interactive-run (centroid unavailable).", warn=True)
+                         "--non-interactive-run (centroid unavailable or implausible).", warn=True)
                 return calculated_x_pixel, calculated_y_pixel
             new_x_pixel, new_y_pixel = prompt_user_for_coordinates(input_x_pixel, input_y_pixel,
                                                                    calculated_x_pixel, calculated_y_pixel)
@@ -11989,9 +12290,11 @@ def build_multiprocess_pointing_precheck_transforms(inputfiles, max_processes, r
     return positions, usable_mask, alignment_transforms
 
 
-def _fit_alignment_candidate_psfs(image_data, predicted_coords, target_fast_centroid, frame_fast_centroid):
+def _fit_alignment_candidate_psfs(image_data, predicted_coords, target_fast_centroid, frame_fast_centroid,
+                                  previous_psf_rows=None):
     global plateStatus
     predicted_coords = np.asarray(predicted_coords, dtype=float)
+    previous_psf_rows = {} if previous_psf_rows is None else dict(previous_psf_rows)
     with _PLATE_STATUS_SWAP_LOCK:
         original_plate_status = plateStatus
         recorder = _ParallelPlateStatusRecorder()
@@ -12000,15 +12303,16 @@ def _fit_alignment_candidate_psfs(image_data, predicted_coords, target_fast_cent
             psf_rows = {
                 'target': fit_centroid_or_warn_out_of_frame(
                     image_data,
-                    choose_centroid_seed_position(predicted_coords[0], None),
+                    choose_centroid_seed_position(predicted_coords[0], previous_psf_rows.get('target')),
                     0,
                     fast_mode=target_fast_centroid,
                 )
             }
             for comp_idx in range(max(0, predicted_coords.shape[0] - 1)):
+                comp_key = f"comp{comp_idx + 1}"
                 psf_rows[f"comp{comp_idx + 1}"] = fit_centroid_or_warn_out_of_frame(
                     image_data,
-                    choose_centroid_seed_position(predicted_coords[comp_idx + 1], None),
+                    choose_centroid_seed_position(predicted_coords[comp_idx + 1], previous_psf_rows.get(comp_key)),
                     comp_idx + 1,
                     fast_mode=frame_fast_centroid,
                 )
@@ -12136,41 +12440,203 @@ def _update_reference_comp_offsets(psf_data, tar_comp_dist, comp_keys):
         tar_comp_dist[comp_key][1] = abs(int(comp_row[1]) - int(target_row[1]))
 
 
-def apply_parallel_alignment_result(result, frame_index, psf_data, tar_comp_dist, comp_keys):
-    wcs_candidate = result.get('wcs')
+def _candidate_seed_position(candidate, star_index):
+    if candidate is None:
+        return None
+
+    try:
+        coords = np.asarray(candidate.get('coords'), dtype=float)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+    if coords.ndim == 1:
+        if coords.size % 2 != 0:
+            return None
+        coords = coords.reshape(-1, 2)
+    if coords.ndim != 2 or coords.shape[1] < 2 or star_index >= coords.shape[0]:
+        return None
+
+    seed = coords[star_index, :2]
+    if np.all(np.isfinite(seed)):
+        return seed
+    return None
+
+
+def alignment_candidate_quality_score(candidate, comp_keys=None, previous_target_psf_row=None,
+                                      previous_comp_psf_rows=None, expected_offsets=None,
+                                      width_max_comp_ratio=PSF_ALIGNMENT_TARGET_WIDTH_MAX_COMP_RATIO):
+    if candidate is None:
+        return np.inf
+
+    psf_rows = candidate.get('psf_rows') if isinstance(candidate, dict) else None
+    if not isinstance(psf_rows, dict):
+        return np.inf
+
+    comp_keys = [] if comp_keys is None else list(comp_keys)
+    previous_comp_psf_rows = {} if previous_comp_psf_rows is None else dict(previous_comp_psf_rows)
+    expected_offsets = {} if expected_offsets is None else dict(expected_offsets)
+
+    target_row = psf_rows.get('target', _nan_psf_result())
+    target_score = psf_solution_quality_score(
+        target_row,
+        seed_pos=_candidate_seed_position(candidate, 0),
+    )
+    if not np.isfinite(target_score):
+        return np.inf
+
+    score = float(target_score)
+    target_sigma = psf_sigma_from_fit(target_row)
+    comp_sigmas = []
+    geometry_test_count = 0
+    geometry_match_count = 0
+
+    for comp_idx, comp_key in enumerate(comp_keys):
+        row = psf_rows.get(f"comp{comp_idx + 1}", _nan_psf_result())
+        comp_score = psf_solution_quality_score(
+            row,
+            seed_pos=_candidate_seed_position(candidate, comp_idx + 1),
+        )
+        if np.isfinite(comp_score):
+            score += 0.25 * float(comp_score)
+            comp_sigma = psf_sigma_from_fit(row)
+            if np.isfinite(comp_sigma) and comp_sigma > 0:
+                comp_sigmas.append(comp_sigma)
+        elif comp_keys:
+            score += 0.75
+
+        expected_offset = expected_offsets.get(comp_key)
+        if expected_offset is None:
+            continue
+
+        try:
+            expected_dx = float(expected_offset[0])
+            expected_dy = float(expected_offset[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if expected_dx == 0.0 and expected_dy == 0.0:
+            continue
+
+        geometry_test_count += 1
+        if centroid_offset_matches_reference(row, target_row, expected_dx, expected_dy):
+            geometry_match_count += 1
+
+        previous_comp_row = previous_comp_psf_rows.get(comp_key)
+        if centroid_position_is_finite(row) and centroid_position_is_finite(previous_comp_row):
+            comp_jump = float(np.hypot(float(row[0]) - float(previous_comp_row[0]),
+                                       float(row[1]) - float(previous_comp_row[1])))
+            score += min(comp_jump / 20.0, 1.0)
+
+    if geometry_test_count:
+        geometry_miss_fraction = (geometry_test_count - geometry_match_count) / geometry_test_count
+        score += 2.0 * geometry_miss_fraction
+
+    if np.isfinite(target_sigma) and target_sigma > 0 and comp_sigmas:
+        comp_sigma_center = float(bn.nanmedian(np.asarray(comp_sigmas, dtype=float)))
+        if np.isfinite(comp_sigma_center) and comp_sigma_center > 0:
+            width_ratio = target_sigma / comp_sigma_center
+            if (
+                not np.isfinite(width_ratio)
+                or width_ratio > float(width_max_comp_ratio)
+            ):
+                return np.inf
+            score += 0.5 * abs(np.log(width_ratio))
+
+    if centroid_position_is_finite(target_row) and centroid_position_is_finite(previous_target_psf_row):
+        target_jump = float(np.hypot(float(target_row[0]) - float(previous_target_psf_row[0]),
+                                     float(target_row[1]) - float(previous_target_psf_row[1])))
+        score += min(target_jump / 20.0, 1.0)
+
+    return float(score)
+
+
+def select_alignment_candidate(result, frame_index, psf_data, tar_comp_dist, comp_keys):
+    wcs_candidate = result.get('wcs') if isinstance(result, dict) else None
+    fallback_candidate = result.get('fallback') if isinstance(result, dict) else None
     selected_candidate = None
     selected_source = 'fallback'
 
+    previous_target_psf_row = None if frame_index == 0 else psf_data['target'][frame_index - 1]
+    previous_comp_psf_rows = {}
+    if frame_index != 0:
+        previous_comp_psf_rows = {comp_key: psf_data[comp_key][frame_index - 1] for comp_key in comp_keys}
+
+    wcs_alignment_decision = {'use_wcs_alignment': False, 'reason': 'no_wcs_candidate'}
     if wcs_candidate is not None:
         comp_psf_rows = {
             comp_key: wcs_candidate['psf_rows'].get(f"comp{comp_idx + 1}", _nan_psf_result())
             for comp_idx, comp_key in enumerate(comp_keys)
         }
-        previous_comp_psf_rows = {}
-        if frame_index != 0:
-            previous_comp_psf_rows = {comp_key: psf_data[comp_key][frame_index - 1] for comp_key in comp_keys}
 
         wcs_alignment_decision = should_keep_header_wcs_alignment(
             wcs_candidate.get('projected_off_frame', False),
             frame_index,
             wcs_candidate['psf_rows']['target'],
-            previous_target_psf_row=None if frame_index == 0 else psf_data['target'][frame_index - 1],
+            previous_target_psf_row=previous_target_psf_row,
             comp_psf_rows=comp_psf_rows,
             previous_comp_psf_rows=previous_comp_psf_rows,
             expected_offsets=tar_comp_dist,
         )
-        if wcs_alignment_decision['use_wcs_alignment']:
-            selected_candidate = wcs_candidate
-            selected_source = 'wcs'
 
-    if selected_candidate is None:
-        selected_candidate = result.get('fallback') or wcs_candidate
+    wcs_score = alignment_candidate_quality_score(
+        wcs_candidate,
+        comp_keys=comp_keys,
+        previous_target_psf_row=previous_target_psf_row,
+        previous_comp_psf_rows=previous_comp_psf_rows,
+        expected_offsets=tar_comp_dist,
+    )
+    fallback_score = alignment_candidate_quality_score(
+        fallback_candidate,
+        comp_keys=comp_keys,
+        previous_target_psf_row=previous_target_psf_row,
+        previous_comp_psf_rows=previous_comp_psf_rows,
+        expected_offsets=tar_comp_dist,
+    )
+
+    if (
+        wcs_candidate is not None
+        and wcs_alignment_decision.get('use_wcs_alignment')
+        and np.isfinite(wcs_score)
+        and (
+            not np.isfinite(fallback_score)
+            or wcs_score <= fallback_score + PSF_ALIGNMENT_CANDIDATE_SELECTION_MARGIN
+        )
+    ):
+        selected_candidate = wcs_candidate
+        selected_source = 'wcs'
+    elif fallback_candidate is not None and np.isfinite(fallback_score):
+        selected_candidate = fallback_candidate
+        selected_source = 'fallback'
+    elif wcs_candidate is not None and np.isfinite(wcs_score):
+        selected_candidate = wcs_candidate
+        selected_source = 'wcs'
+    elif fallback_candidate is not None:
+        selected_candidate = fallback_candidate
+        selected_source = 'fallback'
+    elif wcs_candidate is not None:
+        selected_candidate = wcs_candidate
+        selected_source = 'wcs'
 
     if selected_candidate is None:
         selected_candidate = {
             'psf_rows': {'target': _nan_psf_result()},
             'warnings': [('alignment_error', -1, np.nan, np.nan)],
         }
+
+    return selected_source, selected_candidate, {
+        'wcs_score': wcs_score,
+        'fallback_score': fallback_score,
+        'wcs_decision': wcs_alignment_decision,
+    }
+
+
+def apply_parallel_alignment_result(result, frame_index, psf_data, tar_comp_dist, comp_keys):
+    selected_source, selected_candidate, _ = select_alignment_candidate(
+        result,
+        frame_index,
+        psf_data,
+        tar_comp_dist,
+        comp_keys,
+    )
 
     _store_alignment_candidate_psfs(selected_candidate, frame_index, psf_data, comp_keys)
     _replay_parallel_alignment_warnings(result.get('file_name'), selected_candidate.get('warnings'))
@@ -12503,6 +12969,61 @@ def _has_usable_centroid_signal(subarray, amplitude, min_snr=5.0):
     return amplitude >= (min_snr * scatter)
 
 
+def _fit_seed_anchored_psf(data, pos, psf_function=gaussian_psf, box=8, bound_radius=4.0):
+    xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
+    subarray = data[yv, xv]
+    moment_fit = _fit_centroid_moments(subarray, xv, yv, pos, box)
+
+    try:
+        init = [np.nanmax(subarray) - np.nanmin(subarray), 1.0, 1.0, 0.0, np.nanmin(subarray)]
+    except ValueError:
+        return _nan_psf_result()
+
+    if np.isfinite(moment_fit[0]):
+        init = [
+            moment_fit[2],
+            min(float(moment_fit[3]), 3.0),
+            min(float(moment_fit[4]), 3.0),
+            moment_fit[5],
+            moment_fit[6],
+        ]
+
+    bound_radius = float(bound_radius)
+    sigma_upper = max(float(PSF_FIT_MAX_SIGMA_PIXELS), 0.5)
+    lo = [
+        pos[0] - bound_radius,
+        pos[1] - bound_radius,
+        0,
+        0.5,
+        0.5,
+        -np.pi / 4,
+        np.nanmin(subarray) - 1,
+    ]
+    up = [
+        pos[0] + bound_radius,
+        pos[1] + bound_radius,
+        1e7,
+        sigma_upper,
+        sigma_upper,
+        np.pi / 4,
+        np.nanmax(subarray) + 1,
+    ]
+    x0 = np.array([pos[0], pos[1], *init], dtype=float)
+    lo_arr = np.array(lo, dtype=float)
+    up_arr = np.array(up, dtype=float)
+    if np.all(np.isfinite(x0)):
+        x0 = np.clip(x0, lo_arr + 1e-6, up_arr - 1e-6)
+
+    def fcn2min(pars):
+        model = psf_function(xv, yv, *pars)
+        return (subarray - model).flatten()
+
+    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+    if np.isfinite(moment_fit[6]):
+        res.x[6] = moment_fit[6]
+    return res.x
+
+
 def _nan_psf_result():
     return np.full(7, np.nan, dtype=float)
 
@@ -12512,6 +13033,60 @@ def fit_centroid_or_warn_out_of_frame(data, pos, starIndex, **kwargs):
         plateStatus.outOfFrameWarning(starIndex)
         return _nan_psf_result()
     return fit_centroid(data, pos, starIndex, **kwargs)
+
+
+def psf_solution_quality_score(psf_row, seed_pos=None,
+                               max_seed_offset_pixels=PSF_FIT_MAX_SEED_OFFSET_PIXELS,
+                               max_axis_ratio=PSF_FIT_MAX_AXIS_RATIO,
+                               max_sigma_pixels=PSF_FIT_MAX_SIGMA_PIXELS):
+    try:
+        row = np.asarray(psf_row, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return np.inf
+    if row.size < 5 or not np.all(np.isfinite(row[:5])):
+        return np.inf
+
+    x_centroid, y_centroid, amplitude, sigma_x, sigma_y = row[:5]
+    if amplitude <= 0 or sigma_x <= 0 or sigma_y <= 0:
+        return np.inf
+    if max(sigma_x, sigma_y) > float(max_sigma_pixels):
+        return np.inf
+
+    axis_ratio = max(sigma_x, sigma_y) / max(min(sigma_x, sigma_y), 1e-12)
+    if axis_ratio > float(max_axis_ratio):
+        return np.inf
+
+    score = 0.25 * np.log(axis_ratio)
+    if seed_pos is not None:
+        try:
+            seed = np.asarray(seed_pos, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            seed = np.array([], dtype=float)
+        if seed.size >= 2 and np.all(np.isfinite(seed[:2])):
+            seed_offset = float(np.hypot(x_centroid - seed[0], y_centroid - seed[1]))
+            if seed_offset > float(max_seed_offset_pixels):
+                return np.inf
+            score += seed_offset / max(float(max_seed_offset_pixels), 1e-12)
+
+    mean_sigma = 0.5 * (sigma_x + sigma_y)
+    if np.isfinite(mean_sigma) and mean_sigma > 0:
+        score += 0.05 * abs(np.log(mean_sigma / 1.5))
+
+    score -= 0.005 * np.log1p(max(float(amplitude), 0.0))
+    return float(score)
+
+
+def choose_best_psf_solution(primary_row, fallback_row, seed_pos=None):
+    primary_score = psf_solution_quality_score(primary_row, seed_pos=seed_pos)
+    fallback_score = psf_solution_quality_score(fallback_row, seed_pos=seed_pos)
+    if np.isfinite(primary_score) and (
+        not np.isfinite(fallback_score)
+        or primary_score <= fallback_score + PSF_FIT_SELECTION_MARGIN
+    ):
+        return np.asarray(primary_row, dtype=float)
+    if np.isfinite(fallback_score):
+        return np.asarray(fallback_row, dtype=float)
+    return _nan_psf_result()
 
 
 def fractional_flux_change_within_limit(current_amplitude, previous_amplitude, limit=0.5):
@@ -12670,7 +13245,10 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             wx, wy = moment_fit[0], moment_fit[1]
             init = [moment_fit[2], moment_fit[3], moment_fit[4], moment_fit[5], moment_fit[6]]
             if fast_mode:
-                if _has_usable_centroid_signal(subarray, init[0]):
+                if (
+                    _has_usable_centroid_signal(subarray, init[0])
+                    and centroid_position_is_finite(moment_fit)
+                ):
                     return moment_fit
 
                 plateStatus.lowFluxAmplitudeWarning(starIndex, pos[0], pos[1])
@@ -12701,7 +13279,10 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
         try:
             res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
         except Exception as exc:
-            if has_usable_signal and np.isfinite(moment_fit[0]):
+            if (
+                has_usable_signal
+                and centroid_position_is_finite(moment_fit)
+            ):
                 log.debug(f"Centroid PSF fit failed at {np.round(pos, 2)}; using moment centroid instead: {exc}")
                 return moment_fit
 
@@ -12725,9 +13306,103 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
         if np.isfinite(moment_fit[6]):
             res.x[6] = moment_fit[6]
 
-        return res.x
+        anchored_fit = _nan_psf_result()
+        if not weightedcenter:
+            try:
+                anchored_box = max(4, min(int(box), 8))
+                anchored_fit = _fit_seed_anchored_psf(
+                    data,
+                    pos,
+                    psf_function=psf_function,
+                    box=anchored_box,
+                    bound_radius=4.0,
+                )
+            except Exception as exc:
+                log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
+
+        selected_fit = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos)
+        selected_fit = choose_best_psf_solution(selected_fit, moment_fit, seed_pos=pos)
+        if not np.all(np.isfinite(selected_fit[:5])):
+            log.debug(
+                f"Centroid PSF fit at {np.round(pos, 2)} rejected as implausible "
+                "(large seed offset, elongated PSF, or invalid width)."
+            )
+        return selected_fit
     finally:
         _record_photometry_stage_timing('fit_centroid', perf_counter() - stage_start)
+
+
+def fit_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaussian_psf, box=15):
+    try:
+        centroid_row = np.asarray(centroid_row, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return _nan_psf_result()
+    if centroid_row.size < 2 or not centroid_position_is_finite(centroid_row):
+        return _nan_psf_result()
+
+    pos = centroid_row[:2]
+    try:
+        xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
+        subarray = data[yv, xv]
+        init = [
+            np.nanmax(subarray) - np.nanmin(subarray),
+            1.0,
+            1.0,
+            0.0,
+            np.nanmin(subarray),
+        ]
+    except Exception:
+        return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+
+    lo = [
+        pos[0] - box * 0.5,
+        pos[1] - box * 0.5,
+        0,
+        0.5,
+        0.5,
+        -np.pi / 4,
+        np.nanmin(subarray) - 1,
+    ]
+    up = [
+        pos[0] + box * 0.5,
+        pos[1] + box * 0.5,
+        1e7,
+        20,
+        20,
+        np.pi / 4,
+        np.nanmax(subarray) + 1,
+    ]
+
+    def fcn2min(pars):
+        model = psf_function(xv, yv, *pars)
+        return (subarray - model).flatten()
+
+    try:
+        res = least_squares(
+            fcn2min,
+            x0=[*pos, *init],
+            bounds=[lo, up],
+            jac='3-point',
+            xtol=None,
+            method='trf',
+        )
+        flux_row = np.asarray(res.x, dtype=float)
+    except Exception as exc:
+        log.debug(
+            f"Stable PSF photometry flux fit failed at {np.round(pos, 2)} for star {starIndex}; "
+            f"using centroid fit flux parameters instead: {exc}"
+        )
+        return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+
+    if not np.all(np.isfinite(flux_row[:5])):
+        return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+    if not np.isfinite(psf_solution_quality_score(flux_row, seed_pos=pos)):
+        return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+
+    # Keep the robust centroid/offset solution for diagnostics and aperture placement,
+    # but use the legacy-stable Gaussian amplitude/width for PSF flux integration.
+    flux_row[:2] = centroid_row[:2]
+    return flux_row
 
 
 def sigma_clipped_nanmedian(data, sigma=3.0, max_iters=3):
@@ -14105,19 +14780,31 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 ['comp'],
             )
         else:
-            use_wcs_alignment = False
+            alignment_result = {
+                'index': i,
+                'file_name': fileName,
+                'wcs': None,
+                'fallback': None,
+            }
+            previous_psf_rows = {}
+            if i != 0:
+                previous_psf_rows = {
+                    'target': psf_data['target'][i - 1],
+                    'comp1': psf_data['comp'][i - 1],
+                }
+
+            has_wcs_alignment = False
             if not ignore_header_wcs:
                 try:
                     wcs_hdr = search_wcs_from_header(image_header)
-                    use_wcs_alignment = wcs_hdr.is_celestial
+                    has_wcs_alignment = wcs_hdr.is_celestial
                 except Exception:
-                    use_wcs_alignment = False
+                    has_wcs_alignment = False
 
-            if use_wcs_alignment:
+            if has_wcs_alignment and target_and_comp_radec is not None:
                 try:
                     if i == 0:
-                        tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
-                        cx, cy = comp_star
+                        projected_coords = np.array(target_and_comp_pixels, dtype=float, copy=True)
                     else:
                         pix_x, pix_y = wcs_hdr.world_to_pixel_values(
                             target_and_comp_radec[:, 0],
@@ -14125,48 +14812,22 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                         )
                         pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
                         pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
-                        tx, ty = pix_x[0], pix_y[0]
-                        cx, cy = pix_x[1], pix_y[1]
+                        projected_coords = np.column_stack((pix_x, pix_y))
 
-                    projected_coords = np.array([[tx, ty], [cx, cy]], dtype=float)
-                    projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
-                    target_seed = choose_centroid_seed_position(
-                        [tx, ty],
-                        None if i == 0 else psf_data['target'][i - 1],
-                    )
-                    comp_seed = choose_centroid_seed_position(
-                        [cx, cy],
-                        None if i == 0 else psf_data['comp'][i - 1],
-                    )
-
-                    psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
+                    wcs_candidate = _fit_alignment_candidate_psfs(
                         imageData,
-                        target_seed,
-                        0,
-                        fast_mode=target_fast_centroid,
+                        projected_coords,
+                        target_fast_centroid,
+                        frame_fast_centroid,
+                        previous_psf_rows=previous_psf_rows,
                     )
-                    psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
-                        imageData,
-                        comp_seed,
-                        1,
-                        fast_mode=frame_fast_centroid,
+                    wcs_candidate['projected_off_frame'] = any_projected_coord_out_of_frame(
+                        projected_coords,
+                        imageData.shape,
                     )
-
-                    if i == 0:
-                        tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
-                        tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
-                    wcs_alignment_decision = should_keep_header_wcs_alignment(
-                        projected_off_frame,
-                        i,
-                        psf_data['target'][i],
-                        previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
-                        comp_psf_rows={'comp': psf_data['comp'][i]},
-                        previous_comp_psf_rows={} if i == 0 else {'comp': psf_data['comp'][i - 1]},
-                        expected_offsets={'comp': tar_comp_dist['comp']},
-                    )
-                    use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
+                    alignment_result['wcs'] = wcs_candidate
                 except Exception:
-                    use_wcs_alignment = False
+                    alignment_result['wcs'] = None
 
             log_alignment_progress(
                 i,
@@ -14175,43 +14836,29 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 use_multiprocess_transform_precompute,
             )
 
-            if not use_wcs_alignment:
-                cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
-                if cached_tform is not None:
-                    tform = cached_tform
-                elif i == 0:
-                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-                else:
-                    tform = transformation(imageData, fileName, reference_image=firstImage)
+            cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
+            if cached_tform is not None:
+                tform = cached_tform
+            elif i == 0:
+                tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+            else:
+                tform = transformation(imageData, fileName, reference_image=firstImage)
 
-                transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
-                tx, ty = transformed_coords[0]
-                target_seed = choose_centroid_seed_position(
-                    [tx, ty],
-                    None if i == 0 else psf_data['target'][i - 1],
-                )
-                psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
-                    imageData,
-                    target_seed,
-                    0,
-                    fast_mode=target_fast_centroid,
-                )
-
-                cx, cy = transformed_coords[1]
-                comp_seed = choose_centroid_seed_position(
-                    [cx, cy],
-                    None if i == 0 else psf_data['comp'][i - 1],
-                )
-                psf_data['comp'][i] = fit_centroid_or_warn_out_of_frame(
-                    imageData,
-                    comp_seed,
-                    1,
-                    fast_mode=frame_fast_centroid,
-                )
-
-                if i == 0:
-                    tar_comp_dist['comp'][0] = abs(int(psf_data['comp'][0][0]) - int(psf_data['target'][0][0]))
-                    tar_comp_dist['comp'][1] = abs(int(psf_data['comp'][0][1]) - int(psf_data['target'][0][1]))
+            transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+            alignment_result['fallback'] = _fit_alignment_candidate_psfs(
+                imageData,
+                transformed_coords,
+                target_fast_centroid,
+                frame_fast_centroid,
+                previous_psf_rows=previous_psf_rows,
+            )
+            apply_parallel_alignment_result(
+                alignment_result,
+                i,
+                psf_data,
+                tar_comp_dist,
+                ['comp'],
+            )
 
         # aperture photometry
         target_sigma = psf_sigma_from_fit(psf_data['target'][i], fallback_sigma=sigma)
@@ -14912,6 +15559,47 @@ def prepare_lightcurve_fit_input_series(
     return prepared
 
 
+def comparison_prescore_clip_mask(values, sigma=COMPARISON_STAR_PRESCORE_SIGMA_CLIP,
+                                  max_iters=COMPARISON_STAR_PRESCORE_MAX_CLIP_ITERS,
+                                  scatter_floor=COMPARISON_STAR_PRESCORE_SCATTER_FLOOR,
+                                  min_points=LIGHTCURVE_MIN_VALID_POINTS):
+    values = np.asarray(values, dtype=float)
+    finite_mask = np.isfinite(values)
+    keep_mask = finite_mask.copy()
+    if np.count_nonzero(keep_mask) < int(min_points):
+        return keep_mask
+
+    for _ in range(int(max_iters)):
+        kept_values = values[keep_mask]
+        center = bn.nanmedian(kept_values)
+        if not np.isfinite(center):
+            break
+
+        mad = bn.nanmedian(np.abs(kept_values - center))
+        if np.isfinite(mad) and mad > 0:
+            scatter = 1.4826 * mad
+        else:
+            scatter = bn.nanstd(kept_values)
+
+        if np.isfinite(scatter_floor) and scatter_floor > 0:
+            if not np.isfinite(scatter) or scatter <= 0:
+                scatter = float(scatter_floor)
+            else:
+                scatter = max(float(scatter), float(scatter_floor))
+
+        if not np.isfinite(scatter) or scatter <= 0:
+            break
+
+        next_keep_mask = finite_mask & (np.abs(values - center) <= float(sigma) * scatter)
+        if np.count_nonzero(next_keep_mask) < int(min_points):
+            break
+        if np.array_equal(next_keep_mask, keep_mask):
+            break
+        keep_mask = next_keep_mask
+
+    return keep_mask
+
+
 def cheap_lightcurve_prescore(tFlux, cFlux, airmass, enforce_relative_flux_max=True):
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio = np.divide(tFlux, cFlux)
@@ -14923,15 +15611,37 @@ def cheap_lightcurve_prescore(tFlux, cFlux, airmass, enforce_relative_flux_max=T
     x_vals = airmass[finite_mask]
     y_vals = flux_ratio[finite_mask]
 
-    if should_skip_airmass_fit(x_vals):
-        detrended = y_vals / bn.nanmedian(y_vals)
-    else:
-        slope, intercept = np.polyfit(x_vals, y_vals, 1)
-        trend = slope * x_vals + intercept
-        with np.errstate(divide='ignore', invalid='ignore'):
-            detrended = np.divide(y_vals, trend)
+    score_mask = np.ones(y_vals.shape, dtype=bool)
+    detrended = np.full(y_vals.shape, np.nan, dtype=float)
+    for _ in range(COMPARISON_STAR_PRESCORE_MAX_CLIP_ITERS):
+        if np.count_nonzero(score_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+            return np.inf
 
-    return bn.nanstd(detrended)
+        if should_skip_airmass_fit(x_vals[score_mask]):
+            baseline = bn.nanmedian(y_vals[score_mask])
+            if not np.isfinite(baseline) or baseline == 0:
+                return np.inf
+            detrended = y_vals / baseline
+        else:
+            slope, intercept = np.polyfit(x_vals[score_mask], y_vals[score_mask], 1)
+            trend = slope * x_vals + intercept
+            with np.errstate(divide='ignore', invalid='ignore'):
+                detrended = np.divide(y_vals, trend)
+
+        next_score_mask = comparison_prescore_clip_mask(detrended)
+        if np.array_equal(next_score_mask, score_mask):
+            break
+        score_mask = next_score_mask
+
+    finite_detrended = detrended[score_mask & np.isfinite(detrended)]
+    if finite_detrended.size < LIGHTCURVE_MIN_VALID_POINTS:
+        return np.inf
+
+    scatter = bn.nanstd(finite_detrended)
+    if np.isfinite(scatter) and scatter >= 0:
+        return float(scatter)
+
+    return np.inf
 
 
 def evaluate_lightcurve_candidate(task):
@@ -15008,17 +15718,21 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                                     require_comp_star=True,
                                     skip_low_comparison_coverage_rejection=False,
                                     use_psf_photometry=True,
-                                    use_aperture_photometry=True):
+                                    use_aperture_photometry=True,
+                                    psf_flux_data=None):
     candidate_jobs = []
     comp_star_count = len(comp_stars)
+    psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
 
     if use_psf_photometry and comp_star_count > 0:
-        target_flux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+        frame_count = psf_data['target'].shape[0]
+        target_flux = psf_flux_series_from_rows(psf_flux_data['target'])
         target_flux_mask = robust_flux_floor_mask(target_flux)
         psf_comp_flux_map = {
-            f"comp{comp_idx + 1}": 2 * np.pi * psf_data[f"comp{comp_idx + 1}"][:, 2]
-            * psf_data[f"comp{comp_idx + 1}"][:, 3]
-            * psf_data[f"comp{comp_idx + 1}"][:, 4]
+            f"comp{comp_idx + 1}": psf_flux_series_from_rows(
+                psf_flux_data[f"comp{comp_idx + 1}"],
+                psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count),
+            )
             for comp_idx in range(comp_star_count)
         }
         psf_comp_coverage = comparison_star_coverage_summary(
@@ -15032,7 +15746,8 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                 continue
 
             comp_flux = psf_comp_flux_map[ckey]
-            psf_mask = target_flux_mask & robust_flux_floor_mask(comp_flux)
+            target_shape_mask = target_psf_shape_quality_mask(psf_data['target'], psf_data[ckey])
+            psf_mask = target_shape_mask & target_flux_mask & robust_flux_floor_mask(comp_flux)
             candidate_jobs.append({
                 'method': 'psf',
                 'a': None,
@@ -15056,11 +15771,15 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
             })
 
     if use_aperture_photometry and aper_data is not None and apers is not None and annuli is not None:
+        frame_count = aper_data['target'].shape[0]
         for a, aper in enumerate(apers):
             for an, annulus in enumerate(annuli):
-                target_flux = aper_data['target'][:, a, an]
+                target_flux = np.asarray(aper_data['target'][:, a, an], dtype=float)
                 aperture_comp_flux_map = {
-                    f"comp{comp_idx + 1}": aper_data[f"comp{comp_idx + 1}"][:, a, an]
+                    f"comp{comp_idx + 1}": mask_series_with_quality(
+                        aper_data[f"comp{comp_idx + 1}"][:, a, an],
+                        psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count),
+                    )
                     for comp_idx in range(comp_star_count)
                 }
                 aperture_comp_coverage = comparison_star_coverage_summary(
@@ -15097,7 +15816,7 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                         continue
 
                     comp_series = aperture_comp_flux_map[ckey]
-                    aper_mask = valid_comparison_frame_mask(comp_series)
+                    aper_mask = valid_comparison_frame_mask(target_flux) & valid_comparison_frame_mask(comp_series)
                     candidate_jobs.append({
                         'method': 'aperture',
                         'a': a,
@@ -15128,18 +15847,24 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
                               disable_vertical_flux_normalization=False,
                               use_impactparameter_rather_than_inclination_to_fit=True,
                               use_eebls_to_initialize_tmid_and_bounds=True,
-                              compute_eebls_diagnostics=True):
+                              compute_eebls_diagnostics=True,
+                              psf_flux_data=None):
     candidate_mask = np.asarray(candidate['mask'], dtype=bool)
 
     if candidate['method'] == 'psf':
-        target_flux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+        psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
+        target_flux = (
+            2 * np.pi * psf_flux_data['target'][:, 2]
+            * psf_flux_data['target'][:, 3]
+            * psf_flux_data['target'][:, 4]
+        )
         if candidate['ckey'] is None:
             comp_flux = np.ones(target_flux.shape[0], dtype=float)
         else:
             comp_flux = (
-                2 * np.pi * psf_data[candidate['ckey']][:, 2]
-                * psf_data[candidate['ckey']][:, 3]
-                * psf_data[candidate['ckey']][:, 4]
+                2 * np.pi * psf_flux_data[candidate['ckey']][:, 2]
+                * psf_flux_data[candidate['ckey']][:, 3]
+                * psf_flux_data[candidate['ckey']][:, 4]
             )
     else:
         target_flux = aper_data['target'][:, candidate['a'], candidate['an']]
@@ -15175,7 +15900,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
                                         multiprocess_lightcurve_fits=None,
                                         use_impactparameter_rather_than_inclination_to_fit=True,
                                         use_eebls_to_initialize_tmid_and_bounds=True,
-                                        pick_comparison_by_eebls_snr=True):
+                                        pick_comparison_by_eebls_snr=True,
+                                        psf_flux_data=None):
     candidate_jobs = build_target_fit_candidate_jobs(
         psf_data,
         aper_data,
@@ -15188,6 +15914,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         skip_low_comparison_coverage_rejection=skip_low_comparison_coverage_rejection,
         use_psf_photometry=use_psf_photometry,
         use_aperture_photometry=use_aperture_photometry,
+        psf_flux_data=psf_flux_data,
     )
     evaluated_candidates = list(candidate_jobs)
     for candidate_order, candidate in enumerate(evaluated_candidates):
@@ -15223,6 +15950,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
             compute_eebls_diagnostics=True,
+            psf_flux_data=psf_flux_data,
         )
         for candidate in evaluated_candidates
     ]
@@ -16346,17 +17074,24 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                                                  disable_vertical_flux_normalization=False,
                                                  skip_low_comparison_coverage_rejection=False,
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
-                                                 use_eebls_to_initialize_tmid_and_bounds=True):
+                                                 use_eebls_to_initialize_tmid_and_bounds=True,
+                                                 psf_flux_data=None):
     if photometry_info.get('best_fit_lc') is None or not comp_stars:
         return []
 
     use_psf_photometry = photometry_info.get('min_aperture') == 0
     if use_psf_photometry:
-        target_flux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+        frame_count = psf_data['target'].shape[0]
+    else:
+        frame_count = aper_data['target'].shape[0]
+    if use_psf_photometry:
+        psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
+        target_flux = psf_flux_series_from_rows(psf_flux_data['target'])
         comp_flux_map = {
-            f"comp{comp_index + 1}": 2 * np.pi * psf_data[f"comp{comp_index + 1}"][:, 2]
-            * psf_data[f"comp{comp_index + 1}"][:, 3]
-            * psf_data[f"comp{comp_index + 1}"][:, 4]
+            f"comp{comp_index + 1}": psf_flux_series_from_rows(
+                psf_flux_data[f"comp{comp_index + 1}"],
+                psf_quality_mask_for_key(psf_data, f"comp{comp_index + 1}", frame_count),
+            )
             for comp_index in range(len(comp_stars))
         }
     else:
@@ -16364,9 +17099,12 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         annulus_index = photometry_info.get('annulus_index')
         if aperture_index is None or annulus_index is None:
             return []
-        target_flux = aper_data['target'][:, aperture_index, annulus_index]
+        target_flux = np.asarray(aper_data['target'][:, aperture_index, annulus_index], dtype=float)
         comp_flux_map = {
-            f"comp{comp_index + 1}": aper_data[f"comp{comp_index + 1}"][:, aperture_index, annulus_index]
+            f"comp{comp_index + 1}": mask_series_with_quality(
+                aper_data[f"comp{comp_index + 1}"][:, aperture_index, annulus_index],
+                psf_quality_mask_for_key(psf_data, f"comp{comp_index + 1}", frame_count),
+            )
             for comp_index in range(len(comp_stars))
         }
 
@@ -16386,9 +17124,14 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         comp_flux_series = comp_flux_map[ckey]
 
         if use_psf_photometry:
-            fit_mask = robust_target_reference_flux_mask(target_flux, comp_flux_series)
+            target_shape_mask = target_psf_shape_quality_mask(psf_data['target'], psf_data[ckey])
+            if target_shape_mask.shape[0] != frame_count:
+                target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            fit_mask = target_shape_mask & robust_target_reference_flux_mask(candidate_target_flux, comp_flux_series)
         else:
-            fit_mask = valid_comparison_frame_mask(comp_flux_series)
+            candidate_target_flux = target_flux
+            fit_mask = valid_comparison_frame_mask(candidate_target_flux) & valid_comparison_frame_mask(comp_flux_series)
         coverage_count = coverage_summary[ckey]['coverage_count']
         coverage_total_frame_count = coverage_summary[ckey]['coverage_total_frame_count']
         coverage_reference_count = coverage_summary[ckey]['coverage_reference_count']
@@ -16415,7 +17158,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         elif coverage_count > 1:
             fit_diagnostics = diagnose_lightcurve_fit_inputs(
                 times[fit_mask],
-                target_flux[fit_mask],
+                candidate_target_flux[fit_mask],
                 comp_flux_series[fit_mask],
                 airmass[fit_mask],
                 enforce_relative_flux_max=False,
@@ -16424,7 +17167,7 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         if not coverage_rejected and coverage_count > 1 and fit_diagnostics['failure_reason'] is None:
             fit_result, target_fit_flux, comp_fit_flux = fit_lightcurve(
                 times[fit_mask],
-                target_flux[fit_mask],
+                candidate_target_flux[fit_mask],
                 comp_flux_series[fit_mask],
                 airmass[fit_mask],
                 ld,
@@ -17333,14 +18076,21 @@ def _refined_sigma_grid(center, lower_bound, upper_bound, half_width, points):
 
 def auto_tune_aperture_sigma_grid(coarse_apertures_sigma, coarse_annuli_sigma, coarse_aper_data, comp_star_count,
                                   subset_airmass, require_comp_star=True,
-                                  skip_low_comparison_coverage_rejection=False):
+                                  skip_low_comparison_coverage_rejection=False,
+                                  psf_quality_masks=None):
     best_candidate = None
     best_score = np.inf
 
     for a_idx, aperture_sigma in enumerate(coarse_apertures_sigma):
         for an_idx, annulus_sigma in enumerate(coarse_annuli_sigma):
             comp_flux_map = {
-                f"comp{comp_idx + 1}": coarse_aper_data[f"comp{comp_idx + 1}"][:, a_idx, an_idx]
+                f"comp{comp_idx + 1}": mask_series_with_quality(
+                    coarse_aper_data[f"comp{comp_idx + 1}"][:, a_idx, an_idx],
+                    (psf_quality_masks or {}).get(
+                        f"comp{comp_idx + 1}",
+                        np.ones(coarse_aper_data[f"comp{comp_idx + 1}"].shape[0], dtype=bool),
+                    ),
+                )
                 for comp_idx in range(comp_star_count)
             }
             field_summary = comparison_star_stability_summary(
@@ -17401,18 +18151,27 @@ def comparison_method_label(candidate):
 def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, airmass, comp_stars, sigma,
                                            skip_low_comparison_coverage_rejection=False,
                                            use_psf_photometry=True,
-                                           use_aperture_photometry=True):
+                                           use_aperture_photometry=True,
+                                           psf_flux_data=None):
     candidate_summaries = []
     comp_star_count = len(comp_stars)
+    psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
 
     if comp_star_count == 0:
         return None
 
+    frame_count = len(airmass)
+    psf_quality_masks = {
+        f"comp{comp_idx + 1}": psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count)
+        for comp_idx in range(comp_star_count)
+    }
+
     if use_psf_photometry:
         psf_flux_map = {
-            f"comp{comp_idx + 1}": 2 * np.pi * psf_data[f"comp{comp_idx + 1}"][:, 2]
-            * psf_data[f"comp{comp_idx + 1}"][:, 3]
-            * psf_data[f"comp{comp_idx + 1}"][:, 4]
+            f"comp{comp_idx + 1}": psf_flux_series_from_rows(
+                psf_flux_data[f"comp{comp_idx + 1}"],
+                psf_quality_masks[f"comp{comp_idx + 1}"],
+            )
             for comp_idx in range(comp_star_count)
         }
         psf_summary = comparison_star_stability_summary(
@@ -17434,7 +18193,10 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
         for a_idx, aperture in enumerate(apers):
             for an_idx, annulus in enumerate(annuli):
                 comp_flux_map = {
-                    f"comp{comp_idx + 1}": aper_data[f"comp{comp_idx + 1}"][:, a_idx, an_idx]
+                    f"comp{comp_idx + 1}": mask_series_with_quality(
+                        aper_data[f"comp{comp_idx + 1}"][:, a_idx, an_idx],
+                        psf_quality_masks[f"comp{comp_idx + 1}"],
+                    )
                     for comp_idx in range(comp_star_count)
                 }
                 candidate_summary = comparison_star_stability_summary(
@@ -17467,6 +18229,12 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
         comp_summary = dict(summary)
         comp_summary['position'] = comp_stars[comp_summary['comp_index']]
         comp_summary['selected'] = comp_summary['comp_index'] == best_comp_index
+        quality_mask = psf_quality_masks.get(comp_summary['key'])
+        if quality_mask is not None:
+            comp_summary['psf_quality_keep_mask'] = quality_mask
+            comp_summary['psf_quality_rejected_count'] = int(np.count_nonzero(~quality_mask))
+        else:
+            comp_summary['psf_quality_rejected_count'] = 0
         comp_summary['selection_reason'] = comparison_calibration_selection_reason(
             comp_summary,
             best_candidate['best_comp_score'],
@@ -17504,6 +18272,7 @@ def ranked_comparison_calibration_summaries(comparison_calibration):
 
 def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
                                                  psf_data, aper_data, target_psf_flux,
+                                                 psf_flux_data=None,
                                                  plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
                                                  detrend_on_outoftransit_baseline=True,
@@ -17535,9 +18304,14 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
     aperture_index = comparison_calibration.get('a')
     annulus_index = comparison_calibration.get('an')
     if method == 'psf':
-        target_flux = target_psf_flux
+        frame_count = target_psf_flux.shape[0]
     else:
-        target_flux = aper_data['target'][:, aperture_index, annulus_index]
+        frame_count = aper_data['target'].shape[0]
+    if method == 'psf':
+        target_flux = np.asarray(target_psf_flux, dtype=float)
+        psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
+    else:
+        target_flux = np.asarray(aper_data['target'][:, aperture_index, annulus_index], dtype=float)
 
     adaptive_summary = build_comparison_candidate_adaptive_summary(
         comparison_calibration,
@@ -17572,14 +18346,25 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
     for field_rank, comp_summary in enumerate(ranked_summaries):
         comp_index = comp_summary['comp_index']
         ckey = comp_summary.get('key', f"comp{comp_index + 1}")
+        comp_quality_mask = np.asarray(
+            comp_summary.get(
+                'psf_quality_keep_mask',
+                psf_quality_mask_for_key(psf_data, ckey, frame_count),
+            ),
+            dtype=bool,
+        )
+        if comp_quality_mask.shape[0] != frame_count:
+            comp_quality_mask = psf_quality_mask_for_key(psf_data, ckey, frame_count)
         if method == 'psf':
-            comp_flux = (
-                2 * np.pi * psf_data[ckey][:, 2]
-                * psf_data[ckey][:, 3]
-                * psf_data[ckey][:, 4]
-            )
+            target_shape_mask = target_psf_shape_quality_mask(psf_data['target'], psf_data[ckey])
+            if target_shape_mask.shape[0] != frame_count:
+                target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            comp_flux = psf_flux_series_from_rows(psf_flux_data[ckey], comp_quality_mask)
         else:
-            comp_flux = aper_data[ckey][:, aperture_index, annulus_index]
+            target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = target_flux
+            comp_flux = mask_series_with_quality(aper_data[ckey][:, aperture_index, annulus_index], comp_quality_mask)
 
         candidate_frame_keep_mask = np.asarray(
             comp_summary.get('ensemble_frame_keep_mask', np.ones(times.shape[0], dtype=bool)),
@@ -17606,13 +18391,15 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 ),
             )
 
-        fit_mask = field_image_keep_mask & candidate_frame_keep_mask
+        fit_mask = field_image_keep_mask & candidate_frame_keep_mask & comp_quality_mask & target_shape_mask
         if method == 'psf':
-            fit_mask &= robust_target_reference_flux_mask(target_flux, comp_flux)
+            fit_mask &= robust_target_reference_flux_mask(candidate_target_flux, comp_flux)
+        else:
+            fit_mask &= valid_comparison_frame_mask(candidate_target_flux) & valid_comparison_frame_mask(comp_flux)
 
         fit_diagnostics = diagnose_lightcurve_fit_inputs(
             times[fit_mask],
-            target_flux[fit_mask],
+            candidate_target_flux[fit_mask],
             comp_flux[fit_mask],
             airmass[fit_mask],
             enforce_relative_flux_max=False,
@@ -17624,7 +18411,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             airmass[fit_mask],
             ld,
             p_dict,
-            target_flux[fit_mask],
+            candidate_target_flux[fit_mask],
             comp_flux[fit_mask],
             adaptive_summary=adaptive_summary,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
@@ -17633,6 +18420,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'field_rank': field_rank,
             'summary': comp_summary,
             'ckey': ckey,
+            'target_flux': candidate_target_flux,
             'comp_flux': comp_flux,
             'fit_mask': fit_mask,
             'candidate_frame_clip_diagnostic': candidate_frame_clip_diagnostic,
@@ -17650,6 +18438,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         comp_summary = plan['summary']
         comp_index = comp_summary['comp_index']
         ckey = plan['ckey']
+        candidate_target_flux = plan.get('target_flux', target_flux)
         comp_flux = plan['comp_flux']
         fit_mask = plan['fit_mask']
         candidate_frame_clip_diagnostic = plan.get('candidate_frame_clip_diagnostic')
@@ -17668,7 +18457,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         )
         final_reduction = finalize_comparison_candidate_full_reduction(
             times[fit_mask],
-            target_flux[fit_mask],
+            candidate_target_flux[fit_mask],
             comp_flux[fit_mask],
             airmass[fit_mask],
             ld,
@@ -18827,6 +19616,9 @@ def _main_impl():
                 # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
                 'target': np.zeros((len(inputfiles), 7)),  # PSF fit
             }
+            psf_flux_data = {
+                'target': np.zeros((len(inputfiles), 7)),
+            }
             tar_comp_dist = {}
             vsp_num = []
             comp_star_count = len(exotic_infoDict['comp_stars'])
@@ -18896,6 +19688,7 @@ def _main_impl():
                 if coord in vsp_list:
                     vsp_num.append(i)
                 psf_data[ckey] = np.zeros((len(inputfiles), 7))
+                psf_flux_data[ckey] = np.zeros((len(inputfiles), 7))
                 tar_comp_dist[ckey] = np.zeros(2)
 
             coarse_tune_frames = 0
@@ -19032,85 +19825,52 @@ def _main_impl():
                         comp_alignment_keys,
                     )
                 else:
-                    use_wcs_alignment = False
+                    alignment_result = {
+                        'index': i,
+                        'file_name': fileName,
+                        'wcs': None,
+                        'fallback': None,
+                    }
+                    previous_psf_rows = {}
+                    if i != 0:
+                        previous_psf_rows = {'target': psf_data['target'][i - 1]}
+                        for comp_idx, comp_key in enumerate(comp_alignment_keys):
+                            previous_psf_rows[f"comp{comp_idx + 1}"] = psf_data[comp_key][i - 1]
+
+                    has_wcs_alignment = False
                     if not ignore_header_wcs:
                         try:
                             wcs_hdr = search_wcs_from_header(image_header)
-                            use_wcs_alignment = wcs_hdr.is_celestial
+                            has_wcs_alignment = wcs_hdr.is_celestial
                         except Exception:
-                            use_wcs_alignment = False
+                            has_wcs_alignment = False
 
-                    if use_wcs_alignment:
+                    if has_wcs_alignment and target_and_comp_radec is not None:
                         try:
-                            pix_x = pix_y = None
-                            if target_and_comp_radec is not None:
-                                pix_x, pix_y = wcs_hdr.world_to_pixel_values(
-                                    target_and_comp_radec[:, 0],
-                                    target_and_comp_radec[:, 1],
-                                )
-                                pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
-                                pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
-
+                            pix_x, pix_y = wcs_hdr.world_to_pixel_values(
+                                target_and_comp_radec[:, 0],
+                                target_and_comp_radec[:, 1],
+                            )
+                            pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
+                            pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
+                            projected_coords = np.column_stack((pix_x, pix_y))
                             if i == 0:
-                                tx, ty = exotic_UIprevTPX, exotic_UIprevTPY
-                            else:
-                                tx, ty = pix_x[0], pix_y[0]
+                                projected_coords[0] = target_and_comp_pixels[0]
 
-                            projected_coords = np.array(
-                                [[tx, ty], *np.column_stack((pix_x[1:], pix_y[1:]))] if pix_x is not None else [[tx, ty]],
-                                dtype=float,
-                            )
-                            projected_off_frame = any_projected_coord_out_of_frame(projected_coords, imageData.shape)
-                            target_seed = choose_centroid_seed_position(
-                                [tx, ty],
-                                None if i == 0 else psf_data['target'][i - 1],
-                            )
-
-                            psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
+                            wcs_candidate = _fit_alignment_candidate_psfs(
                                 imageData,
-                                target_seed,
-                                0,
-                                fast_mode=target_fast_centroid,
+                                projected_coords,
+                                target_fast_centroid,
+                                frame_fast_centroid,
+                                previous_psf_rows=previous_psf_rows,
                             )
-
-                            # TODO: Add check for flux on target/comp stars relative to others in the field
-                            # in case of cloudy data, large changes, etc.
-                            current_comp_psf_rows = {}
-                            previous_comp_psf_rows = {}
-                            for j in range(len(exotic_infoDict['comp_stars'])):
-                                ckey = f"comp{j + 1}"
-
-                                cx, cy = pix_x[j + 1], pix_y[j + 1]
-                                comp_seed = choose_centroid_seed_position(
-                                    [cx, cy],
-                                    None if i == 0 else psf_data[ckey][i - 1],
-                                )
-                                psf_data[ckey][i] = fit_centroid_or_warn_out_of_frame(
-                                    imageData,
-                                    comp_seed,
-                                    j + 1,
-                                    fast_mode=frame_fast_centroid,
-                                )
-
-                                current_comp_psf_rows[ckey] = psf_data[ckey][i]
-                                if i != 0:
-                                    previous_comp_psf_rows[ckey] = psf_data[ckey][i - 1]
-                                else:
-                                    tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
-                                    tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
-
-                            wcs_alignment_decision = should_keep_header_wcs_alignment(
-                                projected_off_frame,
-                                i,
-                                psf_data['target'][i],
-                                previous_target_psf_row=None if i == 0 else psf_data['target'][i - 1],
-                                comp_psf_rows=current_comp_psf_rows,
-                                previous_comp_psf_rows=previous_comp_psf_rows,
-                                expected_offsets=tar_comp_dist,
+                            wcs_candidate['projected_off_frame'] = any_projected_coord_out_of_frame(
+                                projected_coords,
+                                imageData.shape,
                             )
-                            use_wcs_alignment = wcs_alignment_decision['use_wcs_alignment']
+                            alignment_result['wcs'] = wcs_candidate
                         except Exception:
-                            use_wcs_alignment = False
+                            alignment_result['wcs'] = None
 
                     log_alignment_progress(
                         i,
@@ -19119,46 +19879,42 @@ def _main_impl():
                         use_multiprocess_transform_precompute,
                     )
 
-                    if not use_wcs_alignment:
-                        cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
-                        if cached_tform is not None:
-                            tform = cached_tform
-                        elif i == 0:
-                            tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-                        else:
-                            tform = transformation(imageData, fileName, reference_image=firstImage)
+                    cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
+                    if cached_tform is not None:
+                        tform = cached_tform
+                    elif i == 0:
+                        tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+                    else:
+                        tform = transformation(imageData, fileName, reference_image=firstImage)
 
-                        transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
-                        tx, ty = transformed_coords[0]
-                        target_seed = choose_centroid_seed_position(
-                            [tx, ty],
-                            None if i == 0 else psf_data['target'][i - 1],
-                        )
-                        psf_data['target'][i] = fit_centroid_or_warn_out_of_frame(
+                    transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+                    alignment_result['fallback'] = _fit_alignment_candidate_psfs(
+                        imageData,
+                        transformed_coords,
+                        target_fast_centroid,
+                        frame_fast_centroid,
+                        previous_psf_rows=previous_psf_rows,
+                    )
+                    apply_parallel_alignment_result(
+                        alignment_result,
+                        i,
+                        psf_data,
+                        tar_comp_dist,
+                        comp_alignment_keys,
+                    )
+
+                if use_psf_photometry:
+                    psf_flux_data['target'][i] = fit_psf_photometry_flux_row(
+                        imageData,
+                        psf_data['target'][i],
+                        0,
+                    )
+                    for comp_idx, comp_key in enumerate(comp_alignment_keys):
+                        psf_flux_data[comp_key][i] = fit_psf_photometry_flux_row(
                             imageData,
-                            target_seed,
-                            0,
-                            fast_mode=target_fast_centroid,
+                            psf_data[comp_key][i],
+                            comp_idx + 1,
                         )
-
-                        for j, coord in enumerate(exotic_infoDict['comp_stars']):
-                            ckey = f"comp{j + 1}"
-
-                            cx, cy = transformed_coords[j + 1]
-                            comp_seed = choose_centroid_seed_position(
-                                [cx, cy],
-                                None if i == 0 else psf_data[ckey][i - 1],
-                            )
-                            psf_data[ckey][i] = fit_centroid_or_warn_out_of_frame(
-                                imageData,
-                                comp_seed,
-                                j + 1,
-                                fast_mode=frame_fast_centroid,
-                            )
-
-                            if i == 0:
-                                tar_comp_dist[ckey][0] = abs(int(psf_data[ckey][0][0]) - int(psf_data['target'][0][0]))
-                                tar_comp_dist[ckey][1] = abs(int(psf_data[ckey][0][1]) - int(psf_data['target'][0][1]))
 
                 # aperture photometry
                 if use_aperture_photometry and i == 0:
@@ -19199,6 +19955,14 @@ def _main_impl():
 
                     if i == coarse_tune_frames - 1:
                         subset_airmass = np.asarray(airMassList[:coarse_tune_frames], dtype=float)
+                        coarse_psf_quality_masks = {
+                            f"comp{comp_idx + 1}": psf_quality_mask_for_key(
+                                {key: value[:coarse_tune_frames] for key, value in psf_data.items()},
+                                f"comp{comp_idx + 1}",
+                                coarse_tune_frames,
+                            )
+                            for comp_idx in range(comp_star_count)
+                        }
                         refined_apertures_sigma, refined_annuli_sigma, best_coarse_candidate, best_coarse_score = auto_tune_aperture_sigma_grid(
                             coarse_apertures_sigma,
                             coarse_annuli_sigma,
@@ -19207,6 +19971,7 @@ def _main_impl():
                             subset_airmass,
                             require_comp_star=require_comp_star,
                             skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                            psf_quality_masks=coarse_psf_quality_masks,
                         )
                         if use_adaptive_apertures:
                             aperture_values = refined_apertures_sigma
@@ -19329,15 +20094,73 @@ def _main_impl():
             jd_times = jd_times[goodmask]
             airmass = np.array(airMassList)[goodmask]
             psf_data["target"] = psf_data["target"][goodmask]
+            psf_flux_data["target"] = psf_flux_data["target"][goodmask]
             if aper_data is not None:
                 aper_data["target"] = aper_data["target"][goodmask]
                 aper_data["target_bg"] = aper_data["target_bg"][goodmask]
             for j in range(len(exotic_infoDict['comp_stars'])):
                 ckey = f"comp{j + 1}"
                 psf_data[ckey] = psf_data[ckey][goodmask]
+                psf_flux_data[ckey] = psf_flux_data[ckey][goodmask]
                 if aper_data is not None:
                     aper_data[ckey] = aper_data[ckey][goodmask]
                     aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
+
+            psf_quality_diagnostics = []
+            target_quality_components = target_psf_shape_quality_components(psf_data['target'])
+            target_quality_keep_mask = target_quality_components['keep_mask']
+            if target_quality_keep_mask.shape == times.shape and np.any(~target_quality_keep_mask):
+                reason_parts = []
+                invalid_count = int(np.count_nonzero(target_quality_components['invalid_mask']))
+                seeing_count = int(np.count_nonzero(target_quality_components['seeing_outlier_mask']))
+                axis_ratio_count = int(np.count_nonzero(target_quality_components['axis_ratio_outlier_mask']))
+                if invalid_count:
+                    reason_parts.append(f"invalid PSF={invalid_count}")
+                if seeing_count:
+                    reason_parts.append(f"broad PSF outlier={seeing_count}")
+                if axis_ratio_count:
+                    reason_parts.append(f"elongated PSF={axis_ratio_count}")
+                reason_text = "; ".join(reason_parts)
+                psf_quality_diagnostics.append(build_time_rejection_diagnostic(
+                    "Target PSF shape quality filter",
+                    times,
+                    target_quality_keep_mask,
+                    note=(
+                        "Dropped target frame-level PSF photometry before target/comparison fitting "
+                        f"based on robust PSF shape diagnostics ({reason_text})."
+                    ),
+                ))
+            for key, label in [
+                (f"comp{j + 1}", f"Comp {j + 1}") for j in range(len(exotic_infoDict['comp_stars']))
+            ]:
+                quality_components = psf_frame_quality_components(psf_data[key])
+                quality_keep_mask = quality_components['keep_mask']
+                if quality_keep_mask.shape == times.shape and np.any(~quality_keep_mask):
+                    reason_parts = []
+                    invalid_count = int(np.count_nonzero(quality_components['invalid_mask']))
+                    seeing_count = int(np.count_nonzero(quality_components['seeing_outlier_mask']))
+                    amplitude_count = int(np.count_nonzero(quality_components['amplitude_outlier_mask']))
+                    if invalid_count:
+                        reason_parts.append(f"invalid PSF={invalid_count}")
+                    if seeing_count:
+                        reason_parts.append(f"seeing outlier={seeing_count}")
+                    if amplitude_count:
+                        reason_parts.append(f"low amplitude outlier={amplitude_count}")
+                    reason_text = "; ".join(reason_parts)
+                    psf_quality_diagnostics.append(build_time_rejection_diagnostic(
+                        f"{label} PSF seeing/amplitude quality filter",
+                        times,
+                        quality_keep_mask,
+                        note=(
+                            "Dropped this star's frame-level photometry before comparison ensemble scoring "
+                            f"based on robust PSF diagnostics ({reason_text})."
+                        ),
+                    ))
+            if psf_quality_diagnostics:
+                log_lightcurve_filter_diagnostics(
+                    psf_quality_diagnostics,
+                    header="PSF frame rejections before comparison-star calibration",
+                )
 
             sigma_display = representative_psf_sigma(psf_data['target'], fallback_sigma=sigma)
             if not np.isfinite(sigma_display) or sigma_display <= 0:
@@ -19358,9 +20181,25 @@ def _main_impl():
                           header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                           fmt="%.6f")
                         # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
+            if use_psf_photometry:
+                np.savetxt(
+                    Path(exotic_infoDict['save']) / "temp" / "psf_flux_data_target.txt",
+                    psf_flux_data["target"],
+                    header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
+                    fmt="%.6f",
+                )
+                for j in range(len(exotic_infoDict['comp_stars'])):
+                    ckey = f"comp{j + 1}"
+                    np.savetxt(
+                        Path(exotic_infoDict['save']) / "temp" / f"psf_flux_data_{ckey}.txt",
+                        psf_flux_data[ckey],
+                        header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
+                        fmt="%.6f",
+                    )
 
             # PSF flux
-            tFlux = 2 * np.pi * psf_data['target'][:, 2] * psf_data['target'][:, 3] * psf_data['target'][:, 4]
+            psf_flux_source = psf_flux_data if use_psf_photometry else psf_data
+            tFlux = psf_flux_series_from_rows(psf_flux_source['target'])
 
             ref_flux = {}
             if vsp_list:
@@ -19409,6 +20248,7 @@ def _main_impl():
                 skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
                 use_psf_photometry=use_psf_photometry,
                 use_aperture_photometry=use_aperture_photometry,
+                psf_flux_data=psf_flux_source,
             )
 
             if comparison_calibration is not None:
@@ -19454,10 +20294,16 @@ def _main_impl():
                         ensemble_frame_text = (
                             f", ensemble_frame_rejects={summary['ensemble_frame_rejected_count']}"
                         )
+                    psf_quality_text = ""
+                    if summary.get('psf_quality_rejected_count', 0) > 0:
+                        psf_quality_text = (
+                            f", psf_quality_rejects={summary['psf_quality_rejected_count']}"
+                        )
                     log_info(
                         f"  {summary['label']}{selected_label} ({position_text}): suitability={aggregate_text}, "
                         f"ensemble={ensemble_text}, pairwise_median={pairwise_text}, "
-                        f"valid_pairs={summary['valid_pair_count']}, {coverage_text}{ensemble_frame_text}, "
+                        f"valid_pairs={summary['valid_pair_count']}, {coverage_text}"
+                        f"{psf_quality_text}{ensemble_frame_text}, "
                         f"reason={summary['selection_reason']}"
                     )
 
@@ -19515,6 +20361,7 @@ def _main_impl():
                     psf_data,
                     aper_data,
                     tFlux,
+                    psf_flux_data=psf_flux_source,
                     plot_time_range=full_plot_time_range,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
@@ -19676,7 +20523,7 @@ def _main_impl():
                         if comparison_calibration['method'] == 'psf':
                             for j in vsp_num:
                                 ckey = f"comp{j + 1}"
-                                cFlux = 2 * np.pi * psf_data[ckey][:, 2] * psf_data[ckey][:, 3] * psf_data[ckey][:, 4]
+                                cFlux = psf_flux_series_from_rows(psf_flux_source[ckey])
                                 vsp_fit, _, _ = fit_lightcurve(
                                     times, tFlux, cFlux, airmass, ld, pDict, jd_times,
                                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
@@ -19847,6 +20694,7 @@ def _main_impl():
                     use_impactparameter_rather_than_inclination_to_fit=
                     use_impactparameter_rather_than_inclination_to_fit,
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                    psf_flux_data=psf_flux_source,
                 )
                 saved_candidate_fit_count = sum(1 for summary in candidate_fit_summaries if summary['fit'] is not None)
                 failed_candidate_fit_count = len(candidate_fit_summaries) - saved_candidate_fit_count

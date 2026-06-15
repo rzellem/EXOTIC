@@ -388,21 +388,32 @@ def _plot_bestfit_for_lightcurve_png(fit, **requested_kwargs):
 
 def _draw_comp_star_calibration_axis(axis, times, summary, colors):
     axis.axhline(1.0, color='lightgray', lw=1.0, zorder=1)
+    ensemble_keep_mask = np.asarray(summary.get('ensemble_frame_keep_mask'), dtype=bool)
+    has_ensemble_keep_mask = ensemble_keep_mask.shape == times.shape
     pairwise_series = summary.get('pairwise_ratio_series', {})
     for color_index, (other_label, ratio_series) in enumerate(pairwise_series.items()):
         ratio_series = np.asarray(ratio_series, dtype=float)
-        valid = np.isfinite(times) & np.isfinite(ratio_series)
-        if np.any(valid):
-            axis.plot(times[valid], ratio_series[valid], color=colors[color_index % len(colors)],
+        line_ratio = ratio_series.copy()
+        if has_ensemble_keep_mask and line_ratio.shape == times.shape:
+            line_ratio[~ensemble_keep_mask] = np.nan
+        valid_time = np.isfinite(times)
+        valid_line = valid_time & np.isfinite(line_ratio)
+        if np.any(valid_line):
+            axis.plot(times[valid_time], line_ratio[valid_time], color=colors[color_index % len(colors)],
                       alpha=0.55, lw=1.0, label=other_label)
 
     ensemble_ratio = np.asarray(summary.get('ensemble_ratio_series'), dtype=float)
-    ensemble_valid = np.isfinite(times) & np.isfinite(ensemble_ratio)
+    ensemble_time_valid = np.isfinite(times)
+    ensemble_valid = ensemble_time_valid & np.isfinite(ensemble_ratio)
     if np.any(ensemble_valid):
-        axis.plot(times[ensemble_valid], ensemble_ratio[ensemble_valid], color='black', lw=1.8,
-                  label='Ensemble')
-        ensemble_keep_mask = np.asarray(summary.get('ensemble_frame_keep_mask'), dtype=bool)
-        if ensemble_keep_mask.shape == times.shape:
+        line_ratio = ensemble_ratio.copy()
+        if has_ensemble_keep_mask and line_ratio.shape == times.shape:
+            line_ratio[~ensemble_keep_mask] = np.nan
+        line_valid = ensemble_time_valid & np.isfinite(line_ratio)
+        if np.any(line_valid):
+            axis.plot(times[ensemble_time_valid], line_ratio[ensemble_time_valid], color='black', lw=1.8,
+                      label='Ensemble')
+        if has_ensemble_keep_mask:
             rejected = ensemble_valid & ~ensemble_keep_mask
             if np.any(rejected):
                 axis.scatter(times[rejected], ensemble_ratio[rejected], marker='x', s=42,

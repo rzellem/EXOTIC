@@ -121,6 +121,7 @@ from exotic.exotic import (
     deduplicate_comparison_star_coords,
     diagnose_lightcurve_fit_inputs,
     detrend_flux_on_out_of_transit_baseline,
+    alignment_candidate_quality_score,
     ensure_lightcurve_fit_failure_reason,
     evaluate_lightcurve_candidate,
     evaluate_transit_detection_qc,
@@ -146,6 +147,11 @@ from exotic.exotic import (
     parse_deviation_from_expected_transit_in_qc_sigma,
     prepare_final_fit_lightcurve_series,
     prepare_lightcurve_fit_input_series,
+    psf_frame_quality_components,
+    psf_frame_quality_mask,
+    psf_solution_quality_score,
+    target_psf_shape_quality_components,
+    target_psf_shape_quality_mask,
     populate_aperture_data_for_frame,
     rank_comparison_candidate_preflight_plans,
     refit_selected_fast_comparison_on_full_lightcurve,
@@ -158,6 +164,8 @@ from exotic.exotic import (
     robust_target_reference_flux_mask,
     save_final_triangle_plot,
     save_selected_photometry_debug_series,
+    select_comparison_calibrated_photometry,
+    select_alignment_candidate,
     should_keep_header_wcs_alignment,
     should_prefer_pixel_values_over_wcs_for_target,
     sigma_clip,
@@ -621,7 +629,56 @@ def test_robust_target_reference_flux_mask_requires_both_series_to_be_plausible(
     assert not mask[13]
 
 
-def test_build_target_fit_candidate_jobs_masks_psf_target_and_comp_dropouts():
+def test_psf_frame_quality_mask_rejects_high_seeing_and_low_amplitude_outliers():
+    frame_count = 30
+    phase = np.linspace(0.0, 2.0 * np.pi, frame_count)
+    psf_rows = np.zeros((frame_count, 7), dtype=float)
+    psf_rows[:, 0] = 10.0
+    psf_rows[:, 1] = 20.0
+    psf_rows[:, 2] = 200.0 * (1.0 + 0.02 * np.sin(phase))
+    psf_rows[:, 3] = 1.1 * (1.0 + 0.01 * np.cos(phase))
+    psf_rows[:, 4] = 1.0 * (1.0 + 0.01 * np.sin(phase))
+    psf_rows[5, 2] = 45.0
+    psf_rows[12, 3:5] = 6.5
+
+    components = psf_frame_quality_components(psf_rows)
+    mask = psf_frame_quality_mask(psf_rows)
+
+    assert mask.sum() == frame_count - 2
+    assert not mask[5]
+    assert not mask[12]
+    assert components["amplitude_outlier_mask"][5]
+    assert components["seeing_outlier_mask"][12]
+
+
+def test_target_psf_shape_quality_rejects_broad_target_but_preserves_amplitude_dips():
+    frame_count = 30
+    phase = np.linspace(0.0, 2.0 * np.pi, frame_count)
+    target_rows = np.zeros((frame_count, 7), dtype=float)
+    target_rows[:, 0] = 10.0
+    target_rows[:, 1] = 20.0
+    target_rows[:, 2] = 200.0 * (1.0 + 0.02 * np.sin(phase))
+    target_rows[:, 3] = 1.0
+    target_rows[:, 4] = 1.0
+    target_rows[5, 2] = 45.0
+    target_rows[12, 3:5] = 6.5
+
+    reference_rows = target_rows.copy()
+    reference_rows[:, 2] = 250.0
+    reference_rows[:, 3:5] = 1.0
+
+    components = target_psf_shape_quality_components(target_rows, reference_rows)
+    mask = target_psf_shape_quality_mask(target_rows, reference_rows)
+
+    assert mask.sum() == frame_count - 1
+    assert mask[5]
+    assert not mask[12]
+    assert not components["invalid_mask"][5]
+    assert components["seeing_outlier_mask"][12]
+    assert components["reference_width_outlier_mask"][12]
+
+
+def test_build_target_fit_candidate_jobs_masks_pairwise_psf_failures_but_preserves_target_dips():
     frame_count = 30
 
     def build_psf_rows(amplitudes):
@@ -635,13 +692,14 @@ def test_build_target_fit_candidate_jobs_masks_psf_target_and_comp_dropouts():
 
     target_amplitudes = np.full(frame_count, 100.0)
     comp_amplitudes = np.full(frame_count, 120.0)
-    target_amplitudes[7] = 1.0
+    target_amplitudes[7] = 80.0
     comp_amplitudes[13] = 1.0
 
     psf_data = {
         "target": build_psf_rows(target_amplitudes),
         "comp1": build_psf_rows(comp_amplitudes),
     }
+    psf_data["target"][19, 3:5] = 6.5
 
     candidate_jobs = build_target_fit_candidate_jobs(
         psf_data,
@@ -660,8 +718,9 @@ def test_build_target_fit_candidate_jobs_masks_psf_target_and_comp_dropouts():
     assert len(candidate_jobs) == 1
     assert candidate_jobs[0]["method"] == "psf"
     assert candidate_jobs[0]["mask"].sum() == 28
-    assert not candidate_jobs[0]["mask"][7]
+    assert candidate_jobs[0]["mask"][7]
     assert not candidate_jobs[0]["mask"][13]
+    assert not candidate_jobs[0]["mask"][19]
     assert candidate_jobs[0]["coverage_count"] == 29
 
 
@@ -760,6 +819,44 @@ def test_check_coordinates_non_interactive_prefers_wcs_centroid():
     assert y_pixel == 200.75
 
 
+def test_check_coordinates_non_interactive_keeps_input_when_wcs_psf_is_implausible():
+    x_pixel, y_pixel = check_coordinates(
+        input_x_pixel=246,
+        input_y_pixel=271,
+        centroid_x=238.5,
+        centroid_y=266.1,
+        sigma_x=4.6,
+        sigma_y=0.7,
+        calculated_x_pixel=245,
+        calculated_y_pixel=270,
+        non_interactive_run=True,
+        wcs_psf_quality_score=np.inf,
+        input_psf_quality_score=0.1,
+    )
+
+    assert x_pixel == 246
+    assert y_pixel == 271
+
+
+def test_check_coordinates_non_interactive_keeps_plausible_input_when_wcs_finds_other_source():
+    x_pixel, y_pixel = check_coordinates(
+        input_x_pixel=246,
+        input_y_pixel=271,
+        centroid_x=236.6,
+        centroid_y=265.2,
+        sigma_x=1.2,
+        sigma_y=0.8,
+        calculated_x_pixel=236,
+        calculated_y_pixel=265,
+        non_interactive_run=True,
+        wcs_psf_quality_score=0.05,
+        input_psf_quality_score=0.25,
+    )
+
+    assert x_pixel == 246
+    assert y_pixel == 271
+
+
 def test_check_coordinates_non_interactive_uses_wcs_pixel_when_centroid_is_nan():
     x_pixel, y_pixel = check_coordinates(
         input_x_pixel=5,
@@ -800,6 +897,67 @@ def test_should_prefer_pixel_values_over_wcs_for_target_parses_values():
     assert should_prefer_pixel_values_over_wcs_for_target("n") is False
     assert should_prefer_pixel_values_over_wcs_for_target("y") is True
     assert should_prefer_pixel_values_over_wcs_for_target(True) is True
+
+
+def test_psf_solution_quality_score_rejects_offset_or_elongated_solutions():
+    good = np.array([246.2, 270.8, 140.0, 1.1, 0.9, 0.0, 40.0])
+    offset = np.array([238.5, 266.1, 140.0, 1.1, 0.9, 0.0, 40.0])
+    elongated = np.array([246.2, 270.8, 140.0, 4.6, 0.7, 0.0, 40.0])
+
+    assert np.isfinite(psf_solution_quality_score(good, seed_pos=[246.0, 271.0]))
+    assert not np.isfinite(psf_solution_quality_score(offset, seed_pos=[246.0, 271.0]))
+    assert not np.isfinite(psf_solution_quality_score(elongated, seed_pos=[246.0, 271.0]))
+
+
+def test_alignment_candidate_selection_rejects_broad_offset_wcs_target_solution():
+    psf_data = {
+        "target": np.zeros((2, 7), dtype=float),
+        "comp1": np.zeros((2, 7), dtype=float),
+    }
+    psf_data["target"][0] = [245.8, 270.7, 110.0, 1.1, 0.8, 0.0, 40.0]
+    psf_data["comp1"][0] = [360.3, 443.3, 174.0, 1.1, 1.0, 0.0, 40.0]
+    tar_comp_dist = {"comp1": np.array([115.0, 173.0])}
+
+    wcs_candidate = {
+        "coords": np.array([[244.0, 268.7], [360.4, 443.2]], dtype=float),
+        "projected_off_frame": False,
+        "psf_rows": {
+            "target": np.array([244.0, 268.7, 210.0, 7.3, 5.6, 0.0, 40.0]),
+            "comp1": np.array([360.4, 443.2, 174.0, 1.1, 1.0, 0.0, 40.0]),
+        },
+        "warnings": [],
+    }
+    fallback_candidate = {
+        "coords": np.array([[246.0, 270.8], [360.2, 443.3]], dtype=float),
+        "psf_rows": {
+            "target": np.array([245.9, 270.8, 111.0, 1.1, 0.8, 0.0, 40.0]),
+            "comp1": np.array([360.2, 443.3, 173.0, 1.1, 1.0, 0.0, 40.0]),
+        },
+        "warnings": [],
+    }
+
+    assert not np.isfinite(
+        alignment_candidate_quality_score(
+            wcs_candidate,
+            comp_keys=["comp1"],
+            previous_target_psf_row=psf_data["target"][0],
+            previous_comp_psf_rows={"comp1": psf_data["comp1"][0]},
+            expected_offsets=tar_comp_dist,
+        )
+    )
+
+    selected_source, selected_candidate, diagnostics = select_alignment_candidate(
+        {"wcs": wcs_candidate, "fallback": fallback_candidate, "file_name": "frame.fits"},
+        frame_index=1,
+        psf_data=psf_data,
+        tar_comp_dist=tar_comp_dist,
+        comp_keys=["comp1"],
+    )
+
+    assert selected_source == "fallback"
+    assert selected_candidate is fallback_candidate
+    assert not np.isfinite(diagnostics["wcs_score"])
+    assert np.isfinite(diagnostics["fallback_score"])
 
 
 def test_is_comp_star_required_parses_values():
@@ -2074,6 +2232,78 @@ def test_comparison_star_stability_summary_flags_candidate_specific_bad_frame():
     assert comp1_summary["ensemble_frame_valid_pair_counts"][7] == 3
     assert comp1_summary["ensemble_frame_outlier_pair_counts"][7] == 3
     assert comp2_summary["ensemble_frame_rejected_count"] == 0
+
+
+def test_comparison_star_stability_summary_clips_candidate_psf_spikes_before_suitability_rejection():
+    frame_count = 89
+    airmass = np.linspace(1.25, 1.06, frame_count)
+    phase = np.linspace(0.0, 4.0 * np.pi, frame_count)
+    comp_flux_map = {
+        f"comp{index + 1}": 100.0 * (1.0 + 0.002 * np.sin(phase + index))
+        for index in range(9)
+    }
+    spike_indices = np.array([2, 5, 11, 12, 13, 39, 43, 45, 56], dtype=int)
+    comp_flux_map["comp6"] = comp_flux_map["comp6"].copy()
+    comp_flux_map["comp6"][spike_indices] *= 0.35
+
+    summary = comparison_star_stability_summary(comp_flux_map, airmass)
+    comp6_summary = summary["comp_summaries"][5]
+
+    assert comp6_summary["coverage_count"] == frame_count
+    assert comp6_summary["suitability_outlier_rejected"] is False
+    assert comp6_summary["aggregate_score"] < 0.01
+    assert comp6_summary["ensemble_frame_rejected_count"] == len(spike_indices)
+    assert comp6_summary["ensemble_frame_rejected_indices"] == spike_indices.tolist()
+
+
+def test_select_comparison_calibrated_photometry_masks_psf_quality_before_aperture_ensemble():
+    frame_count = 30
+    airmass = np.linspace(1.2, 1.0, frame_count)
+
+    def build_psf_rows():
+        rows = np.zeros((frame_count, 7), dtype=float)
+        rows[:, 0] = 10.0
+        rows[:, 1] = 20.0
+        rows[:, 2] = 200.0
+        rows[:, 3] = 1.0
+        rows[:, 4] = 1.0
+        return rows
+
+    psf_data = {
+        "target": build_psf_rows(),
+        "comp1": build_psf_rows(),
+        "comp2": build_psf_rows(),
+        "comp3": build_psf_rows(),
+    }
+    psf_data["comp1"][7, 2] = 40.0
+    psf_data["comp1"][7, 3:5] = 6.0
+
+    aper_data = {
+        "target": np.full((frame_count, 1, 1), 1000.0),
+        "target_bg": np.full((frame_count, 1, 1), 10.0),
+    }
+    for key in ("comp1", "comp2", "comp3"):
+        aper_data[key] = np.full((frame_count, 1, 1), 100.0)
+        aper_data[f"{key}_bg"] = np.full((frame_count, 1, 1), 10.0)
+    aper_data["comp1"][7, 0, 0] = 1.0
+
+    calibration = select_comparison_calibrated_photometry(
+        psf_data,
+        aper_data,
+        apers=np.array([2.5]),
+        annuli=np.array([10.0]),
+        airmass=airmass,
+        comp_stars=[[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]],
+        sigma=1.0,
+        use_psf_photometry=False,
+        use_aperture_photometry=True,
+    )
+    comp1_summary = calibration["comp_summaries"][0]
+
+    assert comp1_summary["psf_quality_rejected_count"] == 1
+    assert comp1_summary["coverage_count"] == frame_count - 1
+    assert comp1_summary["ensemble_frame_rejected_count"] == 0
+    assert np.isnan(comp1_summary["ensemble_ratio_series"][7])
 
 
 def test_cheap_lightcurve_prescore_treats_large_ratio_flag_as_noop():
@@ -4523,6 +4753,120 @@ def test_fit_ranked_comparison_calibration_candidates_applies_field_image_clip(m
     assert diagnostic["stage"] == "Comparison-field image clip"
     assert diagnostic["dropped_point_count"] == 2
     assert result["attempts"][0]["fit_point_count"] == 4
+
+
+def test_fit_ranked_comparison_calibration_candidates_masks_target_psf_shape(monkeypatch):
+    observed_lengths = []
+
+    def fake_diagnostics(times, *args, **kwargs):
+        observed_lengths.append(("diagnostics", len(times)))
+        return {"usable_point_count": len(times), "failure_reason": None}
+
+    def fake_preflight(*args, **kwargs):
+        return {"coverage_priority": 1, "prepared_series": None}
+
+    def fake_finalize(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times=None,
+        **kwargs,
+    ):
+        observed_lengths.append(("finalize", len(times)))
+        fit = types.SimpleNamespace(
+            residuals=np.full(len(times), 0.01, dtype=float),
+            data=np.ones(len(times), dtype=float),
+            parameters={"tmid": 0.5, "rprs": 0.1, "inc": 89.0, "a0": 1.0, "a2": 0.0},
+            errors={"tmid": 0.001, "rprs": 0.001, "inc": 0.1, "a0": 0.01, "a2": 0.01},
+            transit_qc={"status": "pass", "summary": "ok", "ktmf_metric": 4.2},
+            transit_qc_status="pass",
+            transit_qc_summary="ok",
+            transit_qc_ktmf_metric=4.2,
+            transit_qc_delta_bic=16.0,
+            frame_filter_diagnostics=[],
+        )
+        return {
+            "applied": True,
+            "fit": fit,
+            "good_target_flux": np.asarray(tflux, dtype=float),
+            "good_comp_flux": np.asarray(cflux, dtype=float),
+            "source_indices": np.arange(len(times), dtype=int),
+            "duration_samples": np.array([], dtype=float),
+            "data_highres": None,
+            "note": "test full reduction",
+        }
+
+    monkeypatch.setattr("exotic.exotic.diagnose_lightcurve_fit_inputs", fake_diagnostics)
+    monkeypatch.setattr("exotic.exotic.build_comparison_candidate_preflight", fake_preflight)
+    monkeypatch.setattr("exotic.exotic.finalize_comparison_candidate_full_reduction", fake_finalize)
+
+    frame_count = 30
+    times = np.linspace(0.0, 0.2, frame_count)
+    jd_times = 2460000.0 + times
+    airmass = np.linspace(1.0, 1.2, frame_count)
+
+    psf_rows = np.zeros((frame_count, 7), dtype=float)
+    psf_rows[:, 0] = 10.0
+    psf_rows[:, 1] = 20.0
+    psf_rows[:, 2] = 100.0
+    psf_rows[:, 3] = 1.0
+    psf_rows[:, 4] = 1.0
+    psf_data = {
+        "target": psf_rows.copy(),
+        "comp1": psf_rows.copy(),
+    }
+    psf_data["comp1"][:, 2] = 120.0
+    psf_data["target"][12, 3:5] = 6.5
+    psf_flux_data = {
+        "target": psf_data["target"].copy(),
+        "comp1": psf_data["comp1"].copy(),
+    }
+    psf_flux_data["comp1"][:, 2] = 240.0
+
+    target_psf_flux = 2 * np.pi * psf_data["target"][:, 2] * psf_data["target"][:, 3] * psf_data["target"][:, 4]
+    comparison_calibration = {
+        "method": "psf",
+        "method_label": "PSF photometry",
+        "a": None,
+        "an": None,
+        "aper": 0.0,
+        "annulus": 15.0,
+        "comp_summaries": [
+            {
+                "label": "Comp 1",
+                "position": (10.0, 10.0),
+                "aggregate_score": 0.01,
+                "coverage_count": frame_count,
+                "coverage_total_frame_count": frame_count,
+                "coverage_reference_count": float(frame_count),
+                "coverage_min_required_count": 5,
+                "coverage_rejected": False,
+                "comp_index": 0,
+                "key": "comp1",
+            },
+        ],
+    }
+
+    result = fit_ranked_comparison_calibration_candidates(
+        times,
+        jd_times,
+        airmass,
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={"midT": 0.5, "pPer": 1.0, "rprs": 0.1, "aRs": 10.0, "inc": 89.0, "ecc": 0.0, "omega": 0.0},
+        comparison_calibration=comparison_calibration,
+        psf_data=psf_data,
+        aper_data=None,
+        target_psf_flux=target_psf_flux,
+        psf_flux_data=psf_flux_data,
+    )
+
+    assert observed_lengths == [("diagnostics", frame_count - 1), ("finalize", frame_count - 1)]
+    assert result["selected_result"]["fit_point_count"] == frame_count - 1
+    assert np.nanmax(result["selected_result"]["tflux_fit"]) < 1000.0
+    assert np.nanmedian(result["selected_result"]["cflux_fit"]) == pytest.approx(2.0 * np.pi * 240.0)
 
 
 def test_fit_ranked_comparison_calibration_candidates_applies_candidate_ensemble_clip(monkeypatch):

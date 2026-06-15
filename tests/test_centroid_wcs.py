@@ -275,6 +275,32 @@ def test_fit_centroid_full_mode_preserves_psf_subpixel_solution():
     assert psf_error < moment_error
 
 
+def test_fit_psf_photometry_flux_row_preserves_robust_centroid_coordinates():
+    image = _gaussian_image(center=(40.3, 35.7), amplitude=180.0, sigma=0.9, background=1000.0)
+    centroid_row = np.array([40.1, 35.9, 150.0, 0.8, 0.8, 0.0, 1000.0], dtype=float)
+
+    flux_row = exotic_module.fit_psf_photometry_flux_row(image, centroid_row, 0)
+
+    assert flux_row[0] == pytest.approx(centroid_row[0])
+    assert flux_row[1] == pytest.approx(centroid_row[1])
+    assert flux_row[2] > 0
+    assert 0.5 <= flux_row[3] <= 2.0
+    assert 0.5 <= flux_row[4] <= 2.0
+
+
+def test_fit_centroid_prefers_seed_anchored_solution_in_crowded_field():
+    yy, xx = np.mgrid[0:80, 0:80]
+    image = np.full((80, 80), 400.0)
+    image += 80.0 * np.exp(-((xx - 40.0) ** 2 + (yy - 40.0) ** 2) / (2.0 * 1.0 ** 2))
+    image += 220.0 * np.exp(-((xx - 31.5) ** 2 + (yy - 35.0) ** 2) / (2.0 * 1.0 ** 2))
+
+    result = exotic_module.fit_centroid(image, [40.0, 40.0], 0, fast_mode=False)
+
+    assert np.hypot(result[0] - 40.0, result[1] - 40.0) < 1.5
+    assert np.hypot(result[0] - 31.5, result[1] - 35.0) > 5.0
+    assert result[2] > 0
+
+
 def test_fit_centroid_or_warn_out_of_frame_skips_centroid_fit(monkeypatch):
     image = np.zeros((40, 50), dtype=float)
     out_of_frame_warnings = []

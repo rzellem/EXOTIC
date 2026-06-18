@@ -236,6 +236,24 @@ def test_comp_params_defaults_rprs_search_bound_max_to_half(tmp_path):
     assert inputs.info_dict["rprs_search_bound_max"] == 0.5
 
 
+def test_comp_params_defaults_prior_centered_search_restrictions_to_on(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["restrict_rprs_range"] == "y"
+    assert inputs.info_dict["restrict_rprs_range_percentage"] == 10.0
+    assert inputs.info_dict["restrict_ars_range"] == "y"
+    assert inputs.info_dict["restrict_ars_range_percentage"] == 10.0
+
+
 def test_comp_params_defaults_sparse_posterior_live_point_retry_to_yes(tmp_path):
     init_data = {
         "user_info": {},
@@ -596,6 +614,44 @@ def test_comp_params_reads_rprs_search_bound_max_from_optional_info(tmp_path):
     assert inputs.info_dict["rprs_search_bound_max"] == 0.35
 
 
+def test_comp_params_reads_prior_centered_search_restrictions_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "restrict_Rp/Rs_range": "n",
+            "restrict_Rp/Rs_range_percentage": 15,
+            "restrict_a/Rs_range": "y",
+            "restrict_a/Rs_range_percentage": "12.5%",
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["restrict_rprs_range"] == "n"
+    assert inputs.info_dict["restrict_rprs_range_percentage"] == 15
+    assert inputs.info_dict["restrict_ars_range"] == "y"
+    assert inputs.info_dict["restrict_ars_range_percentage"] == "12.5%"
+
+
+def test_comp_params_reads_prior_rprs_fallback_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"Use Prior Rp/Rs When Posterior Pinned? (y/n)": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_prior_rprs_when_posterior_pinned"] == "n"
+
+
 def test_comp_params_reads_fast_ultranest_before_final_run_from_optional_info(tmp_path):
     init_data = {
         "user_info": {},
@@ -774,6 +830,52 @@ def test_comp_params_reads_use_psf_photometry_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["use_psf_photometry"] == "n"
+
+
+def test_comp_params_reads_use_legacy_psf_flux_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_legacy_psf_flux": "y"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_legacy_psf_flux"] == "y"
+
+
+def test_comp_params_reads_psf_seed_track_directory_from_optional_info(tmp_path):
+    seed_dir = tmp_path / "old_run"
+    init_data = {
+        "user_info": {},
+        "optional_info": {"psf_seed_track_directory": str(seed_dir)},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["psf_seed_track_directory"] == str(seed_dir)
+
+
+def test_comp_params_reads_final_fit_phase_residual_clip_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"run_final_fit_phase_residual_clip": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["run_final_fit_phase_residual_clip"] == "n"
 
 
 def test_comp_params_reads_use_aperture_photometry_from_optional_info(tmp_path):

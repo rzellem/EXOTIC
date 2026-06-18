@@ -84,25 +84,48 @@ sys.modules.setdefault("exotic.api.elca", fake_elca)
 sys.modules.setdefault("exotic.api.ld", fake_ld)
 
 from exotic.exotic import (  # noqa: E402
+    ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
     INITIAL_RPRS_BOUND_LOWER_SCALE,
     INITIAL_RPRS_BOUND_UPPER_SCALE,
     RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
     RPRS_SEARCH_BOUND_MAX,
     RPRS_SEARCH_BOUND_MIN,
     SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+    build_initial_ars_bounds,
     build_fast_ultranest_lightcurve_series,
     build_expected_transit_coverage_assessment,
     evaluate_sparse_posterior_sample_support,
     extend_sparse_posterior_live_points_if_needed,
+    final_residual_rejection_keep_mask,
     fit_final_lightcurve_with_oot_baseline_detrending,
     finalize_comparison_candidate_full_reduction,
     refit_selected_fast_comparison_on_full_lightcurve,
+    configure_ars_range_restriction,
+    configure_prior_rprs_fallback_on_pinned_posterior,
     configure_rprs_search_bound_max,
+    configure_rprs_range_restriction,
+    should_use_legacy_psf_flux_mode,
+    should_run_final_fit_phase_residual_clip,
+    should_run_final_residual_rejection,
     should_run_fast_ultranest_before_final_run,
+    should_restrict_ars_range,
+    should_restrict_rprs_range,
+    should_use_prior_rprs_when_posterior_pinned,
     build_single_transit_duration_prior,
     build_initial_rprs_bounds,
     run_nested_lightcurve_fit_with_rprs_posterior_retry,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_prior_centered_range_restrictions(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_ENABLED", False)
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+    monkeypatch.setattr(exotic_module, "RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR", True)
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", False)
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
 
 
 def test_build_initial_rprs_bounds_allows_zero_depth_search_box():
@@ -113,6 +136,35 @@ def test_build_initial_rprs_bounds_allows_zero_depth_search_box():
         INITIAL_RPRS_BOUND_UPPER_SCALE * 0.1,
     ])
     assert INITIAL_RPRS_BOUND_LOWER_SCALE == pytest.approx(0.0)
+
+
+def test_build_initial_rprs_bounds_restricts_to_prior_centered_window(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+
+    assert build_initial_rprs_bounds(0.1) == pytest.approx([0.09, 0.11])
+
+
+def test_build_initial_rprs_bounds_widens_prior_window_for_data_uncertainty(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+
+    assert build_initial_rprs_bounds(0.1, rprs_data_uncertainty=0.006) == pytest.approx([0.09, 0.11])
+    assert build_initial_rprs_bounds(0.1, rprs_data_uncertainty=0.02) == pytest.approx([0.04, 0.16])
+
+
+def test_build_initial_ars_bounds_restricts_fallback_window_to_prior_centered_range(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+
+    assert build_initial_ars_bounds(15.0, None) == pytest.approx([13.5, 16.5])
+    assert build_initial_ars_bounds(15.0, 0.1) == pytest.approx([14.5, 15.5])
 
 
 def test_build_initial_rprs_bounds_clamps_to_configured_search_ceiling(monkeypatch):
@@ -131,6 +183,31 @@ def test_configure_rprs_search_bound_max_updates_retry_ceiling(monkeypatch):
 
     assert configure_rprs_search_bound_max("0.4") == pytest.approx(0.4)
     assert exotic_module.RPRS_SEARCH_BOUND_MAX == pytest.approx(0.4)
+
+
+def test_configure_prior_centered_range_restrictions_parse_values():
+    import exotic.exotic as exotic_module
+
+    assert should_restrict_rprs_range(None) is True
+    assert should_restrict_ars_range(None) is True
+    assert should_use_prior_rprs_when_posterior_pinned(None) is True
+    assert should_restrict_rprs_range("n") is False
+    assert should_restrict_ars_range(False) is False
+    assert should_use_prior_rprs_when_posterior_pinned("n") is False
+
+    enabled, percentage = configure_rprs_range_restriction("y", "12.5%")
+    assert enabled is True
+    assert percentage == pytest.approx(12.5)
+    assert exotic_module.RPRS_RANGE_RESTRICTION_ENABLED is True
+    assert exotic_module.RPRS_RANGE_RESTRICTION_PERCENTAGE == pytest.approx(12.5)
+
+    enabled, percentage = configure_ars_range_restriction("n", None)
+    assert enabled is False
+    assert percentage == pytest.approx(ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT)
+    assert exotic_module.ARS_RANGE_RESTRICTION_ENABLED is False
+
+    assert configure_prior_rprs_fallback_on_pinned_posterior("n") is False
+    assert exotic_module.RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR is False
 
 
 def test_rprs_posterior_retry_clamps_to_configured_search_ceiling(monkeypatch):
@@ -197,10 +274,280 @@ def test_rprs_posterior_retry_clamps_to_configured_search_ceiling(monkeypatch):
     assert fit.rprs_posterior_refit_bounds[1] == pytest.approx(0.5)
 
 
+def test_rprs_posterior_retry_does_not_escape_configured_prior_range(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+    monkeypatch.setattr(exotic_module, "RPRS_SEARCH_BOUND_MAX", 0.5)
+    captured = {"calls": []}
+    diagnostics = {"clipped": True, "edge": "upper", "mode": 0.109, "std": 0.04, "bounds": [0.09, 0.25]}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        **kwargs,
+    ):
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+        })
+        fit = types.SimpleNamespace(
+            parameters={"tmid": 0.0, "rprs": diagnostics["mode"], "inc": 89.0, "a2": 0.0}
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = (
+            lambda key: dict(diagnostics) if key == "rprs" else None
+        )
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(-0.03, 0.03, 7)
+    flux = np.ones(7, dtype=float)
+    fluxerr = np.full(7, 0.01, dtype=float)
+    airmass = np.ones(7, dtype=float)
+    prior = {"tmid": 0.0, "rprs": 0.1, "inc": 89.0, "a2": 0.0}
+    bounds = {"rprs": [0.0, 0.3], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]}
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        prior,
+        bounds,
+    )
+
+    assert len(captured["calls"]) == 1
+    assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.09, 0.11])
+    assert fit.rprs_posterior_refit_applied is False
+    assert "configured prior-centered search range" in fit.rprs_posterior_refit_note
+
+
+def test_rprs_restriction_uses_explicit_search_prior_instead_of_refined_prior(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(exotic_module, "RPRS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+    captured = {"bounds": None}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        **kwargs,
+    ):
+        captured["bounds"] = {
+            key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+            for key, value in call_bounds.items()
+        }
+        fit = types.SimpleNamespace(parameters=dict(call_prior))
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: {
+            "clipped": False,
+            "edge": None,
+            "mode": call_prior.get(key, np.nan),
+            "std": 0.01,
+            "bounds": captured["bounds"].get(key),
+            "reason": "posterior support is comfortably inside the sampled bounds.",
+        } if key == "rprs" else None
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(-0.03, 0.03, 7)
+    flux = np.ones(7, dtype=float)
+    fluxerr = np.full(7, 0.01, dtype=float)
+    airmass = np.ones(7, dtype=float)
+
+    run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        {"tmid": 0.0, "rprs": 0.145, "inc": 89.0, "a2": 0.0},
+        {"rprs": [0.0, 0.5], "tmid": [-0.01, 0.01], "inc": [84.0, 90.0], "a2": [-3.0, 3.0]},
+        search_restriction_prior={"rprs": 0.1},
+    )
+
+    assert captured["bounds"]["rprs"] == pytest.approx([0.09, 0.11])
+
+
+def test_pinned_rprs_without_expansion_reruns_with_prior_value_and_data_error(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR", True)
+
+    def fake_transit(call_times, call_prior):
+        call_times = np.asarray(call_times, dtype=float)
+        depth = float(call_prior["rprs"]) ** 2
+        return 1.0 - depth * (np.abs(call_times) <= 0.01)
+
+    monkeypatch.setattr(exotic_module, "transit", fake_transit)
+
+    captured = {"calls": []}
+    pinned_diagnostics = {
+        "clipped": True,
+        "edge": "upper",
+        "mode": 0.11,
+        "std": 0.006,
+        "bounds": [0.09, 0.11],
+    }
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        fixed_parameter_errors=None,
+        **kwargs,
+    ):
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+            "fixed_parameter_errors": dict(fixed_parameter_errors or {}),
+        })
+        model = fake_transit(call_times, call_prior)
+        fit = types.SimpleNamespace(
+            time=np.asarray(call_times, dtype=float),
+            data=np.asarray(call_flux, dtype=float),
+            dataerr=np.asarray(call_fluxerr, dtype=float),
+            transit=np.asarray(model, dtype=float),
+            model=np.asarray(model, dtype=float),
+            residuals=np.asarray(call_flux, dtype=float) - np.asarray(model, dtype=float),
+            airmass_model=np.ones_like(model),
+            parameters=dict(call_prior),
+            errors=dict(fixed_parameter_errors or {}),
+            fixed_parameter_errors=dict(fixed_parameter_errors or {}),
+        )
+        fit.errors.setdefault("tmid", 0.001)
+        fit.errors.setdefault("ars", 0.1)
+        fit.errors.setdefault("inc", 0.1)
+
+        def diagnostics(key):
+            if key == "rprs" and "rprs" in call_bounds:
+                return dict(pinned_diagnostics)
+            return {
+                "clipped": False,
+                "edge": None,
+                "mode": call_prior.get(key, np.nan),
+                "std": 0.001,
+                "bounds": call_bounds.get(key),
+                "reason": "posterior support is comfortably inside the sampled bounds.",
+            }
+
+        fit.get_parameter_posterior_recenter_diagnostics = diagnostics
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(-0.03, 0.03, 9)
+    prior = {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 89.0, "a2": 0.0}
+    flux = fake_transit(times, prior) + np.array([0.0, 0.004, -0.003, 0.002, -0.004, 0.003, -0.002, 0.004, 0.0])
+    fluxerr = np.full(times.shape, 0.003)
+    airmass = np.ones(times.shape)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        {"tmid": 0.0, "rprs": 0.11, "ars": 10.0, "inc": 89.0, "a2": 0.0},
+        {"rprs": [0.09, 0.11], "tmid": [-0.01, 0.01], "ars": [8.0, 12.0], "inc": [84.0, 90.0]},
+        max_rprs_retries=0,
+        max_ars_retries=0,
+        max_impact_parameter_retries=0,
+        search_restriction_prior={"rprs": 0.1, "ars": 10.0},
+    )
+
+    assert len(captured["calls"]) == 2
+    assert "rprs" in captured["calls"][0]["bounds"]
+    assert "rprs" not in captured["calls"][1]["bounds"]
+    assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.1)
+    assert captured["calls"][1]["fixed_parameter_errors"]["rprs"] > 0
+    assert fit.rprs_prior_fallback_applied is True
+    assert fit.parameters["rprs"] == pytest.approx(0.1)
+    assert fit.errors["rprs"] == pytest.approx(fit.empirical_transit_uncertainty["data_rprs_uncertainty"])
+    assert fit.empirical_transit_uncertainty["combined_rprs_uncertainty"] == pytest.approx(
+        fit.empirical_transit_uncertainty["data_rprs_uncertainty"]
+    )
+    assert "prior fallback" in fit.rprs_prior_fallback_note
+
+
 def test_fast_ultranest_option_defaults_enabled_and_parses_false_values():
     assert should_run_fast_ultranest_before_final_run(None) is True
     assert should_run_fast_ultranest_before_final_run("n") is False
     assert should_run_fast_ultranest_before_final_run(False) is False
+
+
+def test_final_residual_rejection_option_defaults_enabled_and_parses_false_values():
+    assert should_run_final_residual_rejection(None) is True
+    assert should_run_final_residual_rejection("n") is False
+    assert should_run_final_residual_rejection(False) is False
+
+
+def test_final_fit_phase_residual_clip_option_defaults_enabled_and_parses_false_values():
+    assert should_run_final_fit_phase_residual_clip(None) is True
+    assert should_run_final_fit_phase_residual_clip("n") is False
+    assert should_run_final_fit_phase_residual_clip(False) is False
+
+
+def test_legacy_psf_flux_mode_option_defaults_modern_and_parses_true_values():
+    assert should_use_legacy_psf_flux_mode(None) is False
+    assert should_use_legacy_psf_flux_mode("legacy") is True
+    assert should_use_legacy_psf_flux_mode("y") is True
+    assert should_use_legacy_psf_flux_mode(False) is False
+
+
+def test_final_residual_rejection_keep_mask_flags_large_residual_outlier():
+    fit = types.SimpleNamespace(
+        data=np.ones(8, dtype=float),
+        residuals=np.array([0.0, 0.001, -0.001, 0.0, 0.001, -0.001, 0.0, 0.20], dtype=float),
+    )
+
+    keep_mask, summary = final_residual_rejection_keep_mask(fit, sigma=2.0, min_required_points=5)
+
+    assert keep_mask.tolist() == [True, True, True, True, True, True, True, False]
+    assert summary["applied"] is True
+    assert summary["rejected_point_count"] == 1
+    assert summary["kept_point_count"] == 7
+
+
+def test_final_residual_rejection_keep_mask_iterates_until_clean():
+    fit = types.SimpleNamespace(
+        data=np.ones(10, dtype=float),
+        residuals=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.20], dtype=float),
+    )
+
+    keep_mask, summary = final_residual_rejection_keep_mask(fit, sigma=2.0, min_required_points=5)
+
+    assert keep_mask.tolist() == [True, True, True, True, True, True, True, True, False, False]
+    assert summary["applied"] is True
+    assert summary["rejected_point_count"] == 2
+    assert summary["clip_iteration_count"] == 2
 
 
 def test_fast_ultranest_binning_reduces_large_light_curve_to_twenty_points():
@@ -519,6 +866,127 @@ def test_selected_fast_candidate_final_refit_uses_full_series_and_fixed_baseline
     assert "a2" not in captured["bounds"]
 
 
+def test_selected_fast_candidate_final_refit_reruns_after_residual_rejection(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "selected_final_live_point_target", lambda *args, **kwargs: (200, None))
+    calls = []
+
+    def fake_run_nested(
+        times,
+        flux_values,
+        flux_errors,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        **kwargs,
+    ):
+        call_index = len(calls)
+        calls.append({
+            "times": np.asarray(times, dtype=float),
+            "flux": np.asarray(flux_values, dtype=float),
+            "source_count": len(times),
+        })
+        residuals = np.zeros(len(times), dtype=float)
+        if call_index == 0:
+            residuals[-1] = 1.0
+        elif call_index == 1:
+            residuals[0] = 1.0
+        fit = types.SimpleNamespace(
+            time=np.asarray(times, dtype=float),
+            data=np.asarray(flux_values, dtype=float),
+            dataerr=np.asarray(flux_errors, dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            parameters={**dict(prior), "rprs": 0.1, "tmid": 0.5, "ars": 10.0, "inc": 89.0},
+            errors={"rprs": 0.001, "tmid": 0.001, "ars": 0.1, "inc": 0.1},
+            residuals=residuals,
+            phase=np.linspace(-0.05, 0.05, len(times)),
+            detrended=np.asarray(flux_values, dtype=float),
+            transit=np.ones(len(times), dtype=float),
+            duration_measured=0.04,
+            duration_expected=0.04,
+            transit_qc={"status": "pass", "summary": "ok"},
+            transit_qc_status="pass",
+        )
+        return fit
+
+    monkeypatch.setattr(exotic_module, "run_nested_lightcurve_fit_with_rprs_posterior_retry", fake_run_nested)
+
+    previous_fit = types.SimpleNamespace(
+        fast_ultranest_binning_applied=True,
+        frame_filter_diagnostics=[],
+        parameters={
+            "rprs": 0.1,
+            "ars": 10.0,
+            "per": 1.0,
+            "tmid": 0.5,
+            "inc": 89.0,
+            "u0": 0.1,
+            "u1": 0.1,
+            "u2": 0.1,
+            "u3": 0.1,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.0,
+            "a1": 1.0,
+            "a2": 0.0,
+        },
+        errors={"a0": 0.0, "a1": 0.0, "a2": 0.0, "rprs": 0.001, "tmid": 0.001, "ars": 0.1},
+        bounds={
+            "rprs": [0.05, 0.15],
+            "tmid": [0.49, 0.51],
+            "ars": [9.0, 11.0],
+            "inc": [85.0, 90.0],
+        },
+    )
+    times = np.linspace(0.0, 1.0, 80)
+    selected_result = {
+        "fit": previous_fit,
+        "good_times": times,
+        "good_flux": np.ones(80),
+        "good_unc": np.full(80, 0.01),
+        "good_airmass": np.linspace(1.0, 1.3, 80),
+        "good_jd_times": 2460000.0 + times,
+        "good_target_flux": np.linspace(1000.0, 1080.0, 80),
+        "good_comp_flux": np.linspace(500.0, 540.0, 80),
+        "source_indices": np.arange(80),
+    }
+
+    returned, fit_flux, fit_unc = refit_selected_fast_comparison_on_full_lightcurve(
+        selected_result,
+        {
+            "midT": 0.5,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        detrend_on_outoftransit_baseline=False,
+    )
+
+    assert returned is not None
+    assert [call["source_count"] for call in calls] == [80, 79, 78]
+    assert len(fit_flux) == 78
+    assert len(fit_unc) == 78
+    assert selected_result["good_times"].shape == (78,)
+    assert selected_result["tflux_fit"].shape == (78,)
+    assert selected_result["cflux_fit"].shape == (78,)
+    assert selected_result["source_indices"][0] == 1
+    assert selected_result["source_indices"][-1] == 78
+    assert returned.final_residual_rejection_applied is True
+    assert returned.final_residual_rejection_rejected_count == 2
+    assert returned.final_residual_rejection["refit_iteration_count"] == 2
+    assert returned.final_residual_rejection["rejected_source_indices"] == [79, 0]
+    assert [item["stage"] for item in returned.frame_filter_diagnostics[-2:]] == [
+        "Final residual rejection refit 1",
+        "Final residual rejection refit 2",
+    ]
+
+
 def test_selected_fast_candidate_final_refit_resets_fixed_baseline_after_linear_detrend(monkeypatch):
     import exotic.exotic as exotic_module
 
@@ -613,6 +1081,7 @@ def test_selected_fast_candidate_final_refit_resets_fixed_baseline_after_linear_
             "omega": 0.0,
         },
         detrend_on_outoftransit_baseline=True,
+        oot_baseline_min_points_per_side=2,
     )
 
     assert returned is not None

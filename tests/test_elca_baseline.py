@@ -375,6 +375,38 @@ def test_plot_bestfit_can_hide_flux_baseline_label(monkeypatch, tmp_path):
     plt.close(fig)
 
 
+def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+        fixed_parameter_errors={"rprs": 0.02},
+    )
+    fit.rprs_prior_fallback_applied = True
+    fit.empirical_transit_uncertainty = {
+        "available": True,
+        "combined_rprs_uncertainty": 0.02,
+    }
+
+    fig, axes = fit.plot_bestfit(show_flux_baseline_label=False)
+    legend_text = "\n".join(text.get_text() for text in axes[0].get_legend().get_texts())
+
+    assert "(Prior)" in legend_text
+    plt.close(fig)
+
+
 def test_plot_bestfit_can_draw_transit_model_uncertainty_band(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -525,6 +557,32 @@ def test_baseline_model_uncertainty_does_not_double_count_analytic_a0(monkeypatc
     half_width = np.nanmax(np.maximum(1.0 - lower, upper - 1.0))
 
     assert half_width < 0.03
+
+
+def test_baseline_model_uncertainty_includes_empirical_flux_floor(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.time = time
+    fit.airmass = np.linspace(1.0, 2.0, time.size)
+    fit.airmass_reference = elca.get_airmass_reference(fit.airmass)
+    fit.parameters = prior.copy()
+    fit.parameters["a0"] = 1.0
+    fit.parameters["a1"] = 1.0
+    fit.parameters["a2"] = 0.0
+    fit.errors = {"a0": 0.001, "a1": 0.001, "a2": 0.001}
+    fit.results = None
+    fit.empirical_transit_uncertainty = {
+        "available": True,
+        "baseline_red_noise_uncertainty_fraction": 0.02,
+    }
+
+    lower, upper = fit.baseline_model_uncertainty(time)
+    half_width = np.nanmax(np.maximum(1.0 - lower, upper - 1.0))
+
+    assert half_width >= 0.02
 
 
 def test_baseline_model_uncertainty_prefers_posterior_samples(monkeypatch, tmp_path):

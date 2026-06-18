@@ -412,6 +412,258 @@ def build_fit_quality_metadata(fit):
     return payload
 
 
+def red_noise_beta_factor(residual_fraction, coordinates=None, min_bin_size=2, max_bin_size=None):
+    residual_fraction = np.asarray(residual_fraction, dtype=float)
+    finite_mask = np.isfinite(residual_fraction)
+
+    coordinates_array = None
+    if coordinates is not None:
+        coordinates_array = np.asarray(coordinates, dtype=float)
+        if coordinates_array.shape == residual_fraction.shape:
+            finite_mask &= np.isfinite(coordinates_array)
+        else:
+            coordinates_array = None
+
+    residual_fraction = residual_fraction[finite_mask]
+    if coordinates_array is not None:
+        coordinates_array = coordinates_array[finite_mask]
+        sort_index = np.argsort(coordinates_array)
+        residual_fraction = residual_fraction[sort_index]
+
+    point_count = int(residual_fraction.size)
+    payload = {
+        'factor': 1.0,
+        'point_count': point_count,
+        'bin_sizes': [],
+        'beta_by_bin': {},
+        'max_bin_size': np.nan,
+    }
+    min_bin_size = int(max(2, finite_float(min_bin_size, 2)))
+    if point_count < min_bin_size * 2:
+        return payload
+
+    residual_fraction = residual_fraction - np.nanmedian(residual_fraction)
+    unbinned_rms = finite_float(np.nanstd(residual_fraction, ddof=1))
+    if not np.isfinite(unbinned_rms) or unbinned_rms <= 0:
+        return payload
+
+    if max_bin_size is None:
+        max_bin_size = min(10, max(min_bin_size, point_count // 4))
+    max_bin_size = int(max(min_bin_size, finite_float(max_bin_size, min_bin_size)))
+    max_bin_size = min(max_bin_size, point_count // 2)
+    if max_bin_size < min_bin_size:
+        return payload
+
+    beta_values = []
+    for bin_size in range(min_bin_size, max_bin_size + 1):
+        bin_count = point_count // bin_size
+        if bin_count < 2:
+            continue
+        trimmed = residual_fraction[:bin_count * bin_size]
+        binned_means = np.nanmean(trimmed.reshape(bin_count, bin_size), axis=1)
+        binned_rms = finite_float(np.nanstd(binned_means, ddof=1))
+        expected_rms = (
+            unbinned_rms
+            / np.sqrt(bin_size)
+            * np.sqrt(bin_count / (bin_count - 1.0))
+        )
+        if not np.isfinite(binned_rms) or not np.isfinite(expected_rms) or expected_rms <= 0:
+            continue
+        beta = max(1.0, float(binned_rms / expected_rms))
+        payload['bin_sizes'].append(bin_size)
+        payload['beta_by_bin'][str(bin_size)] = beta
+        beta_values.append(beta)
+
+    if beta_values:
+        payload['factor'] = float(max(beta_values))
+        payload['max_bin_size'] = max(payload['bin_sizes'])
+    return payload
+
+
+def _fit_uncertainty_time_coordinates(fit, expected_shape):
+    for name in ('time', 'phase'):
+        values = getattr(fit, name, None)
+        if values is None:
+            continue
+        try:
+            values = np.asarray(values, dtype=float)
+        except (TypeError, ValueError):
+            continue
+        if values.shape == expected_shape:
+            return values
+    return None
+
+
+def fit_empirical_transit_uncertainty(fit, fit_quality=None, transit_depth_threshold_fraction=0.05):
+    data, model, _ = fit_data_model_uncertainty(fit)
+    if data is None or model is None:
+        return {}
+
+    data = np.asarray(data, dtype=float)
+    model = np.asarray(model, dtype=float)
+    if data.shape != model.shape or data.ndim != 1:
+        return {}
+
+    residuals = data - model
+    finite_mask = np.isfinite(data) & np.isfinite(model) & np.isfinite(residuals)
+    if not np.any(finite_mask):
+        return {}
+
+    fit_quality = fit_quality or {}
+    median_flux = np.nanmedian(data[finite_mask])
+    residual_scatter = finite_float(fit_quality.get('residual_scatter'))
+    if not np.isfinite(residual_scatter):
+        if np.isfinite(median_flux) and median_flux != 0:
+            residual_scatter = float(np.nanstd(residuals[finite_mask]) / median_flux)
+    if not np.isfinite(residual_scatter) or residual_scatter < 0:
+        return {}
+
+    transit = np.asarray(getattr(fit, 'transit', np.array([])), dtype=float)
+    if transit.shape != data.shape:
+        return {}
+
+    transit_mask = finite_mask & np.isfinite(transit)
+    if np.count_nonzero(transit_mask) < 2:
+        return {}
+
+    transit_values = transit[transit_mask]
+    baseline = finite_float(np.nanpercentile(transit_values, 95))
+    if not np.isfinite(baseline):
+        return {}
+
+    transit_depth_profile = baseline - transit
+    max_depth = finite_float(np.nanmax(transit_depth_profile[transit_mask]))
+    if not np.isfinite(max_depth) or max_depth <= 0:
+        return {}
+
+    threshold_fraction = finite_float(transit_depth_threshold_fraction, 0.05)
+    if not np.isfinite(threshold_fraction) or threshold_fraction <= 0:
+        threshold_fraction = 0.05
+    depth_threshold = max_depth * threshold_fraction
+    in_transit_mask = transit_mask & (transit_depth_profile >= depth_threshold)
+    out_of_transit_mask = transit_mask & (transit_depth_profile < depth_threshold)
+
+    in_transit_count = int(np.count_nonzero(in_transit_mask))
+    out_of_transit_count = int(np.count_nonzero(out_of_transit_mask))
+    if in_transit_count <= 0:
+        return {}
+
+    sample_term = 1.0 / in_transit_count
+    if out_of_transit_count > 0:
+        sample_term += 1.0 / out_of_transit_count
+
+    depth_standard_error_fraction = float(residual_scatter * np.sqrt(sample_term))
+    if not np.isfinite(depth_standard_error_fraction) or depth_standard_error_fraction < 0:
+        return {}
+    if out_of_transit_count > 0:
+        baseline_standard_error_fraction = float(residual_scatter / np.sqrt(out_of_transit_count))
+    else:
+        baseline_standard_error_fraction = float(depth_standard_error_fraction)
+
+    residual_fraction = residuals
+    if np.isfinite(median_flux) and median_flux != 0:
+        residual_fraction = residuals / median_flux
+    coordinates = _fit_uncertainty_time_coordinates(fit, data.shape)
+    max_beta_bin_size = min(10, max(2, in_transit_count // 4))
+    beta_payload = red_noise_beta_factor(
+        residual_fraction[finite_mask],
+        coordinates=coordinates[finite_mask] if coordinates is not None else None,
+        min_bin_size=2,
+        max_bin_size=max_beta_bin_size,
+    )
+    red_noise_beta = finite_float(beta_payload.get('factor'), 1.0)
+    if not np.isfinite(red_noise_beta) or red_noise_beta < 1.0:
+        red_noise_beta = 1.0
+    depth_uncertainty_fraction = float(depth_standard_error_fraction * red_noise_beta)
+    baseline_uncertainty_fraction = float(baseline_standard_error_fraction * red_noise_beta)
+    depth_flux_scatter_fraction = float(residual_scatter)
+
+    parameters = getattr(fit, 'parameters', {}) or {}
+    errors = getattr(fit, 'errors', {}) or {}
+    rprs = finite_float(parameters.get('rprs'))
+    model_rprs_uncertainty = finite_float(errors.get('rprs'))
+    rprs_prior_fallback = bool(getattr(fit, 'rprs_prior_fallback_applied', False))
+    if rprs_prior_fallback:
+        model_rprs_uncertainty = np.nan
+    data_rprs_uncertainty = np.nan
+    data_rprs_standard_error = np.nan
+    data_rprs_flux_scatter_uncertainty = np.nan
+    combined_rprs_uncertainty = np.nan
+    combined_rprs_standard_error = np.nan
+    conservative_rprs_uncertainty = np.nan
+    if np.isfinite(rprs) and rprs > 0:
+        data_rprs_uncertainty = float(depth_uncertainty_fraction / (2.0 * rprs))
+        data_rprs_standard_error = float(depth_standard_error_fraction / (2.0 * rprs))
+        data_rprs_flux_scatter_uncertainty = float(depth_flux_scatter_fraction / (2.0 * rprs))
+        if rprs_prior_fallback:
+            combined_rprs_uncertainty = data_rprs_uncertainty
+            combined_rprs_standard_error = data_rprs_standard_error
+            conservative_rprs_uncertainty = data_rprs_uncertainty
+        elif np.isfinite(model_rprs_uncertainty) and model_rprs_uncertainty >= 0:
+            combined_rprs_uncertainty = float(
+                np.sqrt(model_rprs_uncertainty ** 2 + data_rprs_uncertainty ** 2)
+            )
+            combined_rprs_standard_error = float(
+                np.sqrt(model_rprs_uncertainty ** 2 + data_rprs_standard_error ** 2)
+            )
+            conservative_rprs_uncertainty = float(
+                max(model_rprs_uncertainty, data_rprs_uncertainty)
+            )
+
+    return {
+        'available': True,
+        'residual_scatter': residual_scatter,
+        'residual_scatter_percent': residual_scatter * 100.0,
+        'in_transit_point_count': in_transit_count,
+        'out_of_transit_point_count': out_of_transit_count,
+        'transit_depth_threshold_fraction': threshold_fraction,
+        'model_depth_fraction': max_depth,
+        'model_depth_percent': max_depth * 100.0,
+        'depth_uncertainty_fraction': depth_uncertainty_fraction,
+        'depth_uncertainty_percent': depth_uncertainty_fraction * 100.0,
+        'depth_red_noise_uncertainty_fraction': depth_uncertainty_fraction,
+        'depth_red_noise_uncertainty_percent': depth_uncertainty_fraction * 100.0,
+        'baseline_standard_error_fraction': baseline_standard_error_fraction,
+        'baseline_standard_error_percent': baseline_standard_error_fraction * 100.0,
+        'baseline_red_noise_uncertainty_fraction': baseline_uncertainty_fraction,
+        'baseline_red_noise_uncertainty_percent': baseline_uncertainty_fraction * 100.0,
+        'depth_flux_scatter_fraction': depth_flux_scatter_fraction,
+        'depth_flux_scatter_percent': depth_flux_scatter_fraction * 100.0,
+        'depth_standard_error_fraction': depth_standard_error_fraction,
+        'depth_standard_error_percent': depth_standard_error_fraction * 100.0,
+        'red_noise_beta_factor': red_noise_beta,
+        'red_noise_beta_bin_sizes': beta_payload.get('bin_sizes', []),
+        'red_noise_beta_by_bin': beta_payload.get('beta_by_bin', {}),
+        'red_noise_beta_max_bin_size': beta_payload.get('max_bin_size', np.nan),
+        'rprs': rprs,
+        'model_rprs_uncertainty': model_rprs_uncertainty,
+        'data_rprs_uncertainty': data_rprs_uncertainty,
+        'data_rprs_red_noise_uncertainty': data_rprs_uncertainty,
+        'data_rprs_standard_error': data_rprs_standard_error,
+        'data_rprs_flux_scatter_uncertainty': data_rprs_flux_scatter_uncertainty,
+        'combined_rprs_uncertainty': combined_rprs_uncertainty,
+        'combined_rprs_red_noise_uncertainty': combined_rprs_uncertainty,
+        'combined_rprs_standard_error': combined_rprs_standard_error,
+        'conservative_rprs_uncertainty': conservative_rprs_uncertainty,
+        'rprs_uncertainty_basis': (
+            'prior_assumed_data_only'
+            if rprs_prior_fallback
+            else 'model_plus_red_noise'
+        ),
+        'rprs_prior_fallback_applied': rprs_prior_fallback,
+        'rprs_prior_fallback_prior_value': finite_float(
+            getattr(fit, 'rprs_prior_fallback_prior_value', np.nan)
+        ),
+        'rprs_prior_fallback_original_fit_value': finite_float(
+            getattr(fit, 'rprs_prior_fallback_original_fit_value', np.nan)
+        ),
+        'rprs_prior_fallback_data_uncertainty': finite_float(
+            getattr(fit, 'rprs_prior_fallback_data_uncertainty', np.nan)
+        ),
+        'rprs_prior_fallback_note': getattr(fit, 'rprs_prior_fallback_note', None),
+    }
+
+
 def photometry_method_from_info(photometry_info):
     if not isinstance(photometry_info, dict):
         return None
@@ -437,13 +689,21 @@ def build_aavso_qc_metadata(fit):
         'transit_chi2', 'flat_chi2', 'delta_chi2', 'transit_bic', 'flat_bic',
         'delta_bic', 'transit_parameter_count', 'flat_parameter_count',
         'flat_baseline', 'flat_a2', 'flat_model_note', 'residual_scatter',
+        'transit_depth_for_residual_scatter', 'residual_scatter_to_depth_ratio',
         'rprs_sigma', 'duration_ratio', 'eebls_depth_snr',
+        'sampling_score', 'sampling_detail', 'sampling_ingress_count',
+        'sampling_egress_count', 'sampling_in_transit_count',
+        'sampling_pre_baseline_count', 'sampling_post_baseline_count',
+        'sampling_total_duration', 'sampling_ingress_duration',
         'use_deviation_from_expected_transit_in_qc', 'deviation_sigma_threshold',
         'expected_tmid', 'expected_tmid_unc', 'fitted_tmid',
         'expected_rprs', 'expected_rprs_unc', 'fitted_rprs', 'fitted_rprs_unc',
-        'rprs_deviation_fit_unc', 'rprs_deviation_expected_unc',
+        'rprs_deviation_fit_unc', 'rprs_deviation_model_fit_unc',
+        'rprs_deviation_data_fit_unc', 'rprs_deviation_combined_fit_unc',
+        'rprs_deviation_expected_unc',
         'rprs_deviation_systematic_floor', 'rprs_deviation_unc',
         'rprs_deviation_sigma', 'rprs_deviation_score',
+        'rprs_prior_assumed', 'rprs_prior_assumed_note',
         'deviation_from_expected_value', 'ktmf_metric', 'ktmf_contributions',
         'notes',
     )
@@ -461,6 +721,7 @@ def compact_ktmf_contributions(contributions):
             'points': contribution.get('points'),
             'max_points': contribution.get('max_points'),
             'score': contribution.get('score'),
+            'score_uncertainty': contribution.get('score_uncertainty'),
             'detail': contribution.get('detail'),
         })
     return compact
@@ -520,7 +781,21 @@ def build_ktmf_decision_metadata(fit, photometry_info=None):
             'delta_chi2': transit_qc.get('delta_chi2'),
             'eebls_depth_snr': transit_qc.get('eebls_depth_snr'),
             'residual_scatter': transit_qc.get('residual_scatter'),
+            'transit_depth_for_residual_scatter': transit_qc.get('transit_depth_for_residual_scatter'),
+            'residual_scatter_to_depth_ratio': transit_qc.get('residual_scatter_to_depth_ratio'),
+            'sampling_score': transit_qc.get('sampling_score'),
+            'sampling_detail': transit_qc.get('sampling_detail'),
+            'sampling_ingress_count': transit_qc.get('sampling_ingress_count'),
+            'sampling_egress_count': transit_qc.get('sampling_egress_count'),
+            'sampling_in_transit_count': transit_qc.get('sampling_in_transit_count'),
+            'sampling_pre_baseline_count': transit_qc.get('sampling_pre_baseline_count'),
+            'sampling_post_baseline_count': transit_qc.get('sampling_post_baseline_count'),
             'deviation_from_expected_value': transit_qc.get('deviation_from_expected_value'),
+            'rprs_deviation_fit_unc': transit_qc.get('rprs_deviation_fit_unc'),
+            'rprs_deviation_model_fit_unc': transit_qc.get('rprs_deviation_model_fit_unc'),
+            'rprs_deviation_data_fit_unc': transit_qc.get('rprs_deviation_data_fit_unc'),
+            'rprs_deviation_expected_unc': transit_qc.get('rprs_deviation_expected_unc'),
+            'rprs_deviation_unc': transit_qc.get('rprs_deviation_unc'),
         }
 
     if isinstance(photometry_info, dict):
@@ -561,6 +836,17 @@ def build_ktmf_decision_metadata(fit, photometry_info=None):
 def format_ktmf_metric(value):
     value = finite_float(value)
     return f"{value:.2f} / 5.00" if np.isfinite(value) else "n/a"
+
+
+def format_ktmf_status(value):
+    value = finite_float(value)
+    if not np.isfinite(value):
+        return "UNKNOWN"
+    if value >= 4.0:
+        return "PASS"
+    if value >= 3.0:
+        return "MARGINAL"
+    return "FAIL"
 
 
 def format_transit_qc_headline_final_params(transit_qc):
@@ -617,7 +903,7 @@ def format_ktmf_decision_final_params(fit, photometry_info=None):
     if isinstance(transit_qc, dict):
         ktmf_metric = finite_float(transit_qc.get('ktmf_metric'))
         if np.isfinite(ktmf_metric):
-            target_status = str(transit_qc.get('status', 'unknown')).upper()
+            target_status = format_ktmf_status(ktmf_metric)
             params["KTMF target-fit decision"] = (
                 f"{target_status}: KTMF={format_ktmf_metric(ktmf_metric)}"
             )
@@ -744,6 +1030,177 @@ def format_fit_quality_final_params(fit_quality):
     return params
 
 
+def format_empirical_transit_uncertainty_final_params(empirical_uncertainty):
+    empirical_uncertainty = empirical_uncertainty or {}
+    if not empirical_uncertainty.get('available'):
+        return {}
+
+    params = {}
+    rprs = finite_float(empirical_uncertainty.get('rprs'))
+    model_rprs_uncertainty = finite_float(empirical_uncertainty.get('model_rprs_uncertainty'))
+    data_rprs_uncertainty = finite_float(empirical_uncertainty.get('data_rprs_uncertainty'))
+    combined_rprs_uncertainty = finite_float(empirical_uncertainty.get('combined_rprs_uncertainty'))
+    conservative_rprs_uncertainty = finite_float(
+        empirical_uncertainty.get('conservative_rprs_uncertainty')
+    )
+    data_rprs_standard_error = finite_float(empirical_uncertainty.get('data_rprs_standard_error'))
+    data_rprs_flux_scatter_uncertainty = finite_float(
+        empirical_uncertainty.get('data_rprs_flux_scatter_uncertainty')
+    )
+    combined_rprs_standard_error = finite_float(
+        empirical_uncertainty.get('combined_rprs_standard_error')
+    )
+    depth_uncertainty_percent = finite_float(empirical_uncertainty.get('depth_uncertainty_percent'))
+    depth_flux_scatter_percent = finite_float(
+        empirical_uncertainty.get('depth_flux_scatter_percent')
+    )
+    depth_standard_error_percent = finite_float(
+        empirical_uncertainty.get('depth_standard_error_percent')
+    )
+    baseline_red_noise_percent = finite_float(
+        empirical_uncertainty.get('baseline_red_noise_uncertainty_percent')
+    )
+    baseline_standard_error_percent = finite_float(
+        empirical_uncertainty.get('baseline_standard_error_percent')
+    )
+    residual_scatter_percent = finite_float(empirical_uncertainty.get('residual_scatter_percent'))
+    red_noise_beta = finite_float(empirical_uncertainty.get('red_noise_beta_factor'))
+    rprs_prior_fallback = bool(empirical_uncertainty.get('rprs_prior_fallback_applied'))
+    rprs_uncertainty_basis = empirical_uncertainty.get('rprs_uncertainty_basis')
+
+    if (
+        not rprs_prior_fallback
+        and np.isfinite(rprs)
+        and np.isfinite(model_rprs_uncertainty)
+        and model_rprs_uncertainty >= 0
+    ):
+        params["Ratio of Planet to Stellar Radius (Rp/R*) model-fit uncertainty"] = (
+            f"{round_to_2(rprs, model_rprs_uncertainty)} +/- {round_to_2(model_rprs_uncertainty)}"
+        )
+    if np.isfinite(rprs) and np.isfinite(data_rprs_uncertainty) and data_rprs_uncertainty >= 0:
+        if rprs_prior_fallback:
+            params["Ratio of Planet to Stellar Radius (Rp/R*) prior-assumed data-only uncertainty"] = (
+                f"{round_to_2(rprs, data_rprs_uncertainty)} +/- {round_to_2(data_rprs_uncertainty)}"
+            )
+        else:
+            params["Ratio of Planet to Stellar Radius (Rp/R*) data-fit red-noise uncertainty"] = (
+                f"{round_to_2(rprs, data_rprs_uncertainty)} +/- {round_to_2(data_rprs_uncertainty)}"
+            )
+    if np.isfinite(rprs) and np.isfinite(combined_rprs_uncertainty) and combined_rprs_uncertainty >= 0:
+        if rprs_prior_fallback:
+            params["Ratio of Planet to Stellar Radius (Rp/R*) data-only uncertainty used for primary value"] = (
+                f"{round_to_2(rprs, combined_rprs_uncertainty)} +/- "
+                f"{round_to_2(combined_rprs_uncertainty)}"
+            )
+        else:
+            params["Ratio of Planet to Stellar Radius (Rp/R*) model+red-noise uncertainty"] = (
+                f"{round_to_2(rprs, combined_rprs_uncertainty)} +/- "
+                f"{round_to_2(combined_rprs_uncertainty)}"
+            )
+    if np.isfinite(conservative_rprs_uncertainty):
+        params["Conservative Rp/R* uncertainty to quote"] = (
+            f"+/- {round_to_2(conservative_rprs_uncertainty)}"
+        )
+    if np.isfinite(rprs) and np.isfinite(data_rprs_standard_error) and data_rprs_standard_error >= 0:
+        params["Ratio of Planet to Stellar Radius (Rp/R*) data-fit standard-error estimate"] = (
+            f"{round_to_2(rprs, data_rprs_standard_error)} +/- {round_to_2(data_rprs_standard_error)}"
+        )
+    if (
+        not rprs_prior_fallback
+        and np.isfinite(rprs)
+        and np.isfinite(combined_rprs_standard_error)
+        and combined_rprs_standard_error >= 0
+    ):
+        params["Ratio of Planet to Stellar Radius (Rp/R*) model+standard-error estimate"] = (
+            f"{round_to_2(rprs, combined_rprs_standard_error)} +/- "
+            f"{round_to_2(combined_rprs_standard_error)}"
+        )
+    if (
+        np.isfinite(rprs)
+        and np.isfinite(data_rprs_flux_scatter_uncertainty)
+        and data_rprs_flux_scatter_uncertainty >= 0
+    ):
+        params["Ratio of Planet to Stellar Radius (Rp/R*) flux-scatter equivalent"] = (
+            f"{round_to_2(rprs, data_rprs_flux_scatter_uncertainty)} +/- "
+            f"{round_to_2(data_rprs_flux_scatter_uncertainty)}"
+        )
+    if np.isfinite(depth_uncertainty_percent):
+        params["Transit depth red-noise uncertainty"] = (
+            f"+/- {depth_uncertainty_percent:.4f} %"
+        )
+    if np.isfinite(depth_flux_scatter_percent):
+        params["Transit depth flux-scatter equivalent"] = (
+            f"+/- {depth_flux_scatter_percent:.4f} %"
+        )
+    if np.isfinite(depth_standard_error_percent):
+        params["Transit depth data-fit standard-error estimate"] = (
+            f"+/- {depth_standard_error_percent:.4f} %"
+        )
+    if np.isfinite(baseline_red_noise_percent):
+        params["Flux baseline red-noise uncertainty"] = (
+            f"+/- {baseline_red_noise_percent:.4f} %"
+        )
+    if np.isfinite(baseline_standard_error_percent):
+        params["Flux baseline standard-error estimate"] = (
+            f"+/- {baseline_standard_error_percent:.4f} %"
+        )
+    if np.isfinite(red_noise_beta):
+        params["Red-noise beta factor"] = f"{red_noise_beta:.3f}"
+    if rprs_uncertainty_basis:
+        params["Rp/R* uncertainty basis"] = str(rprs_uncertainty_basis)
+    fallback_note = empirical_uncertainty.get('rprs_prior_fallback_note')
+    if fallback_note:
+        params["Rp/R* prior fallback note"] = str(fallback_note)
+
+    beta_bins = empirical_uncertainty.get('red_noise_beta_bin_sizes')
+    if beta_bins:
+        params["Red-noise beta bin sizes"] = ", ".join(str(int(item)) for item in beta_bins)
+
+    in_count = empirical_uncertainty.get('in_transit_point_count')
+    out_count = empirical_uncertainty.get('out_of_transit_point_count')
+    try:
+        in_count = int(in_count)
+        out_count = int(out_count)
+    except (TypeError, ValueError):
+        in_count = None
+        out_count = None
+    if in_count is not None and out_count is not None:
+        params["Data-fit uncertainty point counts"] = (
+            f"{in_count} in transit, {out_count} out of transit"
+        )
+
+    if np.isfinite(residual_scatter_percent):
+        params["Flux residual scatter around model"] = (
+            f"{residual_scatter_percent:.4f} %"
+        )
+    if rprs_prior_fallback:
+        params["Uncertainty interpretation note"] = (
+            "The primary Rp/R* and radius-ratio area-depth uncertainties use the input "
+            "prior Rp/R* value with a data-only red-noise uncertainty because the sampled "
+            "Rp/R* posterior was pinned against a search bound and automatic Rp/R* "
+            "posterior expansion was disabled. Tmid, a/Rs, inclination, and impact "
+            "parameter remain fitted parameters; their primary uncertainties apply the "
+            "same residual time-binning beta factor to the posterior uncertainties. "
+            "The flux baseline red-noise uncertainty is the out-of-transit baseline "
+            "component used for the final-plot baseline band."
+        )
+    else:
+        params["Uncertainty interpretation note"] = (
+            "The primary Rp/R* and radius-ratio area-depth uncertainties use model+red-noise "
+            "when available. The red-noise uncertainty inflates the data-fit standard error "
+            "by a residual time-binning beta factor before combining it with the model "
+            "posterior. The flux baseline red-noise uncertainty is the out-of-transit "
+            "baseline component used for the final-plot baseline band; the transit-depth "
+            "red-noise uncertainty already includes both the in-transit and baseline terms. "
+            "The same residual time-binning beta factor is applied to the posterior "
+            "uncertainties for Tmid, a/Rs, inclination, and impact parameter when reporting "
+            "their primary model+red-noise uncertainties. "
+            "The flux-scatter equivalent is also shown as a diagnostic of the full residual "
+            "scatter around the model."
+        )
+    return params
+
+
 def build_aavso_photometry_metadata(photometry_info):
     if not isinstance(photometry_info, dict):
         return {}
@@ -836,6 +1293,9 @@ def build_aavso_frame_filtering_metadata(fit, frame_filtering_info):
             int((diagnostic or {}).get('dropped_point_count', 0))
             for diagnostic in diagnostics
         )
+    final_residual_rejection = getattr(fit, 'final_residual_rejection', None)
+    if isinstance(final_residual_rejection, dict) and final_residual_rejection:
+        payload['final_residual_rejection'] = aavso_json_safe(final_residual_rejection)
     return payload
 
 
@@ -874,7 +1334,7 @@ def format_percent_parameter_with_error(value, error):
     return f"{text} [%]" if text is not None else None
 
 
-def formatted_transit_depth_parameters(fit, planet_dict=None, limb_darkening=None):
+def formatted_transit_depth_parameters(fit, planet_dict=None, limb_darkening=None, empirical_uncertainty=None):
     prior_parameters = planet_dict_transit_parameters(
         planet_dict,
         limb_darkening=limb_darkening,
@@ -897,24 +1357,93 @@ def formatted_transit_depth_parameters(fit, planet_dict=None, limb_darkening=Non
         text = format_percent_parameter_with_error(summary.get(value_key), summary.get(error_key))
         if text is not None:
             entries[label] = text
+
+    empirical_uncertainty = empirical_uncertainty or {}
+    if empirical_uncertainty.get('available'):
+        area_depth = finite_float(summary.get('area_depth'))
+        rprs = finite_float(empirical_uncertainty.get('rprs'))
+        rprs_prior_fallback = bool(empirical_uncertainty.get('rprs_prior_fallback_applied'))
+
+        def area_error_percent_from_rprs_error(error):
+            error = finite_float(error)
+            if np.isfinite(area_depth) and np.isfinite(rprs) and np.isfinite(error) and error >= 0:
+                return float(200.0 * abs(rprs) * error)
+            return np.nan
+
+        model_area_error = area_error_percent_from_rprs_error(
+            empirical_uncertainty.get('model_rprs_uncertainty')
+        )
+        data_area_error = area_error_percent_from_rprs_error(
+            empirical_uncertainty.get('data_rprs_uncertainty')
+        )
+        combined_area_error = area_error_percent_from_rprs_error(
+            empirical_uncertainty.get('combined_rprs_uncertainty')
+        )
+        flux_scatter_area_error = area_error_percent_from_rprs_error(
+            empirical_uncertainty.get('data_rprs_flux_scatter_uncertainty')
+        )
+        if np.isfinite(area_depth) and np.isfinite(combined_area_error):
+            combined_text = format_percent_parameter_with_error(area_depth, combined_area_error)
+            if combined_text is not None:
+                entries[AREA_DEPTH_LABEL] = combined_text
+                if rprs_prior_fallback:
+                    entries[f"{AREA_DEPTH_LABEL} prior-assumed data-only uncertainty"] = combined_text
+                else:
+                    entries[f"{AREA_DEPTH_LABEL} model+red-noise uncertainty"] = combined_text
+        if not rprs_prior_fallback and np.isfinite(area_depth) and np.isfinite(model_area_error):
+            text = format_percent_parameter_with_error(area_depth, model_area_error)
+            if text is not None:
+                entries[f"{AREA_DEPTH_LABEL} model-fit uncertainty"] = text
+        if np.isfinite(area_depth) and np.isfinite(data_area_error):
+            text = format_percent_parameter_with_error(area_depth, data_area_error)
+            if text is not None:
+                if rprs_prior_fallback:
+                    entries[f"{AREA_DEPTH_LABEL} prior-assumed data-fit uncertainty"] = text
+                else:
+                    entries[f"{AREA_DEPTH_LABEL} data-fit red-noise uncertainty"] = text
+        if np.isfinite(area_depth) and np.isfinite(flux_scatter_area_error):
+            text = format_percent_parameter_with_error(area_depth, flux_scatter_area_error)
+            if text is not None:
+                entries[f"{AREA_DEPTH_LABEL} flux-scatter equivalent"] = text
     return entries
 
 
-def fit_impact_parameter_value_error(fit):
+def empirical_red_noise_error_scale(empirical_uncertainty):
+    empirical_uncertainty = empirical_uncertainty or {}
+    if not empirical_uncertainty.get('available'):
+        return 1.0
+
+    beta = finite_float(empirical_uncertainty.get('red_noise_beta_factor'))
+    if np.isfinite(beta) and beta > 1.0:
+        return float(beta)
+    return 1.0
+
+
+def fit_parameter_model_data_uncertainty(fit, parameter_name, empirical_uncertainty=None):
+    errors = getattr(fit, 'errors', {}) or {}
+    model_error = finite_float(errors.get(parameter_name))
+    if not np.isfinite(model_error) or model_error < 0:
+        return np.nan
+
+    return float(model_error * empirical_red_noise_error_scale(empirical_uncertainty))
+
+
+def fit_impact_parameter_value_error(fit, errors_override=None):
     parameters = getattr(fit, 'parameters', {}) or {}
     errors = getattr(fit, 'errors', {}) or {}
+    errors_override = errors_override or {}
     sample_parameters = getattr(fit, 'sample_parameters', {}) or {}
     sample_errors = getattr(fit, 'sample_errors', {}) or {}
 
     if 'b' in sample_parameters:
         impact_parameter = finite_float(sample_parameters.get('b'))
-        impact_error = finite_float(sample_errors.get('b'))
+        impact_error = finite_float(errors_override.get('b'), finite_float(sample_errors.get('b')))
         if np.isfinite(impact_parameter):
             return impact_parameter, impact_error
 
     if 'b' in parameters:
         impact_parameter = finite_float(parameters.get('b'))
-        impact_error = finite_float(errors.get('b'))
+        impact_error = finite_float(errors_override.get('b'), finite_float(errors.get('b')))
         if np.isfinite(impact_parameter):
             return impact_parameter, impact_error
 
@@ -933,8 +1462,8 @@ def fit_impact_parameter_value_error(fit):
     inc_rad = np.deg2rad(inc)
     impact_parameter = scale_factor * ars * np.cos(inc_rad)
 
-    ars_error = finite_float(errors.get('ars'))
-    inc_error = finite_float(errors.get('inc'))
+    ars_error = finite_float(errors_override.get('ars'), finite_float(errors.get('ars')))
+    inc_error = finite_float(errors_override.get('inc'), finite_float(errors.get('inc')))
     if np.isfinite(ars_error) and np.isfinite(inc_error):
         impact_error = np.hypot(
             scale_factor * np.cos(inc_rad) * ars_error,
@@ -983,6 +1512,7 @@ class OutputFiles:
 
         transit_qc = getattr(self.fit, 'transit_qc', None)
         fit_quality = build_fit_quality_metadata(self.fit)
+        empirical_uncertainty = fit_empirical_transit_uncertainty(self.fit, fit_quality=fit_quality)
         qc_residual_scatter = np.nan
         if isinstance(transit_qc, dict):
             qc_residual_scatter = transit_qc.get('residual_scatter', np.nan)
@@ -1000,15 +1530,43 @@ class OutputFiles:
                         qc_residual_scatter = float(abs(residuals.reshape(-1)[0]) / median_flux)
 
         headline_params = format_transit_qc_headline_final_params(transit_qc)
+        rprs_report_error = finite_float(empirical_uncertainty.get('combined_rprs_uncertainty'))
+        if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
+            rprs_report_error = self.fit.errors['rprs']
+        tmid_report_error = fit_parameter_model_data_uncertainty(
+            self.fit,
+            'tmid',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if not np.isfinite(tmid_report_error) or tmid_report_error < 0:
+            tmid_report_error = self.fit.errors['tmid']
+        inc_report_error = fit_parameter_model_data_uncertainty(
+            self.fit,
+            'inc',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if not np.isfinite(inc_report_error) or inc_report_error < 0:
+            inc_report_error = self.fit.errors['inc']
+        ars_report_error = fit_parameter_model_data_uncertainty(
+            self.fit,
+            'ars',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if not np.isfinite(ars_report_error) or ars_report_error < 0:
+            ars_report_error = self.fit.errors.get('ars', np.nan)
         core_params = {
-            "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
-                                       f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
-            "Ratio of Planet to Stellar Radius (Rp/R*)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
-                                                         f"{round_to_2(self.fit.errors['rprs'])}",
-            "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
-                                                    f"{round_to_2(self.fit.errors['inc'])} ",
+            "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], tmid_report_error)} +/- "
+                                       f"{round_to_2(tmid_report_error)} BJD_TDB",
+            "Ratio of Planet to Stellar Radius (Rp/R*)": f"{round_to_2(self.fit.parameters['rprs'], rprs_report_error)} +/- "
+                                                         f"{round_to_2(rprs_report_error)}",
+            "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], inc_report_error)} +/- "
+                                                    f"{round_to_2(inc_report_error)} ",
         }
-        depth_params = formatted_transit_depth_parameters(self.fit, self.p_dict)
+        depth_params = formatted_transit_depth_parameters(
+            self.fit,
+            self.p_dict,
+            empirical_uncertainty=empirical_uncertainty,
+        )
         params_num = {
             **headline_params,
             "Mid-Transit Time (Tmid)": core_params["Mid-Transit Time (Tmid)"],
@@ -1018,14 +1576,62 @@ class OutputFiles:
         }
         ars_text = format_parameter_with_error(
             self.fit.parameters.get('ars'),
-            self.fit.errors.get('ars'),
+            ars_report_error,
         )
         if ars_text is not None:
             params_num["Ratio of Distance to Stellar Radius (a/Rs)"] = ars_text
-        impact_parameter, impact_error = fit_impact_parameter_value_error(self.fit)
+        model_impact_parameter, model_impact_error = fit_impact_parameter_value_error(self.fit)
+        impact_error_overrides = {
+            'ars': ars_report_error,
+            'inc': inc_report_error,
+        }
+        if (
+            np.isfinite(model_impact_error)
+            and ('b' in (getattr(self.fit, 'parameters', {}) or {})
+                 or 'b' in (getattr(self.fit, 'sample_parameters', {}) or {}))
+        ):
+            impact_error_overrides['b'] = model_impact_error * empirical_red_noise_error_scale(
+                empirical_uncertainty
+            )
+        impact_parameter, impact_error = fit_impact_parameter_value_error(
+            self.fit,
+            errors_override=impact_error_overrides,
+        )
         impact_text = format_parameter_with_error(impact_parameter, impact_error)
         if impact_text is not None:
             params_num["Impact Parameter (b)"] = impact_text
+        if empirical_uncertainty.get('available'):
+            tmid_model_text = (
+                f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
+                f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB"
+            )
+            tmid_combined_text = core_params["Mid-Transit Time (Tmid)"]
+            params_num["Mid-Transit Time (Tmid) model-fit uncertainty"] = tmid_model_text
+            params_num["Mid-Transit Time (Tmid) model+red-noise uncertainty"] = tmid_combined_text
+
+            inc_model_text = (
+                f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
+                f"{round_to_2(self.fit.errors['inc'])} "
+            )
+            params_num["Orbital Inclination (inc) model-fit uncertainty"] = inc_model_text
+            params_num["Orbital Inclination (inc) model+red-noise uncertainty"] = core_params[
+                "Orbital Inclination (inc)"
+            ]
+
+            ars_model_text = format_parameter_with_error(
+                self.fit.parameters.get('ars'),
+                self.fit.errors.get('ars'),
+            )
+            if ars_model_text is not None:
+                params_num["Ratio of Distance to Stellar Radius (a/Rs) model-fit uncertainty"] = ars_model_text
+            if ars_text is not None:
+                params_num["Ratio of Distance to Stellar Radius (a/Rs) model+red-noise uncertainty"] = ars_text
+
+            impact_model_text = format_parameter_with_error(model_impact_parameter, model_impact_error)
+            if impact_model_text is not None:
+                params_num["Impact Parameter (b) model-fit uncertainty"] = impact_model_text
+            if impact_text is not None:
+                params_num["Impact Parameter (b) model+red-noise uncertainty"] = impact_text
         if getattr(self.fit, 'ns_type', None) is not None:
             params_num["Fit parameter point estimate"] = (
                 "Best-fit likelihood point; uncertainties are posterior spread."
@@ -1042,9 +1648,13 @@ class OutputFiles:
         sparse_posterior_note = getattr(self.fit, 'sparse_posterior_live_point_extension_note', None)
         if sparse_posterior_note:
             params_num["Sparse posterior live-point extension note"] = str(sparse_posterior_note)
+        final_residual_note = getattr(self.fit, 'final_residual_rejection_note', None)
+        if final_residual_note:
+            params_num["Final residual rejection note"] = str(final_residual_note)
         if np.isfinite(qc_residual_scatter):
             params_num["Residual scatter around full model fit"] = f"{qc_residual_scatter * 100.0:.4f} %"
         params_num.update(format_fit_quality_final_params(fit_quality))
+        params_num.update(format_empirical_transit_uncertainty_final_params(empirical_uncertainty))
         params_num.update(format_ktmf_decision_final_params(self.fit, photometry_info))
         if getattr(self.fit, 'airmass_fit_skipped', False):
             params_num["Airmass correction"] = getattr(
@@ -1079,6 +1689,11 @@ class OutputFiles:
             qc_eebls_depth_snr = transit_qc.get('eebls_depth_snr', np.nan)
             qc_deviation_metric = transit_qc.get('deviation_from_expected_value', np.nan)
             qc_rprs_deviation_sigma = transit_qc.get('rprs_deviation_sigma', np.nan)
+            qc_rprs_deviation_fit_unc = transit_qc.get('rprs_deviation_fit_unc', np.nan)
+            qc_rprs_deviation_model_unc = transit_qc.get('rprs_deviation_model_fit_unc', np.nan)
+            qc_rprs_deviation_data_unc = transit_qc.get('rprs_deviation_data_fit_unc', np.nan)
+            qc_rprs_deviation_expected_unc = transit_qc.get('rprs_deviation_expected_unc', np.nan)
+            qc_rprs_deviation_comparison_unc = transit_qc.get('rprs_deviation_unc', np.nan)
             qc_sigma_threshold = transit_qc.get('deviation_sigma_threshold', np.nan)
             qc_ktmf = transit_qc.get('ktmf_metric', np.nan)
             qc_ktmf_contributions = transit_qc.get('ktmf_contributions') or []
@@ -1103,6 +1718,26 @@ class OutputFiles:
                 params_num["Expected-value QC threshold"] = f"{qc_sigma_threshold:.2f} sigma"
             if np.isfinite(qc_rprs_deviation_sigma):
                 params_num["Expected-value Rp/R* deviation"] = f"{qc_rprs_deviation_sigma:.2f} sigma"
+            if np.isfinite(qc_rprs_deviation_fit_unc):
+                params_num["Expected-value Rp/R* fit uncertainty used"] = (
+                    f"+/- {round_to_2(qc_rprs_deviation_fit_unc)}"
+                )
+            if np.isfinite(qc_rprs_deviation_model_unc):
+                params_num["Expected-value Rp/R* model-fit uncertainty"] = (
+                    f"+/- {round_to_2(qc_rprs_deviation_model_unc)}"
+                )
+            if np.isfinite(qc_rprs_deviation_data_unc):
+                params_num["Expected-value Rp/R* data-fit red-noise uncertainty"] = (
+                    f"+/- {round_to_2(qc_rprs_deviation_data_unc)}"
+                )
+            if np.isfinite(qc_rprs_deviation_expected_unc):
+                params_num["Expected-value Rp/R* prior uncertainty"] = (
+                    f"+/- {round_to_2(qc_rprs_deviation_expected_unc)}"
+                )
+            if np.isfinite(qc_rprs_deviation_comparison_unc):
+                params_num["Expected-value Rp/R* total comparison uncertainty"] = (
+                    f"+/- {round_to_2(qc_rprs_deviation_comparison_unc)}"
+                )
             if np.isfinite(qc_ktmf):
                 params_num["KTMF"] = f"{qc_ktmf:.2f} / 5.00"
             for contribution_index, contribution in enumerate(qc_ktmf_contributions, start=1):

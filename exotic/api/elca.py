@@ -903,6 +903,63 @@ class lc_fitter(object):
             return None
         return model - model_uncertainty, model + model_uncertainty
 
+    def _empirical_uncertainty_value(self, key):
+        empirical_uncertainty = getattr(self, 'empirical_transit_uncertainty', None)
+        if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+            return np.nan
+        try:
+            value = float(empirical_uncertainty.get(key))
+        except (TypeError, ValueError):
+            return np.nan
+        return value if np.isfinite(value) else np.nan
+
+    def _empirical_baseline_uncertainty_fraction(self):
+        value = self._empirical_uncertainty_value('baseline_red_noise_uncertainty_fraction')
+        if not np.isfinite(value) or value <= 0:
+            value = self._empirical_uncertainty_value('depth_uncertainty_fraction')
+        return value if np.isfinite(value) and value > 0 else np.nan
+
+    def _baseline_envelope_with_empirical_floor(self, envelope):
+        if envelope is None:
+            return None
+
+        lower, upper = envelope
+        lower = np.asarray(lower, dtype=float)
+        upper = np.asarray(upper, dtype=float)
+        empirical_baseline_uncertainty = self._empirical_baseline_uncertainty_fraction()
+        if not np.isfinite(empirical_baseline_uncertainty) or empirical_baseline_uncertainty <= 0:
+            return lower, upper
+
+        existing_width = np.maximum(1.0 - lower, upper - 1.0)
+        combined_width = np.sqrt(
+            np.where(np.isfinite(existing_width), existing_width, 0.0) ** 2
+            + empirical_baseline_uncertainty ** 2
+        )
+        return 1.0 - combined_width, 1.0 + combined_width
+
+    def _combined_rprs_uncertainty_for_reporting(self):
+        value = self._empirical_uncertainty_value('combined_rprs_uncertainty')
+        if np.isfinite(value) and value >= 0:
+            return value
+        try:
+            value = float(self.errors.get('rprs'))
+        except (TypeError, ValueError):
+            return np.nan
+        return value if np.isfinite(value) and value >= 0 else np.nan
+
+    def _model_data_uncertainty_for_reporting(self, parameter_name):
+        try:
+            value = float(self.errors.get(parameter_name))
+        except (TypeError, ValueError):
+            return np.nan
+        if not np.isfinite(value) or value < 0:
+            return np.nan
+
+        beta = self._empirical_uncertainty_value('red_noise_beta_factor')
+        if not np.isfinite(beta) or beta < 1.0:
+            beta = 1.0
+        return value * beta
+
     def _posterior_baseline_model_uncertainty(self, times, sigma=1.0):
         if getattr(self, 'results', None) is None or np.ndim(getattr(self, 'airmass', np.array([]))) == 2:
             return None
@@ -1046,7 +1103,7 @@ class lc_fitter(object):
 
         posterior_envelope = self._posterior_baseline_model_uncertainty(times, sigma=sigma)
         if posterior_envelope is not None:
-            return posterior_envelope
+            return self._baseline_envelope_with_empirical_floor(posterior_envelope)
 
         try:
             best_parameters = self._values_with_analytic_flux_baseline(self.parameters)
@@ -1121,8 +1178,12 @@ class lc_fitter(object):
 
         baseline_uncertainty = np.sqrt(variance)
         if not np.any(np.isfinite(baseline_uncertainty) & (baseline_uncertainty > 0)):
-            return None
-        return 1.0 - baseline_uncertainty, 1.0 + baseline_uncertainty
+            empirical_baseline_uncertainty = self._empirical_baseline_uncertainty_fraction()
+            if not np.isfinite(empirical_baseline_uncertainty) or empirical_baseline_uncertainty <= 0:
+                return None
+        return self._baseline_envelope_with_empirical_floor(
+            (1.0 - baseline_uncertainty, 1.0 + baseline_uncertainty)
+        )
 
     def _plot_transit_model_uncertainty(self, ax, x_values, times, sort_index, label=None):
         envelope = self.transit_model_uncertainty(times)
@@ -3575,15 +3636,21 @@ class lc_fitter(object):
         axs[0].grid(True, ls='--')
 
         rprs2 = self.parameters['rprs'] ** 2
-        rprs2err = 2 * self.parameters['rprs'] * self.errors['rprs']
-        lclabel1 = r"Area ratio $(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" % (
+        rprs_error_for_depth = self._combined_rprs_uncertainty_for_reporting()
+        rprs2err = 2 * self.parameters['rprs'] * rprs_error_for_depth
+        rprs_prior_marker = " (Prior)" if getattr(self, 'rprs_prior_fallback_applied', False) else ""
+        lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s%s" % (
             str(round_to_2(rprs2, rprs2err)),
-            str(round_to_2(rprs2err))
+            str(round_to_2(rprs2err)),
+            rprs_prior_marker,
         )
 
+        tmid_error_for_plot = self._model_data_uncertainty_for_reporting('tmid')
+        if not np.isfinite(tmid_error_for_plot):
+            tmid_error_for_plot = self.errors.get('tmid', 0)
         lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" % (
-            str(round_to_2(self.parameters['tmid'], self.errors.get('tmid', 0))),
-            str(round_to_2(self.errors.get('tmid', 0)))
+            str(round_to_2(self.parameters['tmid'], tmid_error_for_plot)),
+            str(round_to_2(tmid_error_for_plot))
         )
 
         lclabel = lclabel1 + "\n" + lclabel2
@@ -4104,7 +4171,7 @@ class glc_fitter(lc_fitter):
             rprs2 = self.lc_data[0]['priors']['rprs']**2
             rprs2err = 2*self.lc_data[0]['priors']['rprs']*self.lc_data[0]['errors']['rprs']
 
-        lclabel1 = r"Area ratio $(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
+        lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
             str(round_to_2(rprs2, rprs2err)),
             str(round_to_2(rprs2err))
         )
@@ -4247,7 +4314,7 @@ class glc_fitter(lc_fitter):
 
         rprs2 = self.parameters['rprs']**2
         rprs2err = 2*self.parameters['rprs']*self.errors['rprs']
-        lclabel1 = r"Area ratio $(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
+        lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
             str(round_to_2(rprs2, rprs2err)),
             str(round_to_2(rprs2err))
         )

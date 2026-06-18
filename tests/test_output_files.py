@@ -10,6 +10,7 @@ from exotic.output_files import (
     PRIOR_OBSERVABLE_DEPTH_LABEL,
     AIDOutputFiles,
     OutputFiles,
+    fit_empirical_transit_uncertainty,
     fit_impact_parameter_value_error,
     save_comp_star_calibration_summary,
 )
@@ -629,6 +630,171 @@ def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertaintie
     assert final_params["Orbital Inclination (inc)"] == "88.5 +/- 0.2 "
     assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.0 +/- 0.4"
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
+
+
+def test_fit_empirical_transit_uncertainty_uses_residual_scatter_and_point_counts():
+    fit = DummyFit()
+    fit.parameters["rprs"] = 0.1
+    fit.errors["rprs"] = 0.002
+    fit.transit = np.array([1.0, 1.0, 0.99, 0.99, 1.0, 1.0])
+    fit.model = np.array(fit.transit)
+    fit.data = fit.model + np.array([0.0, 0.01, -0.01, 0.01, -0.01, 0.0])
+    fit.residuals = fit.data - fit.model
+    fit.dataerr = np.full_like(fit.model, 0.01)
+    fit.airmass_model = np.ones_like(fit.model)
+
+    empirical = fit_empirical_transit_uncertainty(fit)
+
+    assert empirical["available"] is True
+    assert empirical["in_transit_point_count"] == 2
+    assert empirical["out_of_transit_point_count"] == 4
+    assert empirical["data_rprs_uncertainty"] == pytest.approx(
+        empirical["depth_uncertainty_fraction"] / 0.2
+    )
+    assert empirical["depth_flux_scatter_fraction"] == pytest.approx(
+        empirical["residual_scatter"]
+    )
+    assert empirical["data_rprs_standard_error"] == pytest.approx(
+        empirical["depth_standard_error_fraction"] / 0.2
+    )
+    assert empirical["data_rprs_flux_scatter_uncertainty"] == pytest.approx(
+        empirical["depth_flux_scatter_fraction"] / 0.2
+    )
+    assert empirical["red_noise_beta_factor"] >= 1.0
+    assert empirical["data_rprs_uncertainty"] >= empirical["data_rprs_standard_error"]
+    assert empirical["data_rprs_flux_scatter_uncertainty"] > empirical["data_rprs_standard_error"]
+    assert empirical["combined_rprs_uncertainty"] > empirical["model_rprs_uncertainty"]
+    assert empirical["baseline_red_noise_uncertainty_fraction"] >= (
+        empirical["baseline_standard_error_fraction"]
+    )
+    assert empirical["depth_uncertainty_fraction"] >= empirical["baseline_red_noise_uncertainty_fraction"]
+
+
+def test_fit_empirical_transit_uncertainty_uses_data_only_for_prior_fallback():
+    fit = DummyFit()
+    fit.parameters["rprs"] = 0.1
+    fit.errors["rprs"] = 0.5
+    fit.rprs_prior_fallback_applied = True
+    fit.rprs_prior_fallback_note = "Applied Rp/R* prior fallback."
+    fit.transit = np.array([1.0, 1.0, 0.99, 0.99, 1.0, 1.0])
+    fit.model = np.array(fit.transit)
+    fit.data = fit.model + np.array([0.0, 0.01, -0.01, 0.01, -0.01, 0.0])
+    fit.residuals = fit.data - fit.model
+    fit.dataerr = np.full_like(fit.model, 0.01)
+    fit.airmass_model = np.ones_like(fit.model)
+
+    empirical = fit_empirical_transit_uncertainty(fit)
+
+    assert empirical["rprs_uncertainty_basis"] == "prior_assumed_data_only"
+    assert np.isnan(empirical["model_rprs_uncertainty"])
+    assert empirical["combined_rprs_uncertainty"] == pytest.approx(
+        empirical["data_rprs_uncertainty"]
+    )
+    assert empirical["conservative_rprs_uncertainty"] == pytest.approx(
+        empirical["data_rprs_uncertainty"]
+    )
+
+
+def test_final_planetary_params_reports_model_and_red_noise_uncertainties(tmp_path):
+    fit = DummyFit()
+    fit.parameters["rprs"] = 0.1
+    fit.errors["rprs"] = 0.002
+    fit.transit = np.array([1.0, 1.0, 0.99, 0.99, 1.0, 1.0])
+    fit.model = np.array(fit.transit)
+    fit.data = fit.model + np.array([0.0, 0.01, -0.01, 0.01, -0.01, 0.0])
+    fit.residuals = fit.data - fit.model
+    fit.dataerr = np.full_like(fit.model, 0.01)
+    fit.airmass_model = np.ones_like(fit.model)
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Ratio of Planet to Stellar Radius (Rp/R*)"] == (
+        final_params["Ratio of Planet to Stellar Radius (Rp/R*) model+red-noise uncertainty"]
+    )
+    assert final_params["Ratio of Planet to Stellar Radius (Rp/R*) model-fit uncertainty"] == (
+        "0.1 +/- 0.002"
+    )
+    assert "Ratio of Planet to Stellar Radius (Rp/R*) data-fit red-noise uncertainty" in final_params
+    assert "Ratio of Planet to Stellar Radius (Rp/R*) model+red-noise uncertainty" in final_params
+    assert "Ratio of Planet to Stellar Radius (Rp/R*) data-fit standard-error estimate" in final_params
+    assert "Ratio of Planet to Stellar Radius (Rp/R*) flux-scatter equivalent" in final_params
+    assert "Transit depth red-noise uncertainty" in final_params
+    assert "Transit depth data-fit standard-error estimate" in final_params
+    assert "Transit depth flux-scatter equivalent" in final_params
+    assert final_params[AREA_DEPTH_LABEL] == (
+        final_params[f"{AREA_DEPTH_LABEL} model+red-noise uncertainty"]
+    )
+    assert final_params["Mid-Transit Time (Tmid)"] == (
+        final_params["Mid-Transit Time (Tmid) model+red-noise uncertainty"]
+    )
+    assert "Mid-Transit Time (Tmid) model-fit uncertainty" in final_params
+    assert final_params["Orbital Inclination (inc)"] == (
+        final_params["Orbital Inclination (inc) model+red-noise uncertainty"]
+    )
+    assert "Orbital Inclination (inc) model-fit uncertainty" in final_params
+    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == (
+        final_params["Ratio of Distance to Stellar Radius (a/Rs) model+red-noise uncertainty"]
+    )
+    assert "Ratio of Distance to Stellar Radius (a/Rs) model-fit uncertainty" in final_params
+    assert final_params["Impact Parameter (b)"] == (
+        final_params["Impact Parameter (b) model+red-noise uncertainty"]
+    )
+    assert "Impact Parameter (b) model-fit uncertainty" in final_params
+    assert f"{AREA_DEPTH_LABEL} model-fit uncertainty" in final_params
+    assert f"{AREA_DEPTH_LABEL} data-fit red-noise uncertainty" in final_params
+    assert "Flux baseline red-noise uncertainty" in final_params
+    assert "Flux baseline standard-error estimate" in final_params
+    assert "Red-noise beta factor" in final_params
+    assert final_params["Data-fit uncertainty point counts"] == "2 in transit, 4 out of transit"
+    assert "primary Rp/R*" in final_params["Uncertainty interpretation note"]
+    assert "baseline component" in final_params["Uncertainty interpretation note"]
+    assert "time-binning" in final_params["Uncertainty interpretation note"]
+
+
+def test_final_planetary_params_reports_prior_fallback_data_only_uncertainty(tmp_path):
+    fit = DummyFit()
+    fit.parameters["rprs"] = 0.1
+    fit.errors["rprs"] = 0.5
+    fit.rprs_prior_fallback_applied = True
+    fit.rprs_prior_fallback_prior_value = 0.1
+    fit.rprs_prior_fallback_original_fit_value = 0.11
+    fit.rprs_prior_fallback_data_uncertainty = 0.02
+    fit.rprs_prior_fallback_note = "Applied Rp/R* prior fallback."
+    fit.transit = np.array([1.0, 1.0, 0.99, 0.99, 1.0, 1.0])
+    fit.model = np.array(fit.transit)
+    fit.data = fit.model + np.array([0.0, 0.01, -0.01, 0.01, -0.01, 0.0])
+    fit.residuals = fit.data - fit.model
+    fit.dataerr = np.full_like(fit.model, 0.01)
+    fit.airmass_model = np.ones_like(fit.model)
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Rp/R* uncertainty basis"] == "prior_assumed_data_only"
+    assert not any("Rp/R*) model-fit uncertainty" in key for key in final_params)
+    assert not any("Rp/R*) model+standard-error" in key for key in final_params)
+    assert "input prior Rp/R* value with a data-only" in final_params["Uncertainty interpretation note"]
+    assert "Rp/R* prior fallback note" in final_params
+    assert any("prior-assumed data-only uncertainty" in key for key in final_params)
 
 
 def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):

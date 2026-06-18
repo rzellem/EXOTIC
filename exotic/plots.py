@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 from pathlib import Path
+import textwrap
 
 try:
     from utils import (
@@ -22,6 +23,21 @@ except ImportError:
         magnitude_text,
         normalized_magnitude_error,
         safe_output_filename,
+    )
+
+try:
+    from output_files import (
+        empirical_red_noise_error_scale,
+        fit_empirical_transit_uncertainty,
+        fit_impact_parameter_value_error,
+        fit_parameter_model_data_uncertainty,
+    )
+except ImportError:
+    from .output_files import (
+        empirical_red_noise_error_scale,
+        fit_empirical_transit_uncertainty,
+        fit_impact_parameter_value_error,
+        fit_parameter_model_data_uncertainty,
     )
 
 plt.style.use(astropy_mpl_style)
@@ -695,7 +711,196 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
 
 
 # Plotting Final Lightcurve
+def _final_lightcurve_model_grid(fit, high_res):
+    if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):
+        x_values = np.asarray(fit.phase_upsample, dtype=float)
+        model = np.asarray(fit.transit_upsample, dtype=float)
+        times = getattr(fit, 'time_upsample', None)
+        if times is not None:
+            times = np.asarray(times, dtype=float)
+            if times.shape != model.shape:
+                times = None
+        return x_values, model, times
+
+    phase = np.asarray(getattr(fit, 'phase', np.array([])), dtype=float)
+    model = np.asarray(high_res, dtype=float)
+    if phase.size == 0 or model.size == 0:
+        return None, None, None
+    x_values = np.linspace(np.nanmin(phase), np.nanmax(phase), model.size)
+    return x_values, model, None
+
+
+def _transit_model_uncertainty_envelope_for_grid(fit, times, model_shape):
+    if times is None or times.shape != model_shape:
+        return None
+
+    uncertainty_func = getattr(fit, 'transit_model_uncertainty', None)
+    if not callable(uncertainty_func):
+        return None
+
+    try:
+        envelope = uncertainty_func(times)
+    except Exception:
+        return None
+    if envelope is None or len(envelope) != 2:
+        return None
+
+    lower = np.asarray(envelope[0], dtype=float)
+    upper = np.asarray(envelope[1], dtype=float)
+    if lower.shape != model_shape or upper.shape != model_shape:
+        return None
+    return lower, upper
+
+
+def _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res):
+    empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
+    if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+        empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
+    if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+        return False
+
+    depth_uncertainty = empirical_uncertainty.get('depth_uncertainty_fraction')
+    try:
+        depth_uncertainty = float(depth_uncertainty)
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(depth_uncertainty) or depth_uncertainty <= 0:
+        return False
+
+    x_values, model, times = _final_lightcurve_model_grid(fit, high_res)
+    if x_values is None or model is None or x_values.shape != model.shape:
+        return False
+
+    finite = np.isfinite(x_values) & np.isfinite(model)
+    if not np.any(finite):
+        return False
+
+    empirical_lower = model - depth_uncertainty
+    empirical_upper = model + depth_uncertainty
+    sort_index = np.argsort(x_values)
+    x_sorted = x_values[sort_index]
+    finite_sorted = finite[sort_index]
+    empirical_lower_sorted = empirical_lower[sort_index]
+    empirical_upper_sorted = empirical_upper[sort_index]
+
+    model_envelope = _transit_model_uncertainty_envelope_for_grid(fit, times, model.shape)
+    drew_band = False
+    def next_label():
+        nonlocal drew_band
+        drew_band = True
+        return '_nolegend_'
+
+    if model_envelope is not None:
+        model_lower, model_upper = model_envelope
+        model_lower_sorted = np.asarray(model_lower, dtype=float)[sort_index]
+        model_upper_sorted = np.asarray(model_upper, dtype=float)[sort_index]
+
+        upper_region = (
+            finite_sorted
+            & np.isfinite(empirical_upper_sorted)
+            & np.isfinite(model_upper_sorted)
+            & (empirical_upper_sorted > model_upper_sorted)
+        )
+        lower_region = (
+            finite_sorted
+            & np.isfinite(empirical_lower_sorted)
+            & np.isfinite(model_lower_sorted)
+            & (empirical_lower_sorted < model_lower_sorted)
+        )
+        if np.any(upper_region):
+            ax_lc.fill_between(
+                x_sorted,
+                model_upper_sorted,
+                empirical_upper_sorted,
+                where=upper_region,
+                interpolate=True,
+                color='#6a1b9a',
+                alpha=0.16,
+                linewidth=0,
+                zorder=2.35,
+                label=next_label(),
+            )
+        if np.any(lower_region):
+            ax_lc.fill_between(
+                x_sorted,
+                empirical_lower_sorted,
+                model_lower_sorted,
+                where=lower_region,
+                interpolate=True,
+                color='#6a1b9a',
+                alpha=0.16,
+                linewidth=0,
+                zorder=2.35,
+                label=next_label(),
+            )
+        return drew_band
+
+    ax_lc.fill_between(
+        x_sorted,
+        empirical_lower_sorted,
+        empirical_upper_sorted,
+        where=finite_sorted,
+        interpolate=True,
+        color='#6a1b9a',
+        alpha=0.14,
+        linewidth=0,
+        zorder=2.0,
+        label=next_label(),
+    )
+    return drew_band
+
+
+def _plot_final_residual_rejected_points(ax_lc, ax_res, fit):
+    rejection = getattr(fit, 'final_residual_rejection', None)
+    if not isinstance(rejection, dict) or not rejection.get('applied'):
+        return
+
+    phase = np.asarray(rejection.get('rejected_phase', []), dtype=float)
+    flux = np.asarray(rejection.get('rejected_flux', []), dtype=float)
+    residual_percent = np.asarray(rejection.get('rejected_residual_percent', []), dtype=float)
+    plot_count = min(phase.size, flux.size, residual_percent.size)
+    if plot_count == 0:
+        return
+
+    phase = phase[:plot_count]
+    flux = flux[:plot_count]
+    residual_percent = residual_percent[:plot_count]
+    finite = np.isfinite(phase) & np.isfinite(flux) & np.isfinite(residual_percent)
+    if not np.any(finite):
+        return
+
+    ax_lc.scatter(
+        phase[finite],
+        flux[finite],
+        marker='x',
+        s=58,
+        linewidths=1.6,
+        color='red',
+        zorder=1200,
+        label='_nolegend_',
+    )
+    ax_res.scatter(
+        phase[finite],
+        residual_percent[finite],
+        marker='x',
+        s=58,
+        linewidths=1.6,
+        color='red',
+        zorder=1200,
+        label='_nolegend_',
+    )
+
+
 def plot_final_lightcurve(fit, high_res, targ_name, save, date):
+    empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
+    if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+        empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
+        if isinstance(empirical_uncertainty, dict) and empirical_uncertainty.get('available'):
+            try:
+                fit.empirical_transit_uncertainty = empirical_uncertainty
+            except Exception:
+                pass
+
     f, (ax_lc, ax_res) = _plot_bestfit_for_lightcurve_png(
         fit,
         show_flux_baseline_label=False,
@@ -704,10 +909,14 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
     )
 
     ax_lc.set_title(targ_name)
+    drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):
         ax_lc.plot(fit.phase_upsample, fit.transit_upsample, 'r', zorder=1000, lw=2)
     else:
         ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r', zorder=1000, lw=2)
+    _plot_final_residual_rejected_points(ax_lc, ax_res, fit)
+    if drew_data_scatter_band:
+        ax_lc.legend(loc='best')
 
     Path(save).mkdir(parents=True, exist_ok=True)
     try:
@@ -716,3 +925,689 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
     except Exception:
         pass
     plt.close()
+
+
+def _plot_scalar(value, default=np.nan):
+    try:
+        result = np.asarray(value, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return default
+    if result.size == 0:
+        return default
+    result = float(result[0])
+    return result if np.isfinite(result) else default
+
+
+def _plot_positive_error(value):
+    value = _plot_scalar(value)
+    if not np.isfinite(value) or value < 0:
+        return np.nan
+    return value
+
+
+def _decimal_places_for_two_sigfig_error(error):
+    error = _plot_positive_error(error)
+    if not np.isfinite(error) or error == 0:
+        return None
+
+    exponent = int(np.floor(np.log10(abs(error))))
+    return max(0, 1 - exponent)
+
+
+def _format_parameter_value(value, error=None, unit="", split_error=False):
+    value = _plot_scalar(value)
+    if not np.isfinite(value):
+        return "n/a"
+
+    suffix = f" {unit}" if unit else ""
+    if error is None:
+        return f"{value:.6f}".rstrip('0').rstrip('.') + suffix
+
+    error = _plot_positive_error(error)
+    if np.isfinite(error):
+        decimal_places = _decimal_places_for_two_sigfig_error(error)
+        if decimal_places is None:
+            decimal_places = 0
+        value_text = f"{value:.{decimal_places}f}"
+        error_text = f"{error:.{decimal_places}f}"
+        if split_error:
+            return f"{value_text}\n+/- {error_text}{suffix}"
+        return f"{value_text} +/- {error_text}{suffix}"
+    return f"{value:.6f}".rstrip('0').rstrip('.') + suffix
+
+
+def _prior_impact_parameter_value_error(planet_dict):
+    ars = _plot_scalar(planet_dict.get('aRs'))
+    inc = _plot_scalar(planet_dict.get('inc'))
+    if not np.isfinite(ars) or not np.isfinite(inc):
+        return np.nan, np.nan
+
+    ecc = _plot_scalar(planet_dict.get('ecc'), 0.0)
+    omega = np.deg2rad(_plot_scalar(planet_dict.get('omega'), 0.0))
+    denominator = 1.0 + ecc * np.sin(omega)
+    if not np.isfinite(denominator) or np.isclose(denominator, 0.0):
+        return np.nan, np.nan
+
+    scale_factor = (1.0 - ecc ** 2) / denominator
+    inc_rad = np.deg2rad(inc)
+    impact_parameter = scale_factor * ars * np.cos(inc_rad)
+
+    ars_error = _plot_positive_error(planet_dict.get('aRsUnc'))
+    inc_error = _plot_positive_error(planet_dict.get('incUnc'))
+    if np.isfinite(ars_error) and np.isfinite(inc_error):
+        impact_error = np.hypot(
+            scale_factor * np.cos(inc_rad) * ars_error,
+            scale_factor * ars * np.sin(inc_rad) * np.deg2rad(inc_error),
+        )
+    else:
+        impact_error = np.nan
+
+    return float(impact_parameter), float(impact_error) if np.isfinite(impact_error) else np.nan
+
+
+def _ephemeris_prior_at_posterior_epoch(planet_dict, posterior_tmid):
+    mid_t = _plot_scalar(planet_dict.get('midT'))
+    period = _plot_scalar(planet_dict.get('pPer'))
+    posterior_tmid = _plot_scalar(posterior_tmid)
+    if not np.isfinite(mid_t) or not np.isfinite(period) or period <= 0 or not np.isfinite(posterior_tmid):
+        return mid_t, _plot_positive_error(planet_dict.get('midTUnc')), None
+
+    epoch = int(np.round((posterior_tmid - mid_t) / period))
+    expected_tmid = mid_t + epoch * period
+
+    error_terms = []
+    mid_t_error = _plot_positive_error(planet_dict.get('midTUnc'))
+    period_error = _plot_positive_error(planet_dict.get('pPerUnc'))
+    if np.isfinite(mid_t_error):
+        error_terms.append(mid_t_error)
+    if np.isfinite(period_error):
+        error_terms.append(abs(epoch) * period_error)
+
+    if error_terms:
+        expected_error = float(np.sqrt(np.sum(np.square(error_terms))))
+    else:
+        expected_error = np.nan
+    return float(expected_tmid), expected_error, epoch
+
+
+def _posterior_parameter_value_error(fit, parameter_key, empirical_uncertainty):
+    parameters = getattr(fit, 'parameters', {}) or {}
+    errors = getattr(fit, 'errors', {}) or {}
+
+    if parameter_key == 'b':
+        errors_override = {}
+        errors = getattr(fit, 'errors', {}) or {}
+        sample_errors = getattr(fit, 'sample_errors', {}) or {}
+        b_error = _plot_positive_error(errors.get('b'))
+        if not np.isfinite(b_error):
+            b_error = _plot_positive_error(sample_errors.get('b'))
+        if np.isfinite(b_error):
+            errors_override['b'] = float(b_error * empirical_red_noise_error_scale(empirical_uncertainty))
+        ars_error = fit_parameter_model_data_uncertainty(
+            fit,
+            'ars',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        inc_error = fit_parameter_model_data_uncertainty(
+            fit,
+            'inc',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if np.isfinite(ars_error):
+            errors_override['ars'] = ars_error
+        if np.isfinite(inc_error):
+            errors_override['inc'] = inc_error
+        return fit_impact_parameter_value_error(fit, errors_override=errors_override)
+
+    value = _plot_scalar(parameters.get(parameter_key))
+    if parameter_key == 'rprs':
+        error = _plot_positive_error(
+            (empirical_uncertainty or {}).get('combined_rprs_uncertainty')
+        )
+        if not np.isfinite(error):
+            error = _plot_positive_error(errors.get(parameter_key))
+        return value, error
+
+    error = fit_parameter_model_data_uncertainty(
+        fit,
+        parameter_key,
+        empirical_uncertainty=empirical_uncertainty,
+    )
+    if not np.isfinite(error):
+        error = _plot_positive_error(errors.get(parameter_key))
+    return value, error
+
+
+def _prior_posterior_comparison_rows(fit, planet_dict):
+    empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
+    if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+        empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
+        if isinstance(empirical_uncertainty, dict) and empirical_uncertainty.get('available'):
+            try:
+                fit.empirical_transit_uncertainty = empirical_uncertainty
+            except Exception:
+                pass
+
+    definitions = [
+        ("Tmid", "tmid", "midT", "midTUnc", "", True),
+        ("Rp/R*", "rprs", "rprs", "rprsUnc", "", False),
+        ("a/Rs", "ars", "aRs", "aRsUnc", "", False),
+        ("Inc.", "inc", "inc", "incUnc", "deg", False),
+        ("b", "b", None, None, "", False),
+    ]
+
+    rows = []
+    rprs_prior_fallback = bool(
+        getattr(fit, 'rprs_prior_fallback_applied', False)
+        or (isinstance(empirical_uncertainty, dict)
+            and empirical_uncertainty.get('rprs_prior_fallback_applied'))
+        or (isinstance(empirical_uncertainty, dict)
+            and empirical_uncertainty.get('rprs_uncertainty_basis') == 'prior_assumed_data_only')
+    )
+    omitted_notes = []
+    for label, parameter_key, prior_key, prior_error_key, unit, split_error in definitions:
+        if parameter_key == 'rprs' and rprs_prior_fallback:
+            prior_value = _plot_scalar(planet_dict.get(prior_key))
+            prior_error = _plot_positive_error(planet_dict.get(prior_error_key))
+            posterior_value, posterior_error = _posterior_parameter_value_error(
+                fit,
+                parameter_key,
+                empirical_uncertainty,
+            )
+            omitted_notes.append(
+                "Rp/R* omitted: prior value assumed, not measured "
+                f"({_format_parameter_value(prior_value, prior_error)}; "
+                f"data-only uncertainty {_format_parameter_value(posterior_value, posterior_error)})."
+            )
+            continue
+
+        posterior_value, posterior_error = _posterior_parameter_value_error(
+            fit,
+            parameter_key,
+            empirical_uncertainty,
+        )
+
+        if parameter_key == 'b':
+            prior_value, prior_error = _prior_impact_parameter_value_error(planet_dict)
+            prior_label = "Prior"
+        elif parameter_key == 'tmid':
+            prior_value, prior_error, _ = _ephemeris_prior_at_posterior_epoch(
+                planet_dict,
+                posterior_value,
+            )
+            prior_label = "Prior"
+        else:
+            prior_value = _plot_scalar(planet_dict.get(prior_key))
+            prior_error = _plot_positive_error(planet_dict.get(prior_error_key))
+            prior_label = "Prior"
+
+        if not np.isfinite(prior_value) or not np.isfinite(posterior_value):
+            continue
+
+        error_terms = [
+            term for term in (prior_error, posterior_error)
+            if np.isfinite(term) and term > 0
+        ]
+        if error_terms:
+            combined_sigma = float(np.sqrt(np.sum(np.square(error_terms))))
+        else:
+            separation = abs(posterior_value - prior_value)
+            combined_sigma = float(separation) if separation > 0 else np.nan
+        if not np.isfinite(combined_sigma) or combined_sigma <= 0:
+            continue
+
+        posterior_offset = (posterior_value - prior_value) / combined_sigma
+        prior_error_sigma = prior_error / combined_sigma if np.isfinite(prior_error) else 0.0
+        posterior_error_sigma = (
+            posterior_error / combined_sigma if np.isfinite(posterior_error) else 0.0
+        )
+        prior_assumed = parameter_key == 'rprs' and rprs_prior_fallback
+
+        rows.append({
+            "label": label,
+            "parameter_key": parameter_key,
+            "posterior_offset": float(posterior_offset),
+            "prior_error_sigma": float(prior_error_sigma),
+            "posterior_error_sigma": float(posterior_error_sigma),
+            "prior_text": _format_parameter_value(
+                prior_value,
+                prior_error,
+                unit=unit,
+                split_error=split_error,
+            ),
+            "posterior_text": _format_parameter_value(
+                posterior_value,
+                posterior_error,
+                unit=unit,
+                split_error=split_error,
+            ),
+            "prior_label": prior_label,
+            "prior_assumed": prior_assumed,
+        })
+
+    return rows, omitted_notes
+
+
+def plot_prior_posterior_comparison(fit, planet_dict, targ_name, save, date):
+    rows, omitted_notes = _prior_posterior_comparison_rows(fit, planet_dict)
+    if not rows:
+        return None
+
+    note_height = 0.34 * len(omitted_notes)
+    row_spacing = 1.35
+    fig_height = max(5.0, 1.02 * len(rows) + 2.0 + note_height)
+    fig, ax = plt.subplots(figsize=(11.8, fig_height))
+
+    y_positions = np.arange(len(rows), dtype=float) * row_spacing
+    posterior_offsets = np.array([row["posterior_offset"] for row in rows], dtype=float)
+    prior_errors = np.array([row["prior_error_sigma"] for row in rows], dtype=float)
+    posterior_errors = np.array([row["posterior_error_sigma"] for row in rows], dtype=float)
+
+    xmin = min(-3.5, np.nanmin(np.r_[posterior_offsets - posterior_errors, -prior_errors]) - 0.45)
+    xmax = max(3.5, np.nanmax(np.r_[posterior_offsets + posterior_errors, prior_errors]) + 0.45)
+
+    ax.axvspan(-1.0, 1.0, color='#2e7d32', alpha=0.08, linewidth=0)
+    ax.axvspan(-3.0, 3.0, color='#f9a825', alpha=0.06, linewidth=0)
+    ax.axvline(0.0, color='0.25', lw=1.2, ls='--', zorder=1)
+
+    ax.errorbar(
+        np.zeros_like(y_positions),
+        y_positions + 0.13,
+        xerr=prior_errors,
+        fmt='o',
+        ms=6,
+        color='#1565c0',
+        ecolor='#1565c0',
+        elinewidth=1.4,
+        capsize=3,
+        label='Prior',
+        zorder=5,
+    )
+    ax.errorbar(
+        posterior_offsets,
+        y_positions - 0.13,
+        xerr=posterior_errors,
+        fmt='s',
+        ms=6,
+        color='#c62828',
+        ecolor='#c62828',
+        elinewidth=1.4,
+        capsize=3,
+        label='Posterior',
+        zorder=6,
+    )
+
+    for y_position, row in zip(y_positions, rows):
+        annotation = (
+            f"{row['prior_label']}\n"
+            f"{row['prior_text']}\n"
+            "Posterior\n"
+            f"{row['posterior_text']}"
+        )
+        ax.text(
+            1.015,
+            y_position,
+            annotation,
+            transform=ax.get_yaxis_transform(),
+            ha='left',
+            va='center',
+            fontsize=8.5,
+            linespacing=1.12,
+            color='0.18',
+        )
+
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels([row["label"] for row in rows])
+    ax.invert_yaxis()
+    ax.set_xlim(xmin, xmax)
+    ax.set_xlabel("Posterior offset from prior [combined sigma]")
+    ax.set_title(f"{targ_name} Prior vs Posterior Transit Parameters")
+    ax.grid(axis='x', alpha=0.28)
+    if omitted_notes:
+        ax.text(
+            0.0,
+            -0.16,
+            "\n".join(omitted_notes),
+            transform=ax.transAxes,
+            ha='left',
+            va='top',
+            fontsize=9,
+            color='0.22',
+        )
+    ax.legend(
+        handles=[
+            Line2D([0], [0], marker='o', color='none', markerfacecolor='#1565c0',
+                   markeredgecolor='#1565c0', markersize=7, label='Prior'),
+            Line2D([0], [0], marker='s', color='none', markerfacecolor='#c62828',
+                   markeredgecolor='#c62828', markersize=7, label='Posterior'),
+        ],
+        loc='lower right',
+    )
+    fig.subplots_adjust(right=0.64)
+
+    Path(save).mkdir(parents=True, exist_ok=True)
+    png_path = Path(save) / _dated_plot_filename(
+        "PriorPosteriorComparison",
+        targ_name,
+        date=date,
+        extension="png",
+    )
+    pdf_path = Path(save) / _dated_plot_filename(
+        "PriorPosteriorComparison",
+        targ_name,
+        date=date,
+        extension="pdf",
+    )
+    try:
+        fig.savefig(png_path, bbox_inches="tight")
+        fig.savefig(pdf_path, bbox_inches="tight")
+    except Exception:
+        png_path = None
+    plt.close(fig)
+    return png_path
+
+
+def _fit_ktmf_metric_contributions_status(fit):
+    transit_qc = getattr(fit, 'transit_qc', None)
+    if not isinstance(transit_qc, dict):
+        transit_qc = {}
+
+    metric = _plot_scalar(
+        getattr(fit, 'transit_qc_ktmf_metric', transit_qc.get('ktmf_metric', np.nan))
+    )
+    contributions = getattr(fit, 'transit_qc_ktmf_contributions', None)
+    if not contributions:
+        contributions = transit_qc.get('ktmf_contributions', [])
+    if not isinstance(contributions, (list, tuple)):
+        contributions = []
+
+    status = _ktmf_status_from_metric(metric)
+    if not status:
+        status = getattr(fit, 'transit_qc_status', transit_qc.get('status', None))
+    return metric, list(contributions), status
+
+
+def _ktmf_status_from_metric(metric):
+    metric = _plot_scalar(metric)
+    if not np.isfinite(metric):
+        return None
+    if metric >= 4.0:
+        return "pass"
+    if metric >= 3.0:
+        return "marginal"
+    return "fail"
+
+
+def _short_ktmf_label(label):
+    replacements = {
+        "Deviation From Expected Value": "Expected Rp/R*",
+        "Residual Scatter Around Full Model Fit": "Residual scatter",
+        "Duration Consistency": "Duration",
+        "EEBLS Depth SNR": "EEBLS SNR",
+        "Sampling / Cadence": "Sampling",
+    }
+    return replacements.get(str(label), str(label))
+
+
+def _ktmf_marker_color(score):
+    score = _plot_scalar(score)
+    if not np.isfinite(score):
+        return '0.45'
+    if score >= 0.8:
+        return '#2e7d32'
+    if score >= 0.6:
+        return '#f9a825'
+    return '#c62828'
+
+
+def _format_ktmf_metric(value, maximum=5.0):
+    value = _plot_scalar(value)
+    maximum = _plot_scalar(maximum)
+    if not np.isfinite(value):
+        return "n/a"
+    if np.isfinite(maximum) and maximum > 0:
+        return f"{value:.2f} / {maximum:.2f}"
+    return f"{value:.2f}"
+
+
+def _format_ktmf_component_annotation(row):
+    if row.get('kind') == 'total':
+        status = row.get('status')
+        status_text = f"\n{status.upper()}" if status else ""
+        uncertainty = _plot_positive_error(row.get('score_uncertainty'))
+        uncertainty_text = f"\nscore spread +/- {uncertainty:.2f}" if np.isfinite(uncertainty) else ""
+        return f"KTMF\n{_format_ktmf_metric(row.get('points'), row.get('max_points'))}{status_text}{uncertainty_text}"
+
+    if not row.get('available', True):
+        detail = row.get('detail') or "unavailable"
+        return f"Not scored\n{textwrap.fill(str(detail), width=44)}"
+
+    score_uncertainty = _plot_positive_error(row.get('score_uncertainty'))
+    if np.isfinite(score_uncertainty):
+        score_text = _format_parameter_value(row.get('score'), score_uncertainty)
+    else:
+        score_text = _format_parameter_value(row.get('score'))
+    detail = _compact_ktmf_detail(row)
+    detail_text = f"\n{textwrap.fill(str(detail), width=44)}" if detail else ""
+    return (
+        f"Score\n{score_text}\n"
+        f"Points\n{_format_ktmf_metric(row.get('points'), row.get('max_points'))}"
+        f"{detail_text}"
+    )
+
+
+def _compact_ktmf_detail(row):
+    detail = row.get('detail')
+    if not detail:
+        return None
+    detail = str(detail)
+    if row.get('label') == "Expected Rp/R*":
+        if "fixed to the input prior" in detail or "prior" in detail.lower():
+            return "Rp/R* prior assumed; not scored."
+        keep = []
+        for part in detail.split(','):
+            part = part.strip()
+            if part.startswith("Rp/R* sigma="):
+                keep.append(part)
+        return ", ".join(keep) if keep else detail
+    return detail
+
+
+def _ktmf_plot_rows(fit):
+    metric, contributions, status = _fit_ktmf_metric_contributions_status(fit)
+    component_rows = []
+    for contribution in contributions:
+        if not isinstance(contribution, dict):
+            continue
+        available = bool(contribution.get('available', True))
+        score = _plot_scalar(contribution.get('score'))
+        if not available or not np.isfinite(score):
+            score = np.nan
+        component_rows.append({
+            "kind": "component",
+            "label": _short_ktmf_label(contribution.get('label', 'KTMF component')),
+            "score": float(np.clip(score, 0.0, 1.0)) if np.isfinite(score) else np.nan,
+            "score_uncertainty": _plot_positive_error(contribution.get('score_uncertainty')),
+            "points": _plot_scalar(contribution.get('points'), 0.0),
+            "max_points": _plot_scalar(contribution.get('max_points'), 0.0),
+            "available": available and np.isfinite(score),
+            "detail": contribution.get('detail'),
+        })
+
+    rows = []
+    if np.isfinite(metric):
+        total_score = float(np.clip(metric / 5.0, 0.0, 1.0))
+        available_component_rows = [
+            row for row in component_rows
+            if row.get('available')
+            and np.isfinite(row.get('score', np.nan))
+            and np.isfinite(row.get('max_points', np.nan))
+            and row.get('max_points', 0.0) > 0
+        ]
+        score_uncertainty = np.nan
+        if len(available_component_rows) > 1:
+            scores = np.asarray([row['score'] for row in available_component_rows], dtype=float)
+            weights = np.asarray([row['max_points'] for row in available_component_rows], dtype=float)
+            if np.isfinite(weights).all() and np.sum(weights) > 0:
+                score_uncertainty = float(
+                    np.sqrt(np.average((scores - total_score) ** 2, weights=weights))
+                )
+        rows.append({
+            "kind": "total",
+            "label": "KTMF total",
+            "score": total_score,
+            "score_uncertainty": score_uncertainty,
+            "points": float(metric),
+            "max_points": 5.0,
+            "available": True,
+            "status": status,
+        })
+    rows.extend(component_rows)
+    return rows
+
+
+def _score_errorbar_limits(score, uncertainty):
+    score = _plot_scalar(score)
+    uncertainty = _plot_positive_error(uncertainty)
+    if not np.isfinite(score) or not np.isfinite(uncertainty) or uncertainty <= 0:
+        return None
+    lower = min(uncertainty, max(score, 0.0))
+    upper = min(uncertainty, max(1.0 - score, 0.0))
+    if lower <= 0 and upper <= 0:
+        return None
+    return np.asarray([[lower], [upper]], dtype=float)
+
+
+def _draw_ktmf_score_background(ax):
+    ax.axvspan(0.0, 0.6, color='#c62828', alpha=0.055, linewidth=0)
+    ax.axvspan(0.6, 0.8, color='#f9a825', alpha=0.09, linewidth=0)
+    ax.axvspan(0.8, 1.0, color='#2e7d32', alpha=0.08, linewidth=0)
+    ax.axvline(0.6, color='0.55', lw=1.0, ls=':', zorder=1)
+    ax.axvline(0.8, color='0.45', lw=1.1, ls='--', zorder=1)
+    ax.grid(axis='x', alpha=0.28)
+
+
+def _plot_ktmf_score_marker(ax, row, y_position):
+    score = _plot_scalar(row.get('score'))
+    color = _ktmf_marker_color(score)
+    marker = 'D' if row.get('kind') == 'total' else 's'
+    marker_size = 62 if row.get('kind') == 'total' else 48
+    marker_scale = 3.0
+    if np.isfinite(score):
+        ax.errorbar(
+            [score],
+            [y_position],
+            xerr=_score_errorbar_limits(score, row.get('score_uncertainty')),
+            fmt=marker,
+            ms=np.sqrt(marker_size) * marker_scale,
+            color=color,
+            ecolor=color,
+            elinewidth=1.8,
+            capsize=4,
+            markeredgecolor='white',
+            markeredgewidth=1.2,
+            zorder=5,
+        )
+    else:
+        ax.scatter(
+            [0.0],
+            [y_position],
+            marker='x',
+            s=52 * marker_scale ** 2,
+            color='0.45',
+            linewidths=2.0,
+            zorder=5,
+        )
+
+
+def plot_ktmf_qc_metrics(fit, targ_name, save, date):
+    rows = _ktmf_plot_rows(fit)
+    if not rows:
+        return None
+
+    total_rows = [row for row in rows if row.get('kind') == 'total']
+    component_rows = [row for row in rows if row.get('kind') != 'total']
+    row_spacing = 1.35
+    component_height = max(3.6, 0.98 * max(len(component_rows), 1) + 1.3)
+    fig_height = component_height + (1.55 if total_rows else 0.0)
+    if total_rows:
+        fig, (ax_total, ax_components) = plt.subplots(
+            2,
+            1,
+            figsize=(11.8, fig_height),
+            sharex=True,
+            gridspec_kw={'height_ratios': [1.0, component_height]},
+        )
+        axes = [ax_total, ax_components]
+    else:
+        fig, ax_components = plt.subplots(figsize=(11.8, fig_height))
+        ax_total = None
+        axes = [ax_components]
+
+    for axis in axes:
+        _draw_ktmf_score_background(axis)
+        axis.set_xlim(-0.05, 1.05)
+
+    if total_rows:
+        total_row = total_rows[0]
+        _plot_ktmf_score_marker(ax_total, total_row, 0.0)
+        ax_total.text(
+            1.025,
+            0.0,
+            _format_ktmf_component_annotation(total_row),
+            transform=ax_total.get_yaxis_transform(),
+            ha='left',
+            va='center',
+            fontsize=8.5,
+            linespacing=1.12,
+            color='0.18',
+        )
+        ax_total.set_yticks([0.0])
+        ax_total.set_yticklabels([total_row["label"]])
+        ax_total.set_ylim(0.65, -0.65)
+        ax_total.tick_params(axis='x', labelbottom=False)
+        ax_total.set_title(f"{targ_name} KTMF QC Metrics")
+
+    component_positions = np.arange(len(component_rows), dtype=float) * row_spacing
+    for y_position, row in zip(component_positions, component_rows):
+        _plot_ktmf_score_marker(ax_components, row, y_position)
+        ax_components.text(
+            1.025,
+            y_position,
+            _format_ktmf_component_annotation(row),
+            transform=ax_components.get_yaxis_transform(),
+            ha='left',
+            va='center',
+            fontsize=8.5,
+            linespacing=1.12,
+            color='0.18',
+        )
+
+    ax_components.set_yticks(component_positions)
+    ax_components.set_yticklabels([row["label"] for row in component_rows])
+    ax_components.invert_yaxis()
+    ax_components.set_xlabel("KTMF component score fraction")
+    if not total_rows:
+        ax_components.set_title(f"{targ_name} KTMF QC Metrics")
+    fig.subplots_adjust(right=0.62, hspace=0.12)
+
+    Path(save).mkdir(parents=True, exist_ok=True)
+    png_path = Path(save) / _dated_plot_filename(
+        "KTMF_QC",
+        targ_name,
+        date=date,
+        extension="png",
+    )
+    pdf_path = Path(save) / _dated_plot_filename(
+        "KTMF_QC",
+        targ_name,
+        date=date,
+        extension="pdf",
+    )
+    try:
+        fig.savefig(png_path, bbox_inches="tight")
+        fig.savefig(pdf_path, bbox_inches="tight")
+    except Exception:
+        png_path = None
+    plt.close(fig)
+    return png_path

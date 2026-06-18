@@ -6,12 +6,15 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
 from exotic.plots import (
+    _format_parameter_value,
     plot_fov,
     plot_adaptive_aperture_diagnostics,
     plot_comp_star_candidate_lightcurve_fits,
     plot_final_lightcurve,
     plot_individual_comp_star_calibration_series,
+    plot_ktmf_qc_metrics,
     plot_obs_stats,
+    plot_prior_posterior_comparison,
     plot_stellar_variability,
 )
 
@@ -20,6 +23,14 @@ class DummyFit:
     def __init__(self):
         self.time = np.array([1.0, 2.0, 3.0])
         self.airmass = np.array([1.1, 1.2, 1.3])
+
+
+def test_format_parameter_value_uses_uncertainty_precision_without_scientific_notation():
+    assert (
+        _format_parameter_value(2461197.8645824, 0.0005037355680314821, split_error=True)
+        == "2461197.86458\n+/- 0.00050"
+    )
+    assert _format_parameter_value(89.3511, 2.16, unit="deg") == "89.4 +/- 2.2 deg"
 
 
 def test_plot_obs_stats_applies_relative_flux_mask(tmp_path, monkeypatch):
@@ -381,3 +392,219 @@ def test_plot_final_lightcurve_requests_uncertainty_bands_without_baseline_label
     }
     assert (tmp_path / "FinalLightCurve_Target_2026-03-09.png").exists()
     assert (tmp_path / "FinalLightCurve_Target_2026-03-09.pdf").exists()
+
+
+def test_plot_final_lightcurve_draws_data_scatter_uncertainty_band(tmp_path, monkeypatch):
+    captured = []
+    original_fill_between = Axes.fill_between
+
+    def spy_fill_between(self, x, y1, y2=0, *args, **kwargs):
+        captured.append({
+            "x": np.asarray(x, dtype=float),
+            "y1": np.asarray(y1, dtype=float),
+            "y2": np.asarray(y2, dtype=float),
+            "color": kwargs.get("color"),
+            "alpha": kwargs.get("alpha"),
+            "label": kwargs.get("label"),
+        })
+        return original_fill_between(self, x, y1, y2, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "fill_between", spy_fill_between)
+
+    class DummyFinalFit:
+        def __init__(self):
+            self.phase_upsample = np.linspace(-0.05, 0.05, 41)
+            depth_shape = np.exp(-0.5 * (self.phase_upsample / 0.015) ** 2)
+            self.transit_upsample = 1.0 - 0.01 * depth_shape
+            self.time_upsample = self.phase_upsample.copy()
+            self.phase = self.phase_upsample.copy()
+            self.transit = self.transit_upsample.copy()
+            self.model = self.transit.copy()
+            residual_pattern = 0.02 * np.sin(np.linspace(0, 6 * np.pi, self.model.size))
+            self.data = self.model + residual_pattern
+            self.residuals = self.data - self.model
+            self.dataerr = np.full_like(self.model, 0.02)
+            self.parameters = {"rprs": 0.1}
+            self.errors = {"rprs": 0.001}
+
+        def transit_model_uncertainty(self, times):
+            return self.transit_upsample - 0.001, self.transit_upsample + 0.001
+
+        def plot_bestfit(self, show_flux_baseline_label=True, show_model_uncertainty=False,
+                         show_baseline_uncertainty=False):
+            fig, axes = plt.subplots(2, 1)
+            axes[0].plot(self.phase_upsample, self.transit_upsample, 'r-', label='model')
+            axes[0].legend(loc='best')
+            return fig, axes
+
+    plot_final_lightcurve(
+        DummyFinalFit(),
+        high_res=np.ones(41),
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+    )
+
+    purple_bands = [item for item in captured if item["color"] == "#6a1b9a"]
+    assert purple_bands
+    assert all(item["label"] == "_nolegend_" for item in purple_bands)
+    assert all(item["alpha"] <= 0.16 for item in purple_bands)
+    assert any(np.nanmax(np.abs(item["y2"] - item["y1"])) > 0.001 for item in purple_bands)
+
+
+def test_plot_final_lightcurve_marks_final_residual_rejections(tmp_path, monkeypatch):
+    captured = []
+    original_scatter = Axes.scatter
+
+    def spy_scatter(self, x, y, *args, **kwargs):
+        captured.append({
+            "x": np.asarray(x, dtype=float),
+            "y": np.asarray(y, dtype=float),
+            "label": kwargs.get("label"),
+            "color": kwargs.get("color"),
+        })
+        return original_scatter(self, x, y, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "scatter", spy_scatter)
+
+    class DummyFinalFit:
+        def __init__(self):
+            self.phase_upsample = np.linspace(-0.05, 0.05, 5)
+            self.transit_upsample = np.ones(5)
+            self.final_residual_rejection = {
+                "applied": True,
+                "rejected_phase": [0.01],
+                "rejected_flux": [0.92],
+                "rejected_residual_percent": [-8.0],
+            }
+
+        def plot_bestfit(self, show_flux_baseline_label=True, show_model_uncertainty=False,
+                         show_baseline_uncertainty=False):
+            fig, axes = plt.subplots(2, 1)
+            return fig, axes
+
+    plot_final_lightcurve(
+        DummyFinalFit(),
+        high_res=np.ones(5),
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+    )
+
+    residual_rejection_points = [
+        item for item in captured
+        if item["label"] == "_nolegend_" and item["color"] == "red"
+    ]
+    assert len(residual_rejection_points) == 2
+    np.testing.assert_allclose(residual_rejection_points[0]["x"], [0.01])
+    np.testing.assert_allclose(residual_rejection_points[1]["y"], [-8.0])
+
+
+def test_plot_prior_posterior_comparison_omits_prior_fallback_rprs(tmp_path, monkeypatch):
+    captured_text = []
+    original_text = Axes.text
+
+    def spy_text(self, x, y, s, *args, **kwargs):
+        captured_text.append(str(s))
+        return original_text(self, x, y, s, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", spy_text)
+
+    class DummyFit:
+        def __init__(self):
+            self.parameters = {
+                "tmid": 1.012,
+                "rprs": 0.1,
+                "ars": 10.6,
+                "inc": 88.2,
+            }
+            self.errors = {
+                "tmid": 0.002,
+                "rprs": 0.005,
+                "ars": 0.4,
+                "inc": 0.3,
+            }
+            self.rprs_prior_fallback_applied = True
+            self.empirical_transit_uncertainty = {
+                "available": True,
+                "combined_rprs_uncertainty": 0.02,
+                "rprs_uncertainty_basis": "prior_assumed_data_only",
+            }
+
+    planet_dict = {
+        "midT": 1.0,
+        "midTUnc": 0.001,
+        "rprs": 0.1,
+        "rprsUnc": 0.003,
+        "aRs": 10.0,
+        "aRsUnc": 0.2,
+        "inc": 89.0,
+        "incUnc": 0.4,
+    }
+
+    output = plot_prior_posterior_comparison(
+        DummyFit(),
+        planet_dict,
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+    )
+
+    assert output == tmp_path / "PriorPosteriorComparison_Target_2026-03-09.png"
+    assert output.exists()
+    assert (tmp_path / "PriorPosteriorComparison_Target_2026-03-09.pdf").exists()
+    assert any("Rp/R* omitted: prior value assumed, not measured" in text for text in captured_text)
+    assert any("Prior\n" in text and "Posterior\n" in text for text in captured_text)
+    assert not any("BJD_TDB" in text for text in captured_text)
+    assert not any("Prior epoch" in text for text in captured_text)
+    assert not any("Posterior (Prior)" in text for text in captured_text)
+
+
+def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypatch):
+    captured_text = []
+    original_text = Axes.text
+
+    def spy_text(self, x, y, s, *args, **kwargs):
+        captured_text.append(str(s))
+        return original_text(self, x, y, s, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", spy_text)
+
+    class DummyKTMFFit:
+        def __init__(self):
+            self.transit_qc = {
+                "status": "fail",
+                "ktmf_metric": 3.07,
+                "ktmf_contributions": [
+                    {
+                        "label": "Model Evidence",
+                        "available": True,
+                        "points": 0.11,
+                        "max_points": 0.89,
+                        "score": 0.12,
+                        "detail": "Delta BIC=-2.00, Delta chi2=6.91",
+                    },
+                    {
+                        "label": "Residual Scatter Around Full Model Fit",
+                        "available": True,
+                        "points": 0.14,
+                        "max_points": 0.78,
+                        "score": 0.18,
+                        "detail": "2.3437%",
+                    },
+                ],
+            }
+
+    output = plot_ktmf_qc_metrics(
+        DummyKTMFFit(),
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+    )
+
+    assert output == tmp_path / "KTMF_QC_Target_2026-03-09.png"
+    assert output.exists()
+    assert (tmp_path / "KTMF_QC_Target_2026-03-09.pdf").exists()
+    assert any("KTMF\n3.07 / 5.00\nMARGINAL" in text for text in captured_text)
+    assert any("0.11 / 0.89" in text for text in captured_text)
+    assert any("Delta BIC=-2.00" in text for text in captured_text)

@@ -151,7 +151,10 @@ try:  # output files
     from output_files import (
         OutputFiles,
         AIDOutputFiles,
+        empirical_red_noise_error_scale,
+        fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
+        fit_parameter_model_data_uncertainty,
         format_parameter_with_error,
         formatted_transit_depth_parameters,
         save_comp_star_calibration_summary,
@@ -160,7 +163,10 @@ except ImportError:  # package import
     from .output_files import (
         OutputFiles,
         AIDOutputFiles,
+        empirical_red_noise_error_scale,
+        fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
+        fit_parameter_model_data_uncertainty,
         format_parameter_with_error,
         formatted_transit_depth_parameters,
         save_comp_star_calibration_summary,
@@ -175,12 +181,14 @@ except ImportError:
     from .plate_status import PlateStatus
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
+        plot_prior_posterior_comparison, plot_ktmf_qc_metrics, \
         plot_stellar_variability, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
         plot_comp_star_calibration_series, plot_individual_comp_star_calibration_series, \
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
         plot_adaptive_aperture_diagnostics
 except ImportError:  # package import
     from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
+        plot_prior_posterior_comparison, plot_ktmf_qc_metrics, \
         plot_stellar_variability, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
         plot_comp_star_calibration_series, plot_individual_comp_star_calibration_series, \
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
@@ -257,12 +265,19 @@ COMPARISON_IMAGE_OUTLIER_MIN_VALID_PAIRS = 2
 COMPARISON_IMAGE_OUTLIER_MIN_SCATTER = 1e-4
 COMPARISON_CANDIDATE_FRAME_OUTLIER_MIN_VALID_PAIRS = 2
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
+OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT = 12
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
 FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT = True
 FAST_ULTRANEST_MAX_BINNED_POINTS = 20
 FAST_ULTRANEST_MIN_POINTS_TO_BIN = 60
+LEGACY_PSF_FLUX_MODE_DEFAULT = False
+FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT = True
+FINAL_RESIDUAL_REJECTION_DEFAULT = True
+FINAL_RESIDUAL_REJECTION_SIGMA = 3.0
+FINAL_RESIDUAL_REJECTION_MAX_CLIP_ITERS = 10
+FINAL_RESIDUAL_REJECTION_MAX_REFITS = 10
 COMPARISON_PREFLIGHT_FIELD_SCORE_RELATIVE_BAND = 0.25
 COMPARISON_PREFLIGHT_FIELD_SCORE_ABSOLUTE_BAND = 2.5e-4
 PARTIAL_COVERAGE_RPRS_POSTERIOR_MAX_RETRIES = 1
@@ -283,11 +298,22 @@ RPRS_SEARCH_BOUND_MIN = 0.0
 RPRS_SEARCH_BOUND_MAX_DEFAULT = 0.5
 RPRS_SEARCH_BOUND_ABSOLUTE_MAX = 1.0
 RPRS_SEARCH_BOUND_MAX = RPRS_SEARCH_BOUND_MAX_DEFAULT
+RPRS_RANGE_RESTRICTION_DEFAULT = True
+RPRS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT = 10.0
+RPRS_RANGE_RESTRICTION_ENABLED = RPRS_RANGE_RESTRICTION_DEFAULT
+RPRS_RANGE_RESTRICTION_PERCENTAGE = RPRS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT
+RPRS_DATA_UNCERTAINTY_BOUND_SIGMA = 3.0
+RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR_DEFAULT = True
+RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR = RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR_DEFAULT
 RPRS_RETRY_MIN_HALF_WIDTH = 0.05
 INITIAL_RPRS_BOUND_LOWER_SCALE = 0.0
 INITIAL_RPRS_BOUND_UPPER_SCALE = 3.0
 ARS_SEARCH_BOUND_MIN = 1e-6
 ARS_SEARCH_BOUND_FALLBACK_MAX = 100.0
+ARS_RANGE_RESTRICTION_DEFAULT = True
+ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT = 10.0
+ARS_RANGE_RESTRICTION_ENABLED = ARS_RANGE_RESTRICTION_DEFAULT
+ARS_RANGE_RESTRICTION_PERCENTAGE = ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT
 ARS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 ARS_RETRY_MIN_HALF_WIDTH = 0.0
 IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT = 5
@@ -356,8 +382,8 @@ BAD_PIXEL_NEIGHBOR_FOOTPRINT = np.array(
 )
 TRANSIT_QC_DELTA_BIC_FAIL_THRESHOLD = 6.0
 TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD = 10.0
-TRANSIT_QC_KTMF_FAIL_THRESHOLD = 2.5
-TRANSIT_QC_KTMF_PASS_THRESHOLD = 3.5
+TRANSIT_QC_KTMF_FAIL_THRESHOLD = 3.0
+TRANSIT_QC_KTMF_PASS_THRESHOLD = 4.0
 TRANSIT_QC_MIN_EEBLS_SNR = 4.0
 TRANSIT_QC_DURATION_RATIO_MIN = 0.5
 TRANSIT_QC_DURATION_RATIO_MAX = 2.0
@@ -366,11 +392,12 @@ TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT = True
 TRANSIT_QC_DEVIATION_SIGMA_DEFAULT = 5.0
 TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION = 0.05
 TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS = {
-    'model_evidence': 0.8,
+    'model_evidence': 0.3,
     'deviation_from_expected_value': 1.5,
     'residual_scatter': 0.7,
     'duration_consistency': 0.75,
-    'eebls_depth_snr': 0.75,
+    'eebls_depth_snr': 1.3,
+    'sampling': 0.7,
 }
 
 
@@ -551,6 +578,334 @@ def prepend_lightcurve_filter_diagnostic(fit, diagnostic):
     fit.frame_filter_diagnostics = diagnostics
 
 
+def _fit_residual_percent(fit):
+    residuals = np.asarray(getattr(fit, 'residuals', np.array([])), dtype=float).reshape(-1)
+    if residuals.size == 0:
+        return residuals
+
+    data = np.asarray(getattr(fit, 'data', np.array([])), dtype=float).reshape(-1)
+    median_flux = np.nanmedian(data) if data.size else np.nan
+    if not np.isfinite(median_flux) or median_flux == 0:
+        return residuals
+    return residuals / median_flux * 100.0
+
+
+def final_residual_rejection_keep_mask(
+    fit,
+    sigma=FINAL_RESIDUAL_REJECTION_SIGMA,
+    min_required_points=LIGHTCURVE_MIN_VALID_POINTS,
+    max_clip_iters=FINAL_RESIDUAL_REJECTION_MAX_CLIP_ITERS,
+):
+    residual_percent = _fit_residual_percent(fit)
+    point_count = int(residual_percent.size)
+    summary = {
+        'enabled': True,
+        'applied': False,
+        'sigma': float(sigma),
+        'input_point_count': point_count,
+        'kept_point_count': point_count,
+        'rejected_point_count': 0,
+        'median_residual_percent': np.nan,
+        'stdev_residual_percent': np.nan,
+        'clip_iteration_count': 0,
+        'clip_iterations': [],
+        'note': None,
+    }
+    if point_count == 0:
+        summary['note'] = "Skipped; the first final fit did not provide residuals."
+        return np.ones(0, dtype=bool), summary
+
+    valid = np.isfinite(residual_percent)
+    valid_count = int(np.count_nonzero(valid))
+    if valid_count < max(LIGHTCURVE_MIN_VALID_POINTS, 2):
+        summary['note'] = "Skipped; too few finite residuals were available."
+        return np.ones(point_count, dtype=bool), summary
+
+    keep_mask = valid.copy()
+    max_clip_iters = int(max(1, max_clip_iters or 1))
+    stopped_on_iteration_cap = False
+    last_rejecting_center = np.nan
+    last_rejecting_scatter = np.nan
+    for clip_iteration in range(1, max_clip_iters + 1):
+        active = keep_mask & valid
+        active_count = int(np.count_nonzero(active))
+        if active_count < max(LIGHTCURVE_MIN_VALID_POINTS, 2):
+            summary['note'] = "Skipped; too few finite residuals remained during iterative clipping."
+            return valid.copy(), summary
+
+        center = float(np.nanmedian(residual_percent[active]))
+        scatter = float(np.nanstd(residual_percent[active] - center, ddof=1))
+        summary['median_residual_percent'] = center
+        summary['stdev_residual_percent'] = scatter
+        if not np.isfinite(scatter) or scatter <= 0:
+            summary['note'] = "Stopped; the final-fit residual scatter was not finite."
+            break
+
+        outlier_mask = active & (np.abs(residual_percent - center) > float(sigma) * scatter)
+        rejected_this_iteration = int(np.count_nonzero(outlier_mask))
+        summary['clip_iterations'].append({
+            'iteration': int(clip_iteration),
+            'input_point_count': active_count,
+            'median_residual_percent': center,
+            'stdev_residual_percent': scatter,
+            'rejected_point_count': rejected_this_iteration,
+        })
+        summary['clip_iteration_count'] = int(clip_iteration)
+        if rejected_this_iteration == 0:
+            break
+
+        last_rejecting_center = center
+        last_rejecting_scatter = scatter
+        candidate_keep_mask = keep_mask & ~outlier_mask
+        if int(np.count_nonzero(candidate_keep_mask)) < int(min_required_points):
+            summary['note'] = (
+                f"Skipped; residual rejection would leave {int(np.count_nonzero(candidate_keep_mask))} point(s), "
+                f"but at least {int(min_required_points)} are required."
+            )
+            summary['clip_iterations'][-1]['skipped_for_minimum_points'] = True
+            summary['kept_point_count'] = point_count
+            summary['rejected_point_count'] = 0
+            return np.ones(point_count, dtype=bool), summary
+
+        keep_mask = candidate_keep_mask
+    else:
+        stopped_on_iteration_cap = True
+
+    kept_count = int(np.count_nonzero(keep_mask))
+    rejected_count = int(point_count - kept_count)
+    summary['kept_point_count'] = kept_count
+    summary['rejected_point_count'] = rejected_count
+
+    if rejected_count == 0:
+        summary['note'] = (
+            f"No residual outliers exceeded {float(sigma):.1f} sigma from the iterated median residual "
+            f"({summary['median_residual_percent']:.4f}%, stdev={summary['stdev_residual_percent']:.4f}%)."
+        )
+        return keep_mask, summary
+
+    summary['applied'] = True
+    if np.isfinite(last_rejecting_center):
+        summary['median_residual_percent'] = last_rejecting_center
+    if np.isfinite(last_rejecting_scatter):
+        summary['stdev_residual_percent'] = last_rejecting_scatter
+    cap_text = f" after reaching {max_clip_iters} clip iteration(s)" if stopped_on_iteration_cap else ""
+    summary['note'] = (
+        f"Rejected {rejected_count}/{point_count} final-fit residual outlier(s) with iterative "
+        f"{float(sigma):.1f}-sigma clipping from the median residual "
+        f"({summary['median_residual_percent']:.4f}%, stdev={summary['stdev_residual_percent']:.4f}%){cap_text}."
+    )
+    return keep_mask, summary
+
+
+def _fit_array_for_rejection_plot(fit, attr_name, fallback=None):
+    values = getattr(fit, attr_name, fallback)
+    if values is None:
+        values = fallback
+    if values is None:
+        return np.array([], dtype=float)
+    return np.asarray(values, dtype=float).reshape(-1)
+
+
+def build_final_residual_rejection_payload(fit, keep_mask, summary, source_indices=None):
+    keep_mask = np.asarray(keep_mask, dtype=bool).reshape(-1)
+    rejected_mask = ~keep_mask
+    time_values = _fit_array_for_rejection_plot(fit, 'time')
+    phase_values = _fit_array_for_rejection_plot(fit, 'phase')
+    data_values = _fit_array_for_rejection_plot(fit, 'data')
+    flux_values = _fit_array_for_rejection_plot(fit, 'detrended', fallback=data_values)
+    residual_percent = _fit_residual_percent(fit)
+
+    plot_count = min(
+        keep_mask.size,
+        time_values.size,
+        phase_values.size,
+        flux_values.size,
+        residual_percent.size,
+    )
+    if plot_count == 0:
+        rejected_mask = np.zeros(0, dtype=bool)
+    else:
+        rejected_mask = rejected_mask[:plot_count]
+        time_values = time_values[:plot_count]
+        phase_values = phase_values[:plot_count]
+        flux_values = flux_values[:plot_count]
+        residual_percent = residual_percent[:plot_count]
+
+    payload = dict(summary or {})
+    payload['rejected_time'] = time_values[rejected_mask].tolist()
+    payload['rejected_phase'] = phase_values[rejected_mask].tolist()
+    payload['rejected_flux'] = flux_values[rejected_mask].tolist()
+    payload['rejected_residual_percent'] = residual_percent[rejected_mask].tolist()
+    if source_indices is not None:
+        index_values = np.asarray(source_indices, dtype=int).reshape(-1)
+        if index_values.size >= plot_count:
+            payload['rejected_source_indices'] = index_values[:plot_count][rejected_mask].tolist()
+    return payload
+
+
+def initialize_final_residual_rejection_payload(
+    enabled=True,
+    input_point_count=0,
+    sigma=FINAL_RESIDUAL_REJECTION_SIGMA,
+    note=None,
+):
+    point_count = int(input_point_count or 0)
+    return {
+        'enabled': bool(enabled),
+        'applied': False,
+        'sigma': float(sigma),
+        'input_point_count': point_count,
+        'kept_point_count': point_count,
+        'rejected_point_count': 0,
+        'median_residual_percent': np.nan,
+        'stdev_residual_percent': np.nan,
+        'clip_iteration_count': 0,
+        'clip_iterations': [],
+        'refit_iteration_count': 0,
+        'refit_iterations': [],
+        'rejected_time': [],
+        'rejected_phase': [],
+        'rejected_flux': [],
+        'rejected_residual_percent': [],
+        'rejected_source_indices': [],
+        'note': note,
+    }
+
+
+def _extend_final_residual_rejection_payload_list(payload, key, values):
+    existing = payload.get(key)
+    if not isinstance(existing, list):
+        existing = []
+    if values is None:
+        values = []
+    elif isinstance(values, np.ndarray):
+        values = values.tolist()
+    elif not isinstance(values, list):
+        values = list(values)
+    payload[key] = existing + values
+
+
+def record_final_residual_rejection_refit_cycle(payload, cycle_payload, refit_iteration):
+    payload = dict(payload or {})
+    cycle_payload = dict(cycle_payload or {})
+    rejected_count = int(cycle_payload.get('rejected_point_count', 0) or 0)
+    payload['enabled'] = True
+    payload['applied'] = bool(payload.get('applied', False) or rejected_count > 0)
+    payload['sigma'] = float(cycle_payload.get('sigma', payload.get('sigma', FINAL_RESIDUAL_REJECTION_SIGMA)))
+    payload['kept_point_count'] = int(cycle_payload.get('kept_point_count', payload.get('kept_point_count', 0)) or 0)
+    payload['rejected_point_count'] = int(payload.get('rejected_point_count', 0) or 0) + rejected_count
+    payload['median_residual_percent'] = cycle_payload.get(
+        'median_residual_percent',
+        payload.get('median_residual_percent', np.nan),
+    )
+    payload['stdev_residual_percent'] = cycle_payload.get(
+        'stdev_residual_percent',
+        payload.get('stdev_residual_percent', np.nan),
+    )
+    payload['clip_iteration_count'] = int(payload.get('clip_iteration_count', 0) or 0) + int(
+        cycle_payload.get('clip_iteration_count', 0) or 0
+    )
+    _extend_final_residual_rejection_payload_list(
+        payload,
+        'clip_iterations',
+        cycle_payload.get('clip_iterations', []),
+    )
+    for key in (
+        'rejected_time',
+        'rejected_phase',
+        'rejected_flux',
+        'rejected_residual_percent',
+        'rejected_source_indices',
+    ):
+        _extend_final_residual_rejection_payload_list(payload, key, cycle_payload.get(key, []))
+
+    refit_iterations = payload.get('refit_iterations')
+    if not isinstance(refit_iterations, list):
+        refit_iterations = []
+    refit_iterations.append({
+        'iteration': int(refit_iteration),
+        'input_point_count': int(cycle_payload.get('input_point_count', 0) or 0),
+        'kept_point_count': int(cycle_payload.get('kept_point_count', 0) or 0),
+        'rejected_point_count': rejected_count,
+        'median_residual_percent': cycle_payload.get('median_residual_percent', np.nan),
+        'stdev_residual_percent': cycle_payload.get('stdev_residual_percent', np.nan),
+        'clip_iteration_count': int(cycle_payload.get('clip_iteration_count', 0) or 0),
+        'clip_iterations': list(cycle_payload.get('clip_iterations', [])),
+        'note': cycle_payload.get('note'),
+    })
+    payload['refit_iterations'] = refit_iterations
+    payload['refit_iteration_count'] = int(len(refit_iterations))
+    return payload
+
+
+def update_final_residual_rejection_final_pass(payload, final_summary):
+    payload = dict(payload or {})
+    final_summary = dict(final_summary or {})
+    payload['final_clip_summary'] = final_summary
+    payload['median_residual_percent'] = final_summary.get(
+        'median_residual_percent',
+        payload.get('median_residual_percent', np.nan),
+    )
+    payload['stdev_residual_percent'] = final_summary.get(
+        'stdev_residual_percent',
+        payload.get('stdev_residual_percent', np.nan),
+    )
+    return payload
+
+
+def finalize_final_residual_rejection_payload(
+    payload,
+    current_point_count=None,
+    stopped_reason=None,
+):
+    payload = dict(payload or {})
+    if current_point_count is not None:
+        payload['kept_point_count'] = int(current_point_count)
+
+    rejected_count = int(payload.get('rejected_point_count', 0) or 0)
+    input_point_count = int(payload.get('input_point_count', payload.get('kept_point_count', 0)) or 0)
+    refit_count = int(payload.get('refit_iteration_count', 0) or 0)
+    payload['applied'] = bool(payload.get('enabled', True) and rejected_count > 0)
+    if not payload.get('enabled', True):
+        if not payload.get('note'):
+            payload['note'] = "Disabled per optional_info setting."
+        return payload
+
+    if rejected_count <= 0:
+        if payload.get('note') is None:
+            payload['note'] = "No final-fit residual outliers were rejected."
+        return payload
+
+    stop_text = " Final pass found no new residual outliers."
+    if stopped_reason == 'max_refits':
+        stop_text = f" Stopped after reaching {FINAL_RESIDUAL_REJECTION_MAX_REFITS} refit cycle(s)."
+    elif stopped_reason == 'refit_failed':
+        stop_text = " Stopped because the next residual-rejected UltraNest refit did not converge."
+    elif stopped_reason == 'shape_mismatch':
+        stop_text = " Stopped because the next residual array did not align with the light-curve points."
+
+    payload['note'] = (
+        f"Rejected {rejected_count}/{input_point_count} final-fit residual outlier(s) over "
+        f"{refit_count} iterative UltraNest refit cycle(s) using "
+        f"{float(payload.get('sigma', FINAL_RESIDUAL_REJECTION_SIGMA)):.1f}-sigma median clipping."
+        f"{stop_text}"
+    )
+    return payload
+
+
+def annotate_final_residual_rejection(fit, payload):
+    if fit is None:
+        return
+
+    payload = dict(payload or {})
+    fit.final_residual_rejection = payload
+    fit.final_residual_rejection_applied = bool(payload.get('applied', False))
+    fit.final_residual_rejection_sigma = payload.get('sigma')
+    fit.final_residual_rejection_point_count = int(payload.get('input_point_count', 0) or 0)
+    fit.final_residual_rejection_rejected_count = int(payload.get('rejected_point_count', 0) or 0)
+    fit.final_residual_rejection_note = payload.get('note')
+
+
 def annotate_selected_photometry_debug(
     fit,
     times,
@@ -714,6 +1069,24 @@ def transit_qc_residual_scatter(data, model):
     return float(np.std(residuals) / median_flux)
 
 
+def transit_qc_model_depth_fraction(model):
+    model = np.asarray(model, dtype=float)
+    if model.ndim != 1 or model.size == 0:
+        return np.nan
+
+    finite = model[np.isfinite(model)]
+    if finite.size == 0:
+        return np.nan
+
+    baseline = float(np.nanpercentile(finite, 95.0))
+    minimum = float(np.nanmin(finite))
+    if not np.isfinite(baseline) or not np.isfinite(minimum) or baseline <= 0:
+        return np.nan
+
+    depth = (baseline - minimum) / baseline
+    return float(depth) if np.isfinite(depth) and depth > 0 else np.nan
+
+
 def transit_qc_deviation_score_from_sigma(sigma_offset, sigma_threshold):
     try:
         sigma_offset = abs(float(sigma_offset))
@@ -764,6 +1137,134 @@ def transit_qc_duration_score(duration_ratio):
 
     score = 1.0 - abs(np.log(duration_ratio)) / max_log_deviation
     return float(np.clip(score, 0.0, 1.0))
+
+
+def transit_qc_geometry_contact_duration(parameters, contact_radius):
+    parameters = parameters or {}
+    try:
+        period = float(parameters.get('per', np.nan))
+        ars = float(parameters.get('ars', np.nan))
+        inc = float(parameters.get('inc', np.nan))
+        contact_radius = float(contact_radius)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if (
+        not np.isfinite(period) or period <= 0
+        or not np.isfinite(ars) or ars <= 0
+        or not np.isfinite(inc)
+        or not np.isfinite(contact_radius) or contact_radius <= 0
+    ):
+        return np.nan
+
+    ecc = coerce_finite_transit_qc_scalar(parameters.get('ecc', 0.0))
+    omega = np.deg2rad(coerce_finite_transit_qc_scalar(parameters.get('omega', 0.0)))
+    denominator = 1.0 + ecc * np.sin(omega)
+    if not np.isfinite(denominator) or np.isclose(denominator, 0.0):
+        return np.nan
+
+    impact_scale = ars * (1.0 - ecc ** 2) / denominator
+    inc_rad = np.deg2rad(inc)
+    sin_inc = np.sin(inc_rad)
+    if not np.isfinite(impact_scale) or impact_scale <= 0 or not np.isfinite(sin_inc) or sin_inc <= 0:
+        return np.nan
+
+    impact_parameter = impact_scale * np.cos(inc_rad)
+    chord_sq = contact_radius ** 2 - impact_parameter ** 2
+    if not np.isfinite(chord_sq) or chord_sq <= 0:
+        return np.nan
+
+    argument = np.sqrt(chord_sq) / (impact_scale * sin_inc)
+    if not np.isfinite(argument):
+        return np.nan
+    argument = float(np.clip(argument, -1.0, 1.0))
+    duration = (period / np.pi) * np.arcsin(argument)
+    return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
+
+
+def transit_qc_sampling_summary(fit):
+    summary = {
+        'available': False,
+        'score': np.nan,
+        'ingress_count': 0,
+        'egress_count': 0,
+        'in_transit_count': 0,
+        'pre_baseline_count': 0,
+        'post_baseline_count': 0,
+        'total_duration': np.nan,
+        'ingress_duration': np.nan,
+        'detail': 'sampling unavailable',
+    }
+    if fit is None:
+        return summary
+
+    times = np.asarray(getattr(fit, 'time', []), dtype=float)
+    parameters = getattr(fit, 'parameters', {}) or {}
+    if times.ndim != 1 or times.size == 0:
+        return summary
+
+    tmid = coerce_finite_transit_qc_scalar(parameters.get('tmid', np.nan))
+    rprs = coerce_finite_transit_qc_scalar(parameters.get('rprs', np.nan))
+    if not np.isfinite(tmid) or not np.isfinite(rprs) or rprs < 0:
+        return summary
+
+    total_duration = transit_qc_geometry_contact_duration(parameters, 1.0 + rprs)
+    full_duration = transit_qc_geometry_contact_duration(parameters, max(1.0 - rprs, 0.0))
+    if not np.isfinite(total_duration) or total_duration <= 0:
+        total_duration = coerce_finite_transit_qc_scalar(getattr(fit, 'duration_expected', np.nan))
+    if not np.isfinite(total_duration) or total_duration <= 0:
+        return summary
+
+    if np.isfinite(full_duration) and full_duration >= 0 and full_duration < total_duration:
+        ingress_duration = 0.5 * (total_duration - full_duration)
+    else:
+        ingress_duration = 0.2 * total_duration
+    if not np.isfinite(ingress_duration) or ingress_duration <= 0:
+        return summary
+    ingress_duration = min(float(ingress_duration), 0.5 * float(total_duration))
+
+    finite_times = times[np.isfinite(times)]
+    if finite_times.size == 0:
+        return summary
+
+    start = tmid - 0.5 * total_duration
+    end = tmid + 0.5 * total_duration
+    ingress_end = min(start + ingress_duration, tmid)
+    egress_start = max(end - ingress_duration, tmid)
+
+    ingress_count = int(np.count_nonzero((finite_times >= start) & (finite_times <= ingress_end)))
+    egress_count = int(np.count_nonzero((finite_times >= egress_start) & (finite_times <= end)))
+    in_transit_count = int(np.count_nonzero((finite_times >= start) & (finite_times <= end)))
+    pre_baseline_count = int(np.count_nonzero(finite_times < start))
+    post_baseline_count = int(np.count_nonzero(finite_times > end))
+
+    ingress_egress_score = min(min(ingress_count, egress_count) / 4.0, 1.0)
+    in_transit_score = min(in_transit_count / 20.0, 1.0)
+    baseline_score = min(min(pre_baseline_count, post_baseline_count) / 12.0, 1.0)
+    score = float(np.clip(
+        0.60 * ingress_egress_score
+        + 0.25 * in_transit_score
+        + 0.15 * baseline_score,
+        0.0,
+        1.0,
+    ))
+
+    summary.update({
+        'available': True,
+        'score': score,
+        'ingress_count': ingress_count,
+        'egress_count': egress_count,
+        'in_transit_count': in_transit_count,
+        'pre_baseline_count': pre_baseline_count,
+        'post_baseline_count': post_baseline_count,
+        'total_duration': float(total_duration),
+        'ingress_duration': float(ingress_duration),
+        'detail': (
+            f"ingress={ingress_count}, egress={egress_count}, "
+            f"in-transit={in_transit_count}, baseline pre/post={pre_baseline_count}/{post_baseline_count}"
+        ),
+    })
+    return summary
 
 
 def estimate_midpoint_anchored_partial_duration(fit, assessment):
@@ -858,17 +1359,50 @@ def transit_qc_saturating_score(value, scale):
     return float(np.clip(1.0 - np.exp(-max(value, 0.0) / scale), 0.0, 1.0))
 
 
-def transit_qc_residual_scatter_score(residual_scatter, reference_scatter=0.005):
+def transit_qc_residual_scatter_score(
+    residual_scatter,
+    transit_depth=np.nan,
+    full_credit_ratio=0.5,
+    zero_credit_ratio=4.0,
+    decay_rate=3.0,
+):
     try:
         residual_scatter = float(residual_scatter)
-        reference_scatter = float(reference_scatter)
+        transit_depth = float(transit_depth)
+        full_credit_ratio = float(full_credit_ratio)
+        zero_credit_ratio = float(zero_credit_ratio)
+        decay_rate = float(decay_rate)
     except (TypeError, ValueError):
         return np.nan
 
-    if not np.isfinite(residual_scatter) or residual_scatter < 0 or not np.isfinite(reference_scatter) or reference_scatter <= 0:
+    if (
+        not np.isfinite(residual_scatter)
+        or residual_scatter < 0
+        or not np.isfinite(full_credit_ratio)
+        or full_credit_ratio < 0
+        or not np.isfinite(zero_credit_ratio)
+        or zero_credit_ratio <= full_credit_ratio
+        or not np.isfinite(decay_rate)
+        or decay_rate <= 0
+    ):
         return np.nan
 
-    return float(np.clip(1.0 / (1.0 + residual_scatter / reference_scatter), 0.0, 1.0))
+    if not np.isfinite(transit_depth) or transit_depth <= 0:
+        return np.nan
+
+    scatter_ratio = residual_scatter / transit_depth
+    if scatter_ratio <= full_credit_ratio:
+        return 1.0
+    if scatter_ratio >= zero_credit_ratio:
+        return 0.0
+
+    interval_fraction = (
+        (scatter_ratio - full_credit_ratio)
+        / (zero_credit_ratio - full_credit_ratio)
+    )
+    numerator = np.exp(-decay_rate * interval_fraction) - np.exp(-decay_rate)
+    denominator = 1.0 - np.exp(-decay_rate)
+    return float(np.clip(numerator / denominator, 0.0, 1.0))
 
 
 def transit_qc_mean_available_score(*scores):
@@ -1016,6 +1550,9 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         'tmid_deviation_threshold_minutes': np.nan,
         'tmid_deviation_sigma': np.nan,
         'rprs_deviation_fit_unc': np.nan,
+        'rprs_deviation_model_fit_unc': np.nan,
+        'rprs_deviation_data_fit_unc': np.nan,
+        'rprs_deviation_combined_fit_unc': np.nan,
         'rprs_deviation_expected_unc': np.nan,
         'rprs_deviation_systematic_floor': np.nan,
         'rprs_deviation_unc': np.nan,
@@ -1023,6 +1560,8 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         'tmid_deviation_score': np.nan,
         'rprs_deviation_score': np.nan,
         'deviation_from_expected_value': np.nan,
+        'rprs_prior_assumed': False,
+        'rprs_prior_assumed_note': None,
         'available': False,
         'failed': False,
         'notes': [],
@@ -1046,7 +1585,32 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
     expected_rprs_unc = expected.get('expected_rprs_unc', np.nan)
     fitted_rprs = parameters.get('rprs', np.nan)
     errors = getattr(fit, 'errors', {}) or {}
-    fitted_rprs_unc = errors.get('rprs', np.nan)
+    fitted_rprs_model_unc = errors.get('rprs', np.nan)
+    empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
+    if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+        empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
+        if isinstance(empirical_uncertainty, dict) and empirical_uncertainty.get('available'):
+            try:
+                fit.empirical_transit_uncertainty = empirical_uncertainty
+            except Exception:
+                pass
+    fitted_rprs_data_unc = np.nan
+    fitted_rprs_unc = fitted_rprs_model_unc
+    rprs_prior_assumed = False
+    if isinstance(empirical_uncertainty, dict) and empirical_uncertainty.get('available'):
+        rprs_prior_assumed = (
+            bool(empirical_uncertainty.get('rprs_prior_fallback_applied'))
+            or empirical_uncertainty.get('rprs_uncertainty_basis') == 'prior_assumed_data_only'
+        )
+        if rprs_prior_assumed:
+            fitted_rprs_model_unc = np.nan
+        fitted_rprs_data_unc = empirical_uncertainty.get('data_rprs_uncertainty', np.nan)
+        combined_uncertainty = _finite_float(
+            empirical_uncertainty.get('combined_rprs_uncertainty'),
+            np.nan,
+        )
+        if np.isfinite(combined_uncertainty) and combined_uncertainty >= 0:
+            fitted_rprs_unc = combined_uncertainty
     comparison_unc, systematic_floor = transit_qc_rprs_deviation_uncertainty(
         fitted_rprs_unc,
         expected_rprs_unc,
@@ -1057,9 +1621,18 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
     summary['fitted_rprs'] = fitted_rprs
     summary['fitted_rprs_unc'] = fitted_rprs_unc
     summary['rprs_deviation_fit_unc'] = fitted_rprs_unc
+    summary['rprs_deviation_model_fit_unc'] = fitted_rprs_model_unc
+    summary['rprs_deviation_data_fit_unc'] = fitted_rprs_data_unc
+    summary['rprs_deviation_combined_fit_unc'] = fitted_rprs_unc
     summary['rprs_deviation_expected_unc'] = expected_rprs_unc
     summary['rprs_deviation_systematic_floor'] = systematic_floor
     summary['rprs_deviation_unc'] = comparison_unc
+    summary['rprs_prior_assumed'] = bool(rprs_prior_assumed)
+    if rprs_prior_assumed:
+        summary['rprs_prior_assumed_note'] = (
+            "Rp/R* was fixed to the input prior; the expected-value deviation is circular "
+            "and is omitted from KTMF scoring."
+        )
     if (
         np.isfinite(expected_rprs)
         and np.isfinite(fitted_rprs)
@@ -1075,6 +1648,18 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
         summary['deviation_from_expected_value'] = float(summary['rprs_deviation_score'])
 
     if np.isfinite(summary['rprs_deviation_sigma']):
+        uncertainty_parts = []
+        model_unc = summary.get('rprs_deviation_model_fit_unc', np.nan)
+        data_unc = summary.get('rprs_deviation_data_fit_unc', np.nan)
+        if np.isfinite(model_unc):
+            uncertainty_parts.append(f"model={model_unc:.6f}")
+        if np.isfinite(data_unc):
+            uncertainty_parts.append(f"data/red-noise={data_unc:.6f}")
+        uncertainty_note = (
+            "; fit uncertainty terms: " + ", ".join(uncertainty_parts)
+            if uncertainty_parts
+            else ""
+        )
         summary['notes'].append(
             "Expected-value Rp/R* deviation: "
             f"{summary['rprs_deviation_sigma']:.2f} sigma "
@@ -1082,8 +1667,11 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
             f"expected={expected_rprs:.6f} +/- {expected_rprs_unc:.6f}; "
             f"comparison uncertainty={summary['rprs_deviation_unc']:.6f}, "
             f"including {100.0 * TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION:.1f}% "
-            f"Rp/R* floor={summary['rprs_deviation_systematic_floor']:.6f})."
+            f"Rp/R* floor={summary['rprs_deviation_systematic_floor']:.6f}"
+            f"{uncertainty_note})."
         )
+        if rprs_prior_assumed:
+            summary['notes'].append(summary['rprs_prior_assumed_note'])
 
     rprs_sigma = summary['rprs_deviation_sigma']
     if np.isfinite(rprs_sigma) and np.isfinite(sigma_threshold) and sigma_threshold > 0 and rprs_sigma > sigma_threshold:
@@ -1105,6 +1693,12 @@ def compute_transit_qc_ktmf(summary):
     )
     delta_chi2_score = transit_qc_saturating_score(summary.get('delta_chi2', np.nan), 25.0)
     model_evidence_score = transit_qc_mean_available_score(delta_bic_score, delta_chi2_score)
+    model_evidence_score_uncertainty = np.nan
+    model_evidence_scores = [
+        float(score) for score in (delta_bic_score, delta_chi2_score) if np.isfinite(score)
+    ]
+    if len(model_evidence_scores) > 1:
+        model_evidence_score_uncertainty = float(np.std(model_evidence_scores))
     model_evidence_detail_parts = [
         f"Delta BIC={format_transit_delta_bic(summary.get('delta_bic', np.nan))}",
         f"Delta chi2={summary.get('delta_chi2', np.nan):.2f}"
@@ -1112,7 +1706,14 @@ def compute_transit_qc_ktmf(summary):
         else "Delta chi2=n/a",
     ]
     deviation_score = summary.get('deviation_from_expected_value', np.nan)
-    if np.isfinite(deviation_score):
+    rprs_prior_assumed = bool(summary.get('rprs_prior_assumed', False))
+    if rprs_prior_assumed:
+        deviation_score = np.nan
+        deviation_detail = (
+            summary.get('rprs_prior_assumed_note')
+            or "Rp/R* was fixed to the input prior; expected-value deviation is omitted from KTMF scoring."
+        )
+    elif np.isfinite(deviation_score):
         deviation_detail_parts = [
             f"score={deviation_score:.2f}",
             f"Rp/R* sigma={summary.get('rprs_deviation_sigma', np.nan):.2f}",
@@ -1120,6 +1721,12 @@ def compute_transit_qc_ktmf(summary):
         rprs_fit_unc = summary.get('rprs_deviation_fit_unc', np.nan)
         if np.isfinite(rprs_fit_unc):
             deviation_detail_parts.append(f"fit uncertainty={rprs_fit_unc:.6f}")
+        model_fit_unc = summary.get('rprs_deviation_model_fit_unc', np.nan)
+        if np.isfinite(model_fit_unc):
+            deviation_detail_parts.append(f"model uncertainty={model_fit_unc:.6f}")
+        data_fit_unc = summary.get('rprs_deviation_data_fit_unc', np.nan)
+        if np.isfinite(data_fit_unc):
+            deviation_detail_parts.append(f"data/red-noise uncertainty={data_fit_unc:.6f}")
         expected_unc = summary.get('rprs_deviation_expected_unc', summary.get('expected_rprs_unc', np.nan))
         if np.isfinite(expected_unc):
             deviation_detail_parts.append(f"expected uncertainty={expected_unc:.6f}")
@@ -1132,6 +1739,58 @@ def compute_transit_qc_ktmf(summary):
         deviation_detail = ", ".join(deviation_detail_parts)
     else:
         deviation_detail = "expected-value deviation disabled or unavailable"
+
+    residual_scatter = summary.get('residual_scatter', np.nan)
+    residual_depth = summary.get('transit_depth_for_residual_scatter', np.nan)
+    residual_scatter_to_depth_ratio = summary.get('residual_scatter_to_depth_ratio', np.nan)
+    residual_scatter_score = transit_qc_residual_scatter_score(
+        residual_scatter,
+        residual_depth,
+    )
+    residual_scatter_score_uncertainty = np.nan
+    point_count = summary.get('point_count', np.nan)
+    if (
+        np.isfinite(residual_scatter)
+        and residual_scatter >= 0
+        and np.isfinite(residual_depth)
+        and residual_depth > 0
+        and np.isfinite(point_count)
+        and point_count > 2
+    ):
+        residual_scatter_uncertainty = residual_scatter / np.sqrt(2.0 * (point_count - 1.0))
+        residual_ratio_uncertainty = residual_scatter_uncertainty / residual_depth
+        full_credit_ratio = 0.5
+        zero_credit_ratio = 4.0
+        decay_rate = 3.0
+        if not np.isfinite(residual_scatter_to_depth_ratio):
+            residual_scatter_to_depth_ratio = residual_scatter / residual_depth
+        if residual_scatter_to_depth_ratio <= full_credit_ratio or residual_scatter_to_depth_ratio >= zero_credit_ratio:
+            residual_scatter_score_uncertainty = 0.0
+        else:
+            interval_fraction = (
+                (residual_scatter_to_depth_ratio - full_credit_ratio)
+                / (zero_credit_ratio - full_credit_ratio)
+            )
+            derivative = (
+                decay_rate * np.exp(-decay_rate * interval_fraction)
+                / ((zero_credit_ratio - full_credit_ratio) * (1.0 - np.exp(-decay_rate)))
+            )
+            residual_scatter_score_uncertainty = float(derivative * residual_ratio_uncertainty)
+
+    if (
+        np.isfinite(residual_scatter)
+        and np.isfinite(residual_depth)
+        and residual_depth > 0
+    ):
+        residual_scatter_detail = (
+            f"scatter/depth={residual_scatter / residual_depth:.2f}, "
+            f"scatter={residual_scatter * 100.0:.4f}%, "
+            f"depth={residual_depth * 100.0:.3f}%"
+        )
+    elif np.isfinite(residual_scatter):
+        residual_scatter_detail = f"scatter={residual_scatter * 100.0:.4f}%, depth=n/a"
+    else:
+        residual_scatter_detail = "n/a"
 
     duration_note = summary.get('duration_consistency_note')
     if np.isfinite(summary.get('duration_ratio', np.nan)):
@@ -1146,39 +1805,47 @@ def compute_transit_qc_ktmf(summary):
             'key': 'model_evidence',
             'label': 'Model Evidence',
             'score': model_evidence_score,
+            'score_uncertainty': model_evidence_score_uncertainty,
             'detail': ", ".join(model_evidence_detail_parts),
         },
         {
             'key': 'deviation_from_expected_value',
             'label': 'Deviation From Expected Value',
             'score': deviation_score,
+            'score_uncertainty': np.nan,
             'detail': deviation_detail,
         },
         {
             'key': 'residual_scatter',
             'label': 'Residual Scatter Around Full Model Fit',
-            'score': transit_qc_residual_scatter_score(summary.get('residual_scatter', np.nan)),
-            'detail': (
-                f"{summary.get('residual_scatter', np.nan) * 100.0:.4f}%"
-                if np.isfinite(summary.get('residual_scatter', np.nan))
-                else "n/a"
-            ),
+            'score': residual_scatter_score,
+            'score_uncertainty': residual_scatter_score_uncertainty,
+            'detail': residual_scatter_detail,
         },
         {
             'key': 'duration_consistency',
             'label': 'Duration Consistency',
             'score': transit_qc_duration_score(summary.get('duration_ratio', np.nan)),
+            'score_uncertainty': np.nan,
             'detail': duration_detail,
         },
         {
             'key': 'eebls_depth_snr',
             'label': 'EEBLS Depth SNR',
             'score': transit_qc_saturating_score(summary.get('eebls_depth_snr', np.nan), TRANSIT_QC_MIN_EEBLS_SNR),
+            'score_uncertainty': np.nan,
             'detail': (
                 f"{summary.get('eebls_depth_snr', np.nan):.2f}"
                 if np.isfinite(summary.get('eebls_depth_snr', np.nan))
                 else "n/a"
             ),
+        },
+        {
+            'key': 'sampling',
+            'label': 'Sampling / Cadence',
+            'score': summary.get('sampling_score', np.nan),
+            'score_uncertainty': np.nan,
+            'detail': summary.get('sampling_detail') or "n/a",
         },
     ]
 
@@ -1206,8 +1873,10 @@ def compute_transit_qc_ktmf(summary):
             points = float(np.clip(score, 0.0, 1.0) * max_points)
             total_points += points
             ktmf_contributions.append({
+                'key': component['key'],
                 'label': component['label'],
                 'score': float(np.clip(score, 0.0, 1.0)),
+                'score_uncertainty': component.get('score_uncertainty', np.nan),
                 'max_points': float(max_points),
                 'points': points,
                 'detail': component.get('detail'),
@@ -1215,8 +1884,10 @@ def compute_transit_qc_ktmf(summary):
             })
         else:
             ktmf_contributions.append({
+                'key': component['key'],
                 'label': component['label'],
                 'score': np.nan,
+                'score_uncertainty': np.nan,
                 'max_points': 0.0,
                 'points': 0.0,
                 'detail': component.get('detail'),
@@ -1406,6 +2077,17 @@ def evaluate_transit_detection_qc(fit):
         'duration_consistency_note': None,
         'eebls_depth_snr': np.nan,
         'residual_scatter': np.nan,
+        'transit_depth_for_residual_scatter': np.nan,
+        'residual_scatter_to_depth_ratio': np.nan,
+        'sampling_score': np.nan,
+        'sampling_detail': None,
+        'sampling_ingress_count': 0,
+        'sampling_egress_count': 0,
+        'sampling_in_transit_count': 0,
+        'sampling_pre_baseline_count': 0,
+        'sampling_post_baseline_count': 0,
+        'sampling_total_duration': np.nan,
+        'sampling_ingress_duration': np.nan,
         'use_deviation_from_expected_transit_in_qc': bool(use_deviation_from_expected_transit_in_qc),
         'deviation_sigma_threshold': deviation_sigma_threshold,
         'expected_tmid': expected_context.get('expected_tmid', np.nan),
@@ -1421,6 +2103,9 @@ def evaluate_transit_detection_qc(fit):
         'tmid_deviation_threshold_minutes': np.nan,
         'tmid_deviation_sigma': np.nan,
         'rprs_deviation_fit_unc': np.nan,
+        'rprs_deviation_model_fit_unc': np.nan,
+        'rprs_deviation_data_fit_unc': np.nan,
+        'rprs_deviation_combined_fit_unc': np.nan,
         'rprs_deviation_expected_unc': np.nan,
         'rprs_deviation_systematic_floor': np.nan,
         'rprs_deviation_unc': np.nan,
@@ -1512,8 +2197,17 @@ def evaluate_transit_detection_qc(fit):
         'flat_a2': flat_model.get('a2', np.nan),
         'flat_model_note': flat_model.get('note'),
         'residual_scatter': transit_qc_residual_scatter(data, transit_model),
+        'transit_depth_for_residual_scatter': transit_qc_model_depth_fraction(transit_model),
         'point_count': int(point_count),
     })
+    if (
+        np.isfinite(summary['residual_scatter'])
+        and np.isfinite(summary['transit_depth_for_residual_scatter'])
+        and summary['transit_depth_for_residual_scatter'] > 0
+    ):
+        summary['residual_scatter_to_depth_ratio'] = float(
+            summary['residual_scatter'] / summary['transit_depth_for_residual_scatter']
+        )
 
     if not summary['computed']:
         note = flat_model.get('note') or 'flat/null model comparison failed.'
@@ -1549,6 +2243,18 @@ def evaluate_transit_detection_qc(fit):
 
     ensure_lightcurve_fit_eebls_diagnostic(fit)
     summary['eebls_depth_snr'] = extract_lightcurve_fit_eebls_snr(fit)
+    sampling_summary = transit_qc_sampling_summary(fit)
+    summary.update({
+        'sampling_score': sampling_summary.get('score', np.nan),
+        'sampling_detail': sampling_summary.get('detail'),
+        'sampling_ingress_count': sampling_summary.get('ingress_count', 0),
+        'sampling_egress_count': sampling_summary.get('egress_count', 0),
+        'sampling_in_transit_count': sampling_summary.get('in_transit_count', 0),
+        'sampling_pre_baseline_count': sampling_summary.get('pre_baseline_count', 0),
+        'sampling_post_baseline_count': sampling_summary.get('post_baseline_count', 0),
+        'sampling_total_duration': sampling_summary.get('total_duration', np.nan),
+        'sampling_ingress_duration': sampling_summary.get('ingress_duration', np.nan),
+    })
     deviation_summary = evaluate_transit_qc_expected_value_deviation(
         fit,
         deviation_sigma_threshold,
@@ -1566,6 +2272,9 @@ def evaluate_transit_detection_qc(fit):
         'tmid_deviation_threshold_minutes': deviation_summary.get('tmid_deviation_threshold_minutes', np.nan),
         'tmid_deviation_sigma': deviation_summary.get('tmid_deviation_sigma', np.nan),
         'rprs_deviation_fit_unc': deviation_summary.get('rprs_deviation_fit_unc', np.nan),
+        'rprs_deviation_model_fit_unc': deviation_summary.get('rprs_deviation_model_fit_unc', np.nan),
+        'rprs_deviation_data_fit_unc': deviation_summary.get('rprs_deviation_data_fit_unc', np.nan),
+        'rprs_deviation_combined_fit_unc': deviation_summary.get('rprs_deviation_combined_fit_unc', np.nan),
         'rprs_deviation_expected_unc': deviation_summary.get('rprs_deviation_expected_unc', np.nan),
         'rprs_deviation_systematic_floor': deviation_summary.get('rprs_deviation_systematic_floor', np.nan),
         'rprs_deviation_unc': deviation_summary.get('rprs_deviation_unc', np.nan),
@@ -1573,6 +2282,8 @@ def evaluate_transit_detection_qc(fit):
         'tmid_deviation_score': deviation_summary.get('tmid_deviation_score', np.nan),
         'rprs_deviation_score': deviation_summary.get('rprs_deviation_score', np.nan),
         'deviation_from_expected_value': deviation_summary.get('deviation_from_expected_value', np.nan),
+        'rprs_prior_assumed': deviation_summary.get('rprs_prior_assumed', False),
+        'rprs_prior_assumed_note': deviation_summary.get('rprs_prior_assumed_note'),
     })
 
     notes = []
@@ -1728,6 +2439,9 @@ def annotate_transit_detection_qc(fit, summary=None):
     fit.transit_qc_tmid_deviation_threshold_minutes = summary.get('tmid_deviation_threshold_minutes')
     fit.transit_qc_tmid_deviation_sigma = summary.get('tmid_deviation_sigma')
     fit.transit_qc_rprs_deviation_fit_unc = summary.get('rprs_deviation_fit_unc')
+    fit.transit_qc_rprs_deviation_model_fit_unc = summary.get('rprs_deviation_model_fit_unc')
+    fit.transit_qc_rprs_deviation_data_fit_unc = summary.get('rprs_deviation_data_fit_unc')
+    fit.transit_qc_rprs_deviation_combined_fit_unc = summary.get('rprs_deviation_combined_fit_unc')
     fit.transit_qc_rprs_deviation_expected_unc = summary.get('rprs_deviation_expected_unc')
     fit.transit_qc_rprs_deviation_systematic_floor = summary.get('rprs_deviation_systematic_floor')
     fit.transit_qc_rprs_deviation_unc = summary.get('rprs_deviation_unc')
@@ -2023,6 +2737,234 @@ def build_comparison_candidate_transit_prior(p_dict, ld):
         'tmid': p_dict['midT'],
         'a2': 0,
     }
+
+
+def build_search_restriction_prior_from_planet_dict(p_dict):
+    if not isinstance(p_dict, dict):
+        return {}
+    return {
+        'rprs': p_dict.get('rprs'),
+        'ars': p_dict.get('aRs'),
+    }
+
+
+def estimate_rprs_data_uncertainty_from_lightcurve(
+    times,
+    flux_values,
+    flux_errors,
+    prior,
+    transit_depth_threshold_fraction=0.05,
+):
+    payload = {
+        'available': False,
+        'data_rprs_uncertainty': np.nan,
+        'rprs_data_uncertainty': np.nan,
+        'note': 'Unavailable; the prior transit model could not be evaluated against the light curve.',
+    }
+    if not isinstance(prior, dict):
+        return payload
+
+    try:
+        times = np.asarray(times, dtype=float).reshape(-1)
+        flux_values = np.asarray(flux_values, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return payload
+    if flux_errors is None:
+        flux_errors = np.full(flux_values.shape, np.nan, dtype=float)
+    else:
+        try:
+            flux_errors = np.asarray(flux_errors, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            flux_errors = np.full(flux_values.shape, np.nan, dtype=float)
+
+    if not (times.shape == flux_values.shape == flux_errors.shape):
+        return payload
+    if times.size < 3:
+        payload['note'] = 'Unavailable; too few light-curve points for a data-based Rp/R* uncertainty estimate.'
+        return payload
+
+    try:
+        prior_transit = np.asarray(transit(times, prior), dtype=float).reshape(-1)
+    except Exception as exc:
+        payload['note'] = f"Unavailable; prior transit model evaluation failed ({describe_retry_exception(exc)})."
+        return payload
+    if prior_transit.shape != times.shape:
+        return payload
+
+    finite_model = np.isfinite(prior_transit)
+    finite_flux = np.isfinite(flux_values)
+    if not np.any(finite_model & finite_flux):
+        return payload
+
+    baseline_scale = solve_transit_qc_flux_baseline(prior_transit, flux_values, dataerr=flux_errors)
+    if not np.isfinite(baseline_scale) or baseline_scale <= 0:
+        baseline_scale = 1.0
+    scaled_transit = prior_transit * baseline_scale
+
+    class PrefitRprsUncertaintyFit:
+        pass
+
+    dummy_fit = PrefitRprsUncertaintyFit()
+    dummy_fit.time = times
+    dummy_fit.data = flux_values
+    dummy_fit.dataerr = flux_errors
+    dummy_fit.transit = scaled_transit
+    dummy_fit.model = scaled_transit
+    dummy_fit.residuals = flux_values - scaled_transit
+    dummy_fit.airmass_model = np.ones_like(scaled_transit)
+    dummy_fit.parameters = dict(prior)
+    dummy_fit.errors = {'rprs': np.nan}
+
+    empirical = fit_empirical_transit_uncertainty(
+        dummy_fit,
+        transit_depth_threshold_fraction=transit_depth_threshold_fraction,
+    )
+    if not isinstance(empirical, dict) or not empirical.get('available'):
+        payload['note'] = (
+            "Unavailable; the prior transit shape did not provide enough in-transit/out-of-transit "
+            "support for a data-based Rp/R* uncertainty estimate."
+        )
+        return payload
+
+    data_uncertainty = empirical.get('data_rprs_uncertainty')
+    try:
+        data_uncertainty = float(data_uncertainty)
+    except (TypeError, ValueError):
+        data_uncertainty = np.nan
+    if not np.isfinite(data_uncertainty) or data_uncertainty < 0:
+        return payload
+
+    payload.update(empirical)
+    payload.update({
+        'available': True,
+        'data_rprs_uncertainty': data_uncertainty,
+        'rprs_data_uncertainty': data_uncertainty,
+        'rprs_data_uncertainty_source': 'prefit_flux_residual_red_noise',
+        'baseline_scale': float(baseline_scale),
+        'note': (
+            f"Estimated pre-fit Rp/R* data uncertainty {data_uncertainty:.6f} "
+            "from residual scatter around the prior transit shape."
+        ),
+    })
+    return payload
+
+
+def rprs_prior_window_half_widths(prior):
+    if not isinstance(prior, dict):
+        return None
+    try:
+        rprs = float(prior.get('rprs'))
+        percentage = float(RPRS_RANGE_RESTRICTION_PERCENTAGE)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(rprs) or rprs <= RPRS_SEARCH_BOUND_MIN:
+        return None
+    if not np.isfinite(percentage) or percentage < 0:
+        return None
+
+    configured_half_width = abs(rprs) * percentage / 100.0
+    data_uncertainty = prior.get('rprs_data_uncertainty', prior.get('data_rprs_uncertainty'))
+    try:
+        data_uncertainty = float(data_uncertainty)
+    except (TypeError, ValueError):
+        data_uncertainty = np.nan
+    try:
+        data_sigma = float(prior.get('rprs_data_uncertainty_bound_sigma', RPRS_DATA_UNCERTAINTY_BOUND_SIGMA))
+    except (TypeError, ValueError):
+        data_sigma = RPRS_DATA_UNCERTAINTY_BOUND_SIGMA
+    if not np.isfinite(data_sigma) or data_sigma <= 0:
+        data_sigma = RPRS_DATA_UNCERTAINTY_BOUND_SIGMA
+
+    data_half_width = np.nan
+    use_data_window = False
+    if np.isfinite(data_uncertainty) and data_uncertainty > configured_half_width:
+        data_half_width = float(data_sigma * data_uncertainty)
+        use_data_window = np.isfinite(data_half_width) and data_half_width > configured_half_width
+
+    half_width = data_half_width if use_data_window else configured_half_width
+    if not np.isfinite(half_width) or half_width <= 0:
+        return None
+    return {
+        'center': float(rprs),
+        'configured_half_width': float(configured_half_width),
+        'data_uncertainty': float(data_uncertainty) if np.isfinite(data_uncertainty) else np.nan,
+        'data_sigma': float(data_sigma),
+        'data_half_width': float(data_half_width) if np.isfinite(data_half_width) else np.nan,
+        'half_width': float(half_width),
+        'use_data_window': bool(use_data_window),
+    }
+
+
+def rprs_prior_centered_bounds(prior):
+    widths = rprs_prior_window_half_widths(prior)
+    if not widths:
+        return None
+    center = widths['center']
+    half_width = widths['half_width']
+    lower_bound = max(float(RPRS_SEARCH_BOUND_MIN), center - half_width)
+    upper_bound = min(float(RPRS_SEARCH_BOUND_MAX), center + half_width)
+    if not np.isfinite(lower_bound) or not np.isfinite(upper_bound) or upper_bound <= lower_bound:
+        return None
+    return [float(lower_bound), float(upper_bound)]
+
+
+def enrich_search_restriction_prior_with_rprs_data_uncertainty(
+    search_prior,
+    times,
+    flux_values,
+    flux_errors,
+    transit_prior,
+    context_label="light curve",
+):
+    enriched = dict(search_prior) if isinstance(search_prior, dict) else {}
+    if not isinstance(transit_prior, dict):
+        return enriched
+    estimate = estimate_rprs_data_uncertainty_from_lightcurve(
+        times,
+        flux_values,
+        flux_errors,
+        transit_prior,
+    )
+    if not estimate.get('available'):
+        return enriched
+
+    data_uncertainty = estimate.get('data_rprs_uncertainty')
+    try:
+        data_uncertainty = float(data_uncertainty)
+    except (TypeError, ValueError):
+        data_uncertainty = np.nan
+    if not np.isfinite(data_uncertainty) or data_uncertainty < 0:
+        return enriched
+
+    enriched['rprs_data_uncertainty'] = data_uncertainty
+    enriched['data_rprs_uncertainty'] = data_uncertainty
+    enriched['rprs_data_uncertainty_bound_sigma'] = RPRS_DATA_UNCERTAINTY_BOUND_SIGMA
+    enriched['rprs_data_uncertainty_payload'] = estimate
+
+    widths = rprs_prior_window_half_widths(enriched)
+    if widths and widths.get('use_data_window'):
+        log_info(
+            f"Rp/R* data-derived uncertainty for the {context_label} is "
+            f"{data_uncertainty:.6f}, larger than the configured "
+            f"+/-{RPRS_RANGE_RESTRICTION_PERCENTAGE:.1f}% prior window "
+            f"({widths['configured_half_width']:.6f}); widening the prior-centered "
+            f"Rp/R* search half-width to {widths['data_sigma']:.1f} sigma "
+            f"({widths['half_width']:.6f})."
+        )
+    return enriched
+
+
+def widen_rprs_bounds_to_data_uncertainty_window(bounds, prior):
+    widened = clone_lightcurve_bounds(bounds)
+    if 'rprs' not in widened or not RPRS_RANGE_RESTRICTION_ENABLED:
+        return widened
+    widths = rprs_prior_window_half_widths(prior)
+    if not widths or not widths.get('use_data_window'):
+        return widened
+    window = rprs_prior_centered_bounds(prior)
+    if window is not None:
+        widened['rprs'] = window
+    return widened
 
 
 def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_flux, airmass,
@@ -2447,6 +3389,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
                                                  baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
                                                  adaptive_summary=None,
                                                  run_fast_ultranest_before_final_run=FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
+                                                 run_final_fit_phase_residual_clip=FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT,
+                                                 run_final_residual_rejection=FINAL_RESIDUAL_REJECTION_DEFAULT,
                                                  precomputed_candidate_series=None):
     result = {
         'applied': False,
@@ -2560,7 +3504,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
     )
     if (
-        prefit is not None
+        run_final_fit_phase_residual_clip
+        and prefit is not None
         and hasattr(prefit, 'residuals')
         and hasattr(prefit, 'phase')
         and np.shape(prefit.residuals) == np.shape(good_times)
@@ -2651,6 +3596,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         keep_ultranest_sampler_for_deferred_extension=not bool(fast_binning.get('applied')),
         fix_baseline_terms_for_final=not bool(fast_binning.get('applied')),
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
+        search_restriction_prior=build_search_restriction_prior_from_planet_dict(p_dict),
     )
     annotate_fast_ultranest_binning(final_fit, fast_binning)
     if final_fit is None:
@@ -2670,6 +3616,176 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_target_flux = good_target_flux[final_time_indices]
             good_comp_flux = good_comp_flux[final_time_indices]
             source_indices = source_indices[final_time_indices]
+
+    if run_final_residual_rejection and not fast_binning.get('applied'):
+        residual_payload = initialize_final_residual_rejection_payload(
+            enabled=True,
+            input_point_count=int(good_times.shape[0]),
+        )
+        residual_stop_reason = None
+        for residual_refit_iteration in range(1, FINAL_RESIDUAL_REJECTION_MAX_REFITS + 1):
+            min_required_points = max(len(fit_bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
+            residual_keep_mask, residual_summary = final_residual_rejection_keep_mask(
+                final_fit,
+                min_required_points=min_required_points,
+            )
+            cycle_payload = build_final_residual_rejection_payload(
+                final_fit,
+                residual_keep_mask,
+                residual_summary,
+                source_indices=source_indices,
+            )
+            if residual_keep_mask.shape != good_times.shape:
+                residual_stop_reason = 'shape_mismatch'
+                if int(residual_payload.get('rejected_point_count', 0) or 0) == 0:
+                    residual_payload['note'] = (
+                        "Skipped; the final-fit residual array did not align with the retained light-curve points."
+                    )
+                else:
+                    log_info(
+                        "Warning: final residual rejection stopped because the residual array no longer "
+                        "aligned with the retained light-curve points.",
+                        warn=True,
+                    )
+                break
+
+            if not residual_summary.get('applied'):
+                if int(residual_payload.get('rejected_point_count', 0) or 0) == 0:
+                    residual_payload = dict(cycle_payload)
+                    residual_payload.setdefault('refit_iteration_count', 0)
+                    residual_payload.setdefault('refit_iterations', [])
+                else:
+                    residual_payload = update_final_residual_rejection_final_pass(
+                        residual_payload,
+                        residual_summary,
+                    )
+                break
+
+            clipped_times = good_times[residual_keep_mask]
+            clipped_flux = good_flux[residual_keep_mask]
+            clipped_unc = good_unc[residual_keep_mask]
+            clipped_airmass = good_airmass[residual_keep_mask]
+            clipped_jd_times = good_jd_times[residual_keep_mask]
+            clipped_target_flux = good_target_flux[residual_keep_mask]
+            clipped_comp_flux = good_comp_flux[residual_keep_mask]
+            clipped_source_indices = source_indices[residual_keep_mask]
+
+            residual_refit_prior = dict(fit_prior)
+            final_parameters = getattr(final_fit, 'parameters', {})
+            if isinstance(final_parameters, dict):
+                for key in ('rprs', 'ars', 'tmid', 'inc', 'a0', 'a1', 'a2'):
+                    if key in residual_refit_prior and key in final_parameters:
+                        residual_refit_prior[key] = final_parameters[key]
+            residual_refit_bounds = get_posterior_refit_final_bounds(final_fit, fit_bounds)
+            residual_coverage_assessment = build_expected_transit_coverage_assessment(
+                clipped_times,
+                residual_refit_prior,
+                flux_values=clipped_flux,
+                flux_errors=clipped_unc,
+                tmid_search_summary=build_ephemeris_tmid_search_summary_for_coverage(
+                    clipped_times,
+                    p_dict,
+                    prior=residual_refit_prior,
+                    duration_prior=build_single_transit_duration_prior(p_dict),
+                    sigma_multiplier=35.0,
+                ),
+                duration_prior=build_single_transit_duration_prior(p_dict),
+            )
+            refit, refit_flux, refit_unc = fit_final_lightcurve_with_oot_baseline_detrending(
+                clipped_times,
+                clipped_flux,
+                clipped_unc,
+                clipped_airmass,
+                residual_refit_prior,
+                residual_refit_bounds,
+                jd_times=clipped_jd_times,
+                skip_airmass_fit=skip_final_airmass_fit,
+                airmass_skip_note=airmass_skip_note,
+                disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+                use_impactparameter_rather_than_inclination_to_fit=
+                use_impactparameter_rather_than_inclination_to_fit,
+                plot_time_range=plot_time_range,
+                baseline_duration_multiplier=baseline_duration_multiplier,
+                expected_planet_dict=p_dict,
+                expected_tmid_search_summary=tmid_search_summary,
+                eebls_search_summary=eebls_search_summary,
+                extend_sparse_posterior_live_points=False,
+                keep_ultranest_sampler_for_deferred_extension=True,
+                fix_baseline_terms_for_final=True,
+                pre_ultranest_coverage_assessment=residual_coverage_assessment,
+                search_restriction_prior=build_search_restriction_prior_from_planet_dict(p_dict),
+            )
+            if refit is None:
+                residual_stop_reason = 'refit_failed'
+                if int(residual_payload.get('rejected_point_count', 0) or 0) == 0:
+                    residual_payload['note'] = (
+                        "Skipped; the residual-rejected final UltraNest refit did not converge, "
+                        "so the unrejected final fit was retained."
+                    )
+                log_info(
+                    "Warning: the residual-rejected final UltraNest refit did not converge; "
+                    "retaining the last successful final fit.",
+                    warn=True,
+                )
+                break
+
+            cycle_note = (
+                f"Iteration {residual_refit_iteration}: {residual_summary.get('note')} "
+                f"Reran UltraNest on {int(clipped_times.shape[0])} point(s)."
+            )
+            diagnostic = build_time_rejection_diagnostic(
+                f"Final residual rejection refit {residual_refit_iteration}",
+                good_times,
+                residual_keep_mask,
+                note=cycle_note,
+            )
+            if diagnostic is not None:
+                result['filter_diagnostics'].append(diagnostic)
+            log_info(cycle_note)
+            residual_payload = record_final_residual_rejection_refit_cycle(
+                residual_payload,
+                cycle_payload,
+                residual_refit_iteration,
+            )
+            annotate_fast_ultranest_binning(refit, fast_binning)
+            final_fit = refit
+            fitted_flux = np.asarray(refit_flux, dtype=float)
+            fitted_unc = np.asarray(refit_unc, dtype=float)
+            good_times = clipped_times
+            good_flux = clipped_flux
+            good_unc = clipped_unc
+            good_airmass = clipped_airmass
+            good_jd_times = clipped_jd_times
+            good_target_flux = clipped_target_flux
+            good_comp_flux = clipped_comp_flux
+            source_indices = clipped_source_indices
+        else:
+            residual_stop_reason = 'max_refits'
+
+        residual_payload = finalize_final_residual_rejection_payload(
+            residual_payload,
+            current_point_count=int(good_times.shape[0]),
+            stopped_reason=residual_stop_reason,
+        )
+        annotate_final_residual_rejection(final_fit, residual_payload)
+    else:
+        annotate_final_residual_rejection(
+            final_fit,
+            {
+                'enabled': bool(run_final_residual_rejection),
+                'applied': False,
+                'note': (
+                    "Deferred to the selected full-resolution final refit."
+                    if fast_binning.get('applied')
+                    else "Disabled per optional_info setting."
+                ),
+                'input_point_count': int(final_fit_times.size),
+                'kept_point_count': int(final_fit_times.size),
+                'rejected_point_count': 0,
+                'sigma': FINAL_RESIDUAL_REJECTION_SIGMA,
+            },
+        )
 
     annotate_lightcurve_filter_diagnostics(final_fit, result['filter_diagnostics'])
     annotate_selected_photometry_debug(
@@ -2807,10 +3923,12 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     skip_airmass_fit=False,
     airmass_skip_note=None,
     detrend_on_outoftransit_baseline=True,
+    oot_baseline_min_points_per_side=OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT,
     use_impactparameter_rather_than_inclination_to_fit=True,
     plot_time_range=None,
     duration_prior=None,
     sparse_live_point_extension_enabled=None,
+    run_final_residual_rejection=FINAL_RESIDUAL_REJECTION_DEFAULT,
 ):
     previous_fit = selected_result.get('fit') if isinstance(selected_result, dict) else None
     if previous_fit is None or not getattr(previous_fit, 'fast_ultranest_binning_applied', False):
@@ -2832,7 +3950,28 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     if jd_times is not None and jd_times.shape != times.shape:
         jd_times = None
 
+    original_times = times.copy()
+    base_filter_diagnostics = [
+        dict(diagnostic)
+        for diagnostic in getattr(previous_fit, 'frame_filter_diagnostics', [])
+        if isinstance(diagnostic, dict)
+    ]
+    residual_rejection_diagnostics = []
+    residual_rejection_payload = None
+
+    def aligned_selected_array(key, dtype=float):
+        values = selected_result.get(key)
+        if values is None:
+            return None
+        array = np.asarray(values, dtype=dtype).reshape(-1)
+        return array if array.shape == times.shape else None
+
+    target_flux_values = aligned_selected_array('good_target_flux')
+    comp_flux_values = aligned_selected_array('good_comp_flux')
+    source_indices = aligned_selected_array('source_indices', dtype=int)
+
     prior = build_full_resolution_final_prior_from_previous_fit(previous_fit, p_dict)
+    search_restriction_prior = build_search_restriction_prior_from_planet_dict(p_dict)
     fallback_bounds = selected_result.get('fast_fit_bounds')
     if not isinstance(fallback_bounds, dict):
         fallback_bounds = getattr(previous_fit, 'bounds', {})
@@ -2869,6 +4008,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             flux_errors,
             previous_fit,
             prior=prior,
+            min_side_points=oot_baseline_min_points_per_side,
         )
         if detrend_result.get('applied'):
             fit_flux = np.asarray(detrend_result['flux'], dtype=float)
@@ -2876,6 +4016,25 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             prior['a0'] = 1.0
             prior['a1'] = 1.0
             prior['a2'] = 0.0
+            log_info(
+                "Applying selected full-resolution out-of-transit linear baseline detrending: "
+                f"{detrend_result.get('note', 'baseline fit details unavailable')}"
+            )
+        else:
+            log_info(
+                "Selected full-resolution out-of-transit baseline detrending skipped: "
+                f"{detrend_result.get('note', 'baseline fit details unavailable')}"
+            )
+
+    search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+        search_restriction_prior,
+        times,
+        fit_flux,
+        fit_unc,
+        prior,
+        context_label="selected full-resolution final light curve",
+    )
+    bounds = widen_rprs_bounds_to_data_uncertainty_window(bounds, search_restriction_prior)
 
     fixed_errors = baseline_fixed_errors_from_fit(previous_fit)
     if detrend_result.get('applied'):
@@ -2934,9 +4093,188 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         fixed_flux_baseline=True,
         ultranest_min_num_live_points=min_live_points,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
+        search_restriction_prior=search_restriction_prior,
     )
+    if fit is None:
+        return None
+
+    if run_final_residual_rejection:
+        residual_rejection_payload = initialize_final_residual_rejection_payload(
+            enabled=True,
+            input_point_count=int(times.shape[0]),
+        )
+        residual_stop_reason = None
+        for residual_refit_iteration in range(1, FINAL_RESIDUAL_REJECTION_MAX_REFITS + 1):
+            min_required_points = max(len(bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
+            residual_keep_mask, residual_summary = final_residual_rejection_keep_mask(
+                fit,
+                min_required_points=min_required_points,
+            )
+            cycle_payload = build_final_residual_rejection_payload(
+                fit,
+                residual_keep_mask,
+                residual_summary,
+                source_indices=source_indices,
+            )
+            if residual_keep_mask.shape != times.shape:
+                residual_stop_reason = 'shape_mismatch'
+                if int(residual_rejection_payload.get('rejected_point_count', 0) or 0) == 0:
+                    residual_rejection_payload['note'] = (
+                        "Skipped; the final-fit residual array did not align with the retained light-curve points."
+                    )
+                else:
+                    log_info(
+                        "Warning: final residual rejection stopped because the residual array no longer "
+                        "aligned with the retained light-curve points.",
+                        warn=True,
+                    )
+                break
+
+            if not residual_summary.get('applied'):
+                if int(residual_rejection_payload.get('rejected_point_count', 0) or 0) == 0:
+                    residual_rejection_payload = dict(cycle_payload)
+                    residual_rejection_payload.setdefault('refit_iteration_count', 0)
+                    residual_rejection_payload.setdefault('refit_iterations', [])
+                else:
+                    residual_rejection_payload = update_final_residual_rejection_final_pass(
+                        residual_rejection_payload,
+                        residual_summary,
+                    )
+                break
+
+            retained_times = times[residual_keep_mask]
+            retained_flux = fit_flux[residual_keep_mask]
+            retained_unc = fit_unc[residual_keep_mask]
+            retained_airmass = airmass[residual_keep_mask]
+            retained_jd_times = None if jd_times is None else jd_times[residual_keep_mask]
+            retained_target_flux_values = (
+                None if target_flux_values is None else target_flux_values[residual_keep_mask]
+            )
+            retained_comp_flux_values = (
+                None if comp_flux_values is None else comp_flux_values[residual_keep_mask]
+            )
+            retained_source_indices = (
+                None if source_indices is None else source_indices[residual_keep_mask]
+            )
+
+            residual_refit_prior = dict(prior)
+            final_parameters = getattr(fit, 'parameters', {})
+            if isinstance(final_parameters, dict):
+                for key in ('rprs', 'ars', 'tmid', 'inc'):
+                    if key in residual_refit_prior and key in final_parameters:
+                        residual_refit_prior[key] = final_parameters[key]
+            residual_refit_bounds = get_posterior_refit_final_bounds(fit, bounds)
+            residual_search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+                search_restriction_prior,
+                retained_times,
+                retained_flux,
+                retained_unc,
+                residual_refit_prior,
+                context_label="residual-rejected selected final light curve",
+            )
+            residual_refit_bounds = widen_rprs_bounds_to_data_uncertainty_window(
+                residual_refit_bounds,
+                residual_search_restriction_prior,
+            )
+            residual_coverage_assessment = build_expected_transit_coverage_assessment(
+                retained_times,
+                residual_refit_prior,
+                flux_values=retained_flux,
+                flux_errors=retained_unc,
+                tmid_search_summary=build_ephemeris_tmid_search_summary_for_coverage(
+                    retained_times,
+                    p_dict,
+                    prior=residual_refit_prior,
+                    duration_prior=coverage_duration_prior,
+                    sigma_multiplier=35.0,
+                ),
+                duration_prior=coverage_duration_prior,
+            )
+            log_expected_transit_coverage_assessment(residual_coverage_assessment)
+            refit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+                retained_times,
+                retained_flux,
+                retained_unc,
+                retained_airmass,
+                residual_refit_prior,
+                residual_refit_bounds,
+                jd_times=retained_jd_times,
+                use_impactparameter_rather_than_inclination_to_fit=
+                use_impactparameter_rather_than_inclination_to_fit,
+                max_rprs_retries=0,
+                max_ars_retries=0,
+                max_impact_parameter_retries=0,
+                duration_prior=duration_prior,
+                keep_ultranest_sampler=False,
+                fixed_parameter_errors=fixed_errors,
+                fixed_flux_baseline=True,
+                ultranest_min_num_live_points=min_live_points,
+                pre_ultranest_coverage_assessment=residual_coverage_assessment,
+                search_restriction_prior=residual_search_restriction_prior,
+            )
+            if refit is None:
+                residual_stop_reason = 'refit_failed'
+                if int(residual_rejection_payload.get('rejected_point_count', 0) or 0) == 0:
+                    residual_rejection_payload['note'] = (
+                        "Skipped; the residual-rejected selected full-resolution UltraNest refit "
+                        "did not converge, so the unrejected final fit was retained."
+                    )
+                log_info(
+                    "Warning: the residual-rejected selected full-resolution UltraNest refit did not "
+                    "converge; retaining the last successful final fit.",
+                    warn=True,
+                )
+                break
+
+            cycle_note = (
+                f"Iteration {residual_refit_iteration}: {residual_summary.get('note')} "
+                f"Reran UltraNest on {int(retained_times.shape[0])} point(s)."
+            )
+            residual_rejection_diagnostic = build_time_rejection_diagnostic(
+                f"Final residual rejection refit {residual_refit_iteration}",
+                times,
+                residual_keep_mask,
+                note=cycle_note,
+            )
+            if residual_rejection_diagnostic is not None:
+                residual_rejection_diagnostics.append(residual_rejection_diagnostic)
+            log_info(cycle_note)
+            residual_rejection_payload = record_final_residual_rejection_refit_cycle(
+                residual_rejection_payload,
+                cycle_payload,
+                residual_refit_iteration,
+            )
+            fit = refit
+            times = retained_times
+            fit_flux = retained_flux
+            fit_unc = retained_unc
+            airmass = retained_airmass
+            jd_times = retained_jd_times
+            target_flux_values = retained_target_flux_values
+            comp_flux_values = retained_comp_flux_values
+            source_indices = retained_source_indices
+            pre_ultranest_coverage_assessment = residual_coverage_assessment
+        else:
+            residual_stop_reason = 'max_refits'
+
+        residual_rejection_payload = finalize_final_residual_rejection_payload(
+            residual_rejection_payload,
+            current_point_count=int(times.shape[0]),
+            stopped_reason=residual_stop_reason,
+        )
+    else:
+        residual_rejection_payload = {
+            'enabled': False,
+            'applied': False,
+            'note': "Disabled per optional_info setting.",
+            'input_point_count': int(times.shape[0]),
+            'kept_point_count': int(times.shape[0]),
+            'rejected_point_count': 0,
+            'sigma': FINAL_RESIDUAL_REJECTION_SIGMA,
+        }
+
     annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
-    fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
+    fit = apply_plot_time_range(fit, original_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
     baseline_parameter_note = (
         "Full-resolution out-of-transit linear detrending flattened the final-fit light curve; "
@@ -2968,7 +4306,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         fit,
         {
             'applied': False,
-            'original_point_count': int(times.shape[0]),
+            'original_point_count': int(original_times.shape[0]),
             'binned_point_count': int(times.shape[0]),
             'note': 'Full-resolution selected comparison-star final run; fast binning was not applied.',
         },
@@ -2993,6 +4331,26 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         )
     else:
         annotate_sparse_posterior_live_point_extension(fit, False, False)
+    if residual_rejection_diagnostics:
+        base_filter_diagnostics.extend(residual_rejection_diagnostics)
+    annotate_lightcurve_filter_diagnostics(fit, base_filter_diagnostics)
+    annotate_final_residual_rejection(fit, residual_rejection_payload)
+    selected_debug = getattr(previous_fit, 'selected_photometry_debug', None)
+    if selected_debug is not None:
+        fit.selected_photometry_debug = copy.deepcopy(selected_debug)
+    selected_result['good_times'] = np.asarray(times, dtype=float)
+    selected_result['good_flux'] = np.asarray(fit_flux, dtype=float)
+    selected_result['good_unc'] = np.asarray(fit_unc, dtype=float)
+    selected_result['good_airmass'] = np.asarray(airmass, dtype=float)
+    selected_result['good_jd_times'] = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    if target_flux_values is not None:
+        selected_result['good_target_flux'] = np.asarray(target_flux_values, dtype=float)
+        selected_result['tflux_fit'] = np.asarray(target_flux_values, dtype=float)
+    if comp_flux_values is not None:
+        selected_result['good_comp_flux'] = np.asarray(comp_flux_values, dtype=float)
+        selected_result['cflux_fit'] = np.asarray(comp_flux_values, dtype=float)
+    if source_indices is not None:
+        selected_result['source_indices'] = np.asarray(source_indices, dtype=int)
     annotate_transit_detection_qc(fit)
     clear_fit_ultranest_resume_state(fit)
     return fit, fit_flux, fit_unc
@@ -3088,9 +4446,11 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
             data_highres, _ = estimate_transit_duration_samples_from_fit(final_fit, sample_count=1)
         if data_highres is not None:
             plot_final_lightcurve(final_fit, data_highres, p_dict['pName'], candidate_info_dict['save'], observation_date)
+        plot_prior_posterior_comparison(final_fit, p_dict, p_dict['pName'], candidate_info_dict['save'], observation_date)
+        plot_ktmf_qc_metrics(final_fit, p_dict['pName'], candidate_info_dict['save'], observation_date)
     except Exception as exc:
         archive_errors.append(archive_exception_payload(
-            "Could not save the final lightcurve plot",
+            "Could not save the final lightcurve, prior/posterior comparison, or KTMF QC plot",
             exc,
         ))
 
@@ -3734,10 +5094,99 @@ def extend_selected_comparison_live_points_if_needed(fit, enabled=None):
     )
 
 
+def prior_centered_parameter_bounds(
+    prior_value,
+    percentage,
+    minimum_bound,
+    maximum_bound=None,
+):
+    try:
+        center = float(prior_value)
+        percentage = float(percentage)
+    except (TypeError, ValueError):
+        return None
+
+    if not np.isfinite(center) or center <= minimum_bound:
+        return None
+    if not np.isfinite(percentage) or percentage < 0:
+        return None
+
+    fraction = percentage / 100.0
+    lower_bound = max(float(minimum_bound), center * (1.0 - fraction))
+    upper_bound = center * (1.0 + fraction)
+    if maximum_bound is not None:
+        upper_bound = min(float(maximum_bound), upper_bound)
+    if not np.isfinite(lower_bound) or not np.isfinite(upper_bound) or upper_bound <= lower_bound:
+        return None
+    return [float(lower_bound), float(upper_bound)]
+
+
+def configured_prior_centered_bounds_for_key(key, prior):
+    if not isinstance(prior, dict):
+        return None
+    if key == 'rprs':
+        if not RPRS_RANGE_RESTRICTION_ENABLED:
+            return None
+        return rprs_prior_centered_bounds(prior)
+    if key == 'ars':
+        if not ARS_RANGE_RESTRICTION_ENABLED:
+            return None
+        return prior_centered_parameter_bounds(
+            prior.get('ars'),
+            ARS_RANGE_RESTRICTION_PERCENTAGE,
+            ARS_SEARCH_BOUND_MIN,
+        )
+    return None
+
+
+def intersect_parameter_bounds(bounds, restriction):
+    if restriction is None:
+        return None
+    try:
+        lower_bound, upper_bound = [
+            float(value) for value in np.asarray(bounds, dtype=float).reshape(-1)[:2]
+        ]
+        restrict_lower, restrict_upper = [
+            float(value) for value in np.asarray(restriction, dtype=float).reshape(-1)[:2]
+        ]
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    lower_bound = max(lower_bound, restrict_lower)
+    upper_bound = min(upper_bound, restrict_upper)
+    if not np.isfinite(lower_bound) or not np.isfinite(upper_bound) or upper_bound <= lower_bound:
+        return None
+    return [float(lower_bound), float(upper_bound)]
+
+
+def apply_configured_prior_search_restrictions(bounds, prior):
+    restricted = widen_rprs_bounds_to_data_uncertainty_window(bounds, prior)
+    for key in ('rprs', 'ars'):
+        if key not in restricted:
+            continue
+        restriction = configured_prior_centered_bounds_for_key(key, prior)
+        intersection = intersect_parameter_bounds(restricted[key], restriction)
+        if intersection is not None:
+            restricted[key] = intersection
+    return restricted
+
+
+def bounds_are_close(bounds_a, bounds_b, atol=1e-12):
+    if bounds_a is None or bounds_b is None:
+        return False
+    try:
+        array_a = np.asarray(bounds_a, dtype=float).reshape(-1)[:2]
+        array_b = np.asarray(bounds_b, dtype=float).reshape(-1)[:2]
+    except (TypeError, ValueError, IndexError):
+        return False
+    return array_a.shape == array_b.shape and bool(np.allclose(array_a, array_b, rtol=0.0, atol=atol))
+
+
 def build_initial_rprs_bounds(
     rprs,
     lower_scale=INITIAL_RPRS_BOUND_LOWER_SCALE,
     upper_scale=INITIAL_RPRS_BOUND_UPPER_SCALE,
+    rprs_data_uncertainty=None,
 ):
     try:
         rprs = float(rprs)
@@ -3757,7 +5206,15 @@ def build_initial_rprs_bounds(
         lower_bound = RPRS_SEARCH_BOUND_MIN
         upper_bound = RPRS_SEARCH_BOUND_MAX
 
-    return [float(lower_bound), float(upper_bound)]
+    bounds = [float(lower_bound), float(upper_bound)]
+    restriction_prior = {'rprs': rprs}
+    if rprs_data_uncertainty is not None:
+        restriction_prior['rprs_data_uncertainty'] = rprs_data_uncertainty
+    restricted_bounds = intersect_parameter_bounds(
+        bounds,
+        configured_prior_centered_bounds_for_key('rprs', restriction_prior),
+    )
+    return restricted_bounds if restricted_bounds is not None else bounds
 
 
 def build_initial_ars_bounds(
@@ -3789,15 +5246,29 @@ def build_initial_ars_bounds(
     if not np.isfinite(upper_bound) or upper_bound <= lower_bound:
         upper_bound = float(lower_bound + max(np.finfo(float).eps, ARS_SEARCH_BOUND_MIN))
 
-    return [float(lower_bound), float(upper_bound)]
+    bounds = [float(lower_bound), float(upper_bound)]
+    restricted_bounds = intersect_parameter_bounds(
+        bounds,
+        configured_prior_centered_bounds_for_key('ars', {'ars': ars}),
+    )
+    return restricted_bounds if restricted_bounds is not None else bounds
 
 
-def build_initial_transit_bounds(prior, tmid_bounds, ars_unc=None, inclination_half_width=5.0):
+def build_initial_transit_bounds(
+    prior,
+    tmid_bounds,
+    ars_unc=None,
+    inclination_half_width=5.0,
+    rprs_data_uncertainty=None,
+):
     lower, upper = [float(value) for value in np.asarray(tmid_bounds, dtype=float).reshape(-1)[:2]]
     # Keep ars ahead of inc so the internal impact-parameter parameterization
     # uses the sampled ars value when converting inclination to b.
     return {
-        'rprs': build_initial_rprs_bounds(prior['rprs']),
+        'rprs': build_initial_rprs_bounds(
+            prior['rprs'],
+            rprs_data_uncertainty=rprs_data_uncertainty,
+        ),
         'tmid': [lower, upper],
         'ars': build_initial_ars_bounds(prior['ars'], ars_unc=ars_unc),
         'inc': [prior['inc'] - inclination_half_width, min(90, prior['inc'] + inclination_half_width)],
@@ -4148,7 +5619,19 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     fixed_flux_baseline=False,
     ultranest_min_num_live_points=None,
     pre_ultranest_coverage_assessment=None,
+    search_restriction_prior=None,
+    use_prior_rprs_when_posterior_pinned=None,
 ):
+    if use_prior_rprs_when_posterior_pinned is None:
+        use_prior_rprs_when_posterior_pinned = RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR
+    else:
+        use_prior_rprs_when_posterior_pinned = bool(use_prior_rprs_when_posterior_pinned)
+    restriction_reference_prior = (
+        dict(search_restriction_prior)
+        if isinstance(search_restriction_prior, dict)
+        else dict(prior) if isinstance(prior, dict) else {}
+    )
+
     def impact_parameter_retry_available(fit, local_bounds):
         if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
             return False
@@ -4256,8 +5739,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         },
     ]
 
-    def build_fit(local_prior, local_bounds):
-        local_bounds = sanitize_retry_search_bounds(local_bounds)
+    def build_fit(local_prior, local_bounds, fixed_parameter_errors_override=None):
+        local_bounds = sanitize_retry_search_bounds(
+            apply_configured_prior_search_restrictions(local_bounds, restriction_reference_prior)
+        )
         if fixed_flux_baseline:
             local_bounds = clone_lightcurve_bounds(local_bounds)
             for key in ('a0', 'a1', 'a2'):
@@ -4275,8 +5760,15 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fit_kwargs['keep_ultranest_sampler'] = True
         if baseline_fit_mask is not None and callable_accepts_keyword(lc_fitter, 'baseline_fit_mask'):
             fit_kwargs['baseline_fit_mask'] = baseline_fit_mask
-        if fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
-            fit_kwargs['fixed_parameter_errors'] = fixed_parameter_errors
+        effective_fixed_parameter_errors = (
+            dict(fixed_parameter_errors)
+            if isinstance(fixed_parameter_errors, dict)
+            else {}
+        )
+        if isinstance(fixed_parameter_errors_override, dict):
+            effective_fixed_parameter_errors.update(fixed_parameter_errors_override)
+        if effective_fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
+            fit_kwargs['fixed_parameter_errors'] = effective_fixed_parameter_errors
         if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
             fit_kwargs['fixed_flux_baseline'] = True
         if (
@@ -4296,7 +5788,9 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         annotate_duration_prior(fit, duration_prior)
         return fit
 
-    current_bounds = sanitize_retry_search_bounds(bounds)
+    current_bounds = sanitize_retry_search_bounds(
+        apply_configured_prior_search_restrictions(bounds, restriction_reference_prior)
+    )
     current_prior = clamp_retry_priors_to_bounds(prior, current_bounds)
     retry_histories = {config['key']: [] for config in retry_configs}
     retry_notes = {config['key']: None for config in retry_configs}
@@ -4384,6 +5878,11 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             clamped_bounds,
         )
         clamped_bounds = retry_config['sanitize_bounds']({bounds_key: clamped_bounds}).get(bounds_key, clamped_bounds)
+        clamped_bounds = apply_configured_prior_search_restrictions(
+            {bounds_key: clamped_bounds},
+            restriction_reference_prior,
+        ).get(bounds_key, clamped_bounds)
+        clamped_bounds = retry_config['sanitize_bounds']({bounds_key: clamped_bounds}).get(bounds_key, clamped_bounds)
         new_lower, new_upper = [float(value) for value in clamped_bounds]
         if previous_bounds is not None:
             previous_lower, previous_upper = [float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]]
@@ -4397,7 +5896,20 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
             if not expands_sampled_range:
                 maximum_bound = retry_config['max_bound']
+                restricted_bounds = configured_prior_centered_bounds_for_key(
+                    bounds_key,
+                    restriction_reference_prior,
+                )
                 if (
+                    restricted_bounds is not None
+                    and bounds_are_close(previous_bounds, restricted_bounds)
+                ):
+                    retry_notes[key] = (
+                        f"Skipped; the automatic {label} retry reached the configured "
+                        f"prior-centered search range [{restricted_bounds[0]:.6f}, "
+                        f"{restricted_bounds[1]:.6f}]."
+                    )
+                elif (
                     maximum_bound is not None and
                     previous_lower <= retry_config['min_bound'] + 1e-12 and
                     previous_upper >= maximum_bound - 1e-12
@@ -4429,7 +5941,9 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
         updated_bounds = clone_lightcurve_bounds(current_bounds)
         updated_bounds[bounds_key] = [new_lower, new_upper]
-        updated_bounds = sanitize_retry_search_bounds(updated_bounds)
+        updated_bounds = sanitize_retry_search_bounds(
+            apply_configured_prior_search_restrictions(updated_bounds, restriction_reference_prior)
+        )
 
         updated_prior = dict(current_prior)
         fit_parameters = getattr(fit, 'parameters', {})
@@ -4447,6 +5961,117 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         fit = build_fit(current_prior, current_bounds)
 
     final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+    rprs_final_diagnostics = None
+    if callable(final_diagnostics_getter) and 'rprs' in current_bounds:
+        rprs_final_diagnostics = final_diagnostics_getter('rprs')
+        latest_diagnostics['rprs'] = rprs_final_diagnostics
+    elif latest_diagnostics.get('rprs') is not None:
+        rprs_final_diagnostics = latest_diagnostics['rprs']
+
+    if (
+        use_prior_rprs_when_posterior_pinned
+        and int(max(0, max_rprs_retries)) <= 0
+        and 'rprs' in current_bounds
+        and isinstance(rprs_final_diagnostics, dict)
+        and rprs_final_diagnostics.get('clipped')
+    ):
+        prior_rprs = restriction_reference_prior.get('rprs', prior.get('rprs') if isinstance(prior, dict) else np.nan)
+        try:
+            prior_rprs = float(prior_rprs)
+        except (TypeError, ValueError):
+            prior_rprs = np.nan
+        if np.isfinite(prior_rprs) and prior_rprs > 0:
+            original_fit = fit
+            original_bounds = clone_lightcurve_bounds(current_bounds)
+            original_rprs_value = (getattr(original_fit, 'parameters', {}) or {}).get('rprs', np.nan)
+            fixed_prior = dict(current_prior)
+            fixed_prior['rprs'] = prior_rprs
+            fixed_bounds = clone_lightcurve_bounds(current_bounds)
+            fixed_bounds.pop('rprs', None)
+
+            prefit_uncertainty = estimate_rprs_data_uncertainty_from_lightcurve(
+                times,
+                flux_values,
+                flux_errors,
+                fixed_prior,
+            )
+            data_rprs_uncertainty = prefit_uncertainty.get(
+                'data_rprs_uncertainty',
+                restriction_reference_prior.get('rprs_data_uncertainty', np.nan),
+            )
+            try:
+                data_rprs_uncertainty = float(data_rprs_uncertainty)
+            except (TypeError, ValueError):
+                data_rprs_uncertainty = np.nan
+
+            fixed_error_override = {}
+            if np.isfinite(data_rprs_uncertainty) and data_rprs_uncertainty >= 0:
+                fixed_error_override['rprs'] = data_rprs_uncertainty
+
+            log_info(
+                "Rp/R* posterior is pinned against the "
+                f"{rprs_final_diagnostics.get('edge', 'active')} bound while Rp/R* "
+                "posterior expansion is disabled; rerunning UltraNest with Rp/R* fixed "
+                f"to the input prior ({prior_rprs:.6f}) and using a data-only Rp/R* uncertainty."
+            )
+            fallback_fit = build_fit(
+                fixed_prior,
+                fixed_bounds,
+                fixed_parameter_errors_override=fixed_error_override,
+            )
+            fallback_parameters = getattr(fallback_fit, 'parameters', None)
+            if isinstance(fallback_parameters, dict):
+                fallback_parameters['rprs'] = prior_rprs
+            fallback_errors = getattr(fallback_fit, 'errors', None)
+            if not isinstance(fallback_errors, dict):
+                fallback_fit.errors = {}
+                fallback_errors = fallback_fit.errors
+
+            fallback_fit.rprs_prior_fallback_applied = True
+            fallback_fit.rprs_prior_fallback_prior_value = prior_rprs
+            fallback_fit.rprs_prior_fallback_original_fit_value = original_rprs_value
+            fallback_fit.rprs_prior_fallback_original_bounds = original_bounds.get('rprs')
+            fallback_fit.rprs_prior_fallback_edge = rprs_final_diagnostics.get('edge')
+            fallback_fit.rprs_prior_fallback_original_diagnostics = dict(rprs_final_diagnostics)
+
+            empirical_uncertainty = fit_empirical_transit_uncertainty(fallback_fit)
+            if isinstance(empirical_uncertainty, dict) and empirical_uncertainty.get('available'):
+                fallback_fit.empirical_transit_uncertainty = empirical_uncertainty
+                empirical_data_uncertainty = empirical_uncertainty.get('data_rprs_uncertainty')
+                try:
+                    empirical_data_uncertainty = float(empirical_data_uncertainty)
+                except (TypeError, ValueError):
+                    empirical_data_uncertainty = np.nan
+                if np.isfinite(empirical_data_uncertainty) and empirical_data_uncertainty >= 0:
+                    data_rprs_uncertainty = empirical_data_uncertainty
+
+            if np.isfinite(data_rprs_uncertainty) and data_rprs_uncertainty >= 0:
+                fallback_errors['rprs'] = data_rprs_uncertainty
+                fixed_parameter_errors_payload = getattr(fallback_fit, 'fixed_parameter_errors', None)
+                if not isinstance(fixed_parameter_errors_payload, dict):
+                    fallback_fit.fixed_parameter_errors = {}
+                    fixed_parameter_errors_payload = fallback_fit.fixed_parameter_errors
+                fixed_parameter_errors_payload['rprs'] = data_rprs_uncertainty
+
+            fallback_note = (
+                "Applied Rp/R* prior fallback; the sampled Rp/R* posterior hugged the "
+                f"{rprs_final_diagnostics.get('edge', 'active')} search bound while automatic "
+                "Rp/R* posterior expansion was disabled. EXOTIC reran UltraNest with Rp/R* fixed "
+                f"to the input prior ({prior_rprs:.6f}) and treats Tmid, a/Rs, and "
+                "impact parameter/inclination as the fitted transit-shape parameters. "
+                "The quoted Rp/R* uncertainty is a data-only red-noise estimate rather than a "
+                "model posterior uncertainty."
+            )
+            if np.isfinite(data_rprs_uncertainty) and data_rprs_uncertainty >= 0:
+                fallback_note += f" Data-only Rp/R* uncertainty: {data_rprs_uncertainty:.6f}."
+            fallback_fit.rprs_prior_fallback_data_uncertainty = data_rprs_uncertainty
+            fallback_fit.rprs_prior_fallback_note = fallback_note
+            retry_notes['rprs'] = fallback_note
+            current_prior = fixed_prior
+            current_bounds = fixed_bounds
+            fit = fallback_fit
+            final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+
     annotate_posterior_refit_final_bounds(fit, current_bounds)
     for config in retry_configs:
         key = config['key']
@@ -4951,14 +6576,27 @@ def psf_frame_quality_mask(psf_rows):
     return psf_frame_quality_components(psf_rows)['keep_mask']
 
 
-def psf_quality_mask_for_key(psf_data, key, frame_count):
-    if not isinstance(psf_data, dict) or key not in psf_data:
+def psf_quality_rows_for_key(psf_data, key, psf_flux_data=None):
+    if isinstance(psf_flux_data, dict) and key in psf_flux_data:
+        return psf_flux_data[key]
+    if isinstance(psf_data, dict) and key in psf_data:
+        return psf_data[key]
+    return None
+
+
+def psf_quality_mask_for_key(psf_data, key, frame_count, psf_flux_data=None):
+    rows = psf_quality_rows_for_key(psf_data, key, psf_flux_data=psf_flux_data)
+    if rows is None:
         return np.ones(int(frame_count), dtype=bool)
 
-    mask = psf_frame_quality_mask(psf_data[key])
+    mask = psf_frame_quality_mask(rows)
     if mask.shape[0] != int(frame_count):
         return np.ones(int(frame_count), dtype=bool)
     return mask
+
+
+def target_psf_quality_rows(psf_data, psf_flux_data=None):
+    return psf_quality_rows_for_key(psf_data, 'target', psf_flux_data=psf_flux_data)
 
 
 def mask_series_with_quality(values, quality_mask):
@@ -4978,7 +6616,7 @@ def psf_flux_series_from_rows(psf_rows, quality_mask=None):
 
 
 def psf_flux_data_source(psf_data, psf_flux_data=None):
-    if isinstance(psf_flux_data, dict):
+    if isinstance(psf_flux_data, dict) and 'target' in psf_flux_data:
         return psf_flux_data
     return psf_data
 
@@ -5117,6 +6755,87 @@ def should_run_fast_ultranest_before_final_run(config_value):
         warn=True,
     )
     return FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT
+
+
+def should_run_final_residual_rejection(config_value):
+    if config_value is None:
+        return FINAL_RESIDUAL_REJECTION_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'run final residual rejection and extra ultranest run' value; "
+        "defaulting to enabled.",
+        warn=True,
+    )
+    return FINAL_RESIDUAL_REJECTION_DEFAULT
+
+
+def should_use_legacy_psf_flux_mode(config_value):
+    if config_value is None:
+        return LEGACY_PSF_FLUX_MODE_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on', 'legacy'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'use_legacy_psf_flux' value; "
+        "defaulting to modern PSF flux mode.",
+        warn=True,
+    )
+    return LEGACY_PSF_FLUX_MODE_DEFAULT
+
+
+def should_run_final_fit_phase_residual_clip(config_value):
+    if config_value is None:
+        return FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'run_final_fit_phase_residual_clip' value; "
+        "defaulting to enabled.",
+        warn=True,
+    )
+    return FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT
+
+
+def psf_seed_track_directory_from_config(config_value):
+    if config_value is None:
+        return None
+    if isinstance(config_value, bool):
+        return None
+    if isinstance(config_value, (int, float)):
+        return None
+    if isinstance(config_value, str):
+        value = config_value.strip()
+        if value.lower() in ('', 'n', 'no', 'false', '0', 'off', 'none', 'null'):
+            return None
+        return value
+    return str(config_value)
 
 
 def configure_sparse_posterior_live_point_retry(config_value):
@@ -5287,6 +7006,105 @@ def configure_rprs_search_bound_max(config_value):
     global RPRS_SEARCH_BOUND_MAX
     RPRS_SEARCH_BOUND_MAX = parse_rprs_search_bound_max(config_value)
     return RPRS_SEARCH_BOUND_MAX
+
+
+def parse_bool_config_value(config_value, default, option_name):
+    if config_value is None:
+        return default
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    default_text = "enabled" if default else "disabled"
+    log_info(
+        f"Warning: Invalid '{option_name}' value; defaulting to {default_text}.",
+        warn=True,
+    )
+    return default
+
+
+def parse_range_restriction_percentage(config_value, default, option_name):
+    if config_value is None:
+        return default
+    if isinstance(config_value, str) and config_value.strip() == "":
+        return default
+
+    try:
+        percentage = float(str(config_value).strip().rstrip('%'))
+    except (TypeError, ValueError):
+        log_info(
+            f"Warning: Invalid '{option_name}' value; defaulting to {default:.1f}%.",
+            warn=True,
+        )
+        return default
+
+    if not np.isfinite(percentage) or percentage <= 0:
+        log_info(
+            f"Warning: '{option_name}' must be finite and positive; defaulting to {default:.1f}%.",
+            warn=True,
+        )
+        return default
+
+    return float(percentage)
+
+
+def should_restrict_rprs_range(config_value):
+    return parse_bool_config_value(
+        config_value,
+        RPRS_RANGE_RESTRICTION_DEFAULT,
+        'restrict_Rp/Rs_range',
+    )
+
+
+def should_use_prior_rprs_when_posterior_pinned(config_value):
+    return parse_bool_config_value(
+        config_value,
+        RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR_DEFAULT,
+        'use_prior_Rp/Rs_when_posterior_pinned',
+    )
+
+
+def should_restrict_ars_range(config_value):
+    return parse_bool_config_value(
+        config_value,
+        ARS_RANGE_RESTRICTION_DEFAULT,
+        'restrict_a/Rs_range',
+    )
+
+
+def configure_rprs_range_restriction(enabled_value, percentage_value):
+    global RPRS_RANGE_RESTRICTION_ENABLED, RPRS_RANGE_RESTRICTION_PERCENTAGE
+    RPRS_RANGE_RESTRICTION_ENABLED = should_restrict_rprs_range(enabled_value)
+    RPRS_RANGE_RESTRICTION_PERCENTAGE = parse_range_restriction_percentage(
+        percentage_value,
+        RPRS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+        'restrict_Rp/Rs_range_percentage',
+    )
+    return RPRS_RANGE_RESTRICTION_ENABLED, RPRS_RANGE_RESTRICTION_PERCENTAGE
+
+
+def configure_prior_rprs_fallback_on_pinned_posterior(config_value):
+    global RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR
+    RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR = should_use_prior_rprs_when_posterior_pinned(config_value)
+    return RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR
+
+
+def configure_ars_range_restriction(enabled_value, percentage_value):
+    global ARS_RANGE_RESTRICTION_ENABLED, ARS_RANGE_RESTRICTION_PERCENTAGE
+    ARS_RANGE_RESTRICTION_ENABLED = should_restrict_ars_range(enabled_value)
+    ARS_RANGE_RESTRICTION_PERCENTAGE = parse_range_restriction_percentage(
+        percentage_value,
+        ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+        'restrict_a/Rs_range_percentage',
+    )
+    return ARS_RANGE_RESTRICTION_ENABLED, ARS_RANGE_RESTRICTION_PERCENTAGE
 
 
 def log_ultranest_mpi_status():
@@ -7163,6 +8981,15 @@ def prepare_final_fit_lightcurve_series(
     }
 
 
+def normalize_out_of_transit_baseline_min_side_points(value):
+    if value is None:
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT
+
+
 def fit_airmass_baseline_parameters_on_out_of_transit(
     times,
     flux_values,
@@ -7172,6 +8999,7 @@ def fit_airmass_baseline_parameters_on_out_of_transit(
     prior=None,
     bounds=None,
     depth_fraction=OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION,
+    min_side_points=OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT,
 ):
     times = np.asarray(times, dtype=float)
     flux_values = np.asarray(flux_values, dtype=float)
@@ -7237,6 +9065,20 @@ def fit_airmass_baseline_parameters_on_out_of_transit(
     min_points = 3 if fit_a2 else 2
     base_result['pre_points'] = coverage_summary.get('pre_points', 0)
     base_result['post_points'] = coverage_summary.get('post_points', 0)
+    min_side_points = normalize_out_of_transit_baseline_min_side_points(min_side_points)
+    if (
+        min_side_points > 0
+        and (
+            base_result['pre_points'] <= min_side_points
+            or base_result['post_points'] <= min_side_points
+        )
+    ):
+        base_result['note'] = (
+            f"only {base_result['pre_points']} pre-ingress and "
+            f"{base_result['post_points']} post-egress out-of-transit point(s) were available; "
+            f"need more than {min_side_points} on each side to fit baseline parameters."
+        )
+        return base_result
 
     if point_count < min_points:
         base_result['note'] = (
@@ -7372,6 +9214,7 @@ def detrend_flux_on_out_of_transit_baseline(
     fit,
     prior=None,
     depth_fraction=OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION,
+    min_side_points=OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT,
 ):
     times = np.asarray(times, dtype=float)
     flux_values = np.asarray(flux_values, dtype=float)
@@ -7424,6 +9267,17 @@ def detrend_flux_on_out_of_transit_baseline(
     egress_time = coverage_summary['egress_time']
     pre_points = coverage_summary['pre_points']
     post_points = coverage_summary['post_points']
+    min_side_points = normalize_out_of_transit_baseline_min_side_points(min_side_points)
+    if min_side_points > 0 and (pre_points <= min_side_points or post_points <= min_side_points):
+        return {
+            'applied': False,
+            'note': (
+                f"only {pre_points} pre-ingress and {post_points} post-egress out-of-transit point(s) "
+                f"were available; need more than {min_side_points} on each side to fit a linear baseline."
+            ),
+            'pre_points': pre_points,
+            'post_points': post_points,
+        }
 
     x = times[oot_mask] - mid_transit
     if np.allclose(x, x[0]):
@@ -7821,6 +9675,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     airmass_skip_note=None,
     disable_vertical_flux_normalization=False,
     detrend_on_outoftransit_baseline=True,
+    oot_baseline_min_points_per_side=OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT,
     use_impactparameter_rather_than_inclination_to_fit=True,
     plot_time_range=None,
     baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
@@ -7832,7 +9687,22 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     keep_ultranest_sampler_for_deferred_extension=False,
     fix_baseline_terms_for_final=True,
     pre_ultranest_coverage_assessment=None,
+    search_restriction_prior=None,
 ):
+    search_restriction_prior = (
+        dict(search_restriction_prior)
+        if isinstance(search_restriction_prior, dict)
+        else dict(prior) if isinstance(prior, dict) else {}
+    )
+    search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+        search_restriction_prior,
+        times,
+        flux_values,
+        flux_errors,
+        prior,
+        context_label="final light curve",
+    )
+    bounds = widen_rprs_bounds_to_data_uncertainty_window(bounds, search_restriction_prior)
     if duration_prior is None and expected_planet_dict is not None:
         duration_prior = build_single_transit_duration_prior(expected_planet_dict)
     if pre_ultranest_coverage_assessment is None:
@@ -7871,6 +9741,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         duration_prior=duration_prior,
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
+        search_restriction_prior=search_restriction_prior,
     )
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -7923,6 +9794,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             duration_prior=duration_prior,
             keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
             pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
+            search_restriction_prior=search_restriction_prior,
         )
         fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -7959,6 +9831,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             fit,
             prior=working_prior,
             bounds=working_bounds,
+            min_side_points=oot_baseline_min_points_per_side,
         )
     else:
         baseline_parameter_result = {
@@ -8020,6 +9893,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             fixed_parameter_errors=baseline_fixed_errors,
             fixed_flux_baseline=True,
             pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
+            search_restriction_prior=search_restriction_prior,
         )
         refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -8078,6 +9952,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         working_unc,
         fit,
         prior=working_prior,
+        min_side_points=oot_baseline_min_points_per_side,
     )
     if not detrend_result.get('applied'):
         note = f"Skipped; {detrend_result.get('note', 'unable to fit an out-of-transit baseline.')}"
@@ -8125,6 +10000,18 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             "already flattened the final-fit flux baseline."
         )
 
+    refit_search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+        search_restriction_prior,
+        working_times,
+        detrend_result['flux'],
+        detrend_result['unc'],
+        refit_prior,
+        context_label="out-of-transit detrended final light curve",
+    )
+    refit_bounds = widen_rprs_bounds_to_data_uncertainty_window(
+        refit_bounds,
+        refit_search_restriction_prior,
+    )
     refit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
         working_times,
         detrend_result['flux'],
@@ -8140,6 +10027,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         fixed_parameter_errors=refit_fixed_parameter_errors,
         fixed_flux_baseline=True,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
+        search_restriction_prior=refit_search_restriction_prior,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -13405,6 +15293,196 @@ def fit_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaus
     return flux_row
 
 
+def fit_legacy_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaussian_psf, box=15):
+    try:
+        centroid_row = np.asarray(centroid_row, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return _nan_psf_result()
+    if centroid_row.size < 2 or not centroid_position_is_finite(centroid_row):
+        return _nan_psf_result()
+
+    pos = centroid_row[:2]
+    try:
+        xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
+        subarray = data[yv, xv]
+        init = [
+            np.nanmax(subarray) - np.nanmin(subarray),
+            1,
+            1,
+            0,
+            np.nanmin(subarray),
+        ]
+    except ValueError:
+        plateStatus.outOfFrameWarning(starIndex)
+        log.debug(f"Warning: empty subfield for legacy PSF flux fit at {np.round(pos, 2)}")
+        return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+    except Exception as exc:
+        log.debug(f"Legacy PSF flux setup failed at {np.round(pos, 2)} for star {starIndex}: {exc}")
+        return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+
+    try:
+        wx = np.sum(xv[0] * subarray.sum(0)) / subarray.sum(0).sum()
+        wy = np.sum(yv[:, 0] * subarray.sum(1)) / subarray.sum(1).sum()
+    except Exception:
+        wx, wy = pos[0], pos[1]
+
+    lo = [
+        pos[0] - box * 0.5,
+        pos[1] - box * 0.5,
+        0,
+        0.5,
+        0.5,
+        -np.pi / 4,
+        np.nanmin(subarray) - 1,
+    ]
+    up = [
+        pos[0] + box * 0.5,
+        pos[1] + box * 0.5,
+        1e7,
+        20,
+        20,
+        np.pi / 4,
+        np.nanmax(subarray) + 1,
+    ]
+
+    def fcn2min(pars):
+        model = psf_function(xv, yv, *pars)
+        return (subarray - model).flatten()
+
+    try:
+        res = least_squares(
+            fcn2min,
+            x0=[*pos, *init],
+            bounds=[lo, up],
+            jac='3-point',
+            xtol=None,
+            method='trf',
+        )
+    except Exception as exc:
+        plateStatus.lowFluxAmplitudeWarning(starIndex, pos[0], pos[1])
+        log.debug(
+            f"Legacy PSF flux fit failed at {np.round(pos, 2)} for star {starIndex}; "
+            f"trying unbounded LM fallback: {exc}"
+        )
+        try:
+            res = least_squares(
+                fcn2min,
+                x0=[*pos, *init],
+                jac='3-point',
+                xtol=None,
+                method='lm',
+            )
+        except Exception as lm_exc:
+            log.debug(
+                f"Legacy PSF flux LM fallback failed at {np.round(pos, 2)} for star {starIndex}; "
+                f"using centroid fit flux parameters instead: {lm_exc}"
+            )
+            return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
+
+    flux_row = np.asarray(res.x, dtype=float)
+    if flux_row.size >= 2:
+        flux_row[0] = wx
+        flux_row[1] = wy
+    return flux_row
+
+
+def _psf_seed_track_candidate_paths(seed_track_directory, key):
+    root = Path(seed_track_directory).expanduser()
+    search_dirs = [root]
+    if root.name.lower() != 'temp':
+        search_dirs.append(root / 'temp')
+
+    if key == 'target':
+        names = (
+            'psf_data_target.txt',
+            'psf_flux_data_target.txt',
+        )
+    else:
+        comp_index = key[4:] if key.startswith('comp') else ''
+        names = (
+            f'psf_data_{key}.txt',
+            f'psf_flux_data_{key}.txt',
+            f'psf_data_comp{comp_index}.txt' if comp_index else '',
+            f'psf_flux_data_comp{comp_index}.txt' if comp_index else '',
+            'psf_data_comp.txt' if key == 'comp1' else '',
+            'psf_flux_data_comp.txt' if key == 'comp1' else '',
+        )
+
+    for directory in search_dirs:
+        for name in names:
+            if not name:
+                continue
+            path = directory / name
+            if path.exists():
+                return path
+    return None
+
+
+def _load_psf_seed_track_file(path, expected_frame_count, key):
+    try:
+        rows = np.loadtxt(path, comments='#')
+    except Exception as exc:
+        log_info(
+            f"Warning: Could not load PSF seed track for {key} from {path}: {exc}",
+            warn=True,
+        )
+        return None
+
+    rows = np.asarray(rows, dtype=float)
+    if rows.ndim == 1:
+        rows = rows.reshape(1, -1)
+
+    if rows.ndim != 2 or rows.shape[1] < 7:
+        log_info(
+            f"Warning: Ignoring PSF seed track for {key}; expected at least 7 columns in {path}.",
+            warn=True,
+        )
+        return None
+
+    if rows.shape[0] != int(expected_frame_count):
+        log_info(
+            f"Warning: Ignoring PSF seed track for {key}; {path} has {rows.shape[0]} row(s), "
+            f"but the reduction has {int(expected_frame_count)} frame(s).",
+            warn=True,
+        )
+        return None
+
+    return np.array(rows[:, :7], dtype=float, copy=True)
+
+
+def load_psf_flux_seed_tracks(seed_track_directory, expected_frame_count, comp_alignment_keys):
+    seed_track_directory = psf_seed_track_directory_from_config(seed_track_directory)
+    if seed_track_directory is None:
+        return {}
+
+    seed_tracks = {}
+    for key in ('target', *tuple(comp_alignment_keys or ())):
+        path = _psf_seed_track_candidate_paths(seed_track_directory, key)
+        if path is None:
+            log_info(
+                f"Warning: PSF seed track directory {seed_track_directory} did not contain a seed file for {key}.",
+                warn=True,
+            )
+            continue
+        rows = _load_psf_seed_track_file(path, expected_frame_count, key)
+        if rows is not None:
+            seed_tracks[key] = rows
+
+    if seed_tracks:
+        loaded_keys = ', '.join(seed_tracks)
+        log_info(
+            f"Loaded PSF flux seed track row(s) from {seed_track_directory} for: {loaded_keys}. "
+            "These rows will seed PSF flux fits only; alignment centroids remain unchanged."
+        )
+    else:
+        log_info(
+            f"Warning: No usable PSF flux seed track rows were loaded from {seed_track_directory}.",
+            warn=True,
+        )
+
+    return seed_tracks
+
+
 def sigma_clipped_nanmedian(data, sigma=3.0, max_iters=3):
     clipped = np.array(data, dtype=float, copy=True)
     if clipped.size == 0:
@@ -15039,10 +17117,19 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             prior['tmid'] = tmid_search_summary['tmid']
             lower, upper = tmid_search_summary['bounds']
 
+    search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+        build_search_restriction_prior_from_planet_dict(pDict),
+        arrayTimes,
+        arrayFinalFlux,
+        arrayNormUnc,
+        prior,
+        context_label="initial light curve",
+    )
     mybounds = build_initial_transit_bounds(
         prior,
         [lower, upper],
         ars_unc=pDict.get('aRsUnc'),
+        rprs_data_uncertainty=search_restriction_prior.get('rprs_data_uncertainty'),
     )
     apply_vertical_flux_normalization_bound(
         prior,
@@ -15148,6 +17235,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             jd_times=arrayJDTimes,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
+            search_restriction_prior=search_restriction_prior,
         )
         annotate_pre_ultranest_transit_coverage(myfit, pre_ultranest_coverage_assessment)
         myfit = apply_plot_time_range(myfit, plot_time_range)
@@ -15731,7 +17819,12 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
         psf_comp_flux_map = {
             f"comp{comp_idx + 1}": psf_flux_series_from_rows(
                 psf_flux_data[f"comp{comp_idx + 1}"],
-                psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count),
+                psf_quality_mask_for_key(
+                    psf_data,
+                    f"comp{comp_idx + 1}",
+                    frame_count,
+                    psf_flux_data=psf_flux_data,
+                ),
             )
             for comp_idx in range(comp_star_count)
         }
@@ -15746,7 +17839,10 @@ def build_target_fit_candidate_jobs(psf_data, aper_data, apers, annuli, airmass,
                 continue
 
             comp_flux = psf_comp_flux_map[ckey]
-            target_shape_mask = target_psf_shape_quality_mask(psf_data['target'], psf_data[ckey])
+            target_shape_mask = target_psf_shape_quality_mask(
+                target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data),
+                psf_quality_rows_for_key(psf_data, ckey, psf_flux_data=psf_flux_data),
+            )
             psf_mask = target_shape_mask & target_flux_mask & robust_flux_floor_mask(comp_flux)
             candidate_jobs.append({
                 'method': 'psf',
@@ -17090,7 +19186,12 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         comp_flux_map = {
             f"comp{comp_index + 1}": psf_flux_series_from_rows(
                 psf_flux_data[f"comp{comp_index + 1}"],
-                psf_quality_mask_for_key(psf_data, f"comp{comp_index + 1}", frame_count),
+                psf_quality_mask_for_key(
+                    psf_data,
+                    f"comp{comp_index + 1}",
+                    frame_count,
+                    psf_flux_data=psf_flux_data,
+                ),
             )
             for comp_index in range(len(comp_stars))
         }
@@ -17124,7 +19225,10 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
         comp_flux_series = comp_flux_map[ckey]
 
         if use_psf_photometry:
-            target_shape_mask = target_psf_shape_quality_mask(psf_data['target'], psf_data[ckey])
+            target_shape_mask = target_psf_shape_quality_mask(
+                target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data),
+                psf_quality_rows_for_key(psf_data, ckey, psf_flux_data=psf_flux_data),
+            )
             if target_shape_mask.shape[0] != frame_count:
                 target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
@@ -18161,8 +20265,17 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
         return None
 
     frame_count = len(airmass)
-    psf_quality_masks = {
+    centroid_psf_quality_masks = {
         f"comp{comp_idx + 1}": psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count)
+        for comp_idx in range(comp_star_count)
+    }
+    psf_quality_masks = {
+        f"comp{comp_idx + 1}": psf_quality_mask_for_key(
+            psf_data,
+            f"comp{comp_idx + 1}",
+            frame_count,
+            psf_flux_data=psf_flux_data,
+        )
         for comp_idx in range(comp_star_count)
     }
 
@@ -18195,7 +20308,7 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
                 comp_flux_map = {
                     f"comp{comp_idx + 1}": mask_series_with_quality(
                         aper_data[f"comp{comp_idx + 1}"][:, a_idx, an_idx],
-                        psf_quality_masks[f"comp{comp_idx + 1}"],
+                        centroid_psf_quality_masks[f"comp{comp_idx + 1}"],
                     )
                     for comp_idx in range(comp_star_count)
                 }
@@ -18225,11 +20338,12 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
     best_comp_index = best_candidate['best_comp_index']
     method_label = comparison_method_label(best_candidate)
     comp_summaries = []
+    best_quality_masks = psf_quality_masks if best_candidate.get('method') == 'psf' else centroid_psf_quality_masks
     for summary in best_candidate['comp_summaries']:
         comp_summary = dict(summary)
         comp_summary['position'] = comp_stars[comp_summary['comp_index']]
         comp_summary['selected'] = comp_summary['comp_index'] == best_comp_index
-        quality_mask = psf_quality_masks.get(comp_summary['key'])
+        quality_mask = best_quality_masks.get(comp_summary['key'])
         if quality_mask is not None:
             comp_summary['psf_quality_keep_mask'] = quality_mask
             comp_summary['psf_quality_rejected_count'] = int(np.count_nonzero(~quality_mask))
@@ -18288,6 +20402,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  fallback_sigma=np.nan,
                                                  run_fast_ultranest_before_final_run=
                                                  FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
+                                                 run_final_fit_phase_residual_clip=
+                                                 FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT,
+                                                 run_final_residual_rejection=FINAL_RESIDUAL_REJECTION_DEFAULT,
                                                  save_dir=None,
                                                  planet_name=None,
                                                  observation_date=None):
@@ -18349,14 +20466,27 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         comp_quality_mask = np.asarray(
             comp_summary.get(
                 'psf_quality_keep_mask',
-                psf_quality_mask_for_key(psf_data, ckey, frame_count),
+                psf_quality_mask_for_key(
+                    psf_data,
+                    ckey,
+                    frame_count,
+                    psf_flux_data=psf_flux_data if method == 'psf' else None,
+                ),
             ),
             dtype=bool,
         )
         if comp_quality_mask.shape[0] != frame_count:
-            comp_quality_mask = psf_quality_mask_for_key(psf_data, ckey, frame_count)
+            comp_quality_mask = psf_quality_mask_for_key(
+                psf_data,
+                ckey,
+                frame_count,
+                psf_flux_data=psf_flux_data if method == 'psf' else None,
+            )
         if method == 'psf':
-            target_shape_mask = target_psf_shape_quality_mask(psf_data['target'], psf_data[ckey])
+            target_shape_mask = target_psf_shape_quality_mask(
+                target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data),
+                psf_quality_rows_for_key(psf_data, ckey, psf_flux_data=psf_flux_data),
+            )
             if target_shape_mask.shape[0] != frame_count:
                 target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
@@ -18472,6 +20602,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
             adaptive_summary=adaptive_summary,
             run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
+            run_final_fit_phase_residual_clip=run_final_fit_phase_residual_clip,
+            run_final_residual_rejection=run_final_residual_rejection,
             precomputed_candidate_series=preflight.get('prepared_series'),
         )
         fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
@@ -18788,6 +20920,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 use_impactparameter_rather_than_inclination_to_fit,
                 plot_time_range=plot_time_range,
                 duration_prior=build_single_transit_duration_prior(p_dict),
+                run_final_residual_rejection=run_final_residual_rejection,
             )
             if full_resolution_refit is not None:
                 full_resolution_refit_applied = True
@@ -19091,6 +21224,42 @@ def _main_impl():
                 FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
             )
         )
+        run_final_residual_rejection = should_run_final_residual_rejection(
+            exotic_infoDict.get(
+                'run_final_residual_rejection',
+                exotic_infoDict.get(
+                    'Run Final Residual Rejection and Extra UltraNest Run',
+                    FINAL_RESIDUAL_REJECTION_DEFAULT,
+                ),
+            )
+        )
+        run_final_fit_phase_residual_clip = should_run_final_fit_phase_residual_clip(
+            exotic_infoDict.get(
+                'run_final_fit_phase_residual_clip',
+                exotic_infoDict.get(
+                    'Run Final-Fit Phase Residual Clip? (y/n)',
+                    FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT,
+                ),
+            )
+        )
+        use_legacy_psf_flux_mode = should_use_legacy_psf_flux_mode(
+            exotic_infoDict.get(
+                'use_legacy_psf_flux',
+                exotic_infoDict.get(
+                    'legacy_psf_flux_mode',
+                    LEGACY_PSF_FLUX_MODE_DEFAULT,
+                ),
+            )
+        )
+        psf_seed_track_directory = psf_seed_track_directory_from_config(
+            exotic_infoDict.get(
+                'psf_seed_track_directory',
+                exotic_infoDict.get(
+                    'legacy_psf_seed_track_directory',
+                    None,
+                ),
+            )
+        )
         ultranest_min_num_live_points = configure_ultranest_min_num_live_points(
             exotic_infoDict.get(
                 'ultranest_min_num_live_points',
@@ -19103,8 +21272,59 @@ def _main_impl():
                 RPRS_SEARCH_BOUND_MAX_DEFAULT,
             )
         )
+        restrict_rprs_range, restrict_rprs_percentage = configure_rprs_range_restriction(
+            exotic_infoDict.get(
+                'restrict_rprs_range',
+                RPRS_RANGE_RESTRICTION_DEFAULT,
+            ),
+            exotic_infoDict.get(
+                'restrict_rprs_range_percentage',
+                RPRS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+            ),
+        )
+        use_prior_rprs_fallback_on_pinned_posterior = configure_prior_rprs_fallback_on_pinned_posterior(
+            exotic_infoDict.get(
+                'use_prior_rprs_when_posterior_pinned',
+                exotic_infoDict.get(
+                    'use_prior_Rp/Rs_when_posterior_pinned',
+                    RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR_DEFAULT,
+                ),
+            )
+        )
+        restrict_ars_range, restrict_ars_percentage = configure_ars_range_restriction(
+            exotic_infoDict.get(
+                'restrict_ars_range',
+                ARS_RANGE_RESTRICTION_DEFAULT,
+            ),
+            exotic_infoDict.get(
+                'restrict_ars_range_percentage',
+                ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+            ),
+        )
         log_info(f"UltraNest minimum live points: {ultranest_min_num_live_points}.")
         log_info(f"Rp/R* maximum search bound: {rprs_search_bound_max:.3f}.")
+        if restrict_rprs_range:
+            log_info(
+                "Rp/R* prior-centered search restriction enabled: "
+                f"+/- {restrict_rprs_percentage:.1f}% around the input prior."
+            )
+        else:
+            log_info("Rp/R* prior-centered search restriction disabled.")
+        if use_prior_rprs_fallback_on_pinned_posterior:
+            log_info(
+                "Rp/R* pinned-posterior prior fallback enabled: when Rp/R* expansion is disabled "
+                "and the posterior is edge-pinned, EXOTIC reruns with Rp/R* fixed to the input "
+                "prior and quotes a data-only Rp/R* uncertainty."
+            )
+        else:
+            log_info("Rp/R* pinned-posterior prior fallback disabled per optional_info setting.")
+        if restrict_ars_range:
+            log_info(
+                "a/Rs prior-centered search restriction enabled: "
+                f"+/- {restrict_ars_percentage:.1f}% around the input prior."
+            )
+        else:
+            log_info("a/Rs prior-centered search restriction disabled.")
         if run_fast_ultranest_before_final_run:
             log_info(
                 "Fast pre-final UltraNest enabled: comparison-candidate UltraNest search runs "
@@ -19113,6 +21333,28 @@ def _main_impl():
             )
         else:
             log_info("Fast pre-final UltraNest disabled per optional_info setting.")
+        if run_final_residual_rejection:
+            log_info(
+                "Final residual rejection enabled: the selected final light-curve fit will reject "
+                f"residual outliers beyond {FINAL_RESIDUAL_REJECTION_SIGMA:.1f} sigma and rerun UltraNest."
+            )
+        else:
+            log_info("Final residual rejection disabled per optional_info setting.")
+        if run_final_fit_phase_residual_clip:
+            log_info("Final-fit phase residual clipping enabled.")
+        else:
+            log_info("Final-fit phase residual clipping disabled per optional_info setting.")
+        if use_legacy_psf_flux_mode:
+            log_info(
+                "Legacy PSF flux mode enabled: PSF photometry flux rows will use the 4.3.1-style "
+                "Gaussian fit with weighted-center override."
+            )
+        else:
+            log_info("Modern PSF flux mode enabled.")
+        if psf_seed_track_directory is not None:
+            log_info(
+                f"PSF flux seed-track directory requested: {psf_seed_track_directory}"
+            )
         use_sparse_posterior_live_point_retry = configure_sparse_posterior_live_point_retry(
             exotic_infoDict.get(
                 'use_sparse_posterior_live_point_retry',
@@ -19763,6 +22005,11 @@ def _main_impl():
                 args.multiprocess_transformations is not None and args.multiprocess_transformations > 0
             )
             comp_alignment_keys = [f"comp{j + 1}" for j in range(comp_star_count)]
+            psf_flux_seed_tracks = load_psf_flux_seed_tracks(
+                psf_seed_track_directory,
+                len(inputfiles),
+                comp_alignment_keys,
+            )
             if use_multiprocess_alignment:
                 multiprocess_alignment_results = build_multiprocess_alignment_results(
                     inputfiles,
@@ -19904,15 +22151,26 @@ def _main_impl():
                     )
 
                 if use_psf_photometry:
-                    psf_flux_data['target'][i] = fit_psf_photometry_flux_row(
+                    psf_flux_row_fitter = (
+                        fit_legacy_psf_photometry_flux_row
+                        if use_legacy_psf_flux_mode
+                        else fit_psf_photometry_flux_row
+                    )
+                    target_psf_flux_seed_row = psf_data['target'][i]
+                    if 'target' in psf_flux_seed_tracks:
+                        target_psf_flux_seed_row = psf_flux_seed_tracks['target'][i]
+                    psf_flux_data['target'][i] = psf_flux_row_fitter(
                         imageData,
-                        psf_data['target'][i],
+                        target_psf_flux_seed_row,
                         0,
                     )
                     for comp_idx, comp_key in enumerate(comp_alignment_keys):
-                        psf_flux_data[comp_key][i] = fit_psf_photometry_flux_row(
+                        comp_psf_flux_seed_row = psf_data[comp_key][i]
+                        if comp_key in psf_flux_seed_tracks:
+                            comp_psf_flux_seed_row = psf_flux_seed_tracks[comp_key][i]
+                        psf_flux_data[comp_key][i] = psf_flux_row_fitter(
                             imageData,
-                            psf_data[comp_key][i],
+                            comp_psf_flux_seed_row,
                             comp_idx + 1,
                         )
 
@@ -20107,7 +22365,10 @@ def _main_impl():
                     aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
 
             psf_quality_diagnostics = []
-            target_quality_components = target_psf_shape_quality_components(psf_data['target'])
+            if use_psf_photometry:
+                target_quality_components = target_psf_shape_quality_components(psf_flux_data['target'])
+            else:
+                target_quality_components = target_psf_shape_quality_components(psf_data['target'])
             target_quality_keep_mask = target_quality_components['keep_mask']
             if target_quality_keep_mask.shape == times.shape and np.any(~target_quality_keep_mask):
                 reason_parts = []
@@ -20133,7 +22394,12 @@ def _main_impl():
             for key, label in [
                 (f"comp{j + 1}", f"Comp {j + 1}") for j in range(len(exotic_infoDict['comp_stars']))
             ]:
-                quality_components = psf_frame_quality_components(psf_data[key])
+                quality_rows = psf_quality_rows_for_key(
+                    psf_data,
+                    key,
+                    psf_flux_data=psf_flux_data if use_psf_photometry else None,
+                )
+                quality_components = psf_frame_quality_components(quality_rows)
                 quality_keep_mask = quality_components['keep_mask']
                 if quality_keep_mask.shape == times.shape and np.any(~quality_keep_mask):
                     reason_parts = []
@@ -20376,6 +22642,8 @@ def _main_impl():
                     adaptive_annulus_values=annulus_values,
                     fallback_sigma=sigma_display,
                     run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
+                    run_final_fit_phase_residual_clip=run_final_fit_phase_residual_clip,
+                    run_final_residual_rejection=run_final_residual_rejection,
                     save_dir=exotic_infoDict['save'],
                     planet_name=pDict['pName'],
                     observation_date=exotic_infoDict['date'],
@@ -20751,7 +23019,11 @@ def _main_impl():
                 ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
                 time_clip_mask = sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt, times=best_fit_lc.time[si])
                 phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
-                if hasattr(best_fit_lc, 'residuals') and hasattr(best_fit_lc, 'phase'):
+                if (
+                    run_final_fit_phase_residual_clip
+                    and hasattr(best_fit_lc, 'residuals')
+                    and hasattr(best_fit_lc, 'phase')
+                ):
                     phase_clip_mask = phase_bin_sigma_clip(best_fit_lc.residuals[si], best_fit_lc.phase[si], sigma=3, bins=10)
                 adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
                 if use_adaptive_apertures and adaptive_summary is not None:
@@ -21112,10 +23384,19 @@ def _main_impl():
                 "skipping airmass fitting and applying no airmass correction."
             )
 
+        search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+            build_search_restriction_prior_from_planet_dict(pDict),
+            goodTimes,
+            goodFluxes,
+            goodNormUnc,
+            prior,
+            context_label="final light curve",
+        )
         mybounds = build_initial_transit_bounds(
             prior,
             [lower, upper],
             ars_unc=pDict.get('aRsUnc'),
+            rprs_data_uncertainty=search_restriction_prior.get('rprs_data_uncertainty'),
         )
         apply_vertical_flux_normalization_bound(
             prior,
@@ -21168,6 +23449,7 @@ def _main_impl():
                 expected_planet_dict=pDict,
                 expected_tmid_search_summary=ephemeris_tmid_search_summary,
                 eebls_search_summary=eebls_tmid_search_summary,
+                search_restriction_prior=search_restriction_prior,
             )
         if (
             reuse_selected_final_model
@@ -21225,6 +23507,8 @@ def _main_impl():
             durs.append(tmask.sum() * dt)
 
         plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+        plot_prior_posterior_comparison(myfit, pDict, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+        plot_ktmf_qc_metrics(myfit, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
         if fitsortext == 1:
             observing_background_series = build_observing_background_series(
@@ -21261,15 +23545,68 @@ def _main_impl():
                 log_info(f"                Transit detection QC: {qc_status}")
         if np.isfinite(qc_ktmf_metric):
             log_info(f"                             KTMF: {qc_ktmf_metric:.2f} / 5.00")
-        log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], myfit.errors['tmid'])} +/- {round_to_2(myfit.errors['tmid'])}")
-        log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], myfit.errors['rprs'])} +/- {round_to_2(myfit.errors['rprs'])}")
-        for depth_label, depth_text in formatted_transit_depth_parameters(myfit, pDict).items():
+        empirical_uncertainty = getattr(myfit, 'empirical_transit_uncertainty', None)
+        if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
+            empirical_uncertainty = fit_empirical_transit_uncertainty(myfit)
+        rprs_report_error = _finite_float(
+            (empirical_uncertainty or {}).get('combined_rprs_uncertainty'),
+            default=myfit.errors['rprs'],
+        )
+        if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
+            rprs_report_error = myfit.errors['rprs']
+        tmid_report_error = fit_parameter_model_data_uncertainty(
+            myfit,
+            'tmid',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if not np.isfinite(tmid_report_error) or tmid_report_error < 0:
+            tmid_report_error = myfit.errors['tmid']
+        inc_report_error = fit_parameter_model_data_uncertainty(
+            myfit,
+            'inc',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if not np.isfinite(inc_report_error) or inc_report_error < 0:
+            inc_report_error = myfit.errors['inc']
+        ars_report_error = fit_parameter_model_data_uncertainty(
+            myfit,
+            'ars',
+            empirical_uncertainty=empirical_uncertainty,
+        )
+        if not np.isfinite(ars_report_error) or ars_report_error < 0:
+            ars_report_error = myfit.errors.get('ars', np.nan)
+        log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], tmid_report_error)} +/- {round_to_2(tmid_report_error)}")
+        log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], rprs_report_error)} +/- {round_to_2(rprs_report_error)}")
+        rprs_prior_fallback_note = getattr(myfit, 'rprs_prior_fallback_note', None)
+        if rprs_prior_fallback_note:
+            log_info(f"                 Rp/R* fallback note: {rprs_prior_fallback_note}")
+        for depth_label, depth_text in formatted_transit_depth_parameters(
+            myfit,
+            pDict,
+            empirical_uncertainty=empirical_uncertainty,
+        ).items():
             log_info(f"                         {depth_label}: {depth_text}")
-        log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], myfit.errors['inc'])} +/- {round_to_2(myfit.errors['inc'])}")
-        ars_text = format_parameter_with_error(myfit.parameters.get('ars'), myfit.errors.get('ars'))
+        log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], inc_report_error)} +/- {round_to_2(inc_report_error)}")
+        ars_text = format_parameter_with_error(myfit.parameters.get('ars'), ars_report_error)
         if ars_text is not None:
             log_info(f" Ratio of Distance to Stellar Radius [a/Rs]: {ars_text}")
-        impact_parameter, impact_error = fit_impact_parameter_value_error(myfit)
+        impact_error_overrides = {
+            'ars': ars_report_error,
+            'inc': inc_report_error,
+        }
+        model_impact_parameter, model_impact_error = fit_impact_parameter_value_error(myfit)
+        if (
+            np.isfinite(model_impact_error)
+            and ('b' in (getattr(myfit, 'parameters', {}) or {})
+                 or 'b' in (getattr(myfit, 'sample_parameters', {}) or {}))
+        ):
+            impact_error_overrides['b'] = model_impact_error * empirical_red_noise_error_scale(
+                empirical_uncertainty
+            )
+        impact_parameter, impact_error = fit_impact_parameter_value_error(
+            myfit,
+            errors_override=impact_error_overrides,
+        )
         impact_text = format_parameter_with_error(impact_parameter, impact_error)
         if impact_text is not None:
             log_info(f"                 Impact Parameter [b]: {impact_text}")

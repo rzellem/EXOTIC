@@ -430,6 +430,43 @@ def round_to_2(*args):
     return round(x, roundval)
 
 
+def _decimal_places_for_two_sigfig_error(error):
+    try:
+        error = float(error)
+    except (TypeError, ValueError):
+        return None
+
+    if not np.isfinite(error):
+        return None
+    if error == 0:
+        return 2
+
+    exponent = int(np.floor(np.log10(abs(error))))
+    return max(0, 1 - exponent)
+
+
+def format_value_error_for_plot(value, error):
+    """Format value/error text with a two-significant-figure uncertainty."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = np.nan
+
+    try:
+        error = float(error)
+    except (TypeError, ValueError):
+        error = np.nan
+
+    decimal_places = _decimal_places_for_two_sigfig_error(error)
+    if decimal_places is None:
+        value_text = f"{value:.6f}".rstrip('0').rstrip('.') if np.isfinite(value) else "n/a"
+        return value_text, "n/a"
+
+    value_text = f"{value:.{decimal_places}f}" if np.isfinite(value) else "n/a"
+    error_text = f"{error:.{decimal_places}f}" if np.isfinite(error) else "n/a"
+    return value_text, error_text
+
+
 # average data into bins of dt from start to finish
 def time_bin(time, flux, dt=1. / (60 * 24)):
     bins = int(np.floor((max(time) - min(time)) / dt))
@@ -3639,25 +3676,34 @@ class lc_fitter(object):
         rprs_error_for_depth = self._combined_rprs_uncertainty_for_reporting()
         rprs2err = 2 * self.parameters['rprs'] * rprs_error_for_depth
         rprs_prior_marker = " (Prior)" if getattr(self, 'rprs_prior_fallback_applied', False) else ""
+        rprs2_text, rprs2err_text = format_value_error_for_plot(rprs2, rprs2err)
         lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s%s" % (
-            str(round_to_2(rprs2, rprs2err)),
-            str(round_to_2(rprs2err)),
+            rprs2_text,
+            rprs2err_text,
             rprs_prior_marker,
         )
 
         tmid_error_for_plot = self._model_data_uncertainty_for_reporting('tmid')
         if not np.isfinite(tmid_error_for_plot):
             tmid_error_for_plot = self.errors.get('tmid', 0)
+        tmid_text, tmid_error_text = format_value_error_for_plot(
+            self.parameters['tmid'],
+            tmid_error_for_plot,
+        )
         lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" % (
-            str(round_to_2(self.parameters['tmid'], tmid_error_for_plot)),
-            str(round_to_2(tmid_error_for_plot))
+            tmid_text,
+            tmid_error_text,
         )
 
         lclabel = lclabel1 + "\n" + lclabel2
         if show_flux_baseline_label and 'a0' in self.parameters:
+            a0_text, a0_error_text = format_value_error_for_plot(
+                self.parameters['a0'],
+                self.errors.get('a0', 0),
+            )
             lclabel3 = r"$a_0$ = %s $\pm$ %s" % (
-                str(round_to_2(self.parameters['a0'], self.errors.get('a0', 0))),
-                str(round_to_2(self.errors.get('a0', 0)))
+                a0_text,
+                a0_error_text,
             )
             lclabel += "\n" + lclabel3
 
@@ -4171,14 +4217,19 @@ class glc_fitter(lc_fitter):
             rprs2 = self.lc_data[0]['priors']['rprs']**2
             rprs2err = 2*self.lc_data[0]['priors']['rprs']*self.lc_data[0]['errors']['rprs']
 
+        rprs2_text, rprs2err_text = format_value_error_for_plot(rprs2, rprs2err)
         lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
-            str(round_to_2(rprs2, rprs2err)),
-            str(round_to_2(rprs2err))
+            rprs2_text,
+            rprs2err_text,
         )
         
+        tmid_text, tmid_error_text = format_value_error_for_plot(
+            self.parameters['tmid'],
+            self.errors.get('tmid',0),
+        )
         lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" %(
-            str(round_to_2(self.parameters['tmid'], self.errors.get('tmid',0))),
-            str(round_to_2(self.errors.get('tmid',0)))
+            tmid_text,
+            tmid_error_text,
         )
 
         lclabel = lclabel1 + "\n" + lclabel2
@@ -4314,14 +4365,19 @@ class glc_fitter(lc_fitter):
 
         rprs2 = self.parameters['rprs']**2
         rprs2err = 2*self.parameters['rprs']*self.errors['rprs']
+        rprs2_text, rprs2err_text = format_value_error_for_plot(rprs2, rprs2err)
         lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s" %(
-            str(round_to_2(rprs2, rprs2err)),
-            str(round_to_2(rprs2err))
+            rprs2_text,
+            rprs2err_text,
         )
         
+        tmid_text, tmid_error_text = format_value_error_for_plot(
+            self.parameters['tmid'],
+            self.errors.get('tmid',0),
+        )
         lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" %(
-            str(round_to_2(self.parameters['tmid'], self.errors.get('tmid',0))),
-            str(round_to_2(self.errors.get('tmid',0)))
+            tmid_text,
+            tmid_error_text,
         )
 
         lclabel = lclabel1 + "\n" + lclabel2

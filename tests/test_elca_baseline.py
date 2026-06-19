@@ -375,6 +375,14 @@ def test_plot_bestfit_can_hide_flux_baseline_label(monkeypatch, tmp_path):
     plt.close(fig)
 
 
+def test_format_value_error_for_plot_preserves_two_sigfig_uncertainty_places(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+
+    assert elca.format_value_error_for_plot(0.027, 0.05) == ("0.027", "0.050")
+    assert elca.format_value_error_for_plot(2461209.81, 0.087) == ("2461209.810", "0.087")
+    assert elca.format_value_error_for_plot(89.3511, 2.16) == ("89.4", "2.2")
+
+
 def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -404,6 +412,8 @@ def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_pat
     legend_text = "\n".join(text.get_text() for text in axes[0].get_legend().get_texts())
 
     assert "(Prior)" in legend_text
+    assert "0.0100" in legend_text
+    assert "0.0040" in legend_text
     plt.close(fig)
 
 

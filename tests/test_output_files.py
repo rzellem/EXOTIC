@@ -317,7 +317,52 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert metadata["comparison_dec_deg"] == pytest.approx(-20.2)
     assert metadata["apparent_magnitude"] == pytest.approx(12.1)
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.03)
+    assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.340,0.050,V,NO,STD" in output_text
+
+
+def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):
+    fit = DummyFit()
+    p_dict = {
+        "pName": "HAT-P-32 b",
+        "sName": "HAT-P-32",
+    }
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "aavso_num": "RTZ",
+        "camera": "CCD",
+        "filter": "V",
+        "lat": "+32.41638889",
+        "long": "-110.73444444",
+        "elev": 2616,
+    }
+    anchor_labels = [f"NextAstro-{index}" for index in range(20)]
+    vsp_params = [{
+        "time": 2450000.12345,
+        "mag": 12.34,
+        "mag_err": 0.05,
+        "airmass": 1.234,
+        "cname": "RA=10.1000000 Dec=-20.2000000",
+        "cmag": 12.1,
+        "cmag_err": 0.03,
+        "pos": [493, 202],
+        "catalog_source": "Derived from full-field catalog-calibrated stars",
+        "is_aavso_vsp": False,
+        "derived_catalog_reference": True,
+        "derived_reference_anchor_count": len(anchor_labels),
+        "derived_reference_anchor_labels": anchor_labels,
+        "mag_band": "V",
+    }]
+
+    AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
+
+    output_text = (tmp_path / "AID_AAVSO_HAT-P-32_2020-01-01.txt").read_text(encoding="utf-8")
+    metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
+
+    assert metadata["derived_reference_anchor_count"] == 20
+    assert "derived_reference_anchor_labels" not in metadata
+    assert metadata["derived_reference_anchor_label_sample"] == anchor_labels[:10]
 
 
 def test_aid_output_floors_reported_magnitude_errors(tmp_path):
@@ -535,7 +580,7 @@ def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp
     assert "Best Comparison Star" not in final_params
     assert final_params["Variable Reference Star"] == "AAVSO Label: 000-BJX-718, Position: [616, 113]"
     assert "Remeasured 2 out-of-transit target/reference point(s)" in final_params["Variable Reference Measurement"]
-    assert "AID rows list the JD timestamps used" in final_params["Variable Reference Measurement"]
+    assert "AID rows list the BJD_TDB timestamps used" in final_params["Variable Reference Measurement"]
     assert "transit-fit catalog reference" in final_params["Variable Reference Measurement"]
 
 
@@ -934,12 +979,12 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
         "delta_chi2": 27.1,
         "ktmf_contributions": [
             {
-                "label": "Model Evidence",
+                "label": "EEBLS Depth SNR",
                 "available": True,
                 "points": 0.74,
                 "max_points": 0.80,
                 "score": 0.93,
-                "detail": "Delta BIC=18.40",
+                "detail": "5.80",
             }
         ],
     }
@@ -1049,6 +1094,30 @@ def test_final_planetary_params_reports_absolute_fit_quality(tmp_path):
     assert final_params["Fit quality point count"] == "6"
 
 
+def test_final_planetary_params_reports_prior_assumed_geometry_note(tmp_path):
+    fit = DummyFit()
+    fit.partial_transit_geometry_prior_assumption_note = (
+        "Applied prior-assumed transit geometry for a one-sided partial light curve."
+    )
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert (
+        final_params["Prior-assumed partial-transit geometry note"]
+        == "Applied prior-assumed transit geometry for a one-sided partial light curve."
+    )
+
+
 def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_path):
     fit = DummyFit()
     fit.airmass_fit_skipped = True
@@ -1133,12 +1202,12 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
         "ktmf_metric": 4.63,
         "ktmf_contributions": [
             {
-                "label": "Model Evidence",
+                "label": "EEBLS Depth SNR",
                 "available": True,
                 "points": 0.74,
                 "max_points": 0.80,
                 "score": 0.93,
-                "detail": "Delta BIC=18.40",
+                "detail": "5.80",
             }
         ],
     }
@@ -1321,7 +1390,7 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     qc = aavso_json_header(output_text, "QC-XC")
     assert qc["status"] == "pass"
     assert qc["ktmf_metric"] == pytest.approx(4.63)
-    assert qc["ktmf_contributions"][0]["label"] == "Model Evidence"
+    assert qc["ktmf_contributions"][0]["label"] == "EEBLS Depth SNR"
 
     fit_quality = aavso_json_header(output_text, "FIT_QUALITY-XC")
     assert fit_quality["reduced_chi_square"] == pytest.approx(10.0 / 3.0)

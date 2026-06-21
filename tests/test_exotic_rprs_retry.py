@@ -1551,6 +1551,182 @@ def test_partial_coverage_suppresses_open_geometry_posterior_retries(monkeypatch
     assert "one-sided/LOW" in fit.b_posterior_refit_note
 
 
+def test_one_sided_partial_coverage_fixes_geometry_and_samples_tmid_only(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        fixed_parameter_errors=None,
+        fixed_flux_baseline=False,
+        **kwargs,
+    ):
+        captured["prior"] = dict(call_prior)
+        captured["bounds"] = dict(call_bounds)
+        captured["fixed_parameter_errors"] = dict(fixed_parameter_errors or {})
+        captured["fixed_flux_baseline"] = bool(fixed_flux_baseline)
+        fit = types.SimpleNamespace(
+            time=np.asarray(call_times, dtype=float),
+            data=np.asarray(call_flux, dtype=float),
+            dataerr=np.asarray(call_fluxerr, dtype=float),
+            airmass=np.asarray(call_airmass, dtype=float),
+            sampled_keys=list(call_bounds.keys()),
+            sample_bounds=dict(call_bounds),
+            parameters=dict(call_prior),
+            errors=dict(fixed_parameter_errors or {}),
+            transit=np.ones(len(call_times), dtype=float),
+            residuals=np.zeros(len(call_times), dtype=float),
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = (
+            lambda key: {"clipped": False, "reason": "parameter was fixed to the prior"}
+        )
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.06, 0.02, 20),
+        np.ones(20, dtype=float),
+        np.full(20, 0.01, dtype=float),
+        np.linspace(1.0, 1.4, 20),
+        {
+            "tmid": 0.0,
+            "rprs": 0.1,
+            "ars": 12.0,
+            "inc": 89.0,
+            "per": 1.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.0,
+            "a2": 0.1,
+        },
+        {
+            "rprs": [0.0, 0.2],
+            "tmid": [-0.05, 0.05],
+            "ars": [10.0, 14.0],
+            "inc": [84.0, 90.0],
+            "a0": [0.95, 1.05],
+            "a2": [-3.0, 3.0],
+        },
+        pre_ultranest_coverage_assessment={
+            "valid": True,
+            "transit_fraction_observed": 0.55,
+            "in_transit_points": 12,
+            "pre_ingress_points": 5,
+            "post_egress_points": 0,
+            "observed_segment": "pre-ingress baseline plus ingress plus mid-transit",
+        },
+        search_restriction_prior={"rprs_unc": 0.002, "ars_unc": 0.3, "inc_unc": 0.4},
+    )
+
+    assert list(captured["bounds"]) == ["tmid"]
+    assert captured["fixed_flux_baseline"] is False
+    assert captured["fixed_parameter_errors"]["rprs"] == pytest.approx(0.002)
+    assert captured["fixed_parameter_errors"]["ars"] == pytest.approx(0.3)
+    assert captured["fixed_parameter_errors"]["inc"] == pytest.approx(0.4)
+    assert fit.partial_transit_geometry_prior_assumption_applied is True
+    assert fit.partial_transit_geometry_prior_assumption_mode == "tmid_only"
+    assert fit.partial_transit_geometry_prior_assumption_sampled_parameters == ["tmid"]
+
+
+def test_no_oot_partial_coverage_keeps_baseline_airmass_in_ultranest(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    captured = {}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        fixed_parameter_errors=None,
+        fixed_flux_baseline=False,
+        **kwargs,
+    ):
+        captured["prior"] = dict(call_prior)
+        captured["bounds"] = dict(call_bounds)
+        captured["fixed_parameter_errors"] = dict(fixed_parameter_errors or {})
+        captured["fixed_flux_baseline"] = bool(fixed_flux_baseline)
+        fit = types.SimpleNamespace(
+            time=np.asarray(call_times, dtype=float),
+            data=np.asarray(call_flux, dtype=float),
+            dataerr=np.asarray(call_fluxerr, dtype=float),
+            airmass=np.asarray(call_airmass, dtype=float),
+            sampled_keys=list(call_bounds.keys()),
+            sample_bounds=dict(call_bounds),
+            parameters=dict(call_prior),
+            errors=dict(fixed_parameter_errors or {}),
+            transit=np.ones(len(call_times), dtype=float),
+            residuals=np.zeros(len(call_times), dtype=float),
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = (
+            lambda key: {"clipped": False, "reason": "parameter was fixed to the prior"}
+        )
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 20),
+        np.full(20, 1.02, dtype=float),
+        np.full(20, 0.01, dtype=float),
+        np.linspace(1.0, 1.5, 20),
+        {
+            "tmid": 0.0,
+            "rprs": 0.1,
+            "ars": 12.0,
+            "inc": 89.0,
+            "per": 1.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.02,
+            "a2": 0.1,
+        },
+        {
+            "rprs": [0.0, 0.2],
+            "tmid": [-0.05, 0.05],
+            "ars": [10.0, 14.0],
+            "inc": [84.0, 90.0],
+        },
+        fixed_flux_baseline=True,
+        pre_ultranest_coverage_assessment={
+            "valid": True,
+            "transit_fraction_observed": 0.90,
+            "in_transit_points": 18,
+            "pre_ingress_points": 0,
+            "post_egress_points": 0,
+            "observed_segment": "inside the expected transit",
+        },
+        search_restriction_prior={"rprs_unc": 0.002, "ars_unc": 0.3, "inc_unc": 0.4},
+    )
+
+    assert "rprs" not in captured["bounds"]
+    assert "ars" not in captured["bounds"]
+    assert "inc" not in captured["bounds"]
+    assert set(captured["bounds"]) == {"tmid", "a0", "a2"}
+    assert captured["fixed_flux_baseline"] is False
+    assert captured["fixed_parameter_errors"]["rprs"] == pytest.approx(0.002)
+    assert captured["fixed_parameter_errors"]["ars"] == pytest.approx(0.3)
+    assert captured["fixed_parameter_errors"]["inc"] == pytest.approx(0.4)
+    assert fit.partial_transit_geometry_prior_assumption_applied is True
+    assert fit.partial_transit_geometry_prior_assumption_mode == "tmid_baseline_airmass"
+    assert set(fit.partial_transit_geometry_prior_assumption_sampled_parameters) == {"tmid", "a0", "a2"}
+
+
 def test_impact_parameter_posterior_retry_expands_inclination_bounds(monkeypatch):
     import exotic.exotic as exotic_module
 

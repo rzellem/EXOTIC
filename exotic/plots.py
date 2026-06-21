@@ -589,6 +589,26 @@ def _stellar_variability_reference_label(vsp_param, comparison_label):
     return str(comparison_label) if comparison_label else ""
 
 
+def _stellar_variability_aavso_assumption_label(vsp_param):
+    if not vsp_param.get('is_aavso_vsp', True):
+        return ""
+
+    details = []
+    observed_filter = vsp_param.get('observed_filter')
+    if observed_filter:
+        details.append(f"Observed filter: {observed_filter}")
+
+    comparison_mag = magnitude_text(
+        vsp_param.get('mag_band') or 'V',
+        vsp_param.get('cmag'),
+        vsp_param.get('cmag_err'),
+    )
+    if comparison_mag is not None:
+        details.append(f"Assumed comparison: {comparison_mag}")
+
+    return " | ".join(details)
+
+
 def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     if not vsp_params:
         return
@@ -609,7 +629,13 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     first_param = vsp_params[0]
     band = first_param.get('mag_band') or 'V'
     reference_label = _stellar_variability_reference_label(first_param, vsp_auid_comp)
-    ax.set_title(f"{s_name}\n{reference_label}" if reference_label else s_name)
+    title_lines = [s_name]
+    if reference_label:
+        title_lines.append(reference_label)
+    assumption_label = _stellar_variability_aavso_assumption_label(first_param)
+    if assumption_label:
+        title_lines.append(assumption_label)
+    ax.set_title("\n".join(title_lines))
     ax.set_ylabel(f"Magnitude ({band})")
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()
@@ -1342,6 +1368,7 @@ def _short_ktmf_label(label):
     replacements = {
         "Deviation From Expected Value": "Expected Rp/R*",
         "Residual Scatter Around Full Model Fit": "Residual scatter",
+        "Residual Flatness": "Residual flatness",
         "Duration Consistency": "Duration",
         "EEBLS Depth SNR": "EEBLS SNR",
         "Sampling / Cadence": "Sampling",

@@ -1131,3 +1131,69 @@ def test_reference_fallback_comparison_stars_use_nextastro_archive_image_criteri
         [candidate["flux"] for candidate in candidates],
         reverse=True,
     )
+
+
+def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(monkeypatch):
+    image = np.zeros((300, 300), dtype=float)
+
+    def add_blob(x_pos, y_pos, value):
+        image[y_pos - 1:y_pos + 2, x_pos - 1:x_pos + 2] = value * 0.5
+        image[y_pos, x_pos] = value
+
+    add_blob(150, 150, 2000.0)
+    add_blob(220, 220, 1800.0)
+    add_blob(80, 80, 1700.0)
+    add_blob(230, 80, 6000.0)
+
+    ra_wcs = np.tile(np.arange(300, dtype=float), (300, 1))
+    dec_wcs = np.tile(np.arange(300, dtype=float)[:, None], (1, 300))
+    catalog = {"rows": []}
+
+    def fake_color_match(_catalog, ra, dec, obs_filter, max_separation_arcsec=5.0):
+        colors = {
+            (150, 150): (12.0, 11.4),
+            (220, 220): (13.0, 12.41),
+            (80, 80): (13.0, 12.0),
+            (230, 80): (10.0, 9.4),
+        }
+        key = (int(round(float(ra))), int(round(float(dec))))
+        if key not in colors:
+            return None
+        b_mag, v_mag = colors[key]
+        return {"catalog_row": {"Bmag": b_mag, "Vmag": v_mag}}
+
+    monkeypatch.setattr(exotic_module, "nextastro_catalog_nearest_color_row", fake_color_match)
+
+    comp_stars, candidates = exotic_module.select_automatic_optimal_calibration_stars(
+        image,
+        image.shape,
+        target_pixel=[150, 150],
+        ra_wcs=ra_wcs,
+        dec_wcs=dec_wcs,
+        obs_filter="V",
+        field_catalog=catalog,
+        count=2,
+    )
+
+    assert comp_stars[0] == [220.0, 220.0]
+    assert [candidate["color_delta"] for candidate in candidates] == sorted(
+        candidate["color_delta"] for candidate in candidates
+    )
+    assert all(0.5 <= candidate["brightness_ratio"] <= 2.0 for candidate in candidates)
+
+
+def test_build_absolute_comp_ensemble_flux_uses_median_normalized_members():
+    comp_flux_map = {
+        "comp1": np.array([100.0, 102.0, 98.0, 100.0, 101.0, 99.0]),
+        "comp2": np.array([200.0, 204.0, 196.0, 200.0, 202.0, 198.0]),
+        "comp3": np.array([np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]),
+    }
+
+    ensemble_flux, member_keys = exotic_module.build_absolute_comp_ensemble_flux(
+        comp_flux_map,
+        ["comp1", "comp2", "comp3"],
+    )
+
+    assert member_keys == ["comp1", "comp2"]
+    assert np.nanmedian(ensemble_flux) == pytest.approx(150.0)
+    assert ensemble_flux[1] / np.nanmedian(ensemble_flux) == pytest.approx(1.02)

@@ -23,6 +23,12 @@ def test_camera_keeps_dslr_as_dslr():
     assert camera("canon dslr") == "DSLR"
 
 
+def test_comparison_star_coords_accepts_more_than_ten_manual_comps():
+    comp_stars = [[float(index), float(index + 1)] for index in range(12)]
+
+    assert inputs_module.comparison_star_coords(comp_stars, rt_bool=False) == comp_stars
+
+
 def test_comp_params_accepts_verbose_camera_key(tmp_path):
     init_data = {
         "user_info": {

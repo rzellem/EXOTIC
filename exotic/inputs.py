@@ -557,6 +557,20 @@ class Inputs:
                 'fit_lightcurve_to_every_comparison_candidate',
                 'Fit Lightcurve to Every Comparison Candidate? (y/n)',
             ),
+            'automatic_optimal_calibration_selector': (
+                'automatic_optimal_calibration_selector',
+                'Automatic Optimal Calibration Selector? (y/n)',
+            ),
+            'automatic_optimal_calibration_selector_count': (
+                'automatic_optimal_calibration_selector_count',
+                'Automatic Optimal Calibration Selector Count',
+                'automatic_optimal_calibration_selector_max_stars',
+                'Automatic Optimal Calibration Selector Max Stars',
+            ),
+            'use_ensemble_photometry_rather_than_single_comp': (
+                'use_ensemble_photometry_rather_than_single_comp',
+                'Use Ensemble Photometry Rather Than Single Comp? (y/n)',
+            ),
             'ultranest_min_num_live_points': (
                 'Minimum Number of Live Points for UltraNest',
                 'minimum number of live points for ultranest',
@@ -995,7 +1009,7 @@ def target_star_coords(coords, planet):
 
 
 def comparison_star_coords(comp_stars, rt_bool):
-    if isinstance(comp_stars, list) and 1 <= len(comp_stars) <= 10 and \
+    if isinstance(comp_stars, list) and len(comp_stars) >= 1 and \
             all(isinstance(star, list) for star in comp_stars):
         comp_stars = [star for star in comp_stars if star != []]
     elif isinstance(comp_stars, str) and any(str.isdigit(x) for x in comp_stars):
@@ -1008,8 +1022,8 @@ def comparison_star_coords(comp_stars, rt_bool):
     if not comp_stars:
         while True:
             if not rt_bool:
-                num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1-10): ", type_=int)
-                if 1 <= num_comp_stars <= 10:
+                num_comp_stars = user_input("\nHow many Comparison Stars would you like to use? (1 or more): ", type_=int)
+                if num_comp_stars >= 1:
                     break
                 log_info("\nError: The number of Comparison Stars entered is incorrect.", error=True)
             else:

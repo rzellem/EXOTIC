@@ -541,7 +541,164 @@ def test_stellar_variability_requires_selected_transit_comparison(monkeypatch, t
     assert any('no transit-fit comparison star' in message for message in logged)
 
 
-def test_stellar_variability_requires_selected_comparison_catalog_match(monkeypatch, tmp_path):
+def test_stellar_variability_derives_selected_comparison_catalog_magnitude(monkeypatch, tmp_path):
+    logged = []
+    captured = {}
+
+    class DummyFit:
+        def __init__(self, data):
+            self.data = np.array(data, dtype=float)
+            self.airmass_model = np.ones(3, dtype=float)
+            self.airmass = np.ones(3, dtype=float)
+            self.jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+            self.transit = np.ones(3, dtype=float)
+
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+    monkeypatch.setattr(
+        exotic_module,
+        'plot_stellar_variability',
+        lambda params, save, s_name, label: captured.update(params=params, label=label),
+    )
+
+    selected_mag = 11.0
+    anchor_mag = 12.0
+    selected_to_anchor_flux_ratio = 10 ** ((anchor_mag - selected_mag) / 2.5)
+    selected_fit = DummyFit([1.0, 1.01, 0.99])
+    anchor_fit = DummyFit(selected_to_anchor_flux_ratio * np.array([1.0, 1.01, 0.99]))
+
+    params = exotic_module.stellar_variability(
+        {
+            0: {'myfit': selected_fit, 'pos': [100, 200]},
+            1: {'myfit': anchor_fit, 'pos': [300, 400]},
+        },
+        DummyFit([1.0, 1.01, 0.99]),
+        [[100, 200], [300, 400]],
+        {'REF': {'pos': [300, 400], 'mag': anchor_mag, 'error': 0.02}},
+        [1],
+        0,
+        tmp_path,
+        'Host Star',
+        comp_ra_dec=[(10.0, -20.0), (11.0, -21.0)],
+    )
+
+    assert len(params) == 3
+    assert params[0]['cmag'] == pytest.approx(selected_mag)
+    assert params[0]['cmag_err'] == pytest.approx(0.02)
+    assert params[0]['comp_ra'] == pytest.approx(10.0)
+    assert params[0]['comp_dec'] == pytest.approx(-20.0)
+    assert params[0]['derived_catalog_reference'] is True
+    assert params[0]['derived_reference_anchor_count'] == 1
+    assert params[0]['derived_reference_anchor_labels'] == ['REF']
+    assert captured['label'] == 'RA=10.0000000 Dec=-20.0000000'
+    assert any('derived catalog magnitude' in message for message in logged)
+
+
+def test_stellar_variability_uses_direct_catalog_when_derived_error_is_worse(monkeypatch, tmp_path):
+    logged = []
+
+    class DummyFit:
+        def __init__(self, data):
+            self.data = np.array(data, dtype=float)
+            self.airmass_model = np.ones(4, dtype=float)
+            self.airmass = np.ones(4, dtype=float)
+            self.jd_times = np.array([2450000.1, 2450000.2, 2450000.3, 2450000.4], dtype=float)
+            self.transit = np.ones(4, dtype=float)
+
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+
+    selected_fit = DummyFit([1.0, 1.0, 1.0, 1.0])
+    noisy_anchor_fit = DummyFit([2.0, 0.8, 2.2, 0.7])
+    params = exotic_module.stellar_variability(
+        {
+            0: {'myfit': selected_fit, 'pos': [100, 200]},
+            1: {'myfit': noisy_anchor_fit, 'pos': [300, 400]},
+        },
+        DummyFit([1.0, 1.0, 1.0, 1.0]),
+        [[100, 200], [300, 400]],
+        {'ANCHOR': {'pos': [300, 400], 'mag': 12.0, 'error': 0.02, 'mag_band': 'g'}},
+        [1],
+        0,
+        tmp_path,
+        'Host Star',
+        observed_filter='g',
+        comp_ra_dec=[(10.0, -20.0), (11.0, -21.0)],
+        field_catalog={
+            'rows': [{
+                'ra': 10.0,
+                'dec': -20.0,
+                'g': 11.5,
+                'dg': 0.08,
+                'source_id': 12345,
+            }]
+        },
+    )
+
+    assert len(params) == 4
+    assert params[0]['cmag'] == pytest.approx(11.5)
+    assert params[0]['cmag_err'] == pytest.approx(0.08)
+    assert params[0]['derived_catalog_reference'] is False
+    assert params[0]['allow_high_error_catalog_reference'] is True
+    assert any('direct selected-comparison catalog magnitude' in message for message in logged)
+
+
+def test_stellar_variability_derives_catalog_magnitude_from_full_field(monkeypatch, tmp_path):
+    class DummyFit:
+        data = np.array([1.0, 1.01, 0.99], dtype=float)
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.ones(3, dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    class DummyWcs:
+        def world_to_pixel_values(self, ra, dec):
+            return float(ra), float(dec)
+
+        def pixel_to_world_values(self, x, y):
+            return 123.4, -45.6
+
+    image = np.full((60, 60), 10.0, dtype=float)
+    image[20, 20] = 50.0
+    image[40, 40] = 110.0
+
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda _path: DummyWcs())
+
+    params = exotic_module.stellar_variability(
+        {0: {'myfit': DummyFit(), 'pos': [20, 20]}},
+        DummyFit(),
+        [[20, 20]],
+        {},
+        [],
+        0,
+        tmp_path,
+        'Host Star',
+        observed_filter='g',
+        field_catalog={
+            'rows': [{
+                'ra': 40.0,
+                'dec': 40.0,
+                'g': 12.0,
+                'dg': 0.03,
+                'source_id': 67890,
+            }]
+        },
+        reference_image=image,
+        wcs_file='dummy.wcs',
+    )
+
+    expected_mag = 12.0 - 2.5 * np.log10(40.0 / 100.0)
+    assert len(params) == 3
+    assert params[0]['cmag'] == pytest.approx(expected_mag)
+    assert params[0]['cmag_err'] == pytest.approx(0.03)
+    assert params[0]['comp_ra'] == pytest.approx(123.4)
+    assert params[0]['comp_dec'] == pytest.approx(-45.6)
+    assert params[0]['derived_catalog_reference'] is True
+    assert params[0]['derived_reference_anchor_count'] == 1
+    assert params[0]['derived_reference_anchor_labels'] == ['NextAstro-67890']
+
+
+def test_stellar_variability_rejects_g_catalog_anchor_for_clearv(monkeypatch, tmp_path):
     logged = []
 
     class DummyFit:
@@ -551,24 +708,98 @@ def test_stellar_variability_requires_selected_comparison_catalog_match(monkeypa
         jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
         transit = np.ones(3, dtype=float)
 
+    class DummyWcs:
+        def world_to_pixel_values(self, ra, dec):
+            return float(ra), float(dec)
+
+        def pixel_to_world_values(self, x, y):
+            return 123.4, -45.6
+
+    image = np.full((60, 60), 10.0, dtype=float)
+    image[20, 20] = 50.0
+    image[40, 40] = 110.0
+
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda _path: DummyWcs())
     monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
 
     params = exotic_module.stellar_variability(
-        {
-            0: {'myfit': DummyFit(), 'pos': [100, 200]},
-            1: {'myfit': DummyFit(), 'pos': [300, 400]},
-        },
+        {0: {'myfit': DummyFit(), 'pos': [20, 20]}},
         DummyFit(),
-        [[100, 200], [300, 400]],
-        {'REF': {'pos': [300, 400], 'mag': 12.0, 'error': 0.02}},
-        [1],
+        [[20, 20]],
+        {},
+        [],
         0,
         tmp_path,
         'Host Star',
+        observed_filter='CV',
+        field_catalog={
+            'rows': [{
+                'ra': 40.0,
+                'dec': 40.0,
+                'g': 12.0,
+                'dg': 0.03,
+                'source_id': 67890,
+            }]
+        },
+        reference_image=image,
+        wcs_file='dummy.wcs',
     )
 
     assert params == []
-    assert any('has no catalog magnitude' in message for message in logged)
+    assert any('no derived magnitude could be inferred' in message for message in logged)
+
+
+def test_stellar_variability_uses_v_catalog_anchor_for_clearv(monkeypatch, tmp_path):
+    class DummyFit:
+        data = np.array([1.0, 1.01, 0.99], dtype=float)
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.ones(3, dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    class DummyWcs:
+        def world_to_pixel_values(self, ra, dec):
+            return float(ra), float(dec)
+
+        def pixel_to_world_values(self, x, y):
+            return 123.4, -45.6
+
+    image = np.full((60, 60), 10.0, dtype=float)
+    image[20, 20] = 50.0
+    image[40, 40] = 110.0
+
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda _path: DummyWcs())
+
+    params = exotic_module.stellar_variability(
+        {0: {'myfit': DummyFit(), 'pos': [20, 20]}},
+        DummyFit(),
+        [[20, 20]],
+        {},
+        [],
+        0,
+        tmp_path,
+        'Host Star',
+        observed_filter='CV',
+        field_catalog={
+            'rows': [{
+                'ra': 40.0,
+                'dec': 40.0,
+                'Vmag': 12.0,
+                'err_Vmag': 0.03,
+                'g': 11.7,
+                'dg': 0.01,
+                'source_id': 67890,
+            }]
+        },
+        reference_image=image,
+        wcs_file='dummy.wcs',
+    )
+
+    assert len(params) == 3
+    assert params[0]['mag_band'] == 'V'
+    assert params[0]['cmag_err'] == pytest.approx(0.03)
 
 
 def test_check_for_variable_stars_uses_nextastro_flags_to_filter(monkeypatch):

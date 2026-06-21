@@ -112,6 +112,7 @@ from exotic.exotic import (
     compute_transit_qc_ktmf,
     detect_aperture_correction_star_candidates,
     transit_qc_residual_scatter_score,
+    transit_qc_residual_flatness_summary,
     transit_qc_sampling_summary,
     apply_comparison_star_suitability_outlier_rejection,
     comparison_calibration_selection_reason,
@@ -154,6 +155,8 @@ from exotic.exotic import (
     psf_solution_quality_score,
     target_psf_shape_quality_components,
     target_psf_shape_quality_mask,
+    target_comp_flux_scatter,
+    fitted_lightcurve_scatter_on_dataset,
     populate_aperture_data_for_frame,
     rank_comparison_candidate_preflight_plans,
     refit_selected_fast_comparison_on_full_lightcurve,
@@ -168,6 +171,7 @@ from exotic.exotic import (
     save_selected_photometry_debug_series,
     select_comparison_calibrated_photometry,
     select_alignment_candidate,
+    select_preferred_comparison_attempt,
     should_keep_header_wcs_alignment,
     should_prefer_pixel_values_over_wcs_for_target,
     sigma_clip,
@@ -1956,12 +1960,12 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
             "ktmf_metric": 4.35,
             "ktmf_contributions": [
                 {
-                    "label": "Delta BIC",
+                    "label": "EEBLS Depth SNR",
                     "available": True,
                     "points": 1.25,
                     "max_points": 1.40,
                     "score": 0.89,
-                    "detail": "Delta BIC=18.40",
+                    "detail": "6.50",
                 }
             ],
             "coverage_count": 3,
@@ -1992,7 +1996,7 @@ def test_log_comparison_candidate_fit_summaries_includes_reasons(monkeypatch):
     assert any("coverage=1 valid frame(s) out of 3 total; min_required=2; peer_median=3.0" in message for message in logged)
     assert any("Comp 1" in message and "reason=comparison candidate rejected after iterative low-coverage clipping" in message for message in logged)
     assert any("Comp 2 [selected]" in message and "ktmf=4.35/5.00" in message and "comparison-field calibration ranked this star best" in message for message in logged)
-    assert any("KTMF contribution: Delta BIC +1.25/1.40" in message for message in logged)
+    assert any("KTMF contribution: EEBLS Depth SNR +1.25/1.40" in message for message in logged)
     assert any("parameters: fit_method=ultranest" in message for message in logged)
 
 
@@ -2117,6 +2121,8 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
         "residual_scatter": 0.005,
         "transit_depth_for_residual_scatter": 0.01,
         "residual_scatter_to_depth_ratio": 0.5,
+        "residual_flatness_score": 0.5,
+        "residual_flatness_detail": "curve=0.50",
         "rprs_sigma": 6.0,
         "duration_ratio": 1.0,
         "eebls_depth_snr": 8.0,
@@ -2125,24 +2131,24 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
     ktmf_metric, contributions = compute_transit_qc_ktmf(summary)
     contributions_by_label = {contribution["label"]: contribution for contribution in contributions}
 
-    assert "Model Evidence" in contributions_by_label
+    assert "Model Evidence" not in contributions_by_label
     assert "Delta BIC" not in contributions_by_label
     assert "Delta chi2" not in contributions_by_label
-    scale = 5.0 / (0.3 + 1.5 + 0.7 + 0.75 + 1.3)
-    assert contributions_by_label["Model Evidence"]["max_points"] == pytest.approx(0.3 * scale)
-    assert contributions_by_label["Deviation From Expected Value"]["max_points"] == pytest.approx(1.5 * scale)
+    scale = 5.0 / (2.0 + 0.7 + 1.0 + 0.75 + 1.3)
+    assert contributions_by_label["Deviation From Expected Value"]["max_points"] == pytest.approx(2.0 * scale)
     assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7 * scale)
+    assert contributions_by_label["Residual Flatness"]["max_points"] == pytest.approx(1.0 * scale)
     assert "Rp/R* Significance" not in contributions_by_label
     assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75 * scale)
     assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(1.3 * scale)
     assert "Rp/R* sigma=2.00" in contributions_by_label["Deviation From Expected Value"]["detail"]
     assert "Tmid" not in contributions_by_label["Deviation From Expected Value"]["detail"]
+    assert contributions_by_label["Residual Flatness"]["score"] == pytest.approx(0.5)
 
-    model_evidence_score = ((1.0 - np.exp(-1.0)) + (1.0 - np.exp(-2.0))) / 2.0
     expected_ktmf = scale * (
-        0.3 * model_evidence_score
-        + 1.5 * 0.6
+        2.0 * 0.6
         + 0.7 * 1.0
+        + 1.0 * 0.5
         + 0.75 * 1.0
         + 1.3 * (1.0 - np.exp(-2.0))
     )
@@ -2160,6 +2166,46 @@ def test_transit_qc_residual_scatter_score_full_credit_floor_and_zero_ceiling():
     mid_score = transit_qc_residual_scatter_score(0.03, transit_depth)
     assert 0.0 < mid_score < 1.0
     assert mid_score < transit_qc_residual_scatter_score(0.02, transit_depth)
+
+
+def test_transit_qc_residual_flatness_summary_penalizes_residual_structure():
+    phase = np.linspace(-0.05, 0.05, 80)
+    alternating_noise = 0.001 * np.where(np.arange(phase.size) % 2 == 0, -1.0, 1.0)
+
+    flat_summary = transit_qc_residual_flatness_summary(alternating_noise, phase)
+    trend_summary = transit_qc_residual_flatness_summary(
+        alternating_noise + 0.004 * np.linspace(-1.0, 1.0, phase.size),
+        phase,
+    )
+    curve_summary = transit_qc_residual_flatness_summary(
+        alternating_noise + 0.004 * np.sin(2.0 * np.pi * np.linspace(0.0, 1.0, phase.size)),
+        phase,
+    )
+    heteroscedastic_summary = transit_qc_residual_flatness_summary(
+        alternating_noise * np.r_[np.ones(40), np.full(40, 4.0)],
+        phase,
+    )
+
+    assert flat_summary["available"] is True
+    assert flat_summary["score"] > 0.9
+    assert trend_summary["score"] < flat_summary["score"]
+    assert trend_summary["score"] < 0.5
+    assert curve_summary["score"] < flat_summary["score"]
+    assert curve_summary["score"] < 0.6
+    assert heteroscedastic_summary["score"] < flat_summary["score"]
+    assert heteroscedastic_summary["score"] < 0.8
+
+
+def test_transit_qc_residual_flatness_summary_tolerates_one_quiet_patch():
+    phase = np.linspace(-0.05, 0.05, 84)
+    residuals = 0.001 * np.sin(np.arange(phase.size) * 2.3999632)
+    residuals[-10:] *= 0.12
+
+    summary = transit_qc_residual_flatness_summary(residuals, phase)
+
+    assert summary["available"] is True
+    assert summary["score"] > 0.5
+    assert summary["scatter_ratio"] < 3.0
 
 
 def test_transit_qc_sampling_summary_scores_ingress_egress_and_baseline_counts():
@@ -2212,17 +2258,49 @@ def test_compute_transit_qc_ktmf_omits_prior_assumed_rprs_component():
     assert omitted["max_points"] == pytest.approx(0.0)
     assert "fixed to the input prior" in omitted["detail"]
 
-    scale = 5.0 / (0.3 + 0.7 + 0.75 + 1.3)
-    assert contributions_by_label["Model Evidence"]["max_points"] == pytest.approx(0.3 * scale)
+    assert "Model Evidence" not in contributions_by_label
+    scale = 5.0 / (0.7 + 0.75 + 1.3)
     assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7 * scale)
     assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75 * scale)
     assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(1.3 * scale)
 
-    model_evidence_score = ((1.0 - np.exp(-1.0)) + (1.0 - np.exp(-2.0))) / 2.0
     expected_ktmf = scale * (
-        0.3 * model_evidence_score
-        + 0.7 * 1.0
+        0.7 * 1.0
         + 0.75 * 1.0
+        + 1.3 * (1.0 - np.exp(-2.0))
+    )
+    assert ktmf_metric == pytest.approx(expected_ktmf)
+
+
+def test_compute_transit_qc_ktmf_uses_only_residual_and_eebls_for_prior_assumed_geometry():
+    summary = {
+        "geometry_prior_assumed": True,
+        "geometry_prior_assumed_note": "Transit geometry was fixed to priors.",
+        "deviation_from_expected_value": 1.0,
+        "residual_scatter": 0.005,
+        "transit_depth_for_residual_scatter": 0.01,
+        "residual_scatter_to_depth_ratio": 0.5,
+        "point_count": 86,
+        "duration_ratio": 1.0,
+        "sampling_score": 1.0,
+        "sampling_detail": "ingress=4, egress=4",
+        "eebls_depth_snr": 8.0,
+    }
+
+    ktmf_metric, contributions = compute_transit_qc_ktmf(summary)
+    contributions_by_label = {contribution["label"]: contribution for contribution in contributions}
+
+    assert contributions_by_label["Deviation From Expected Value"]["available"] is False
+    assert contributions_by_label["Duration Consistency"]["available"] is False
+    assert contributions_by_label["Sampling / Cadence"]["available"] is False
+    assert "fixed to priors" in contributions_by_label["Duration Consistency"]["detail"]
+
+    scale = 5.0 / (0.7 + 1.3)
+    assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7 * scale)
+    assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(1.3 * scale)
+
+    expected_ktmf = scale * (
+        0.7 * 1.0
         + 1.3 * (1.0 - np.exp(-2.0))
     )
     assert ktmf_metric == pytest.approx(expected_ktmf)
@@ -3843,6 +3921,36 @@ def test_evaluate_transit_detection_qc_passes_strong_model_with_low_rprs_precisi
     assert "not used as a transit-detection veto" in " ".join(summary["notes"])
 
 
+def test_evaluate_transit_detection_qc_uses_ktmf_marginal_band_despite_weak_bic(monkeypatch):
+    monkeypatch.setattr(
+        "exotic.exotic.compute_transit_qc_ktmf",
+        lambda summary: (3.34, []),
+    )
+    transit_model = np.ones(21, dtype=float)
+    transit_model[8:13] = 0.99
+    data = np.ones(21, dtype=float)
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.02, dtype=float),
+        model=transit_model,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.02, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["computed"] is True
+    assert summary["delta_bic"] < 6.0
+    assert summary["ktmf_metric"] == pytest.approx(3.34)
+    assert summary["status"] == "marginal"
+    assert "KTMF indicates a marginal transit fit" in summary["summary"]
+
+
 def test_evaluate_transit_detection_qc_uses_midpoint_anchored_duration_for_partial():
     times = np.linspace(0.0, 3.0, 13)
     transit_model = np.ones(times.shape[0], dtype=float)
@@ -4543,13 +4651,126 @@ def test_fit_ranked_comparison_calibration_candidates_selects_highest_ktmf_succe
     )
 
     assert len(result["attempts"]) == 3
-    assert result["selection_metric"] == "ktmf"
+    assert result["selection_metric"] == "ktmf_combined_quality"
     assert result["selected_result"]["comp_index"] == 1
     assert result["selected_result"]["rank"] == 1
     assert result["selected_result"]["selected"] is True
     assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.70)
-    assert "highest KTMF" in result["selected_result"]["selection_reason"]
-    assert result["attempts"][0]["selection_reason"].startswith("not selected: KTMF")
+    assert "highest KTMF/projected-scatter" in result["selected_result"]["selection_reason"]
+    assert result["attempts"][0]["selection_reason"].startswith(
+        "not selected: full-resolution UltraNest model residual scatter"
+    )
+
+
+def test_select_preferred_comparison_attempt_rejects_noisy_high_ktmf_before_ranking():
+    attempts = [
+        {
+            "label": "Comp 1",
+            "rank": 0,
+            "ktmf_metric": 4.8,
+            "residual_scatter": 0.040,
+            "eebls_snr": 3.0,
+            "transit_delta_bic": 10.0,
+        },
+        {
+            "label": "Comp 2",
+            "rank": 1,
+            "ktmf_metric": 3.6,
+            "residual_scatter": 0.010,
+            "eebls_snr": 2.8,
+            "transit_delta_bic": 8.0,
+        },
+        {
+            "label": "Comp 3",
+            "rank": 2,
+            "ktmf_metric": 3.8,
+            "residual_scatter": 0.014,
+            "eebls_snr": 2.6,
+            "transit_delta_bic": 7.0,
+        },
+    ]
+
+    selected, metric = select_preferred_comparison_attempt(attempts)
+
+    assert metric == "ktmf_combined_quality"
+    assert selected["label"] == "Comp 2"
+    assert attempts[0]["scatter_gate_passed"] is False
+    assert attempts[0]["scatter_gate_threshold"] == pytest.approx(0.015)
+    assert selected["scatter_adjusted_ktmf_metric"] == pytest.approx(3.6)
+    assert attempts[2]["scatter_adjusted_ktmf_metric"] == pytest.approx(3.8 * 0.010 / 0.014)
+
+
+def test_select_preferred_comparison_attempt_uses_ktmf_and_projected_selection_scatter_only():
+    attempts = [
+        {
+            "label": "Comp 1",
+            "rank": 0,
+            "ktmf_metric": 2.59,
+            "selection_scatter": 0.022659,
+            "target_comp_scatter": 0.005693,
+            "aggregate_score": 0.010,
+            "eebls_snr": 3.27,
+            "transit_delta_bic": 2.71,
+        },
+        {
+            "label": "Comp 2",
+            "rank": 1,
+            "ktmf_metric": 3.23,
+            "selection_scatter": 0.027437,
+            "target_comp_scatter": 0.003000,
+            "aggregate_score": 0.001,
+            "eebls_snr": 3.53,
+            "transit_delta_bic": 2.28,
+        },
+        {
+            "label": "Comp 9",
+            "rank": 2,
+            "ktmf_metric": 3.25,
+            "selection_scatter": 0.023904,
+            "target_comp_scatter": 0.030258,
+            "aggregate_score": 0.100,
+            "eebls_snr": 1.61,
+            "transit_delta_bic": -8.36,
+        },
+    ]
+
+    selected, metric = select_preferred_comparison_attempt(attempts)
+
+    assert metric == "ktmf_combined_quality"
+    assert selected["label"] == "Comp 9"
+    assert attempts[0]["combined_quality_ktmf_metric"] == pytest.approx(2.59 / 2.2659)
+    assert attempts[1]["combined_quality_ktmf_metric"] == pytest.approx(3.23 / 2.7437)
+    assert attempts[2]["combined_quality_ktmf_metric"] == pytest.approx(3.25 / 2.3904)
+    assert selected["combined_quality_ktmf_metric"] > attempts[1]["combined_quality_ktmf_metric"]
+    assert selected["combined_quality_ktmf_metric"] > attempts[0]["combined_quality_ktmf_metric"]
+
+
+def test_target_comp_flux_scatter_measures_normalized_target_reference_ratio():
+    comp_flux = np.full(8, 100.0, dtype=float)
+    ratio = np.array([1.00, 1.01, 0.99, 1.02, 0.98, 1.00, 1.01, 0.99], dtype=float)
+    target_flux = comp_flux * ratio
+
+    scatter = target_comp_flux_scatter(target_flux, comp_flux, min_points=5)
+
+    assert scatter == pytest.approx(0.014826, rel=1.0e-3)
+
+
+def test_fitted_lightcurve_scatter_on_dataset_projects_fit_to_full_flux(monkeypatch):
+    def fake_transit(times, parameters):
+        return np.ones_like(np.asarray(times, dtype=float))
+
+    monkeypatch.setattr("exotic.exotic.transit", fake_transit)
+    fit = types.SimpleNamespace(
+        parameters={"a0": 1.0, "a2": 0.0},
+        airmass_reference=1.0,
+    )
+    times = np.arange(8, dtype=float)
+    flux_values = np.array([1.0, 1.01, 0.99, 1.02, 0.98, 1.0, 1.01, 0.99], dtype=float)
+    airmass = np.ones_like(times)
+
+    scatter = fitted_lightcurve_scatter_on_dataset(fit, times, flux_values, airmass)
+
+    assert scatter == pytest.approx(np.std(flux_values - 1.0) / np.median(flux_values))
 
 
 def test_fit_ranked_comparison_calibration_candidates_extends_only_selected_final_fit(monkeypatch):

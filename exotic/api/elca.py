@@ -3082,6 +3082,59 @@ class lc_fitter(object):
                 if row == geometry_index and col < row:
                     self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='y')
 
+    def _overlay_single_parameter_triangle_gaussian(self, fig, payload):
+        if not hasattr(fig, 'axes') or len(fig.axes) != 1:
+            return
+        sampled_keys = list(payload.get('sampled_keys', []))
+        if len(sampled_keys) != 1:
+            return
+
+        ax = fig.axes[0]
+        display_points = np.asarray(payload.get('display_points', []), dtype=float)
+        if display_points.ndim != 2 or display_points.shape[1] != 1:
+            return
+
+        values = display_points[:, 0]
+        values = values[np.isfinite(values)]
+        if values.size < 2:
+            return
+
+        try:
+            center = float(payload.get('mask_centers', [np.nan])[0])
+            sigma = float(payload.get('mask_errors', [np.nan])[0])
+            lower, upper = [
+                float(value)
+                for value in np.asarray(payload.get('ranges', [[np.nan, np.nan]])[0], dtype=float).reshape(-1)[:2]
+            ]
+        except (TypeError, ValueError, IndexError):
+            return
+
+        if not np.isfinite(center):
+            center = float(np.nanmedian(values))
+        if not np.isfinite(sigma) or sigma <= 0:
+            sigma = float(np.nanstd(values))
+        if not np.isfinite(sigma) or sigma <= 0:
+            return
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            lower, upper = float(np.nanmin(values)), float(np.nanmax(values))
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            return
+
+        x_values = np.linspace(lower, upper, 300)
+        y_values = np.exp(-0.5 * ((x_values - center) / sigma) ** 2)
+        y_max = y_values.max() if y_values.size else np.nan
+        if not np.isfinite(y_max) or y_max <= 0:
+            return
+        axis_top = ax.get_ylim()[1]
+        if not np.isfinite(axis_top) or axis_top <= 0:
+            axis_top = 1.0
+        y_values = y_values / y_max * axis_top * 0.90
+
+        ax.plot(x_values, y_values, color='#c2410c', linewidth=1.5, label='Gaussian')
+        ax.axvline(center, color='#c2410c', linestyle='--', linewidth=1.0, label='Peak fit')
+        ax.set_ylim(0, max(axis_top, float(np.nanmax(y_values)) * 1.05))
+        ax.legend(loc='best', fontsize=8, frameon=False)
+
     def _adjust_triangle_plot_layout(self, fig):
         if not hasattr(fig, 'subplots_adjust'):
             return
@@ -3866,6 +3919,7 @@ class lc_fitter(object):
             fig.set_size_inches(fig_size, fig_size, forward=True)
         if plot_title and hasattr(fig, 'suptitle'):
             fig.suptitle(plot_title, fontsize=13, y=0.99)
+        self._overlay_single_parameter_triangle_gaussian(fig, payload)
         self._adjust_triangle_plot_layout(fig)
         self._overlay_triangle_plot_geometry_histograms(
             fig,

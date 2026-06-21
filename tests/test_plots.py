@@ -266,6 +266,40 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
     assert (tmp_path / "temp" / "Stellar_Variability.png").exists()
 
 
+def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp_path, monkeypatch):
+    titles = []
+    original_set_title = Axes.set_title
+
+    def spy_set_title(self, label, *args, **kwargs):
+        titles.append(label)
+        return original_set_title(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_title", spy_set_title)
+
+    plot_stellar_variability(
+        [
+            {
+                "time": 2450000.1,
+                "mag": 12.34,
+                "mag_err": 0.05,
+                "cmag": 12.345,
+                "cmag_err": 0.067,
+                "comp_ra": 10.1,
+                "comp_dec": -20.2,
+                "mag_band": "V",
+                "observed_filter": "CV",
+                "is_aavso_vsp": True,
+            }
+        ],
+        str(tmp_path),
+        "Host Star",
+        "000-BJX-718",
+    )
+
+    assert "Observed filter: CV" in titles[-1]
+    assert "Assumed comparison: V=12.345 +/- 0.067" in titles[-1]
+
+
 def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, monkeypatch):
     titles = []
     original_set_title = Axes.set_title
@@ -577,12 +611,12 @@ def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypat
                 "ktmf_metric": 3.07,
                 "ktmf_contributions": [
                     {
-                        "label": "Model Evidence",
+                        "label": "EEBLS Depth SNR",
                         "available": True,
                         "points": 0.11,
                         "max_points": 0.89,
                         "score": 0.12,
-                        "detail": "Delta BIC=-2.00, Delta chi2=6.91",
+                        "detail": "2.00",
                     },
                     {
                         "label": "Residual Scatter Around Full Model Fit",
@@ -607,4 +641,4 @@ def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypat
     assert (tmp_path / "KTMF_QC_Target_2026-03-09.pdf").exists()
     assert any("KTMF\n3.07 / 5.00\nMARGINAL" in text for text in captured_text)
     assert any("0.11 / 0.89" in text for text in captured_text)
-    assert any("Delta BIC=-2.00" in text for text in captured_text)
+    assert any("2.00" in text for text in captured_text)

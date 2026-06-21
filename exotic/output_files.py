@@ -157,15 +157,25 @@ def stellar_variability_measurement_summary(vsp_params, transit_fit_comp_star=No
         return None
 
     return (
-        f"Remeasured {point_count} out-of-transit target/reference point(s) against the transit-fit catalog "
-        "reference for AID magnitudes; AID rows list the JD timestamps used."
+        f"Remeasured {point_count} out-of-transit target/reference point(s) against the transit-fit "
+        f"{'derived ' if vsp_params[0].get('derived_catalog_reference') else ''}catalog reference "
+        "for AID magnitudes; AID rows list the BJD_TDB timestamps used."
     )
 
 
 def aid_comparison_metadata(vsp_param):
     if not vsp_param:
         return {}
-    return aavso_json_safe({
+    anchor_labels = vsp_param.get('derived_reference_anchor_labels')
+    anchor_label_sample = None
+    if isinstance(anchor_labels, np.ndarray):
+        anchor_labels = anchor_labels.tolist()
+    if isinstance(anchor_labels, (list, tuple)):
+        anchor_labels = list(anchor_labels)
+        if len(anchor_labels) > 10:
+            anchor_label_sample = anchor_labels[:10]
+            anchor_labels = None
+    metadata = {
         'source': vsp_param.get('catalog_source', 'AAVSO VSP'),
         'is_aavso_vsp': bool(vsp_param.get('is_aavso_vsp', True)),
         'comparison_name': vsp_param.get('cname'),
@@ -177,10 +187,17 @@ def aid_comparison_metadata(vsp_param):
         'catalog_source_id': vsp_param.get('source_id'),
         'catalog_id': vsp_param.get('catalog_id'),
         'catalog_match_separation_arcsec': vsp_param.get('separation_arcsec'),
+        'derived_catalog_reference': bool(vsp_param.get('derived_catalog_reference', False)),
+        'derived_reference_anchor_count': vsp_param.get('derived_reference_anchor_count'),
         'magnitude_band': vsp_param.get('mag_band'),
         'apparent_magnitude': rounded_magnitude_value(vsp_param.get('cmag')),
         'apparent_magnitude_error': rounded_magnitude_error(vsp_param.get('cmag_err')),
-    })
+    }
+    if anchor_labels is not None:
+        metadata['derived_reference_anchor_labels'] = anchor_labels
+    if anchor_label_sample is not None:
+        metadata['derived_reference_anchor_label_sample'] = anchor_label_sample
+    return aavso_json_safe(metadata)
 
 
 def prune_aavso_metadata(value):
@@ -690,6 +707,11 @@ def build_aavso_qc_metadata(fit):
         'delta_bic', 'transit_parameter_count', 'flat_parameter_count',
         'flat_baseline', 'flat_a2', 'flat_model_note', 'residual_scatter',
         'transit_depth_for_residual_scatter', 'residual_scatter_to_depth_ratio',
+        'residual_flatness_score', 'residual_flatness_trend_strength',
+        'residual_flatness_curve_strength', 'residual_flatness_scatter_ratio',
+        'residual_flatness_trend_score', 'residual_flatness_curve_score',
+        'residual_flatness_scatter_stability_score',
+        'residual_flatness_dominant_metric', 'residual_flatness_detail',
         'rprs_sigma', 'duration_ratio', 'eebls_depth_snr',
         'sampling_score', 'sampling_detail', 'sampling_ingress_count',
         'sampling_egress_count', 'sampling_in_transit_count',
@@ -743,6 +765,27 @@ def compact_comparison_attempt_decision(attempt):
         'label': attempt.get('label'),
         'selected': attempt.get('selected'),
         'selection_reason': attempt.get('selection_reason'),
+        'selection_pass_ktmf_metric': attempt.get('selection_pass_ktmf_metric'),
+        'selection_pass_transit_delta_bic': attempt.get('selection_pass_transit_delta_bic'),
+        'selection_pass_eebls_snr': attempt.get('selection_pass_eebls_snr'),
+        'selection_pass_residual_scatter': attempt.get('selection_pass_residual_scatter'),
+        'target_model_scatter_basis': attempt.get('target_model_scatter_basis'),
+        'projected_full_residual_scatter': attempt.get('projected_full_residual_scatter'),
+        'selection_scatter': attempt.get('selection_scatter'),
+        'selection_scatter_basis': attempt.get('selection_scatter_basis'),
+        'target_comp_scatter': attempt.get('target_comp_scatter'),
+        'selection_pass_target_comp_scatter': attempt.get('selection_pass_target_comp_scatter'),
+        'selection_pass_transit_qc_status': attempt.get('selection_pass_transit_qc_status'),
+        'selection_pass_transit_qc_summary': attempt.get('selection_pass_transit_qc_summary'),
+        'scatter_gate_passed': attempt.get('scatter_gate_passed'),
+        'scatter_gate_lowest_residual_scatter': attempt.get('scatter_gate_lowest_residual_scatter'),
+        'scatter_gate_threshold': attempt.get('scatter_gate_threshold'),
+        'scatter_adjusted_ktmf_metric': attempt.get('scatter_adjusted_ktmf_metric'),
+        'combined_quality_ktmf_metric': attempt.get('combined_quality_ktmf_metric'),
+        'combined_quality_best_residual_scatter': attempt.get('combined_quality_best_residual_scatter'),
+        'combined_quality_best_target_comp_scatter': attempt.get('combined_quality_best_target_comp_scatter'),
+        'combined_quality_best_comp_stability': attempt.get('combined_quality_best_comp_stability'),
+        'final_refit_metric_note': attempt.get('final_refit_metric_note'),
         'ktmf_metric': attempt.get('ktmf_metric'),
         'ktmf_contributions': compact_ktmf_contributions(attempt.get('ktmf_contributions')),
         'transit_delta_bic': attempt.get('transit_delta_bic'),
@@ -783,6 +826,11 @@ def build_ktmf_decision_metadata(fit, photometry_info=None):
             'residual_scatter': transit_qc.get('residual_scatter'),
             'transit_depth_for_residual_scatter': transit_qc.get('transit_depth_for_residual_scatter'),
             'residual_scatter_to_depth_ratio': transit_qc.get('residual_scatter_to_depth_ratio'),
+            'residual_flatness_score': transit_qc.get('residual_flatness_score'),
+            'residual_flatness_detail': transit_qc.get('residual_flatness_detail'),
+            'residual_flatness_trend_strength': transit_qc.get('residual_flatness_trend_strength'),
+            'residual_flatness_curve_strength': transit_qc.get('residual_flatness_curve_strength'),
+            'residual_flatness_scatter_ratio': transit_qc.get('residual_flatness_scatter_ratio'),
             'sampling_score': transit_qc.get('sampling_score'),
             'sampling_detail': transit_qc.get('sampling_detail'),
             'sampling_ingress_count': transit_qc.get('sampling_ingress_count'),
@@ -872,21 +920,99 @@ def format_optional_metric(label, value, precision=2):
     return f"{label}={value:.{precision}f}"
 
 
+def format_transit_delta_bic(value):
+    value = finite_float(value)
+    return f"{value:.2f}" if np.isfinite(value) else "n/a"
+
+
+def format_percent_metric(label, value, precision=4):
+    value = finite_float(value)
+    if not np.isfinite(value):
+        return None
+    return f"{label}={value * 100.0:.{precision}f}%"
+
+
+def metric_values_differ(first_value, second_value, tolerance=5.0e-3):
+    first_value = finite_float(first_value)
+    second_value = finite_float(second_value)
+    return (
+        np.isfinite(first_value)
+        and np.isfinite(second_value)
+        and abs(first_value - second_value) > tolerance
+    )
+
+
 def format_ktmf_candidate_decision(attempt):
     attempt = compact_comparison_attempt_decision(attempt)
     label = attempt.get('label') or (
         f"Comp {attempt['comparison_star']}" if attempt.get('comparison_star') is not None else "Comparison candidate"
     )
     selected_text = " [selected]" if attempt.get('selected') else ""
-    parts = [
-        f"{label}{selected_text}: KTMF={format_ktmf_metric(attempt.get('ktmf_metric'))}",
-    ]
+    ktmf_text = f"KTMF={format_ktmf_metric(attempt.get('ktmf_metric'))}"
+    if metric_values_differ(
+        attempt.get('selection_pass_ktmf_metric'),
+        attempt.get('ktmf_metric'),
+    ):
+        ktmf_text += (
+            f" (selection-pass {format_ktmf_metric(attempt.get('selection_pass_ktmf_metric'))})"
+        )
+    parts = [f"{label}{selected_text}: {ktmf_text}"]
     for metric_text in (
         format_optional_metric("Delta BIC", attempt.get('transit_delta_bic')),
         format_optional_metric("EEBLS SNR", attempt.get('eebls_snr')),
+        format_percent_metric("Target/comp scatter", attempt.get('target_comp_scatter')),
+        format_percent_metric("Target model scatter", attempt.get('residual_scatter')),
+        format_percent_metric("Selection scatter", attempt.get('selection_scatter')),
+        format_optional_metric("KTMF/projected-scatter score", attempt.get('combined_quality_ktmf_metric')),
     ):
         if metric_text:
             parts.append(metric_text)
+    target_model_basis = attempt.get('target_model_scatter_basis')
+    selection_scatter_basis = attempt.get('selection_scatter_basis')
+    if target_model_basis:
+        parts.append(f"target model scatter basis={target_model_basis}")
+    if selection_scatter_basis:
+        parts.append(f"selection scatter basis={selection_scatter_basis}")
+    selection_pass_target_comp_scatter = finite_float(attempt.get('selection_pass_target_comp_scatter'))
+    target_comp_scatter = finite_float(attempt.get('target_comp_scatter'))
+    if (
+        np.isfinite(selection_pass_target_comp_scatter)
+        and (
+            not np.isfinite(target_comp_scatter)
+            or abs(selection_pass_target_comp_scatter - target_comp_scatter) > 1.0e-5
+        )
+    ):
+        parts.append(
+            "selection-pass target/comp scatter="
+            f"{selection_pass_target_comp_scatter * 100.0:.4f}%"
+        )
+    if metric_values_differ(
+        attempt.get('selection_pass_residual_scatter'),
+        attempt.get('residual_scatter'),
+        tolerance=1.0e-5,
+    ):
+        parts.append(
+            "selection-pass target model scatter="
+            f"{finite_float(attempt.get('selection_pass_residual_scatter')) * 100.0:.4f}%"
+        )
+    if metric_values_differ(
+        attempt.get('selection_pass_transit_delta_bic'),
+        attempt.get('transit_delta_bic'),
+        tolerance=1.0e-2,
+    ):
+        parts.append(
+            "selection-pass Delta BIC="
+            f"{format_transit_delta_bic(attempt.get('selection_pass_transit_delta_bic'))}"
+        )
+    if metric_values_differ(
+        attempt.get('selection_pass_eebls_snr'),
+        attempt.get('eebls_snr'),
+        tolerance=1.0e-2,
+    ):
+        parts.append(
+            "selection-pass EEBLS SNR="
+            f"{finite_float(attempt.get('selection_pass_eebls_snr')):.2f}"
+        )
     qc_status = attempt.get('transit_qc_status')
     if qc_status:
         parts.append(f"QC={str(qc_status).upper()}")
@@ -1639,6 +1765,9 @@ class OutputFiles:
         prefit_refinement_note = getattr(self.fit, 'prefit_refinement_note', None)
         if prefit_refinement_note:
             params_num["Prefit refinement note"] = str(prefit_refinement_note)
+        geometry_prior_note = getattr(self.fit, 'partial_transit_geometry_prior_assumption_note', None)
+        if geometry_prior_note:
+            params_num["Prior-assumed partial-transit geometry note"] = str(geometry_prior_note)
         oot_baseline_parameter_note = getattr(self.fit, 'oot_baseline_parameter_fit_note', None)
         if oot_baseline_parameter_note:
             params_num["Out-of-transit baseline parameter-fit note"] = str(oot_baseline_parameter_note)
@@ -1765,11 +1894,14 @@ class OutputFiles:
                 params_num["Variable Reference Measurement"] = measurement_summary
 
         if phot_opt:
-            transit_fit_comp_text = (
-                f"#{comp_star} - {comp_coords}"
-                if comp_star is not None and min_aper >= 0
-                else str(comp_star)
-            )
+            if comp_star == 'ensemble':
+                transit_fit_comp_text = "ensemble"
+            else:
+                transit_fit_comp_text = (
+                    f"#{comp_star} - {comp_coords}"
+                    if comp_star is not None and min_aper >= 0
+                    else str(comp_star)
+                )
             phot_ext = {
                 "Transit Fit Comparison Star": transit_fit_comp_text
             }
@@ -1944,7 +2076,7 @@ class AIDOutputFiles:
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
-                    "#DATE=JD\n"  # fixed
+                    "#DATE=BJD_TDB\n"  # fixed
                     f"#OBSDATE={format_aavso_header_value(self.i_dict.get('date'))}\n"
                     f"#OBSTYPE={self.i_dict['camera']}\n"
                     f"#OBSLAT={format_aavso_header_value(self.i_dict.get('lat'))}\n"

@@ -284,6 +284,7 @@ PARTIAL_COVERAGE_RPRS_POSTERIOR_MAX_RETRIES = 1
 PARTIAL_COVERAGE_ARS_POSTERIOR_MAX_RETRIES = 0
 PARTIAL_COVERAGE_IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES = 0
 PROMISING_PARTIAL_COMPARISON_KTMF_MIN = 3.0
+COMPARISON_SELECTION_MAX_SCATTER_MULTIPLIER = 1.5
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT = True
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV = "EXOTIC_SPARSE_POSTERIOR_LIVE_POINT_RETRY"
 SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT = 5
@@ -364,6 +365,12 @@ REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS = 4
 REFERENCE_FALLBACK_DETECTION_MIN_AREA_PIXELS = 3
 REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS = 10.0
 REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS = 50.0
+AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT = 10
+AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO = 0.5
+AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO = 2.0
+AUTOMATIC_CALIBRATION_SELECTOR_MAX_DETECTIONS = 1000
+AUTOMATIC_CALIBRATION_SELECTOR_DETECTION_PERCENTILE = 98.0
+AUTOMATIC_CALIBRATION_SELECTOR_COLOR_MATCH_RADIUS_ARCSEC = 20.0
 BAD_PIXEL_DETECTION_FRACTION = 0.30
 BAD_PIXEL_PRECHECK_MIN_FRAMES = 5
 BAD_PIXEL_PROGRESS_LOG_INTERVAL = 25
@@ -392,9 +399,9 @@ TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT = True
 TRANSIT_QC_DEVIATION_SIGMA_DEFAULT = 5.0
 TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION = 0.05
 TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS = {
-    'model_evidence': 0.3,
-    'deviation_from_expected_value': 1.5,
+    'deviation_from_expected_value': 2.0,
     'residual_scatter': 0.7,
+    'residual_flatness': 1.0,
     'duration_consistency': 0.75,
     'eebls_depth_snr': 1.3,
     'sampling': 0.7,
@@ -476,6 +483,22 @@ def annotate_out_of_transit_baseline_parameter_fit(
     fit.oot_baseline_parameter_fit_a0_error = a0_error
     fit.oot_baseline_parameter_fit_a2 = a2
     fit.oot_baseline_parameter_fit_a2_error = a2_error
+
+
+def annotate_partial_transit_geometry_prior_assumption(fit, payload):
+    if fit is None:
+        return
+
+    payload = payload if isinstance(payload, dict) else {}
+    fit.partial_transit_geometry_prior_assumption_applied = bool(payload.get('applied', False))
+    fit.partial_transit_geometry_prior_assumption_mode = payload.get('mode')
+    fit.partial_transit_geometry_prior_assumption_note = payload.get('note')
+    fit.partial_transit_geometry_prior_assumption_fixed_parameters = list(
+        payload.get('fixed_parameters') or []
+    )
+    fit.partial_transit_geometry_prior_assumption_sampled_parameters = list(
+        payload.get('sampled_parameters') or []
+    )
 
 
 def annotate_final_fit_prefit_refinement(
@@ -1405,6 +1428,247 @@ def transit_qc_residual_scatter_score(
     return float(np.clip(numerator / denominator, 0.0, 1.0))
 
 
+def transit_qc_flatness_declining_score(value, full_credit, zero_credit, decay_rate=3.0):
+    try:
+        value = float(value)
+        full_credit = float(full_credit)
+        zero_credit = float(zero_credit)
+        decay_rate = float(decay_rate)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if (
+        not np.isfinite(value)
+        or value < 0
+        or not np.isfinite(full_credit)
+        or full_credit < 0
+        or not np.isfinite(zero_credit)
+        or zero_credit <= full_credit
+        or not np.isfinite(decay_rate)
+        or decay_rate <= 0
+    ):
+        return np.nan
+
+    if value <= full_credit:
+        return 1.0
+    if value >= zero_credit:
+        return 0.0
+
+    interval_fraction = (value - full_credit) / (zero_credit - full_credit)
+    numerator = np.exp(-decay_rate * interval_fraction) - np.exp(-decay_rate)
+    denominator = 1.0 - np.exp(-decay_rate)
+    return float(np.clip(numerator / denominator, 0.0, 1.0))
+
+
+def robust_sigma(values):
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return np.nan
+
+    center = float(np.nanmedian(finite))
+    mad = float(np.nanmedian(np.abs(finite - center)))
+    if np.isfinite(mad) and mad > 0:
+        return float(1.4826 * mad)
+
+    scatter = float(np.nanstd(finite, ddof=1)) if finite.size > 1 else 0.0
+    return scatter if np.isfinite(scatter) else np.nan
+
+
+def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points=12):
+    summary = {
+        'available': False,
+        'score': np.nan,
+        'point_count': 0,
+        'scatter': np.nan,
+        'trend_strength': np.nan,
+        'curve_strength': np.nan,
+        'scatter_ratio': np.nan,
+        'trend_score': np.nan,
+        'curve_score': np.nan,
+        'scatter_stability_score': np.nan,
+        'dominant': None,
+        'detail': 'residual flatness unavailable',
+    }
+
+    residuals = np.asarray(residuals, dtype=float).reshape(-1)
+    if residuals.size == 0:
+        return summary
+
+    if coordinates is None:
+        coordinates = np.arange(residuals.size, dtype=float)
+    else:
+        coordinates = np.asarray(coordinates, dtype=float).reshape(-1)
+        if coordinates.shape != residuals.shape:
+            coordinates = np.arange(residuals.size, dtype=float)
+
+    finite = np.isfinite(residuals) & np.isfinite(coordinates)
+    point_count = int(np.count_nonzero(finite))
+    summary['point_count'] = point_count
+    if point_count < int(min_points):
+        summary['detail'] = f"not enough residual points ({point_count} < {int(min_points)})"
+        return summary
+
+    residuals = residuals[finite]
+    coordinates = coordinates[finite]
+    order = np.argsort(coordinates)
+    residuals = residuals[order]
+    coordinates = coordinates[order]
+
+    centered = residuals - float(np.nanmedian(residuals))
+    scatter = robust_sigma(centered)
+    if not np.isfinite(scatter):
+        summary['detail'] = "residual scatter unavailable"
+        return summary
+    if scatter <= np.finfo(float).eps:
+        summary.update({
+            'available': True,
+            'score': 1.0,
+            'scatter': float(scatter),
+            'trend_strength': 0.0,
+            'curve_strength': 0.0,
+            'scatter_ratio': 1.0,
+            'trend_score': 1.0,
+            'curve_score': 1.0,
+            'scatter_stability_score': 1.0,
+            'dominant': 'flat',
+            'detail': f"flat residuals; n={point_count}",
+        })
+        return summary
+
+    normalized = centered / scatter
+    coordinate_min = float(np.nanmin(coordinates))
+    coordinate_max = float(np.nanmax(coordinates))
+    if not np.isfinite(coordinate_min) or not np.isfinite(coordinate_max) or coordinate_max <= coordinate_min:
+        x01 = np.linspace(0.0, 1.0, point_count)
+    else:
+        x01 = (coordinates - coordinate_min) / (coordinate_max - coordinate_min)
+    x = 2.0 * x01 - 1.0
+
+    trend_strength = np.nan
+    try:
+        trend_design = np.column_stack([np.ones(point_count, dtype=float), x])
+        trend_coeff, *_ = np.linalg.lstsq(trend_design, normalized, rcond=None)
+        trend_model = trend_design @ trend_coeff
+        trend_strength = float(np.nanstd(trend_model - np.nanmean(trend_model)))
+    except Exception:
+        trend_strength = np.nan
+
+    curve_strength = np.nan
+    try:
+        centered_quadratic = x ** 2 - float(np.nanmean(x ** 2))
+        structure_design = np.column_stack([
+            np.ones(point_count, dtype=float),
+            x,
+            centered_quadratic,
+            np.sin(2.0 * np.pi * x01),
+            np.cos(2.0 * np.pi * x01),
+            np.sin(4.0 * np.pi * x01),
+            np.cos(4.0 * np.pi * x01),
+        ])
+        structure_coeff, *_ = np.linalg.lstsq(structure_design, normalized, rcond=None)
+        structure_model = structure_design @ structure_coeff
+        raw_structure_strength = float(np.nanstd(structure_model - np.nanmean(structure_model)))
+        expected_noise_projection = float(np.sqrt((structure_design.shape[1] - 1) / max(point_count, 1)))
+        curve_strength = max(0.0, raw_structure_strength - expected_noise_projection)
+    except Exception:
+        curve_strength = np.nan
+
+    binned_curve_strength = np.nan
+    scatter_ratio = np.nan
+    bin_count = int(np.clip(point_count // 8, 4, 8))
+    bins = [
+        chunk for chunk in np.array_split(np.arange(point_count), bin_count)
+        if chunk.size >= 3
+    ]
+    if len(bins) >= 3:
+        bin_medians = np.asarray([
+            float(np.nanmedian(normalized[chunk]))
+            for chunk in bins
+        ], dtype=float)
+        median_bin_size = float(np.nanmedian([chunk.size for chunk in bins]))
+        expected_binned_median_noise = 1.253 / np.sqrt(max(median_bin_size, 1.0))
+        binned_curve_strength = max(
+            0.0,
+            float(np.nanstd(bin_medians - np.nanmedian(bin_medians)))
+            - expected_binned_median_noise,
+        )
+
+        bin_sigmas = np.asarray([
+            robust_sigma(normalized[chunk] - float(np.nanmedian(normalized[chunk])))
+            for chunk in bins
+        ], dtype=float)
+        finite_sigmas = bin_sigmas[np.isfinite(bin_sigmas) & (bin_sigmas > np.finfo(float).eps)]
+        if finite_sigmas.size >= 2:
+            median_sigma = float(np.nanmedian(finite_sigmas))
+            if np.isfinite(median_sigma) and median_sigma > np.finfo(float).eps:
+                finite_sizes = np.asarray([
+                    chunk.size
+                    for chunk, sigma in zip(bins, bin_sigmas)
+                    if np.isfinite(sigma) and sigma > np.finfo(float).eps
+                ], dtype=float)
+                log_scatter_offsets = np.abs(np.log(finite_sigmas / median_sigma))
+                expected_log_scatter_noise = 1.0 / np.sqrt(2.0 * np.maximum(finite_sizes - 1.0, 1.0))
+                excess_log_scatter_offsets = np.maximum(
+                    0.0,
+                    log_scatter_offsets - expected_log_scatter_noise,
+                )
+                if excess_log_scatter_offsets.size:
+                    scatter_ratio = float(np.exp(np.nanpercentile(excess_log_scatter_offsets, 80.0)))
+
+    if np.isfinite(binned_curve_strength):
+        curve_strength = (
+            max(curve_strength, binned_curve_strength)
+            if np.isfinite(curve_strength)
+            else binned_curve_strength
+        )
+
+    trend_score = transit_qc_flatness_declining_score(trend_strength, 0.20, 0.85)
+    curve_score = transit_qc_flatness_declining_score(curve_strength, 0.25, 1.00)
+    scatter_stability_score = (
+        transit_qc_flatness_declining_score(np.log(scatter_ratio), np.log(1.5), np.log(3.0))
+        if np.isfinite(scatter_ratio) and scatter_ratio > 0
+        else np.nan
+    )
+    component_scores = {
+        'trend': trend_score,
+        'curvature/sinusoid': curve_score,
+        'scatter stability': scatter_stability_score,
+    }
+    finite_component_scores = {
+        key: float(value)
+        for key, value in component_scores.items()
+        if np.isfinite(value)
+    }
+    if not finite_component_scores:
+        summary['detail'] = "residual flatness components unavailable"
+        return summary
+
+    dominant = min(finite_component_scores, key=finite_component_scores.get)
+    score = finite_component_scores[dominant]
+    detail_parts = [
+        f"{dominant} limited",
+        f"trend={trend_strength:.2f}" if np.isfinite(trend_strength) else "trend=n/a",
+        f"curve={curve_strength:.2f}" if np.isfinite(curve_strength) else "curve=n/a",
+        f"scatter ratio={scatter_ratio:.2f}" if np.isfinite(scatter_ratio) else "scatter ratio=n/a",
+        f"n={point_count}",
+    ]
+    summary.update({
+        'available': True,
+        'score': float(np.clip(score, 0.0, 1.0)),
+        'scatter': float(scatter),
+        'trend_strength': trend_strength,
+        'curve_strength': curve_strength,
+        'scatter_ratio': scatter_ratio,
+        'trend_score': trend_score,
+        'curve_score': curve_score,
+        'scatter_stability_score': scatter_stability_score,
+        'dominant': dominant,
+        'detail': ", ".join(detail_parts),
+    })
+    return summary
+
+
 def transit_qc_mean_available_score(*scores):
     finite_scores = [float(score) for score in scores if np.isfinite(score)]
     if not finite_scores:
@@ -1687,26 +1951,9 @@ def compute_transit_qc_ktmf(summary):
     if not isinstance(summary, dict):
         return np.nan, []
 
-    delta_bic_score = transit_qc_saturating_score(
-        summary.get('delta_bic', np.nan),
-        TRANSIT_QC_DELTA_BIC_PASS_THRESHOLD,
-    )
-    delta_chi2_score = transit_qc_saturating_score(summary.get('delta_chi2', np.nan), 25.0)
-    model_evidence_score = transit_qc_mean_available_score(delta_bic_score, delta_chi2_score)
-    model_evidence_score_uncertainty = np.nan
-    model_evidence_scores = [
-        float(score) for score in (delta_bic_score, delta_chi2_score) if np.isfinite(score)
-    ]
-    if len(model_evidence_scores) > 1:
-        model_evidence_score_uncertainty = float(np.std(model_evidence_scores))
-    model_evidence_detail_parts = [
-        f"Delta BIC={format_transit_delta_bic(summary.get('delta_bic', np.nan))}",
-        f"Delta chi2={summary.get('delta_chi2', np.nan):.2f}"
-        if np.isfinite(summary.get('delta_chi2', np.nan))
-        else "Delta chi2=n/a",
-    ]
     deviation_score = summary.get('deviation_from_expected_value', np.nan)
     rprs_prior_assumed = bool(summary.get('rprs_prior_assumed', False))
+    geometry_prior_assumed = bool(summary.get('geometry_prior_assumed', False))
     if rprs_prior_assumed:
         deviation_score = np.nan
         deviation_detail = (
@@ -1740,6 +1987,16 @@ def compute_transit_qc_ktmf(summary):
     else:
         deviation_detail = "expected-value deviation disabled or unavailable"
 
+    if geometry_prior_assumed:
+        geometry_note = (
+            summary.get('geometry_prior_assumed_note')
+            or "Transit geometry was fixed to input priors for partial-coverage fitting."
+        )
+        deviation_score = np.nan
+        deviation_detail = (
+            f"{geometry_note} Expected-value deviation is omitted from KTMF scoring."
+        )
+
     residual_scatter = summary.get('residual_scatter', np.nan)
     residual_depth = summary.get('transit_depth_for_residual_scatter', np.nan)
     residual_scatter_to_depth_ratio = summary.get('residual_scatter_to_depth_ratio', np.nan)
@@ -1747,6 +2004,8 @@ def compute_transit_qc_ktmf(summary):
         residual_scatter,
         residual_depth,
     )
+    residual_flatness_score = summary.get('residual_flatness_score', np.nan)
+    residual_flatness_detail = summary.get('residual_flatness_detail') or "n/a"
     residual_scatter_score_uncertainty = np.nan
     point_count = summary.get('point_count', np.nan)
     if (
@@ -1800,14 +2059,24 @@ def compute_transit_qc_ktmf(summary):
     else:
         duration_detail = duration_note or "n/a"
 
+    duration_score = transit_qc_duration_score(summary.get('duration_ratio', np.nan))
+    sampling_score = summary.get('sampling_score', np.nan)
+    sampling_detail = summary.get('sampling_detail') or "n/a"
+    if geometry_prior_assumed:
+        geometry_note = (
+            summary.get('geometry_prior_assumed_note')
+            or "Transit geometry was fixed to input priors for partial-coverage fitting."
+        )
+        duration_score = np.nan
+        duration_detail = (
+            f"{geometry_note} Duration consistency is omitted from KTMF scoring."
+        )
+        sampling_score = np.nan
+        sampling_detail = (
+            f"{geometry_note} Sampling/cadence is omitted from KTMF scoring."
+        )
+
     raw_components = [
-        {
-            'key': 'model_evidence',
-            'label': 'Model Evidence',
-            'score': model_evidence_score,
-            'score_uncertainty': model_evidence_score_uncertainty,
-            'detail': ", ".join(model_evidence_detail_parts),
-        },
         {
             'key': 'deviation_from_expected_value',
             'label': 'Deviation From Expected Value',
@@ -1823,9 +2092,16 @@ def compute_transit_qc_ktmf(summary):
             'detail': residual_scatter_detail,
         },
         {
+            'key': 'residual_flatness',
+            'label': 'Residual Flatness',
+            'score': residual_flatness_score,
+            'score_uncertainty': np.nan,
+            'detail': residual_flatness_detail,
+        },
+        {
             'key': 'duration_consistency',
             'label': 'Duration Consistency',
-            'score': transit_qc_duration_score(summary.get('duration_ratio', np.nan)),
+            'score': duration_score,
             'score_uncertainty': np.nan,
             'detail': duration_detail,
         },
@@ -1843,9 +2119,9 @@ def compute_transit_qc_ktmf(summary):
         {
             'key': 'sampling',
             'label': 'Sampling / Cadence',
-            'score': summary.get('sampling_score', np.nan),
+            'score': sampling_score,
             'score_uncertainty': np.nan,
-            'detail': summary.get('sampling_detail') or "n/a",
+            'detail': sampling_detail,
         },
     ]
 
@@ -2079,6 +2355,15 @@ def evaluate_transit_detection_qc(fit):
         'residual_scatter': np.nan,
         'transit_depth_for_residual_scatter': np.nan,
         'residual_scatter_to_depth_ratio': np.nan,
+        'residual_flatness_score': np.nan,
+        'residual_flatness_trend_strength': np.nan,
+        'residual_flatness_curve_strength': np.nan,
+        'residual_flatness_scatter_ratio': np.nan,
+        'residual_flatness_trend_score': np.nan,
+        'residual_flatness_curve_score': np.nan,
+        'residual_flatness_scatter_stability_score': np.nan,
+        'residual_flatness_dominant_metric': None,
+        'residual_flatness_detail': None,
         'sampling_score': np.nan,
         'sampling_detail': None,
         'sampling_ingress_count': 0,
@@ -2116,6 +2401,8 @@ def evaluate_transit_detection_qc(fit):
         'ktmf_metric': np.nan,
         'ktmf_contributions': [],
         'point_count': 0,
+        'geometry_prior_assumed': False,
+        'geometry_prior_assumed_note': None,
     }
     if fit is None:
         return summary
@@ -2166,6 +2453,16 @@ def evaluate_transit_detection_qc(fit):
     a2_bounds = bounds.get('a2') if isinstance(bounds, dict) else None
     parameters = getattr(fit, 'parameters', {}) or {}
     errors = getattr(fit, 'errors', {}) or {}
+    geometry_prior_assumed = bool(
+        getattr(fit, 'partial_transit_geometry_prior_assumption_applied', False)
+    )
+    geometry_prior_assumed_note = getattr(
+        fit,
+        'partial_transit_geometry_prior_assumption_note',
+        None,
+    )
+    summary['geometry_prior_assumed'] = geometry_prior_assumed
+    summary['geometry_prior_assumed_note'] = geometry_prior_assumed_note
     initial_a2 = parameters.get('a2', 0.0)
 
     flat_model = fit_profiled_flat_null_model(
@@ -2199,6 +2496,24 @@ def evaluate_transit_detection_qc(fit):
         'residual_scatter': transit_qc_residual_scatter(data, transit_model),
         'transit_depth_for_residual_scatter': transit_qc_model_depth_fraction(transit_model),
         'point_count': int(point_count),
+    })
+    residual_coordinates = getattr(fit, 'phase', None)
+    if residual_coordinates is None or np.asarray(residual_coordinates).shape != data.shape:
+        residual_coordinates = getattr(fit, 'time', None)
+    residual_flatness = transit_qc_residual_flatness_summary(
+        data - transit_model,
+        coordinates=residual_coordinates,
+    )
+    summary.update({
+        'residual_flatness_score': residual_flatness.get('score', np.nan),
+        'residual_flatness_trend_strength': residual_flatness.get('trend_strength', np.nan),
+        'residual_flatness_curve_strength': residual_flatness.get('curve_strength', np.nan),
+        'residual_flatness_scatter_ratio': residual_flatness.get('scatter_ratio', np.nan),
+        'residual_flatness_trend_score': residual_flatness.get('trend_score', np.nan),
+        'residual_flatness_curve_score': residual_flatness.get('curve_score', np.nan),
+        'residual_flatness_scatter_stability_score': residual_flatness.get('scatter_stability_score', np.nan),
+        'residual_flatness_dominant_metric': residual_flatness.get('dominant'),
+        'residual_flatness_detail': residual_flatness.get('detail'),
     })
     if (
         np.isfinite(summary['residual_scatter'])
@@ -2282,8 +2597,15 @@ def evaluate_transit_detection_qc(fit):
         'tmid_deviation_score': deviation_summary.get('tmid_deviation_score', np.nan),
         'rprs_deviation_score': deviation_summary.get('rprs_deviation_score', np.nan),
         'deviation_from_expected_value': deviation_summary.get('deviation_from_expected_value', np.nan),
-        'rprs_prior_assumed': deviation_summary.get('rprs_prior_assumed', False),
-        'rprs_prior_assumed_note': deviation_summary.get('rprs_prior_assumed_note'),
+        'rprs_prior_assumed': (
+            deviation_summary.get('rprs_prior_assumed', False)
+            or geometry_prior_assumed
+        ),
+        'rprs_prior_assumed_note': (
+            geometry_prior_assumed_note
+            if geometry_prior_assumed
+            else deviation_summary.get('rprs_prior_assumed_note')
+        ),
     })
 
     notes = []
@@ -2294,6 +2616,8 @@ def evaluate_transit_detection_qc(fit):
         if np.isfinite(delta_bic) and np.isfinite(delta_chi2)
         else "model comparison unavailable"
     )
+    if geometry_prior_assumed_note:
+        notes.append(str(geometry_prior_assumed_note))
 
     if not np.isfinite(delta_bic) or not np.isfinite(delta_chi2):
         status = 'unknown'
@@ -2355,7 +2679,7 @@ def evaluate_transit_detection_qc(fit):
     summary['ktmf_contributions'] = ktmf_contributions
 
     if np.isfinite(ktmf_metric):
-        if status != 'fail' and ktmf_metric < TRANSIT_QC_KTMF_FAIL_THRESHOLD:
+        if ktmf_metric < TRANSIT_QC_KTMF_FAIL_THRESHOLD:
             status = 'fail'
             notes.append(
                 f"KTMF is {ktmf_metric:.2f}/5.00, below the fail threshold "
@@ -2365,22 +2689,23 @@ def evaluate_transit_detection_qc(fit):
                 f"KTMF is {ktmf_metric:.2f}/5.00, below the fail threshold "
                 f"of {TRANSIT_QC_KTMF_FAIL_THRESHOLD:.2f}"
             )
-        elif status == 'pass' and ktmf_metric < TRANSIT_QC_KTMF_PASS_THRESHOLD:
+        elif ktmf_metric < TRANSIT_QC_KTMF_PASS_THRESHOLD:
             status = 'marginal'
             notes.append(
-                f"KTMF is {ktmf_metric:.2f}/5.00, below the pass threshold "
-                f"of {TRANSIT_QC_KTMF_PASS_THRESHOLD:.2f}."
+                f"KTMF is {ktmf_metric:.2f}/5.00, in the marginal range "
+                f"[{TRANSIT_QC_KTMF_FAIL_THRESHOLD:.2f}, {TRANSIT_QC_KTMF_PASS_THRESHOLD:.2f})."
             )
-        elif status == 'marginal' and ktmf_metric < TRANSIT_QC_KTMF_PASS_THRESHOLD:
+        else:
+            status = 'pass'
             notes.append(
-                f"KTMF is {ktmf_metric:.2f}/5.00, below the pass threshold "
+                f"KTMF is {ktmf_metric:.2f}/5.00, meeting the pass threshold "
                 f"of {TRANSIT_QC_KTMF_PASS_THRESHOLD:.2f}."
             )
 
     if status == 'pass':
-        summary_text = f"Transit model strongly preferred over flat/null model ({comparison_text})."
+        summary_text = f"KTMF supports a pass-quality transit fit ({comparison_text})."
     elif status == 'marginal':
-        summary_text = f"Transit model preferred over flat/null model, but the detection is marginal ({comparison_text})."
+        summary_text = f"KTMF indicates a marginal transit fit ({comparison_text})."
     elif status == 'fail':
         if failure_reasons:
             flat_model_only_failure = all(
@@ -2744,7 +3069,11 @@ def build_search_restriction_prior_from_planet_dict(p_dict):
         return {}
     return {
         'rprs': p_dict.get('rprs'),
+        'rprs_unc': p_dict.get('rprsUnc'),
         'ars': p_dict.get('aRs'),
+        'ars_unc': p_dict.get('aRsUnc'),
+        'inc': p_dict.get('inc'),
+        'inc_unc': p_dict.get('incUnc'),
     }
 
 
@@ -3122,6 +3451,144 @@ def is_low_one_sided_expected_transit_coverage(assessment):
     return (pre_points == 0 or post_points == 0) and (
         success_label in ('very low', 'low') or not expected_successful
     )
+
+
+def partial_transit_geometry_prior_assumption_mode(assessment):
+    if not isinstance(assessment, dict) or not assessment.get('valid'):
+        return None
+
+    transit_fraction = coerce_finite_transit_qc_scalar(
+        assessment.get('transit_fraction_observed', np.nan)
+    )
+    in_transit_points = int(assessment.get('in_transit_points', 0) or 0)
+    if (
+        (not np.isfinite(transit_fraction) or transit_fraction <= 0)
+        and in_transit_points <= 0
+    ):
+        return None
+
+    pre_points = int(assessment.get('pre_ingress_points', 0) or 0)
+    post_points = int(assessment.get('post_egress_points', 0) or 0)
+    if pre_points == 0 and post_points == 0:
+        return 'tmid_baseline_airmass'
+    if pre_points == 0 or post_points == 0:
+        return 'tmid_only'
+    return None
+
+
+def partial_transit_geometry_prior_assumption_fixed_error(key, prior, search_restriction_prior):
+    aliases = {
+        'rprs': ('rprs_unc', 'rprsUnc', 'rprs_error', 'rprsErr', 'rprs_data_uncertainty'),
+        'ars': ('ars_unc', 'aRsUnc', 'ars_error', 'aRsErr'),
+        'inc': ('inc_unc', 'incUnc', 'inc_error', 'incErr'),
+        'b': ('b_unc', 'impact_parameter_unc', 'impactParameterUnc'),
+    }
+    for source in (search_restriction_prior, prior):
+        if not isinstance(source, dict):
+            continue
+        for alias in aliases.get(key, ()):
+            value = coerce_finite_transit_qc_scalar(source.get(alias, np.nan))
+            if np.isfinite(value) and value >= 0:
+                return float(value)
+    return 0.0
+
+
+def partial_transit_geometry_prior_assumption_note(mode, assessment, sampled_parameters):
+    observed_segment = assessment.get('observed_segment') or 'partial transit'
+    pre_points = int(assessment.get('pre_ingress_points', 0) or 0)
+    post_points = int(assessment.get('post_egress_points', 0) or 0)
+    sampled_text = ", ".join(sampled_parameters) if sampled_parameters else "no free parameters"
+    if mode == 'tmid_baseline_airmass':
+        return (
+            "Applied prior-assumed transit geometry for a no-out-of-transit partial light curve; "
+            "Rp/R*, a/Rs, and inclination/impact parameter were fixed to the input priors because "
+            f"the observation contains {pre_points} pre-ingress and {post_points} post-egress "
+            f"out-of-transit point(s) ({observed_segment}). The nested fit keeps baseline/airmass "
+            f"terms simultaneous with Tmid; sampled parameter(s): {sampled_text}."
+        )
+    return (
+        "Applied prior-assumed transit geometry for a one-sided partial light curve; Rp/R*, a/Rs, "
+        "and inclination/impact parameter were fixed to the input priors because the transit shape "
+        f"is baseline-degenerate with {pre_points} pre-ingress and {post_points} post-egress "
+        f"out-of-transit point(s) ({observed_segment}). Sampled parameter(s): {sampled_text}."
+    )
+
+
+def ensure_simultaneous_baseline_airmass_bounds_for_no_oot(prior, bounds, flux_values, airmass):
+    fit_a2 = not should_skip_airmass_fit(airmass)
+    ensure_pre_final_ultranest_baseline_bounds(
+        prior,
+        bounds,
+        flux_values,
+        fit_a2=fit_a2,
+    )
+
+
+def apply_partial_transit_geometry_prior_assumption(
+    prior,
+    bounds,
+    assessment,
+    flux_values=None,
+    airmass=None,
+    fixed_parameter_errors=None,
+    search_restriction_prior=None,
+):
+    mode = partial_transit_geometry_prior_assumption_mode(assessment)
+    local_prior = dict(prior) if isinstance(prior, dict) else {}
+    local_bounds = clone_lightcurve_bounds(bounds)
+    local_fixed_errors = (
+        dict(fixed_parameter_errors)
+        if isinstance(fixed_parameter_errors, dict)
+        else {}
+    )
+    payload = {
+        'applied': False,
+        'mode': None,
+        'note': None,
+        'fixed_parameters': [],
+        'sampled_parameters': list(local_bounds.keys()),
+    }
+    if mode is None:
+        return local_prior, local_bounds, local_fixed_errors, payload
+
+    fixed_parameters = []
+    for key in ('rprs', 'ars', 'inc', 'b'):
+        if key in local_bounds:
+            local_bounds.pop(key, None)
+            fixed_parameters.append(key)
+        elif key in local_prior:
+            fixed_parameters.append(key)
+        if key in local_prior and key not in local_fixed_errors:
+            local_fixed_errors[key] = partial_transit_geometry_prior_assumption_fixed_error(
+                key,
+                local_prior,
+                search_restriction_prior,
+            )
+
+    if mode == 'tmid_baseline_airmass':
+        ensure_simultaneous_baseline_airmass_bounds_for_no_oot(
+            local_prior,
+            local_bounds,
+            flux_values,
+            airmass,
+        )
+    else:
+        for key in ('a0', 'a1', 'a2'):
+            local_bounds.pop(key, None)
+
+    sampled_parameters = list(local_bounds.keys())
+    payload.update({
+        'applied': True,
+        'mode': mode,
+        'fixed_parameters': sorted(set(fixed_parameters)),
+        'sampled_parameters': sampled_parameters,
+    })
+    payload['note'] = partial_transit_geometry_prior_assumption_note(
+        mode,
+        assessment,
+        sampled_parameters,
+    )
+    return local_prior, local_bounds, local_fixed_errors, payload
 
 
 def partial_transit_geometry_retry_limits(assessment):
@@ -5738,12 +6205,39 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'annotate': annotate_impact_parameter_posterior_refit,
         },
     ]
+    base_fixed_parameter_errors = (
+        dict(fixed_parameter_errors)
+        if isinstance(fixed_parameter_errors, dict)
+        else {}
+    )
 
     def build_fit(local_prior, local_bounds, fixed_parameter_errors_override=None):
         local_bounds = sanitize_retry_search_bounds(
             apply_configured_prior_search_restrictions(local_bounds, restriction_reference_prior)
         )
-        if fixed_flux_baseline:
+        effective_fixed_parameter_errors = (
+            dict(base_fixed_parameter_errors)
+            if isinstance(base_fixed_parameter_errors, dict)
+            else {}
+        )
+        if isinstance(fixed_parameter_errors_override, dict):
+            effective_fixed_parameter_errors.update(fixed_parameter_errors_override)
+        local_prior, local_bounds, effective_fixed_parameter_errors, prior_assumption = (
+            apply_partial_transit_geometry_prior_assumption(
+                local_prior,
+                local_bounds,
+                pre_ultranest_coverage_assessment,
+                flux_values=flux_values,
+                airmass=airmass,
+                fixed_parameter_errors=effective_fixed_parameter_errors,
+                search_restriction_prior=restriction_reference_prior,
+            )
+        )
+        effective_fixed_flux_baseline = (
+            fixed_flux_baseline
+            and prior_assumption.get('mode') != 'tmid_baseline_airmass'
+        )
+        if effective_fixed_flux_baseline:
             local_bounds = clone_lightcurve_bounds(local_bounds)
             for key in ('a0', 'a1', 'a2'):
                 local_bounds.pop(key, None)
@@ -5760,16 +6254,9 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fit_kwargs['keep_ultranest_sampler'] = True
         if baseline_fit_mask is not None and callable_accepts_keyword(lc_fitter, 'baseline_fit_mask'):
             fit_kwargs['baseline_fit_mask'] = baseline_fit_mask
-        effective_fixed_parameter_errors = (
-            dict(fixed_parameter_errors)
-            if isinstance(fixed_parameter_errors, dict)
-            else {}
-        )
-        if isinstance(fixed_parameter_errors_override, dict):
-            effective_fixed_parameter_errors.update(fixed_parameter_errors_override)
         if effective_fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
             fit_kwargs['fixed_parameter_errors'] = effective_fixed_parameter_errors
-        if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
+        if effective_fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
             fit_kwargs['fixed_flux_baseline'] = True
         if (
             ultranest_min_num_live_points is not None
@@ -5786,12 +6273,24 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             **fit_kwargs,
         )
         annotate_duration_prior(fit, duration_prior)
+        annotate_partial_transit_geometry_prior_assumption(fit, prior_assumption)
         return fit
 
     current_bounds = sanitize_retry_search_bounds(
         apply_configured_prior_search_restrictions(bounds, restriction_reference_prior)
     )
-    current_prior = clamp_retry_priors_to_bounds(prior, current_bounds)
+    current_prior, current_bounds, base_fixed_parameter_errors, initial_prior_assumption = (
+        apply_partial_transit_geometry_prior_assumption(
+            prior,
+            current_bounds,
+            pre_ultranest_coverage_assessment,
+            flux_values=flux_values,
+            airmass=airmass,
+            fixed_parameter_errors=base_fixed_parameter_errors,
+            search_restriction_prior=restriction_reference_prior,
+        )
+    )
+    current_prior = clamp_retry_priors_to_bounds(current_prior, current_bounds)
     retry_histories = {config['key']: [] for config in retry_configs}
     retry_notes = {config['key']: None for config in retry_configs}
     latest_diagnostics = {config['key']: None for config in retry_configs}
@@ -6711,6 +7210,44 @@ def should_fit_lightcurve_to_every_comparison_candidate(config_value):
     log_info("Warning: Invalid 'fit_lightcurve_to_every_comparison_candidate' value; defaulting to disabled.",
              warn=True)
     return False
+
+
+def should_use_automatic_optimal_calibration_selector(config_value):
+    return parse_bool_config_value(
+        config_value,
+        False,
+        'automatic_optimal_calibration_selector',
+    )
+
+
+def should_use_ensemble_photometry_rather_than_single_comp(config_value):
+    return parse_bool_config_value(
+        config_value,
+        False,
+        'use_ensemble_photometry_rather_than_single_comp',
+    )
+
+
+def parse_automatic_calibration_selector_count(config_value):
+    if config_value is None or config_value == '':
+        return AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT
+    try:
+        count = int(float(config_value))
+    except (TypeError, ValueError):
+        log_info(
+            "Warning: Invalid 'automatic_optimal_calibration_selector_count' value; "
+            f"defaulting to {AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT}.",
+            warn=True,
+        )
+        return AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT
+    if count < 1:
+        log_info(
+            "Warning: 'automatic_optimal_calibration_selector_count' must be at least 1; "
+            f"defaulting to {AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT}.",
+            warn=True,
+        )
+        return AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT
+    return count
 
 
 def should_use_sparse_posterior_live_point_retry(config_value):
@@ -12454,13 +12991,17 @@ def _finite_float(value, default=None):
     return parsed if np.isfinite(parsed) else default
 
 
-def usable_catalog_reference_magnitude(magnitude, magnitude_error):
+def usable_catalog_reference_magnitude(magnitude, magnitude_error,
+                                       max_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX):
     parsed_magnitude = _finite_float(magnitude)
     parsed_error = normalized_magnitude_error(magnitude_error)
+    error_limit = _finite_float(max_error)
+    if error_limit is None:
+        error_limit = CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
     if (
         not is_usable_apparent_magnitude(parsed_magnitude)
         or parsed_error is None
-        or parsed_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
+        or parsed_error > error_limit
     ):
         return None
     return parsed_magnitude, parsed_error
@@ -12563,9 +13104,13 @@ def nextastro_catalog_rows(catalog_response):
     return [row for row in rows if isinstance(row, dict)]
 
 
-def row_nextastro_magnitude(row, band_candidates):
+def row_nextastro_magnitude(row, band_candidates, max_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX):
     for priority, (mag_column, error_column, band_label) in enumerate(band_candidates):
-        usable_magnitude = usable_catalog_reference_magnitude(row.get(mag_column), row.get(error_column))
+        usable_magnitude = usable_catalog_reference_magnitude(
+            row.get(mag_column),
+            row.get(error_column),
+            max_error=max_error,
+        )
         if usable_magnitude is None:
             continue
         magnitude, magnitude_error = usable_magnitude
@@ -12587,7 +13132,8 @@ def sky_separation_arcsec(ra_a, dec_a, ra_b, dec_b):
 
 
 def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
-                                       max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+                                       max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC,
+                                       max_magnitude_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX):
     effective_max_separation_arcsec = _finite_float(max_separation_arcsec)
     if effective_max_separation_arcsec is None:
         effective_max_separation_arcsec = NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC
@@ -12602,7 +13148,7 @@ def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
         row_dec = _finite_float(row.get('dec'))
         if row_ra is None or row_dec is None:
             continue
-        magnitude = row_nextastro_magnitude(row, band_candidates)
+        magnitude = row_nextastro_magnitude(row, band_candidates, max_error=max_magnitude_error)
         if magnitude is None:
             continue
         separation = sky_separation_arcsec(ra, dec, row_ra, row_dec)
@@ -12615,6 +13161,7 @@ def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
             'source_id': row.get('source_id'),
             'id': row.get('id'),
             'separation_arcsec': separation,
+            'catalog_row': row,
         })
 
     if not matches:
@@ -12782,7 +13329,8 @@ def detect_reference_fallback_bright_stars(
         max_stars=REFERENCE_FALLBACK_DETECTION_MAX_STARS,
         min_sep=REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS,
         aperture_radius=REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
-        min_area=REFERENCE_FALLBACK_DETECTION_MIN_AREA_PIXELS):
+        min_area=REFERENCE_FALLBACK_DETECTION_MIN_AREA_PIXELS,
+        threshold_percentile=99.7):
     if image_data is None:
         return []
 
@@ -12801,7 +13349,12 @@ def detect_reference_fallback_bright_stars(
     if not np.any(signal > 0):
         return []
 
-    threshold = float(np.percentile(signal, 99.7))
+    try:
+        threshold_percentile = float(threshold_percentile)
+    except (TypeError, ValueError):
+        threshold_percentile = 99.7
+    threshold_percentile = min(max(threshold_percentile, 0.0), 100.0)
+    threshold = float(np.percentile(signal, threshold_percentile))
     if threshold <= 0:
         threshold = float(np.percentile(signal, 99.0))
     if threshold <= 0:
@@ -12994,6 +13547,268 @@ def log_reference_fallback_comparison_candidates(comp_stars, detected_candidates
             f"pixels=[{float(star['x']):.2f}, {float(star['y']):.2f}], "
             f"aperture flux={float(star.get('flux', np.nan)):.3g}.",
             warn=True,
+        )
+
+
+def image_aperture_signal_flux(image_data, x_pos, y_pos,
+                               aperture_radius=REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS):
+    if image_data is None:
+        return np.nan
+    data = np.asarray(image_data, dtype=float)
+    if data.ndim != 2:
+        return np.nan
+    x_pos = _finite_float(x_pos)
+    y_pos = _finite_float(y_pos)
+    if x_pos is None or y_pos is None:
+        return np.nan
+
+    height, width = data.shape
+    radius = float(aperture_radius)
+    x_min = max(0, int(np.floor(x_pos - radius)))
+    x_max = min(width, int(np.ceil(x_pos + radius)) + 1)
+    y_min = max(0, int(np.floor(y_pos - radius)))
+    y_max = min(height, int(np.ceil(y_pos + radius)) + 1)
+    if x_min >= x_max or y_min >= y_max:
+        return np.nan
+
+    finite = np.isfinite(data)
+    if not np.any(finite):
+        return np.nan
+    background = float(np.nanmedian(data[finite]))
+    yy, xx = np.indices(data.shape)
+    mask = (xx - x_pos) ** 2 + (yy - y_pos) ** 2 <= radius ** 2
+    aperture_values = data[mask]
+    aperture_values = aperture_values[np.isfinite(aperture_values)]
+    if aperture_values.size == 0:
+        return np.nan
+    flux = float(np.sum(aperture_values - background))
+    return flux if np.isfinite(flux) and flux > 0 else np.nan
+
+
+def nextastro_color_candidate_pairs(obs_filter):
+    filter_key = normalize_nextastro_filter_key(obs_filter)
+    if filter_key in ('u', 'johnsonu', 'su', 'up'):
+        preferred = [('umag', 'g', 'u-g')]
+    elif filter_key in ('b', 'johnsonb', 'photographicb', 'bb', 'pb'):
+        preferred = [('Bmag', 'Vmag', 'B-V')]
+    elif filter_key in ('v', 'johnsonv', 'bv', 'cv', 'clearv', 'c', 'clear', 'lum', 'luminance'):
+        preferred = [('Bmag', 'Vmag', 'B-V')]
+    elif filter_key in ('sg', 'sloang', 'sdssg', 'photographicg', 'gp', 'g', 'pg', 'tg'):
+        preferred = [('g', 'r', 'g-r')]
+    elif filter_key in ('sr', 'sloanr', 'sdssr', 'johnsonr', 'cousinsr', 'rp', 'r', 'rc', 'rj', 'pr', 'tr', 'cr'):
+        preferred = [('r', 'i', 'r-i')]
+    elif filter_key in ('si', 'sloani', 'sdssi', 'johnsoni', 'cousinsi', 'ip', 'i', 'ic', 'ij'):
+        preferred = [('r', 'i', 'r-i')]
+    elif filter_key in ('sz', 'sloanz', 'sdssz', 'zp', 'z', 'zs'):
+        preferred = [('i', 'z', 'i-z')]
+    else:
+        preferred = []
+
+    fallback = [
+        ('Bmag', 'Vmag', 'B-V'),
+        ('g', 'r', 'g-r'),
+        ('r', 'i', 'r-i'),
+        ('i', 'z', 'i-z'),
+        ('umag', 'g', 'u-g'),
+    ]
+    pairs = list(preferred)
+    pairs.extend(pair for pair in fallback if pair not in pairs)
+    return pairs
+
+
+def nextastro_catalog_color(row, obs_filter):
+    if not isinstance(row, dict):
+        return None
+    for first_column, second_column, label in nextastro_color_candidate_pairs(obs_filter):
+        first = _finite_float(row.get(first_column))
+        second = _finite_float(row.get(second_column))
+        if first is None or second is None:
+            continue
+        return {
+            'color': float(first - second),
+            'label': label,
+            'first_column': first_column,
+            'second_column': second_column,
+        }
+    return None
+
+
+def nextastro_catalog_nearest_color_row(catalog_response, ra, dec, obs_filter,
+                                        max_separation_arcsec=
+                                        AUTOMATIC_CALIBRATION_SELECTOR_COLOR_MATCH_RADIUS_ARCSEC):
+    best_match = None
+    best_separation = None
+    for row in nextastro_catalog_rows(catalog_response):
+        row_ra = _finite_float(row.get('ra'))
+        row_dec = _finite_float(row.get('dec'))
+        if row_ra is None or row_dec is None:
+            continue
+        color = nextastro_catalog_color(row, obs_filter)
+        if color is None:
+            continue
+        separation = sky_separation_arcsec(ra, dec, row_ra, row_dec)
+        if separation > float(max_separation_arcsec):
+            continue
+        if best_separation is None or separation < best_separation:
+            best_match = {
+                'catalog_row': row,
+                'catalog_ra': row_ra,
+                'catalog_dec': row_dec,
+                'source_id': row.get('source_id'),
+                'id': row.get('id'),
+                'separation_arcsec': separation,
+                'color': color,
+            }
+            best_separation = separation
+    return best_match
+
+
+def select_automatic_optimal_calibration_stars(
+        image_data,
+        image_shape,
+        target_pixel,
+        ra_wcs,
+        dec_wcs,
+        obs_filter,
+        field_catalog,
+        count=AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT,
+        min_comp_target_sep=REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS):
+    max_count = parse_automatic_calibration_selector_count(count)
+    if image_data is None or field_catalog is None:
+        return [], []
+
+    target_pixel = np.asarray(target_pixel, dtype=float).reshape(-1)
+    if target_pixel.size < 2 or not np.all(np.isfinite(target_pixel[:2])):
+        return [], []
+    target_x, target_y = float(target_pixel[0]), float(target_pixel[1])
+
+    target_flux = image_aperture_signal_flux(image_data, target_x, target_y)
+    if not np.isfinite(target_flux) or target_flux <= 0:
+        log_info(
+            "Warning: automatic calibration selector could not measure a positive target flux "
+            "on the reference image.",
+            warn=True,
+        )
+        return [], []
+
+    height, width = image_shape[:2]
+    target_xi = int(np.clip(round(target_x), 0, width - 1))
+    target_yi = int(np.clip(round(target_y), 0, height - 1))
+    target_match = nextastro_catalog_nearest_color_row(
+        field_catalog,
+        ra_wcs[target_yi][target_xi],
+        dec_wcs[target_yi][target_xi],
+        obs_filter,
+    )
+    target_color = nextastro_catalog_color((target_match or {}).get('catalog_row'), obs_filter)
+    if target_color is None:
+        log_info(
+            "Warning: automatic calibration selector could not derive a target color from the "
+            "NextAstro photometry catalog.",
+            warn=True,
+        )
+        return [], []
+
+    detected_stars = detect_reference_fallback_bright_stars(
+        image_data,
+        max_stars=max(
+            AUTOMATIC_CALIBRATION_SELECTOR_MAX_DETECTIONS,
+            max_count * 8,
+        ),
+        threshold_percentile=AUTOMATIC_CALIBRATION_SELECTOR_DETECTION_PERCENTILE,
+    )
+    comp_pool = filter_reference_fallback_stars_to_middle_fifty_percent(
+        dedupe_reference_fallback_stars(detected_stars),
+        image_shape,
+    )
+    target_detection = nearest_reference_fallback_star_by_pixels(
+        comp_pool,
+        target_x,
+        target_y,
+        max_sep_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+    )
+    used_ids = {id(target_detection)} if target_detection is not None else set()
+
+    min_sep2 = max(float(min_comp_target_sep), 0.0) ** 2
+    candidates = []
+    for star in comp_pool:
+        if id(star) in used_ids:
+            continue
+        x_pos = _finite_float(star.get('x'))
+        y_pos = _finite_float(star.get('y'))
+        star_flux = _finite_float(star.get('flux'))
+        if x_pos is None or y_pos is None or star_flux is None:
+            continue
+        if not pixel_within_image(x_pos, y_pos, image_shape):
+            continue
+        if (x_pos - target_x) ** 2 + (y_pos - target_y) ** 2 < min_sep2:
+            continue
+        brightness_ratio = float(star_flux / target_flux)
+        if not (
+            AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO
+            <= brightness_ratio
+            <= AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO
+        ):
+            continue
+        xi = int(np.clip(round(x_pos), 0, width - 1))
+        yi = int(np.clip(round(y_pos), 0, height - 1))
+        comp_ra = _finite_float(ra_wcs[yi][xi])
+        comp_dec = _finite_float(dec_wcs[yi][xi])
+        if comp_ra is None or comp_dec is None:
+            continue
+        match = nextastro_catalog_nearest_color_row(field_catalog, comp_ra, comp_dec, obs_filter)
+        color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
+        if match is None or color is None:
+            continue
+        color_delta = abs(color['color'] - target_color['color'])
+        candidates.append({
+            'x': float(x_pos),
+            'y': float(y_pos),
+            'flux': float(star_flux),
+            'brightness_ratio': brightness_ratio,
+            'ra': comp_ra,
+            'dec': comp_dec,
+            'catalog_match': match,
+            'color': color['color'],
+            'color_label': color['label'],
+            'target_color': target_color['color'],
+            'color_delta': float(color_delta),
+            'target_flux': float(target_flux),
+        })
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate['color_delta'],
+            abs(np.log(candidate['brightness_ratio'])),
+            -candidate['flux'],
+        )
+    )
+    selected_candidates = candidates[:max_count]
+    comp_stars = [[candidate['x'], candidate['y']] for candidate in selected_candidates]
+    return comp_stars, selected_candidates
+
+
+def log_automatic_optimal_calibration_selection(comp_stars, candidates, requested_count):
+    if not comp_stars:
+        log_info(
+            "Warning: automatic optimal calibration selector did not find any usable comparison stars; "
+            "the existing comparison-star list will be kept.",
+            warn=True,
+        )
+        return
+    log_info(
+        "Automatic optimal calibration selector chose "
+        f"{len(comp_stars)} comparison star(s) out of the requested {requested_count}. "
+        "Candidates were image-detected, flux-matched to 0.5-2.0x the target, NextAstro matched, "
+        "and ranked by catalog color similarity to the target."
+    )
+    for index, candidate in enumerate(candidates, start=1):
+        log_info(
+            f"  Auto comp #{index}: pixels=[{candidate['x']:.2f}, {candidate['y']:.2f}], "
+            f"flux_ratio={candidate['brightness_ratio']:.3f}, "
+            f"{candidate['color_label']}={candidate['color']:.3f}, "
+            f"target_{candidate['color_label']}={candidate['target_color']:.3f}, "
+            f"delta={candidate['color_delta']:.3f}."
         )
 
 
@@ -16409,10 +17224,16 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
                                               observed_filter=None):
     comp_mag = _finite_float(comp_star.get('mag'))
     comp_mag_error = normalized_magnitude_error(comp_star.get('error'))
+    derived_catalog_reference = bool(comp_star.get('derived_catalog_reference', False))
+    allow_high_error_catalog_reference = bool(comp_star.get('allow_high_error_catalog_reference', False))
     if (
         comp_mag is None
         or comp_mag_error is None
-        or comp_mag_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
+        or (
+            comp_mag_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
+            and not derived_catalog_reference
+            and not allow_high_error_catalog_reference
+        )
         or not is_usable_apparent_magnitude(comp_mag)
     ):
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
@@ -16491,14 +17312,395 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
             'source_id': comp_star.get('source_id'),
             'catalog_id': comp_star.get('id'),
             'separation_arcsec': comp_star.get('separation_arcsec'),
+            'derived_catalog_reference': derived_catalog_reference,
+            'derived_reference_anchor_count': comp_star.get('derived_reference_anchor_count'),
+            'derived_reference_anchor_labels': comp_star.get('derived_reference_anchor_labels'),
+            'allow_high_error_catalog_reference': allow_high_error_catalog_reference,
         })
 
     plot_stellar_variability(vsp_params, save, s_name, display_label)
     return vsp_params
 
 
+def stellar_variability_reference_series(lc_fit):
+    fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
+    fit_airmass_model = np.asarray(
+        getattr(lc_fit, 'airmass_model', np.ones_like(fit_data)),
+        dtype=float,
+    )
+    fit_times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
+    transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
+
+    if not (fit_data.shape == fit_airmass_model.shape == fit_times.shape):
+        return np.array([], dtype=float), np.array([], dtype=float)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        reference_curve = np.divide(fit_data, fit_airmass_model)
+
+    valid = (
+        np.isfinite(fit_times)
+        & np.isfinite(reference_curve)
+        & (reference_curve > 0)
+    )
+    if transit_model.shape == fit_data.shape:
+        valid &= transit_model == 1
+
+    return fit_times[valid], reference_curve[valid]
+
+
+def aligned_reference_curve_ratio(selected_fit, anchor_fit):
+    selected_times, selected_curve = stellar_variability_reference_series(selected_fit)
+    anchor_times, anchor_curve = stellar_variability_reference_series(anchor_fit)
+    if selected_times.size == 0 or anchor_times.size == 0:
+        return np.array([], dtype=float)
+
+    selected_keys = np.round(selected_times.astype(float), 8)
+    anchor_keys = np.round(anchor_times.astype(float), 8)
+    _, selected_idx, anchor_idx = np.intersect1d(
+        selected_keys,
+        anchor_keys,
+        return_indices=True,
+    )
+    if selected_idx.size == 0:
+        return np.array([], dtype=float)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        selected_to_anchor_flux_ratio = np.divide(anchor_curve[anchor_idx], selected_curve[selected_idx])
+
+    return selected_to_anchor_flux_ratio[
+        np.isfinite(selected_to_anchor_flux_ratio)
+        & (selected_to_anchor_flux_ratio > 0)
+    ]
+
+
+def build_direct_selected_catalog_candidate(comp_stars, comp_ra_dec, field_catalog, best_comp,
+                                            observed_filter=None):
+    if best_comp is None or best_comp < 0 or best_comp >= len(comp_stars):
+        return None
+    if field_catalog is None or not comp_ra_dec or best_comp >= len(comp_ra_dec):
+        return None
+
+    comp_ra = _finite_float(comp_ra_dec[best_comp][0])
+    comp_dec = _finite_float(comp_ra_dec[best_comp][1])
+    if comp_ra is None or comp_dec is None:
+        return None
+
+    match = nextastro_photometry_catalog_match(
+        field_catalog,
+        comp_ra,
+        comp_dec,
+        observed_filter,
+        max_magnitude_error=MAX_APPARENT_MAGNITUDE,
+    )
+    if match is None:
+        return None
+    if catalog_band_priority(match.get('mag_band'), observed_filter) != 0:
+        return None
+
+    match.update({
+        'ra': comp_ra,
+        'dec': comp_dec,
+        'pos': list(comp_stars[best_comp]),
+        'catalog_source': 'NextAstro photometry catalog',
+        'is_aavso_vsp': False,
+        'observed_filter': observed_filter,
+        'derived_catalog_reference': False,
+        'allow_high_error_catalog_reference': True,
+    })
+    label = unique_nextastro_calibration_label({}, match)
+    return {
+        'label': label,
+        'star': match,
+        'source': 'direct_catalog',
+        'error': match.get('error'),
+    }
+
+
+def combine_catalog_reference_estimates(derived_estimates, selected_pos, observed_filter, source_label,
+                                        mag_band='V', label_prefix='Derived Comp',
+                                        selected_ra=None, selected_dec=None):
+    if not derived_estimates:
+        return None, None
+
+    mags = np.asarray([estimate['mag'] for estimate in derived_estimates], dtype=float)
+    errors = np.asarray([estimate['error'] for estimate in derived_estimates], dtype=float)
+    weights = np.divide(
+        1.0,
+        errors ** 2,
+        out=np.zeros_like(errors, dtype=float),
+        where=np.isfinite(errors) & (errors > 0),
+    )
+    if not np.any(weights > 0):
+        return None, None
+
+    combined_mag = float(np.average(mags, weights=weights))
+    formal_error = float((1.0 / np.sum(weights)) ** 0.5)
+    if len(derived_estimates) > 1:
+        anchor_scatter = float(np.sqrt(np.average((mags - combined_mag) ** 2, weights=weights)))
+        combined_error = float(np.hypot(formal_error, anchor_scatter / len(derived_estimates) ** 0.5))
+    else:
+        combined_error = formal_error
+
+    anchor_labels = [
+        estimate['anchor_label'] for estimate in derived_estimates
+        if estimate.get('anchor_label') is not None
+    ]
+    derived_star = {
+        'pos': selected_pos,
+        'ra': selected_ra,
+        'dec': selected_dec,
+        'mag': combined_mag,
+        'error': combined_error,
+        'catalog_source': source_label,
+        'is_aavso_vsp': False,
+        'mag_band': mag_band or 'V',
+        'observed_filter': observed_filter,
+        'derived_catalog_reference': True,
+        'derived_reference_anchor_count': len(derived_estimates),
+        'derived_reference_anchor_labels': anchor_labels,
+    }
+    return f"{label_prefix}", derived_star
+
+
+def preferred_catalog_magnitude_band_for_filter(observed_filter):
+    candidates = nextastro_photometry_band_candidates(observed_filter)
+    if not candidates:
+        return None
+    return candidates[0][2]
+
+
+def catalog_band_priority(mag_band, observed_filter):
+    preferred_band = preferred_catalog_magnitude_band_for_filter(observed_filter)
+    if preferred_band is None:
+        return 0
+    return 0 if str(mag_band or '').strip().lower() == str(preferred_band).strip().lower() else 1
+
+
+def derived_catalog_reference_for_selected_comp(fit_lc_refs, comp_stars, vsp_comp_stars, vsp_ind,
+                                                best_comp, observed_filter=None, comp_ra_dec=None):
+    if best_comp is None or best_comp not in fit_lc_refs:
+        return None, None
+
+    selected_fit = fit_lc_refs[best_comp].get('myfit')
+    selected_pos = comp_stars[best_comp]
+    selected_ra, selected_dec = None, None
+    if comp_ra_dec is not None and best_comp < len(comp_ra_dec):
+        selected_ra = _finite_float(comp_ra_dec[best_comp][0])
+        selected_dec = _finite_float(comp_ra_dec[best_comp][1])
+    derived_estimates = []
+
+    for anchor_index in vsp_ind:
+        if anchor_index == best_comp or anchor_index not in fit_lc_refs:
+            continue
+        if anchor_index < 0 or anchor_index >= len(comp_stars):
+            continue
+
+        anchor_pos = comp_stars[anchor_index]
+        anchor_label = None
+        anchor_star = None
+        for label, star in vsp_comp_stars.items():
+            if star.get('pos') == anchor_pos:
+                anchor_label = label
+                anchor_star = star
+                break
+        if anchor_star is None:
+            continue
+
+        anchor_mag = _finite_float(anchor_star.get('mag'))
+        anchor_mag_error = normalized_magnitude_error(anchor_star.get('error'))
+        if catalog_band_priority(anchor_star.get('mag_band'), observed_filter) != 0:
+            continue
+        if (
+            anchor_mag is None
+            or anchor_mag_error is None
+            or anchor_mag_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
+            or not is_usable_apparent_magnitude(anchor_mag)
+        ):
+            continue
+
+        ratio = aligned_reference_curve_ratio(selected_fit, fit_lc_refs[anchor_index].get('myfit'))
+        if ratio.size == 0:
+            continue
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            selected_mag_points = anchor_mag - (2.5 * np.log10(ratio))
+        selected_mag_points = selected_mag_points[
+            np.isfinite(selected_mag_points)
+            & (selected_mag_points <= MAX_APPARENT_MAGNITUDE)
+        ]
+        if selected_mag_points.size == 0:
+            continue
+
+        median_mag = float(np.nanmedian(selected_mag_points))
+        mad = float(np.nanmedian(np.abs(selected_mag_points - median_mag)))
+        robust_scatter = 1.4826 * mad if np.isfinite(mad) else np.nan
+        if not np.isfinite(robust_scatter):
+            robust_scatter = float(np.nanstd(selected_mag_points))
+        scatter_error = robust_scatter / max(selected_mag_points.size, 1) ** 0.5
+        total_error = float(np.hypot(anchor_mag_error, scatter_error))
+        if not np.isfinite(total_error) or total_error <= 0:
+            total_error = anchor_mag_error
+
+        derived_estimates.append({
+            'mag': median_mag,
+            'error': total_error,
+            'mag_band': anchor_star.get('mag_band'),
+            'anchor_label': anchor_label,
+            'anchor_index': anchor_index,
+            'points': int(selected_mag_points.size),
+        })
+
+    return combine_catalog_reference_estimates(
+        derived_estimates,
+        selected_pos,
+        observed_filter,
+        'Derived from catalog-calibrated comparison stars',
+        mag_band=(
+            next((estimate.get('mag_band') for estimate in derived_estimates if estimate.get('mag_band')), None)
+            or 'V'
+        ),
+        label_prefix=f"Derived Comp {best_comp + 1}",
+        selected_ra=selected_ra,
+        selected_dec=selected_dec,
+    )
+
+
+def derive_selected_comp_catalog_reference_from_field(reference_image, wcs_file, field_catalog, comp_stars,
+                                                     best_comp, observed_filter=None,
+                                                     aperture_radius=REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
+                                                     min_separation_pixels=REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS):
+    if (
+        reference_image is None
+        or not wcs_file
+        or field_catalog is None
+        or best_comp is None
+        or best_comp < 0
+        or best_comp >= len(comp_stars)
+    ):
+        return None, None
+
+    selected_pos = comp_stars[best_comp]
+    selected_x = _finite_float(selected_pos[0])
+    selected_y = _finite_float(selected_pos[1])
+    if selected_x is None or selected_y is None:
+        return None, None
+
+    selected_flux = image_aperture_signal_flux(
+        reference_image,
+        selected_x,
+        selected_y,
+        aperture_radius=aperture_radius,
+    )
+    if not np.isfinite(selected_flux) or selected_flux <= 0:
+        return None, None
+
+    try:
+        wcs_hdr = search_wcs(wcs_file)
+    except Exception:
+        return None, None
+    try:
+        selected_ra, selected_dec = wcs_hdr.pixel_to_world_values(selected_x, selected_y)
+        selected_ra = float(np.asarray(selected_ra).reshape(-1)[0])
+        selected_dec = float(np.asarray(selected_dec).reshape(-1)[0])
+    except Exception:
+        selected_ra, selected_dec = None, None
+
+    image_shape = np.asarray(reference_image).shape
+    band_candidates = nextastro_photometry_band_candidates(observed_filter)
+    derived_estimates = []
+
+    for row in nextastro_catalog_rows(field_catalog):
+        row_ra = _finite_float(row.get('ra'))
+        row_dec = _finite_float(row.get('dec'))
+        if row_ra is None or row_dec is None:
+            continue
+        magnitude = row_nextastro_magnitude(row, band_candidates, max_error=MAX_APPARENT_MAGNITUDE)
+        if magnitude is None:
+            continue
+        if catalog_band_priority(magnitude.get('mag_band'), observed_filter) != 0:
+            continue
+        try:
+            anchor_x, anchor_y = wcs_hdr.world_to_pixel_values(row_ra, row_dec)
+            anchor_x = float(np.asarray(anchor_x).reshape(-1)[0])
+            anchor_y = float(np.asarray(anchor_y).reshape(-1)[0])
+        except Exception:
+            continue
+        if not pixel_within_image(anchor_x, anchor_y, image_shape, margin=float(aperture_radius) + 2.0):
+            continue
+        if (anchor_x - selected_x) ** 2 + (anchor_y - selected_y) ** 2 < float(min_separation_pixels) ** 2:
+            continue
+
+        anchor_flux = image_aperture_signal_flux(
+            reference_image,
+            anchor_x,
+            anchor_y,
+            aperture_radius=aperture_radius,
+        )
+        if not np.isfinite(anchor_flux) or anchor_flux <= 0:
+            continue
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            selected_mag = magnitude['mag'] - (2.5 * np.log10(selected_flux / anchor_flux))
+        if not is_usable_apparent_magnitude(selected_mag):
+            continue
+
+        derived_estimates.append({
+            'mag': float(selected_mag),
+            'error': float(magnitude['error']),
+            'mag_band': magnitude.get('mag_band'),
+            'anchor_label': (
+                f"NextAstro-{row.get('source_id') or row.get('id')}"
+                if (row.get('source_id') or row.get('id')) not in (None, '')
+                else f"RA={row_ra:.6f} Dec={row_dec:.6f}"
+            ),
+            'anchor_x': anchor_x,
+            'anchor_y': anchor_y,
+            'anchor_flux': float(anchor_flux),
+        })
+
+    label, star = combine_catalog_reference_estimates(
+        derived_estimates,
+        selected_pos,
+        observed_filter,
+        'Derived from full-field catalog-calibrated stars',
+        mag_band=(
+            next((estimate.get('mag_band') for estimate in derived_estimates if estimate.get('mag_band')), None)
+            or 'V'
+        ),
+        label_prefix=f"Derived Field Comp {best_comp + 1}",
+        selected_ra=selected_ra,
+        selected_dec=selected_dec,
+    )
+    return label, star
+
+
+def catalog_reference_candidate_error(candidate):
+    if not isinstance(candidate, dict):
+        return np.inf
+    star = candidate.get('star')
+    if not isinstance(star, dict):
+        return np.inf
+    error = normalized_magnitude_error(star.get('error'))
+    return float(error) if error is not None and np.isfinite(error) else np.inf
+
+
+def choose_selected_comp_catalog_reference_candidate(candidates, observed_filter=None):
+    usable = [
+        candidate for candidate in candidates
+        if np.isfinite(catalog_reference_candidate_error(candidate))
+    ]
+    if not usable:
+        return None
+    usable.sort(key=lambda candidate: (
+        catalog_band_priority((candidate.get('star') or {}).get('mag_band'), observed_filter),
+        catalog_reference_candidate_error(candidate),
+    ))
+    return usable[0]
+
+
 def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name,
-                        observed_filter=None):
+                        observed_filter=None, comp_ra_dec=None, field_catalog=None, reference_image=None,
+                        wcs_file=None):
     info_comps = {}
 
     try:
@@ -16508,25 +17710,103 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
                 warn=True,
             )
             return []
-        if best_comp not in vsp_ind:
-            log_info(
-                "Skipping AID magnitude output because the transit-fit comparison star has no catalog "
-                f"magnitude with uncertainty <= {CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX:.3f} mag.",
-                warn=True,
-            )
-            return []
         comp_pos = comp_stars[best_comp]
         info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
     except Exception as e:
         log_info(f"Error selecting or calculating variability for comparison star: {e}", warn=True)
         return []
 
-    try:
-        comp_star = next(vsp_comp_stars[ckey] for ckey in vsp_comp_stars.keys() if comp_pos == vsp_comp_stars[ckey]['pos'])
-        vsp_auid_comp = next(key for key, value in vsp_comp_stars.items() if value['pos'] == comp_pos)
-    except StopIteration:
-        log_info("Comparison star or VSP AUID not found.", warn=True)
+    candidates = []
+    for key, value in vsp_comp_stars.items():
+        if value.get('pos') == comp_pos:
+            candidates.append({
+                'label': key,
+                'star': value,
+                'source': 'direct_catalog',
+                'error': value.get('error'),
+            })
+            break
+
+    direct_relaxed = build_direct_selected_catalog_candidate(
+        comp_stars,
+        comp_ra_dec,
+        field_catalog,
+        best_comp,
+        observed_filter=observed_filter,
+    )
+    if direct_relaxed is not None:
+        candidates.append(direct_relaxed)
+
+    derived_label, derived_star = derived_catalog_reference_for_selected_comp(
+        fit_lc_refs,
+        comp_stars,
+        vsp_comp_stars,
+        vsp_ind,
+        best_comp,
+        observed_filter=observed_filter,
+        comp_ra_dec=comp_ra_dec,
+    )
+    if derived_star is not None:
+        candidates.append({
+            'label': derived_label,
+            'star': derived_star,
+            'source': 'provided_comp_derived',
+            'error': derived_star.get('error'),
+        })
+
+    has_preferred_band_candidate = any(
+        catalog_band_priority((candidate.get('star') or {}).get('mag_band'), observed_filter) == 0
+        for candidate in candidates
+    )
+    if not has_preferred_band_candidate:
+        field_label, field_star = derive_selected_comp_catalog_reference_from_field(
+            reference_image,
+            wcs_file,
+            field_catalog,
+            comp_stars,
+            best_comp,
+            observed_filter=observed_filter,
+        )
+        if field_star is not None:
+            candidates.append({
+                'label': field_label,
+                'star': field_star,
+                'source': 'field_derived',
+                'error': field_star.get('error'),
+            })
+
+    selected_candidate = choose_selected_comp_catalog_reference_candidate(
+        candidates,
+        observed_filter=observed_filter,
+    )
+    if selected_candidate is None:
+        log_info(
+            "Skipping AID magnitude output because the transit-fit comparison star has no catalog "
+            f"magnitude and no derived magnitude could be inferred from calibrated comparison stars "
+            "or full-field catalog stars.",
+            warn=True,
+        )
         return []
+
+    comp_star = selected_candidate['star']
+    vsp_auid_comp = selected_candidate['label']
+    direct_error = catalog_reference_candidate_error(
+        next((candidate for candidate in candidates if candidate.get('source') == 'direct_catalog'), None)
+    )
+    chosen_error = catalog_reference_candidate_error(selected_candidate)
+    if comp_star.get('derived_catalog_reference'):
+        log_info(
+            "AID magnitude output will use a derived catalog magnitude for the transit-fit comparison star "
+            f"from {comp_star.get('derived_reference_anchor_count', 0)} calibrated star(s): "
+            f"{comp_star.get('mag', np.nan):.3f} +/- {comp_star.get('error', np.nan):.3f} mag."
+        )
+    elif np.isfinite(direct_error) and direct_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX:
+        log_info(
+            "AID magnitude output will use the direct selected-comparison catalog magnitude even though "
+            f"its uncertainty exceeds {CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX:.3f} mag because it is no worse "
+            f"than the derived alternatives: {comp_star.get('mag', np.nan):.3f} +/- "
+            f"{chosen_error:.3f} mag."
+        )
 
     try:
         info_comp = info_comps[comp_stars.index(comp_pos)]
@@ -17732,6 +19012,103 @@ def cheap_lightcurve_prescore(tFlux, cFlux, airmass, enforce_relative_flux_max=T
     return np.inf
 
 
+def target_comp_flux_scatter(tFlux, cFlux, min_points=LIGHTCURVE_MIN_VALID_POINTS):
+    if tFlux is None or cFlux is None:
+        return np.nan
+
+    tFlux = np.asarray(tFlux, dtype=float)
+    cFlux = np.asarray(cFlux, dtype=float)
+    if tFlux.shape != cFlux.shape:
+        return np.nan
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        flux_ratio = np.divide(tFlux, cFlux)
+
+    ratio_mask = valid_flux_ratio_mask(flux_ratio)
+    if np.count_nonzero(ratio_mask) < int(min_points):
+        return np.nan
+
+    ratio_values = np.asarray(flux_ratio[ratio_mask], dtype=float)
+    baseline = bn.nanmedian(ratio_values)
+    if not np.isfinite(baseline) or baseline <= 0:
+        return np.nan
+
+    normalized_ratio = ratio_values / baseline
+    keep_mask = comparison_prescore_clip_mask(
+        normalized_ratio,
+        min_points=min_points,
+    )
+    kept_ratio = normalized_ratio[keep_mask & np.isfinite(normalized_ratio)]
+    if kept_ratio.size < int(min_points):
+        return np.nan
+
+    scatter = robust_scatter(kept_ratio - bn.nanmedian(kept_ratio))
+    return float(scatter) if np.isfinite(scatter) and scatter >= 0 else np.nan
+
+
+def fitted_lightcurve_model_at(fit, times, airmass):
+    if fit is None:
+        return np.array([], dtype=float)
+
+    parameters = getattr(fit, 'parameters', None)
+    if not isinstance(parameters, dict):
+        return np.array([], dtype=float)
+
+    times = np.asarray(times, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    if times.ndim != 1 or airmass.shape != times.shape:
+        return np.array([], dtype=float)
+
+    try:
+        transit_model = np.asarray(transit(times, parameters), dtype=float)
+    except Exception:
+        return np.array([], dtype=float)
+    if transit_model.shape != times.shape:
+        return np.array([], dtype=float)
+
+    baseline = parameters.get('a0', parameters.get('a1', 1.0))
+    try:
+        baseline = float(baseline)
+    except (TypeError, ValueError):
+        baseline = 1.0
+    if not np.isfinite(baseline):
+        baseline = 1.0
+
+    try:
+        a2 = float(parameters.get('a2', 0.0))
+    except (TypeError, ValueError):
+        a2 = 0.0
+    if not np.isfinite(a2):
+        a2 = 0.0
+
+    reference = getattr(fit, 'airmass_reference', None)
+    try:
+        reference = float(reference)
+    except (TypeError, ValueError):
+        reference = transit_qc_airmass_reference(getattr(fit, 'airmass', airmass))
+    if not np.isfinite(reference):
+        reference = transit_qc_airmass_reference(airmass)
+
+    systematics = baseline * transit_qc_airmass_trend(a2, airmass, reference=reference)
+    model = transit_model * systematics
+    return model if model.shape == times.shape else np.array([], dtype=float)
+
+
+def fitted_lightcurve_scatter_on_dataset(fit, times, flux_values, airmass):
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    if not (times.shape == flux_values.shape == airmass.shape):
+        return np.nan
+
+    model = fitted_lightcurve_model_at(fit, times, airmass)
+    if model.shape != flux_values.shape:
+        return np.nan
+
+    scatter = transit_qc_residual_scatter(flux_values, model)
+    return float(scatter) if np.isfinite(scatter) and scatter >= 0 else np.nan
+
+
 def evaluate_lightcurve_candidate(task):
     (
         times,
@@ -18368,6 +19745,27 @@ def compact_comparison_attempt_for_output(attempt):
         'label': attempt.get('label'),
         'selected': attempt.get('selected'),
         'selection_reason': attempt.get('selection_reason'),
+        'selection_pass_ktmf_metric': attempt.get('selection_pass_ktmf_metric'),
+        'selection_pass_transit_delta_bic': attempt.get('selection_pass_transit_delta_bic'),
+        'selection_pass_eebls_snr': attempt.get('selection_pass_eebls_snr'),
+        'selection_pass_residual_scatter': attempt.get('selection_pass_residual_scatter'),
+        'target_model_scatter_basis': attempt.get('target_model_scatter_basis'),
+        'projected_full_residual_scatter': attempt.get('projected_full_residual_scatter'),
+        'selection_scatter': attempt.get('selection_scatter'),
+        'selection_scatter_basis': attempt.get('selection_scatter_basis'),
+        'target_comp_scatter': attempt.get('target_comp_scatter'),
+        'selection_pass_target_comp_scatter': attempt.get('selection_pass_target_comp_scatter'),
+        'selection_pass_transit_qc_status': attempt.get('selection_pass_transit_qc_status'),
+        'selection_pass_transit_qc_summary': attempt.get('selection_pass_transit_qc_summary'),
+        'scatter_gate_passed': attempt.get('scatter_gate_passed'),
+        'scatter_gate_lowest_residual_scatter': attempt.get('scatter_gate_lowest_residual_scatter'),
+        'scatter_gate_threshold': attempt.get('scatter_gate_threshold'),
+        'scatter_adjusted_ktmf_metric': attempt.get('scatter_adjusted_ktmf_metric'),
+        'combined_quality_ktmf_metric': attempt.get('combined_quality_ktmf_metric'),
+        'combined_quality_best_residual_scatter': attempt.get('combined_quality_best_residual_scatter'),
+        'combined_quality_best_target_comp_scatter': attempt.get('combined_quality_best_target_comp_scatter'),
+        'combined_quality_best_comp_stability': attempt.get('combined_quality_best_comp_stability'),
+        'final_refit_metric_note': attempt.get('final_refit_metric_note'),
         'ktmf_metric': attempt.get('ktmf_metric'),
         'ktmf_contributions': attempt.get('ktmf_contributions') or [],
         'transit_delta_bic': attempt.get('transit_delta_bic'),
@@ -18379,6 +19777,82 @@ def compact_comparison_attempt_for_output(attempt):
         'rejected_by_transit_qc': attempt.get('rejected_by_transit_qc'),
         'failure_reason': attempt.get('failure_reason'),
     }
+
+
+def record_comparison_attempt_selection_pass_metrics(attempt):
+    if not isinstance(attempt, dict):
+        return
+
+    attempt['selection_pass_ktmf_metric'] = attempt.get('ktmf_metric', np.nan)
+    attempt['selection_pass_transit_delta_bic'] = attempt.get('transit_delta_bic', np.nan)
+    attempt['selection_pass_eebls_snr'] = attempt.get('eebls_snr', np.nan)
+    attempt['selection_pass_residual_scatter'] = attempt.get('residual_scatter', np.nan)
+    attempt['selection_pass_selection_scatter'] = attempt.get('selection_scatter', np.nan)
+    attempt['selection_pass_target_comp_scatter'] = attempt.get('target_comp_scatter', np.nan)
+    attempt['selection_pass_fit_point_count'] = attempt.get('fit_point_count')
+    attempt['selection_pass_transit_qc_status'] = attempt.get('transit_qc_status')
+    attempt['selection_pass_transit_qc_summary'] = attempt.get('transit_qc_summary')
+
+
+def comparison_selection_metric_changed(before, after, tolerance=5.0e-3):
+    try:
+        before = float(before)
+        after = float(after)
+    except (TypeError, ValueError):
+        return False
+    return np.isfinite(before) and np.isfinite(after) and abs(before - after) > tolerance
+
+
+def update_selected_comparison_final_refit_note(selected_result):
+    if not isinstance(selected_result, dict):
+        return
+
+    notes = []
+    if comparison_selection_metric_changed(
+        selected_result.get('selection_pass_ktmf_metric'),
+        selected_result.get('ktmf_metric'),
+    ):
+        notes.append(
+            "KTMF "
+            f"{format_ktmf_metric(selected_result.get('selection_pass_ktmf_metric'))} -> "
+            f"{format_ktmf_metric(selected_result.get('ktmf_metric'))}"
+        )
+    if comparison_selection_metric_changed(
+        selected_result.get('selection_pass_eebls_snr'),
+        selected_result.get('eebls_snr'),
+        tolerance=1.0e-2,
+    ):
+        selection_pass_eebls_snr = float(selected_result.get('selection_pass_eebls_snr'))
+        final_eebls_snr = float(selected_result.get('eebls_snr'))
+        notes.append(
+            "EEBLS SNR "
+            f"{selection_pass_eebls_snr:.2f} -> "
+            f"{final_eebls_snr:.2f}"
+        )
+    if comparison_selection_metric_changed(
+        selected_result.get('selection_pass_transit_delta_bic'),
+        selected_result.get('transit_delta_bic'),
+        tolerance=1.0e-2,
+    ):
+        notes.append(
+            "Delta BIC "
+            f"{format_transit_delta_bic(selected_result.get('selection_pass_transit_delta_bic'))} -> "
+            f"{format_transit_delta_bic(selected_result.get('transit_delta_bic'))}"
+        )
+
+    if not notes:
+        return
+
+    selected_result['final_refit_metric_note'] = (
+        "final full-resolution refit updated selected-candidate metrics: "
+        + "; ".join(notes)
+    )
+    reason = selected_result.get('selection_reason') or ''
+    if selected_result['final_refit_metric_note'] not in reason:
+        selected_result['selection_reason'] = (
+            f"{reason}; {selected_result['final_refit_metric_note']}"
+            if reason else selected_result['final_refit_metric_note']
+        )
 
 
 def format_transit_delta_bic(value):
@@ -18615,7 +20089,10 @@ def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, 
     if comp_summary is None:
         return
 
-    label = comp_summary.get('label', f"Comp {comp_summary.get('comp_index', 0) + 1}")
+    label = comp_summary.get('label')
+    if label is None:
+        comp_index = comp_summary.get('comp_index')
+        label = "comparison candidate" if comp_index is None else f"Comp {comp_index + 1}"
     position_text = format_comp_star_position(comp_summary.get('position'))
     coverage_text = format_comp_star_coverage_text({
         'coverage_count': comp_summary.get('coverage_count', 0),
@@ -18697,6 +20174,10 @@ def comparison_selection_metric_label(selection_metric):
         return "Comparison-Field Rank"
     if selection_metric == 'ktmf':
         return "KTMF"
+    if selection_metric == 'ktmf_scatter':
+        return "KTMF / scatter"
+    if selection_metric == 'ktmf_combined_quality':
+        return "KTMF / projected scatter"
     if selection_metric == 'eebls_snr':
         return "EEBLS SNR"
     return "transit-vs-flat Delta BIC"
@@ -18731,22 +20212,121 @@ def should_stop_after_promising_partial_comparison_attempt(attempt):
     )
 
 
+def scatter_gate_comparison_attempts(
+        attempts,
+        max_scatter_multiplier=COMPARISON_SELECTION_MAX_SCATTER_MULTIPLIER):
+    attempts = list(attempts or [])
+    finite_scatters = [
+        float(attempt.get('selection_scatter', attempt.get('residual_scatter', np.nan)))
+        for attempt in attempts
+        if np.isfinite(attempt.get('selection_scatter', attempt.get('residual_scatter', np.nan)))
+    ]
+    if not finite_scatters:
+        for attempt in attempts:
+            attempt['scatter_gate_passed'] = True
+            attempt['scatter_gate_lowest_residual_scatter'] = np.nan
+            attempt['scatter_gate_threshold'] = np.nan
+        return attempts, np.nan, np.nan
+
+    lowest_scatter = min(finite_scatters)
+    scatter_threshold = lowest_scatter * float(max_scatter_multiplier)
+    eligible_attempts = []
+    for attempt in attempts:
+        residual_scatter = attempt.get('selection_scatter', attempt.get('residual_scatter', np.nan))
+        scatter_passed = (
+            np.isfinite(residual_scatter)
+            and residual_scatter <= scatter_threshold
+        )
+        attempt['scatter_gate_passed'] = bool(scatter_passed)
+        attempt['scatter_gate_lowest_residual_scatter'] = lowest_scatter
+        attempt['scatter_gate_threshold'] = scatter_threshold
+        if scatter_passed:
+            eligible_attempts.append(attempt)
+
+    return eligible_attempts or attempts, lowest_scatter, scatter_threshold
+
+
+def finite_positive_attempt_values(attempts, key):
+    values = []
+    for attempt in attempts:
+        value = attempt.get(key, np.nan)
+        if np.isfinite(value) and value > 0:
+            values.append(float(value))
+    return values
+
+
+def comparison_attempt_combined_quality_ktmf(attempt):
+    ktmf_metric = attempt.get('ktmf_metric', np.nan)
+    if not np.isfinite(ktmf_metric):
+        return np.nan
+
+    selection_scatter = attempt.get('selection_scatter', np.nan)
+    if (
+        np.isfinite(selection_scatter)
+        and selection_scatter > 0
+    ):
+        return float(ktmf_metric) / float(selection_scatter * 100.0)
+    return float(ktmf_metric)
+
+
+def annotate_comparison_attempt_combined_quality_scores(attempts):
+    attempts = list(attempts or [])
+    for attempt in attempts:
+        selection_scatter = attempt.get('selection_scatter', np.nan)
+        if not np.isfinite(selection_scatter):
+            residual_scatter = attempt.get('residual_scatter', np.nan)
+            if np.isfinite(residual_scatter):
+                attempt['selection_scatter'] = residual_scatter
+                attempt.setdefault(
+                    'selection_scatter_basis',
+                    "candidate UltraNest model residual scatter",
+                )
+
+    best_residual_scatter = min(finite_positive_attempt_values(attempts, 'selection_scatter'), default=np.nan)
+    for attempt in attempts:
+        attempt['combined_quality_best_residual_scatter'] = best_residual_scatter
+        attempt['combined_quality_best_target_comp_scatter'] = np.nan
+        attempt['combined_quality_best_comp_stability'] = np.nan
+        attempt['combined_quality_ktmf_metric'] = comparison_attempt_combined_quality_ktmf(attempt)
+        attempt['scatter_adjusted_ktmf_metric'] = attempt['combined_quality_ktmf_metric']
+
+    return attempts
+
+
+def comparison_attempt_ranking_score(attempt):
+    value = attempt.get('combined_quality_ktmf_metric', np.nan)
+    if np.isfinite(value):
+        return value
+    value = attempt.get('scatter_adjusted_ktmf_metric', np.nan)
+    if np.isfinite(value):
+        return value
+    value = attempt.get('ktmf_metric', np.nan)
+    if np.isfinite(value):
+        return value
+    return np.nan
+
+
 def select_preferred_comparison_attempt(attempts, pick_comparison_by_eebls_snr=True):
     selected_result = None
     selection_metric = 'ktmf'
     if not attempts:
         return selected_result, selection_metric
 
+    attempts, _, _ = scatter_gate_comparison_attempts(attempts)
+    annotate_comparison_attempt_combined_quality_scores(attempts)
     has_ktmf = any(np.isfinite(attempt.get('ktmf_metric', np.nan)) for attempt in attempts)
     has_eebls = any(np.isfinite(attempt.get('eebls_snr', np.nan)) for attempt in attempts)
     has_delta_bic = any(np.isfinite(attempt.get('transit_delta_bic', np.nan)) for attempt in attempts)
 
     if has_ktmf:
-        selection_metric = 'ktmf'
+        selection_metric = 'ktmf_combined_quality'
         if pick_comparison_by_eebls_snr:
             selected_result = min(
                 attempts,
                 key=lambda attempt: (
+                    0 if np.isfinite(comparison_attempt_ranking_score(attempt)) else 1,
+                    -comparison_attempt_ranking_score(attempt)
+                    if np.isfinite(comparison_attempt_ranking_score(attempt)) else np.inf,
                     0 if np.isfinite(attempt.get('ktmf_metric', np.nan)) else 1,
                     -attempt.get('ktmf_metric', np.nan) if np.isfinite(attempt.get('ktmf_metric', np.nan)) else np.inf,
                     0 if np.isfinite(attempt.get('eebls_snr', np.nan)) else 1,
@@ -18760,6 +20340,9 @@ def select_preferred_comparison_attempt(attempts, pick_comparison_by_eebls_snr=T
             selected_result = min(
                 attempts,
                 key=lambda attempt: (
+                    0 if np.isfinite(comparison_attempt_ranking_score(attempt)) else 1,
+                    -comparison_attempt_ranking_score(attempt)
+                    if np.isfinite(comparison_attempt_ranking_score(attempt)) else np.inf,
                     0 if np.isfinite(attempt.get('ktmf_metric', np.nan)) else 1,
                     -attempt.get('ktmf_metric', np.nan) if np.isfinite(attempt.get('ktmf_metric', np.nan)) else np.inf,
                     0 if np.isfinite(attempt.get('transit_delta_bic', np.nan)) else 1,
@@ -19363,6 +20946,40 @@ def build_normalized_comp_ensemble(normalized_flux_map, exclude_key):
     ensemble = np.full(ensemble_stack.shape[1], np.nan, dtype=float)
     ensemble[valid_mask] = np.nanmedian(ensemble_stack[:, valid_mask], axis=0)
     return ensemble
+
+
+def build_absolute_comp_ensemble_flux(comp_flux_map, active_keys,
+                                      validity_mask_func=valid_comparison_frame_mask):
+    normalized_members = []
+    member_medians = []
+    member_keys = []
+    for key in active_keys:
+        if key not in comp_flux_map:
+            continue
+        flux_values = np.asarray(comp_flux_map[key], dtype=float)
+        valid_mask = validity_mask_func(flux_values)
+        if np.count_nonzero(valid_mask) < 5:
+            continue
+        member_median = float(bn.nanmedian(flux_values[valid_mask]))
+        if not np.isfinite(member_median) or member_median <= 0:
+            continue
+        normalized_flux = np.full(flux_values.shape, np.nan, dtype=float)
+        normalized_flux[valid_mask] = flux_values[valid_mask] / member_median
+        normalized_members.append(normalized_flux)
+        member_medians.append(member_median)
+        member_keys.append(key)
+
+    if not normalized_members:
+        return None, []
+
+    ensemble_stack = np.vstack(normalized_members)
+    valid_mask = np.any(np.isfinite(ensemble_stack), axis=0)
+    ensemble = np.full(ensemble_stack.shape[1], np.nan, dtype=float)
+    ensemble[valid_mask] = np.nanmedian(ensemble_stack[:, valid_mask], axis=0)
+    scale = float(np.nanmedian(member_medians))
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 1.0
+    return ensemble * scale, member_keys
 
 
 def comparison_star_coverage_summary(comp_flux_map,
@@ -20407,7 +22024,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  run_final_residual_rejection=FINAL_RESIDUAL_REJECTION_DEFAULT,
                                                  save_dir=None,
                                                  planet_name=None,
-                                                 observation_date=None):
+                                                 observation_date=None,
+                                                 use_ensemble_photometry_rather_than_single_comp=False):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
     if not ranked_summaries:
         return {
@@ -20460,7 +22078,142 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         )
 
     preflight_plans = []
-    for field_rank, comp_summary in enumerate(ranked_summaries):
+    if use_ensemble_photometry_rather_than_single_comp:
+        active_keys = [summary.get('key') for summary in ranked_summaries if summary.get('key')]
+        if method == 'psf':
+            comp_flux_map = {
+                summary['key']: psf_flux_series_from_rows(
+                    psf_flux_data[summary['key']],
+                    np.asarray(
+                        summary.get(
+                            'psf_quality_keep_mask',
+                            psf_quality_mask_for_key(
+                                psf_data,
+                                summary['key'],
+                                frame_count,
+                                psf_flux_data=psf_flux_data,
+                            ),
+                        ),
+                        dtype=bool,
+                    ),
+                )
+                for summary in ranked_summaries
+                if summary.get('key') in psf_flux_data
+            }
+            ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
+                comp_flux_map,
+                active_keys,
+                validity_mask_func=robust_flux_floor_mask,
+            )
+            target_shape_mask = target_psf_shape_quality_mask(target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data))
+            if target_shape_mask.shape[0] != frame_count:
+                target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+        else:
+            comp_flux_map = {
+                summary['key']: mask_series_with_quality(
+                    aper_data[summary['key']][:, aperture_index, annulus_index],
+                    np.asarray(
+                        summary.get(
+                            'psf_quality_keep_mask',
+                            psf_quality_mask_for_key(psf_data, summary['key'], frame_count),
+                        ),
+                        dtype=bool,
+                    ),
+                )
+                for summary in ranked_summaries
+                if summary.get('key') in aper_data
+            }
+            ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
+                comp_flux_map,
+                active_keys,
+                validity_mask_func=valid_comparison_frame_mask,
+            )
+            target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = target_flux
+
+        if ensemble_flux is not None and member_keys:
+            candidate_frame_keep_mask = np.ones(times.shape[0], dtype=bool)
+            for summary in ranked_summaries:
+                if summary.get('key') not in set(member_keys):
+                    continue
+                member_keep_mask = np.asarray(
+                    summary.get('ensemble_frame_keep_mask', np.ones(times.shape[0], dtype=bool)),
+                    dtype=bool,
+                )
+                if member_keep_mask.shape == times.shape:
+                    candidate_frame_keep_mask &= member_keep_mask
+            fit_mask = field_image_keep_mask & candidate_frame_keep_mask & target_shape_mask
+            if method == 'psf':
+                fit_mask &= robust_target_reference_flux_mask(candidate_target_flux, ensemble_flux)
+            else:
+                fit_mask &= (
+                    valid_comparison_frame_mask(candidate_target_flux)
+                    & valid_comparison_frame_mask(ensemble_flux)
+                )
+            fit_diagnostics = diagnose_lightcurve_fit_inputs(
+                times[fit_mask],
+                candidate_target_flux[fit_mask],
+                ensemble_flux[fit_mask],
+                airmass[fit_mask],
+                enforce_relative_flux_max=False,
+                expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
+            )
+            preflight = build_comparison_candidate_preflight(
+                times[fit_mask],
+                jd_times[fit_mask],
+                airmass[fit_mask],
+                ld,
+                p_dict,
+                candidate_target_flux[fit_mask],
+                ensemble_flux[fit_mask],
+                adaptive_summary=adaptive_summary,
+                use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+            )
+            ensemble_summary = {
+                'comp_index': None,
+                'key': 'ensemble',
+                'label': f"Comparison ensemble ({len(member_keys)} comps)",
+                'position': None,
+                'aggregate_score': comparison_calibration.get('field_score', np.inf),
+                'coverage_count': int(np.count_nonzero(valid_comparison_frame_mask(ensemble_flux))),
+                'coverage_total_frame_count': int(frame_count),
+                'coverage_reference_count': np.nan,
+                'coverage_min_required_count': LIGHTCURVE_MIN_VALID_POINTS,
+                'coverage_rejected': False,
+                'ensemble_frame_rejected_count': int(np.count_nonzero(~candidate_frame_keep_mask)),
+                'ensemble_frame_required_valid_pairs': len(member_keys),
+                'ensemble_member_keys': member_keys,
+            }
+            preflight_plans.append({
+                'field_rank': 0,
+                'summary': ensemble_summary,
+                'ckey': None,
+                'target_flux': candidate_target_flux,
+                'comp_flux': ensemble_flux,
+                'fit_mask': fit_mask,
+                'candidate_frame_clip_diagnostic': None,
+                'fit_diagnostics': fit_diagnostics,
+                'preflight': preflight,
+            })
+            log_info(
+                "Ensemble comparison photometry enabled: target fit will use "
+                f"{len(member_keys)} non-rejected comparison star(s) as a median normalized ensemble "
+                "rather than fitting each comparison star independently."
+            )
+        else:
+            log_info(
+                "Warning: ensemble comparison photometry was enabled, but no usable non-rejected "
+                "comparison-star ensemble could be built; falling back to ranked single-comp fits.",
+                warn=True,
+            )
+
+    if not preflight_plans:
+        ranked_summaries_to_fit = ranked_summaries
+    else:
+        ranked_summaries_to_fit = []
+
+    for field_rank, comp_summary in enumerate(ranked_summaries_to_fit):
         comp_index = comp_summary['comp_index']
         ckey = comp_summary.get('key', f"comp{comp_index + 1}")
         comp_quality_mask = np.asarray(
@@ -20620,10 +22373,37 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         )
         if fit_result is None:
             log_info(
-                f"  {comp_summary.get('label', f'Comp {comp_index + 1}')}: "
+                f"  {comp_summary.get('label', 'comparison candidate')}: "
                 "the raw comparison-candidate light curve did not converge to a usable fully reduced fit."
             )
         selection_fit = fit_result
+        fast_binning = final_reduction.get('fast_ultranest_binning') or {}
+        fast_binned_ultranest = bool(fast_binning.get('applied'))
+        residual_scatter = extract_lightcurve_fit_residual_scatter(selection_fit)
+        target_comp_scatter_value = target_comp_flux_scatter(tflux_fit, cflux_fit)
+        projected_full_scatter = fitted_lightcurve_scatter_on_dataset(
+            selection_fit,
+            final_reduction.get('good_times'),
+            final_reduction.get('good_flux'),
+            final_reduction.get('good_airmass'),
+        )
+        if fast_binned_ultranest and np.isfinite(projected_full_scatter):
+            selection_scatter = projected_full_scatter
+            selection_scatter_basis = (
+                "fast-binned UltraNest model residual scatter evaluated on full unbinned light curve"
+            )
+        else:
+            selection_scatter = residual_scatter
+            selection_scatter_basis = (
+                "full-resolution UltraNest model residual scatter"
+                if not fast_binned_ultranest
+                else "fast-binned UltraNest model residual scatter"
+            )
+        target_model_scatter_basis = (
+            "fast-binned UltraNest model residual scatter"
+            if fast_binned_ultranest
+            else "full-resolution UltraNest model residual scatter"
+        )
         transit_qc_failure_reason = lightcurve_fit_transit_qc_failure_reason(selection_fit)
         if transit_qc_failure_reason is not None:
             fit_diagnostics = dict(fit_diagnostics)
@@ -20650,7 +22430,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'field_rank': plan.get('field_rank'),
             'comp_index': comp_index,
             'ckey': ckey,
-            'label': comp_summary.get('label', f"Comp {comp_index + 1}"),
+            'label': comp_summary.get('label', 'comparison candidate'),
             'position': comp_summary.get('position'),
             'aggregate_score': comp_summary.get('aggregate_score', np.inf),
             'coverage_count': comp_summary.get('coverage_count', 0),
@@ -20676,7 +22456,12 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'fit_diagnostics': fit_diagnostics,
             'eebls_snr': extract_lightcurve_fit_eebls_snr(selection_fit),
             'transit_delta_bic': extract_lightcurve_fit_transit_delta_bic(selection_fit),
-            'residual_scatter': extract_lightcurve_fit_residual_scatter(selection_fit),
+            'residual_scatter': residual_scatter,
+            'target_model_scatter_basis': target_model_scatter_basis,
+            'projected_full_residual_scatter': projected_full_scatter,
+            'selection_scatter': selection_scatter,
+            'selection_scatter_basis': selection_scatter_basis,
+            'target_comp_scatter': target_comp_scatter_value,
             'ktmf_metric': extract_lightcurve_fit_ktmf_metric(selection_fit),
             'ktmf_contributions': extract_lightcurve_fit_ktmf_contributions(selection_fit),
             'fit_point_count': 0 if tflux_fit is None else int(len(np.asarray(tflux_fit, dtype=float))),
@@ -20693,7 +22478,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'final_output_dir': None,
             'full_reduction_applied': final_reduction.get('applied', False),
             'full_reduction_note': final_reduction.get('note'),
-            'fast_ultranest_binning': final_reduction.get('fast_ultranest_binning'),
+            'fast_ultranest_binning': fast_binning,
             'skip_airmass_fit': final_reduction.get('skip_airmass_fit', False),
             'airmass_skip_note': final_reduction.get('airmass_skip_note'),
             'preflight_coverage_priority': preflight.get('coverage_priority'),
@@ -20819,9 +22604,13 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
     if selected_result is not None:
         selected_result['selected'] = True
         selected_result['selected_despite_transit_qc'] = fallback_to_qc_rejected
-        selected_ktmf_metric = selected_result.get('ktmf_metric', np.nan)
-        selected_transit_delta_bic = selected_result.get('transit_delta_bic', np.nan)
-        selected_eebls_snr = selected_result.get('eebls_snr', np.nan)
+        for attempt in attempts:
+            record_comparison_attempt_selection_pass_metrics(attempt)
+        selected_ktmf_metric = selected_result.get('selection_pass_ktmf_metric', np.nan)
+        selected_transit_delta_bic = selected_result.get('selection_pass_transit_delta_bic', np.nan)
+        selected_eebls_snr = selected_result.get('selection_pass_eebls_snr', np.nan)
+        selected_scatter_adjusted_ktmf = selected_result.get('scatter_adjusted_ktmf_metric', np.nan)
+        selected_combined_quality_ktmf = selected_result.get('combined_quality_ktmf_metric', np.nan)
 
         for attempt in attempts:
             if attempt is selected_result:
@@ -20830,17 +22619,28 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         "selected as best available fallback: all completed comparison-star "
                         "target fits were rejected by transit QC"
                     )
-                    if selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
+                    if (
+                        selection_metric in ('ktmf', 'ktmf_scatter', 'ktmf_combined_quality')
+                        and np.isfinite(selected_ktmf_metric)
+                    ):
                         attempt['selection_reason'] += (
-                            f"; this fit had the highest KTMF ({format_ktmf_metric(selected_ktmf_metric)})"
+                            f"; this candidate had the highest KTMF/projected-scatter score "
+                            f"among candidates with projected scatter "
+                            f"<= {COMPARISON_SELECTION_MAX_SCATTER_MULTIPLIER:.1f}x the lowest scatter"
                         )
+                        if np.isfinite(selected_combined_quality_ktmf):
+                            attempt['selection_reason'] += (
+                                f"; KTMF/projected-scatter score={selected_combined_quality_ktmf:.2f}; "
+                                f"raw selection-pass KTMF={format_ktmf_metric(selected_ktmf_metric)}"
+                            )
                     elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
                         attempt['selection_reason'] += (
-                            f"; this fit had the highest EEBLS SNR ({selected_eebls_snr:.2f})"
+                            f"; this candidate had the highest selection-pass EEBLS SNR "
+                            f"({selected_eebls_snr:.2f})"
                         )
                     elif np.isfinite(selected_transit_delta_bic):
                         attempt['selection_reason'] += (
-                            "; this fit had the strongest transit-vs-flat Delta BIC "
+                            "; this candidate had the strongest selection-pass transit-vs-flat Delta BIC "
                             f"({format_transit_delta_bic(selected_transit_delta_bic)})"
                         )
                 elif attempt.get('search_stopped_after_qc_pass', False):
@@ -20852,20 +22652,29 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         "selected: first partial-coverage comparison-star candidate with promising "
                         "MARGINAL transit diagnostics"
                     )
-                elif selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
+                elif (
+                    selection_metric in ('ktmf', 'ktmf_scatter', 'ktmf_combined_quality')
+                    and np.isfinite(selected_ktmf_metric)
+                ):
                     attempt['selection_reason'] = (
-                        "selected: highest KTMF among the evaluated "
-                        "comparison-star calibration candidates"
+                        "selected: highest KTMF/projected-scatter score among comparison-star calibration "
+                        f"candidates with projected scatter <= "
+                        f"{COMPARISON_SELECTION_MAX_SCATTER_MULTIPLIER:.1f}x the lowest scatter"
                     )
+                    if np.isfinite(selected_combined_quality_ktmf):
+                        attempt['selection_reason'] += (
+                            f"; KTMF/projected-scatter score={selected_combined_quality_ktmf:.2f}; "
+                            f"raw selection-pass KTMF={format_ktmf_metric(selected_ktmf_metric)}"
+                        )
                 elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
                     attempt['selection_reason'] = (
-                        "selected: highest EEBLS SNR among the evaluated "
+                        "selected: highest selection-pass EEBLS SNR among the evaluated "
                         "comparison-star calibration candidates"
                     )
                 else:
                     attempt['selection_reason'] = (
-                        "selected: strongest transit-vs-flat Delta BIC among the evaluated "
-                        "comparison-star calibration candidates"
+                        "selected: strongest selection-pass transit-vs-flat Delta BIC among "
+                        "the evaluated comparison-star calibration candidates"
                     )
                 continue
             if (
@@ -20873,11 +22682,31 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 and attempt.get('full_reduction_applied', False)
                 and (not attempt.get('rejected_by_transit_qc', False) or fallback_to_qc_rejected)
             ):
-                if selection_metric == 'ktmf' and np.isfinite(selected_ktmf_metric):
+                if attempt.get('scatter_gate_passed') is False:
+                    selection_scatter_basis = attempt.get('selection_scatter_basis') or "selection scatter"
                     attempt['selection_reason'] = (
-                        "not selected: KTMF "
-                        f"{format_ktmf_metric(attempt.get('ktmf_metric', np.nan))} was lower than the selected "
-                        f"{format_ktmf_metric(selected_ktmf_metric)}"
+                        f"not selected: {selection_scatter_basis} "
+                        f"{format_residual_scatter(attempt.get('selection_scatter', np.nan))} "
+                        f"exceeded {COMPARISON_SELECTION_MAX_SCATTER_MULTIPLIER:.1f}x the lowest candidate scatter "
+                        f"({format_residual_scatter(attempt.get('scatter_gate_lowest_residual_scatter', np.nan))}); "
+                        "excluded before KTMF ranking"
+                    )
+                elif (
+                    selection_metric in ('ktmf', 'ktmf_scatter', 'ktmf_combined_quality')
+                    and np.isfinite(selected_ktmf_metric)
+                ):
+                    attempt_score = attempt.get('combined_quality_ktmf_metric', np.nan)
+                    selected_score = selected_combined_quality_ktmf
+                    score_text = (
+                        f"KTMF/projected-scatter score {attempt_score:.2f} was lower than the selected "
+                        f"{selected_score:.2f}"
+                        if np.isfinite(attempt_score) and np.isfinite(selected_score)
+                        else "selection-pass KTMF was lower than the selected candidate"
+                    )
+                    attempt['selection_reason'] = (
+                        "not selected: "
+                        f"{score_text}; raw selection-pass KTMF="
+                        f"{format_ktmf_metric(attempt.get('selection_pass_ktmf_metric', np.nan))}"
                     )
                 elif selection_metric == 'first_qc_pass':
                     attempt['selection_reason'] = (
@@ -20890,10 +22719,10 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         "candidate with promising MARGINAL transit diagnostics"
                     )
                 elif selection_metric == 'eebls_snr' and np.isfinite(selected_eebls_snr):
-                    if np.isfinite(attempt.get('eebls_snr', np.nan)):
+                    if np.isfinite(attempt.get('selection_pass_eebls_snr', np.nan)):
                         attempt['selection_reason'] = (
-                            "not selected: EEBLS SNR "
-                            f"{attempt['eebls_snr']:.2f} was lower than the selected "
+                            "not selected: selection-pass EEBLS SNR "
+                            f"{attempt['selection_pass_eebls_snr']:.2f} was lower than the selected "
                             f"{selected_eebls_snr:.2f}"
                         )
                     else:
@@ -20902,8 +22731,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                         )
                 else:
                     attempt['selection_reason'] = (
-                        "not selected: transit-vs-flat Delta BIC "
-                        f"{format_transit_delta_bic(attempt.get('transit_delta_bic', np.nan))} was lower than the selected "
+                        "not selected: selection-pass transit-vs-flat Delta BIC "
+                        f"{format_transit_delta_bic(attempt.get('selection_pass_transit_delta_bic', np.nan))} "
+                        "was lower than the selected "
                         f"{format_transit_delta_bic(selected_transit_delta_bic)}"
                     )
 
@@ -20939,11 +22769,18 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 selected_result['eebls_snr'] = extract_lightcurve_fit_eebls_snr(selected_result['fit'])
                 selected_result['transit_delta_bic'] = extract_lightcurve_fit_transit_delta_bic(selected_result['fit'])
                 selected_result['residual_scatter'] = extract_lightcurve_fit_residual_scatter(selected_result['fit'])
+                final_target_comp_scatter = target_comp_flux_scatter(
+                    selected_result.get('good_target_flux'),
+                    selected_result.get('good_comp_flux'),
+                )
+                if np.isfinite(final_target_comp_scatter):
+                    selected_result['target_comp_scatter'] = final_target_comp_scatter
                 selected_result['ktmf_metric'] = extract_lightcurve_fit_ktmf_metric(selected_result['fit'])
                 selected_result['ktmf_contributions'] = extract_lightcurve_fit_ktmf_contributions(selected_result['fit'])
                 selected_result['parameter_summary'] = summarize_lightcurve_fit_parameters(selected_result['fit'])
                 selected_result['transit_qc_status'] = getattr(selected_result['fit'], 'transit_qc_status', None)
                 selected_result['transit_qc_summary'] = getattr(selected_result['fit'], 'transit_qc_summary', None)
+                update_selected_comparison_final_refit_note(selected_result)
                 data_highres, duration_samples = estimate_transit_duration_samples_from_fit(selected_result['fit'])
                 selected_result['data_highres'] = data_highres
                 selected_result['duration_samples'] = duration_samples
@@ -21810,6 +23647,31 @@ def _main_impl():
                         )
                         return
 
+                if should_use_automatic_optimal_calibration_selector(
+                    exotic_infoDict.get('automatic_optimal_calibration_selector', 'n')
+                ):
+                    automatic_comp_count = parse_automatic_calibration_selector_count(
+                        exotic_infoDict.get('automatic_optimal_calibration_selector_count')
+                    )
+                    automatic_comp_stars, automatic_candidates = select_automatic_optimal_calibration_stars(
+                        reference_image,
+                        reference_image.shape,
+                        target_pixel=[exotic_UIprevTPX, exotic_UIprevTPY],
+                        ra_wcs=ra_wcs,
+                        dec_wcs=dec_wcs,
+                        obs_filter=exotic_infoDict['filter'],
+                        field_catalog=nextastro_field_catalog,
+                        count=automatic_comp_count,
+                    )
+                    log_automatic_optimal_calibration_selection(
+                        automatic_comp_stars,
+                        automatic_candidates,
+                        automatic_comp_count,
+                    )
+                    if automatic_comp_stars:
+                        exotic_infoDict['comp_stars'] = automatic_comp_stars
+                        vsp_comp_stars = {}
+
                 check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
                                          use_nextastro_variability_server=args.use_nextastro_variability_server)
 
@@ -21876,6 +23738,9 @@ def _main_impl():
             fit_every_comparison_candidate = should_fit_lightcurve_to_every_comparison_candidate(
                 exotic_infoDict.get('fit_lightcurve_to_every_comparison_candidate', 'n')
             )
+            use_ensemble_photometry_rather_than_single_comp = should_use_ensemble_photometry_rather_than_single_comp(
+                exotic_infoDict.get('use_ensemble_photometry_rather_than_single_comp', 'n')
+            )
             use_deviation_from_expected_transit_in_qc = should_use_deviation_from_expected_transit_in_qc(
                 exotic_infoDict.get('use_deviation_from_expected_transit_in_qc', True)
             )
@@ -21908,6 +23773,11 @@ def _main_impl():
                 log_info("EEBLS transit initializer disabled per optional_info setting.")
             if not pick_comparison_by_eebls_snr:
                 log_info("Comparison-star selection by EEBLS SNR disabled per optional_info setting.")
+            if use_ensemble_photometry_rather_than_single_comp:
+                log_info(
+                    "Ensemble comparison photometry enabled per optional_info setting; the final target "
+                    "light curve will use non-rejected comparison stars as a combined reference."
+                )
             if not use_deviation_from_expected_transit_in_qc:
                 log_info("Expected-value transit QC deviation checks disabled per optional_info setting.")
             if target_driven_comp_selection:
@@ -22647,6 +24517,8 @@ def _main_impl():
                     save_dir=exotic_infoDict['save'],
                     planet_name=pDict['pName'],
                     observation_date=exotic_infoDict['date'],
+                    use_ensemble_photometry_rather_than_single_comp=
+                    use_ensemble_photometry_rather_than_single_comp,
                 )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -22670,7 +24542,12 @@ def _main_impl():
                 if selected_attempt is not None:
                     selected_comp_index = selected_attempt['comp_index']
                     selected_ckey = selected_attempt['ckey']
-                    selected_comp_coords = exotic_infoDict['comp_stars'][selected_comp_index]
+                    selected_is_ensemble = selected_comp_index is None
+                    selected_comp_coords = (
+                        None
+                        if selected_is_ensemble
+                        else exotic_infoDict['comp_stars'][selected_comp_index]
+                    )
                     selected_min_aperture = 0 if comparison_calibration['method'] == 'psf' else comparison_calibration['aper']
                     selected_min_annulus = comparison_calibration['annulus']
                     selected_a = None if comparison_calibration['method'] == 'psf' else comparison_calibration['a']
@@ -22682,12 +24559,15 @@ def _main_impl():
                         selected_attempt.get('source_indices', np.arange(len(tFlux1), dtype=int)),
                         dtype=int,
                     )
+                    selected_attempt_label = selected_attempt.get('label', 'comparison candidate')
                     if selected_attempt.get('search_stopped_after_qc_pass', False):
                         selection_basis = 'first_qc_pass'
                     elif selected_attempt.get('search_stopped_after_promising_partial', False):
                         selection_basis = 'promising_partial'
                     elif selected_attempt.get('selected_despite_transit_qc', False):
                         selection_basis = 'comparison_field_qc_fallback'
+                    elif selected_is_ensemble:
+                        selection_basis = 'comparison_ensemble'
                     elif selected_comp_index == comparison_calibration['best_comp_index']:
                         selection_basis = 'comparison_field'
                     else:
@@ -22695,13 +24575,13 @@ def _main_impl():
                     if selection_basis == 'first_qc_pass':
                         log_info(
                             "Comparison-star calibration target-fit selection chose "
-                            f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
+                            f"{selected_attempt_label} with {comparison_calibration['method_label']} "
                             "because it was the first candidate to pass transit QC."
                         )
                     elif selection_basis == 'promising_partial':
                         log_info(
                             "Comparison-star calibration target-fit selection chose "
-                            f"Comp {selected_comp_index + 1} with {comparison_calibration['method_label']} "
+                            f"{selected_attempt_label} with {comparison_calibration['method_label']} "
                             "because pre-UltraNest preflight and the candidate fit indicated a promising "
                             "partial-coverage MARGINAL solution."
                         )
@@ -22710,6 +24590,16 @@ def _main_impl():
                         if fallback_selection_metric == 'ktmf':
                             fallback_metric_value = format_ktmf_metric(
                                 selected_attempt.get('ktmf_metric', np.nan)
+                            )
+                        elif fallback_selection_metric in ('ktmf_scatter', 'ktmf_combined_quality'):
+                            score_key = (
+                                'combined_quality_ktmf_metric'
+                                if fallback_selection_metric == 'ktmf_combined_quality'
+                                else 'scatter_adjusted_ktmf_metric'
+                            )
+                            score = selected_attempt.get(score_key, np.nan)
+                            fallback_metric_value = (
+                                f"{score:.2f}" if np.isfinite(score) else "n/a"
                             )
                         elif fallback_selection_metric == 'eebls_snr':
                             fallback_metric_value = format_eebls_snr(
@@ -22722,10 +24612,16 @@ def _main_impl():
                         log_info(
                             "Warning: all completed comparison-star target fits were rejected by transit QC; "
                             "continuing with the best available fit "
-                            f"(Comp {selected_comp_index + 1}, "
+                            f"({selected_attempt_label}, "
                             f"{comparison_selection_metric_label(fallback_selection_metric)}="
                             f"{fallback_metric_value}) so final outputs are still produced.",
                             warn=True,
+                        )
+                    elif selection_basis == 'comparison_ensemble':
+                        log_info(
+                            "Comparison-star calibration target-fit selection chose the comparison-star ensemble "
+                            f"with {comparison_calibration['method_label']} because "
+                            "'use_ensemble_photometry_rather_than_single_comp' is enabled."
                         )
                     elif selection_basis == 'comparison_field_retry':
                         retry_count = selected_attempt['rank']
@@ -22738,7 +24634,9 @@ def _main_impl():
                         )
 
                     photometry_info.update(best_fit_lc=myfit,
-                                           comp_star_num=selected_comp_index + 1,
+                                           comp_star_num=(
+                                               'ensemble' if selected_is_ensemble else selected_comp_index + 1
+                                           ),
                                            comp_star_coords=selected_comp_coords,
                                            min_aperture=selected_min_aperture,
                                            min_annulus=selected_min_annulus,
@@ -22776,12 +24674,17 @@ def _main_impl():
                     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
                                        flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
 
+                    ref_centroid_x = np.full(selected_source_indices.shape, np.nan, dtype=float)
+                    ref_centroid_y = np.full(selected_source_indices.shape, np.nan, dtype=float)
+                    if selected_ckey in psf_data:
+                        ref_centroid_x = psf_data[selected_ckey][selected_source_indices, 0]
+                        ref_centroid_y = psf_data[selected_ckey][selected_source_indices, 1]
                     centroid_positions.update(x_targ=psf_data["target"][selected_source_indices, 0],
                                               y_targ=psf_data["target"][selected_source_indices, 1],
-                                              x_ref=psf_data[selected_ckey][selected_source_indices, 0],
-                                              y_ref=psf_data[selected_ckey][selected_source_indices, 1])
+                                              x_ref=ref_centroid_x,
+                                              y_ref=ref_centroid_y)
 
-                    if selected_comp_index in vsp_num:
+                    if selected_comp_index is not None:
                         ref_flux[selected_comp_index] = {
                             'myfit': myfit,
                             'pos': exotic_infoDict['comp_stars'][selected_comp_index]
@@ -22892,7 +24795,10 @@ def _main_impl():
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] == 0:  # psf
-                log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
+                if photometry_info.get('comp_star_num') == 'ensemble':
+                    log_info("Transit Fit Comparison Star: ensemble")
+                else:
+                    log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
                 log_info("Optimal Method: PSF photometry")
             elif photometry_info['min_aperture'] < 0:  # no comp star
                 log_info("Transit Fit Comparison Star: None")
@@ -22907,7 +24813,10 @@ def _main_impl():
                     log_info(f"Optimal Aperture: {abs(np.round(display_aperture, 2))}")
                     log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             else:
-                log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
+                if photometry_info.get('comp_star_num') == 'ensemble':
+                    log_info("Transit Fit Comparison Star: ensemble")
+                else:
+                    log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {display_aperture:.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -22987,7 +24896,7 @@ def _main_impl():
                         log_info(f"Warning: Could not save comparison-candidate lightcurve plots ({e}).", warn=True)
 
             # save psf_data to disk for best comparison star
-            if bestCompStar:
+            if isinstance(bestCompStar, int):
                 np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_comp.txt", psf_data[f"comp{bestCompStar}"],
                             header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                             fmt="%.6f")
@@ -23174,17 +25083,27 @@ def _main_impl():
                 psf_sigma=sigma_display,
             )
 
-            plot_fov(fov_aperture, fov_annulus, sigma_display,
-                     centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
-                     centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
-                     firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'],
-                     exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov,
-                     sky_inner_radius=fov_sky_geometry['inner_radius'],
-                     sky_outer_radius=fov_sky_geometry['outer_radius'])
+            reference_centroid_available = (
+                np.isfinite(centroid_positions['x_ref'][0])
+                and np.isfinite(centroid_positions['y_ref'][0])
+            )
+            if reference_centroid_available:
+                plot_fov(fov_aperture, fov_annulus, sigma_display,
+                         centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
+                         centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
+                         firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'],
+                         exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov,
+                         sky_inner_radius=fov_sky_geometry['inner_radius'],
+                         sky_outer_radius=fov_sky_geometry['outer_radius'])
 
-            plot_centroids(centroid_positions['x_targ'], centroid_positions['y_targ'],
-                           centroid_positions['x_ref'], centroid_positions['y_ref'],
-                           goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+                plot_centroids(centroid_positions['x_targ'], centroid_positions['y_targ'],
+                               centroid_positions['x_ref'], centroid_positions['y_ref'],
+                               goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+            else:
+                log_info(
+                    "Skipping reference-star FOV and centroid plots because the selected reference is "
+                    "a comparison-star ensemble rather than a single star."
+                )
 
             plot_flux(goodTimes, flux_values['flux_tar'], flux_values['flux_unc_tar'],
                       flux_values['flux_ref'], flux_values['flux_unc_ref'],
@@ -23223,12 +25142,16 @@ def _main_impl():
             # standardDev1 = np.std(goodFluxes)
 
             if vsp_comp_stars:
-                if bestCompStar:
+                if isinstance(bestCompStar, int):
                     vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
                                                       vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                       pDict['sName'],
                                                       observed_filter=exotic_infoDict.get('observed_filter',
-                                                                                          exotic_infoDict.get('filter')))
+                                                                                          exotic_infoDict.get('filter')),
+                                                      comp_ra_dec=ra_dec_wcs,
+                                                      field_catalog=nextastro_field_catalog,
+                                                      reference_image=reference_image,
+                                                      wcs_file=wcs_file)
                 else:
                     log_info(
                         "Skipping AID magnitude output because no transit-fit comparison star was selected.",
@@ -23635,7 +25558,10 @@ def _main_impl():
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')
             if photometry_info['min_aperture'] >= 0:
-                log_info(f"      Transit Fit Comparison Star: #{bestCompStar} - {comp_coords}")
+                if bestCompStar == 'ensemble':
+                    log_info("      Transit Fit Comparison Star: ensemble")
+                else:
+                    log_info(f"      Transit Fit Comparison Star: #{bestCompStar} - {comp_coords}")
             else:
                 log_info("       Transit Fit Comparison Star: None")
             if photometry_info['min_aperture'] == 0:
@@ -23700,7 +25626,7 @@ def _main_impl():
         except Exception as e:
             log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
         try:
-            if bestCompStar:
+            if isinstance(bestCompStar, int):
                 exotic_infoDict['phot_comp_star'] = save_comp_ra_dec(wcs_file, ra_wcs, dec_wcs, comp_coords)
             aavso_photometry_info = photometry_info if fitsortext == 1 else None
             aavso_frame_filtering_info = None

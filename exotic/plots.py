@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 from pathlib import Path
-import textwrap
 
 try:
     from utils import (
@@ -1406,20 +1405,16 @@ def _format_ktmf_component_annotation(row):
         return f"KTMF\n{_format_ktmf_metric(row.get('points'), row.get('max_points'))}{status_text}{uncertainty_text}"
 
     if not row.get('available', True):
-        detail = row.get('detail') or "unavailable"
-        return f"Not scored\n{textwrap.fill(str(detail), width=44)}"
+        return "Not scored"
 
     score_uncertainty = _plot_positive_error(row.get('score_uncertainty'))
     if np.isfinite(score_uncertainty):
         score_text = _format_parameter_value(row.get('score'), score_uncertainty)
     else:
         score_text = _format_parameter_value(row.get('score'))
-    detail = _compact_ktmf_detail(row)
-    detail_text = f"\n{textwrap.fill(str(detail), width=44)}" if detail else ""
     return (
         f"Score\n{score_text}\n"
         f"Points\n{_format_ktmf_metric(row.get('points'), row.get('max_points'))}"
-        f"{detail_text}"
     )
 
 

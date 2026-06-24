@@ -1484,6 +1484,9 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
         'trend_strength': np.nan,
         'curve_strength': np.nan,
         'scatter_ratio': np.nan,
+        'zero_offset_strength': np.nan,
+        'sign_imbalance': np.nan,
+        'zero_bias_score': np.nan,
         'trend_score': np.nan,
         'curve_score': np.nan,
         'scatter_stability_score': np.nan,
@@ -1515,26 +1518,43 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
     residuals = residuals[order]
     coordinates = coordinates[order]
 
-    centered = residuals - float(np.nanmedian(residuals))
+    median_residual = float(np.nanmedian(residuals))
+    centered = residuals - median_residual
     scatter = robust_sigma(centered)
     if not np.isfinite(scatter):
         summary['detail'] = "residual scatter unavailable"
         return summary
     if scatter <= np.finfo(float).eps:
+        zero_bias_score = 1.0 if abs(median_residual) <= np.finfo(float).eps else 0.0
         summary.update({
             'available': True,
-            'score': 1.0,
+            'score': zero_bias_score,
             'scatter': float(scatter),
             'trend_strength': 0.0,
             'curve_strength': 0.0,
             'scatter_ratio': 1.0,
+            'zero_offset_strength': 0.0 if zero_bias_score == 1.0 else np.inf,
+            'sign_imbalance': 0.0 if zero_bias_score == 1.0 else 1.0,
+            'zero_bias_score': zero_bias_score,
             'trend_score': 1.0,
             'curve_score': 1.0,
             'scatter_stability_score': 1.0,
-            'dominant': 'flat',
-            'detail': f"flat residuals; n={point_count}",
+            'dominant': 'flat' if zero_bias_score == 1.0 else 'zero bias',
+            'detail': (
+                f"flat residuals; n={point_count}"
+                if zero_bias_score == 1.0
+                else f"zero bias limited, median offset=inf, sign imbalance=1.00, n={point_count}"
+            ),
         })
         return summary
+
+    zero_offset_strength = abs(median_residual) / scatter
+    sign_tolerance = 0.05 * scatter
+    signed = residuals[np.abs(residuals) > sign_tolerance]
+    sign_imbalance = np.nan
+    if signed.size >= max(6, point_count // 3):
+        positive_fraction = float(np.count_nonzero(signed > 0.0) / signed.size)
+        sign_imbalance = float(abs(2.0 * positive_fraction - 1.0))
 
     normalized = centered / scatter
     coordinate_min = float(np.nanmin(coordinates))
@@ -1568,9 +1588,7 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
         ])
         structure_coeff, *_ = np.linalg.lstsq(structure_design, normalized, rcond=None)
         structure_model = structure_design @ structure_coeff
-        raw_structure_strength = float(np.nanstd(structure_model - np.nanmean(structure_model)))
-        expected_noise_projection = float(np.sqrt((structure_design.shape[1] - 1) / max(point_count, 1)))
-        curve_strength = max(0.0, raw_structure_strength - expected_noise_projection)
+        curve_strength = float(np.nanstd(structure_model - np.nanmean(structure_model)))
     except Exception:
         curve_strength = np.nan
 
@@ -1586,13 +1604,7 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
             float(np.nanmedian(normalized[chunk]))
             for chunk in bins
         ], dtype=float)
-        median_bin_size = float(np.nanmedian([chunk.size for chunk in bins]))
-        expected_binned_median_noise = 1.253 / np.sqrt(max(median_bin_size, 1.0))
-        binned_curve_strength = max(
-            0.0,
-            float(np.nanstd(bin_medians - np.nanmedian(bin_medians)))
-            - expected_binned_median_noise,
-        )
+        binned_curve_strength = float(np.nanstd(bin_medians - np.nanmedian(bin_medians)))
 
         bin_sigmas = np.asarray([
             robust_sigma(normalized[chunk] - float(np.nanmedian(normalized[chunk])))
@@ -1630,7 +1642,18 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
         if np.isfinite(scatter_ratio) and scatter_ratio > 0
         else np.nan
     )
+    zero_offset_score = transit_qc_flatness_declining_score(zero_offset_strength, 0.25, 1.25)
+    sign_balance_score = (
+        transit_qc_flatness_declining_score(sign_imbalance, 0.35, 0.85)
+        if np.isfinite(sign_imbalance)
+        else np.nan
+    )
+    zero_bias_score = np.nanmin([
+        value for value in (zero_offset_score, sign_balance_score)
+        if np.isfinite(value)
+    ]) if np.isfinite(zero_offset_score) or np.isfinite(sign_balance_score) else np.nan
     component_scores = {
+        'zero bias': zero_bias_score,
         'trend': trend_score,
         'curvature/sinusoid': curve_score,
         'scatter stability': scatter_stability_score,
@@ -1648,6 +1671,8 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
     score = finite_component_scores[dominant]
     detail_parts = [
         f"{dominant} limited",
+        f"median offset={zero_offset_strength:.2f}" if np.isfinite(zero_offset_strength) else "median offset=n/a",
+        f"sign imbalance={sign_imbalance:.2f}" if np.isfinite(sign_imbalance) else "sign imbalance=n/a",
         f"trend={trend_strength:.2f}" if np.isfinite(trend_strength) else "trend=n/a",
         f"curve={curve_strength:.2f}" if np.isfinite(curve_strength) else "curve=n/a",
         f"scatter ratio={scatter_ratio:.2f}" if np.isfinite(scatter_ratio) else "scatter ratio=n/a",
@@ -1660,6 +1685,9 @@ def transit_qc_residual_flatness_summary(residuals, coordinates=None, min_points
         'trend_strength': trend_strength,
         'curve_strength': curve_strength,
         'scatter_ratio': scatter_ratio,
+        'zero_offset_strength': zero_offset_strength,
+        'sign_imbalance': sign_imbalance,
+        'zero_bias_score': zero_bias_score,
         'trend_score': trend_score,
         'curve_score': curve_score,
         'scatter_stability_score': scatter_stability_score,
@@ -2359,6 +2387,9 @@ def evaluate_transit_detection_qc(fit):
         'residual_flatness_trend_strength': np.nan,
         'residual_flatness_curve_strength': np.nan,
         'residual_flatness_scatter_ratio': np.nan,
+        'residual_flatness_zero_offset_strength': np.nan,
+        'residual_flatness_sign_imbalance': np.nan,
+        'residual_flatness_zero_bias_score': np.nan,
         'residual_flatness_trend_score': np.nan,
         'residual_flatness_curve_score': np.nan,
         'residual_flatness_scatter_stability_score': np.nan,
@@ -2464,6 +2495,14 @@ def evaluate_transit_detection_qc(fit):
     summary['geometry_prior_assumed'] = geometry_prior_assumed
     summary['geometry_prior_assumed_note'] = geometry_prior_assumed_note
     initial_a2 = parameters.get('a2', 0.0)
+    transit_depth_model_obj = getattr(fit, 'transit', None)
+    transit_depth_model = None
+    if transit_depth_model_obj is not None:
+        transit_depth_model = np.asarray(transit_depth_model_obj, dtype=float)
+        if transit_depth_model.shape != data.shape:
+            transit_depth_model = None
+    if transit_depth_model is None:
+        transit_depth_model = transit_model
 
     flat_model = fit_profiled_flat_null_model(
         data,
@@ -2494,7 +2533,7 @@ def evaluate_transit_detection_qc(fit):
         'flat_a2': flat_model.get('a2', np.nan),
         'flat_model_note': flat_model.get('note'),
         'residual_scatter': transit_qc_residual_scatter(data, transit_model),
-        'transit_depth_for_residual_scatter': transit_qc_model_depth_fraction(transit_model),
+        'transit_depth_for_residual_scatter': transit_qc_model_depth_fraction(transit_depth_model),
         'point_count': int(point_count),
     })
     residual_coordinates = getattr(fit, 'phase', None)
@@ -2509,6 +2548,9 @@ def evaluate_transit_detection_qc(fit):
         'residual_flatness_trend_strength': residual_flatness.get('trend_strength', np.nan),
         'residual_flatness_curve_strength': residual_flatness.get('curve_strength', np.nan),
         'residual_flatness_scatter_ratio': residual_flatness.get('scatter_ratio', np.nan),
+        'residual_flatness_zero_offset_strength': residual_flatness.get('zero_offset_strength', np.nan),
+        'residual_flatness_sign_imbalance': residual_flatness.get('sign_imbalance', np.nan),
+        'residual_flatness_zero_bias_score': residual_flatness.get('zero_bias_score', np.nan),
         'residual_flatness_trend_score': residual_flatness.get('trend_score', np.nan),
         'residual_flatness_curve_score': residual_flatness.get('curve_score', np.nan),
         'residual_flatness_scatter_stability_score': residual_flatness.get('scatter_stability_score', np.nan),
@@ -6469,7 +6511,6 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
     if (
         use_prior_rprs_when_posterior_pinned
-        and int(max(0, max_rprs_retries)) <= 0
         and 'rprs' in current_bounds
         and isinstance(rprs_final_diagnostics, dict)
         and rprs_final_diagnostics.get('clipped')
@@ -6510,7 +6551,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             log_info(
                 "Rp/R* posterior is pinned against the "
                 f"{rprs_final_diagnostics.get('edge', 'active')} bound while Rp/R* "
-                "posterior expansion is disabled; rerunning UltraNest with Rp/R* fixed "
+                "posterior expansion is disabled, exhausted, or blocked; rerunning UltraNest with Rp/R* fixed "
                 f"to the input prior ({prior_rprs:.6f}) and using a data-only Rp/R* uncertainty."
             )
             fallback_fit = build_fit(
@@ -6555,7 +6596,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fallback_note = (
                 "Applied Rp/R* prior fallback; the sampled Rp/R* posterior hugged the "
                 f"{rprs_final_diagnostics.get('edge', 'active')} search bound while automatic "
-                "Rp/R* posterior expansion was disabled. EXOTIC reran UltraNest with Rp/R* fixed "
+                "Rp/R* posterior expansion was disabled, exhausted, or blocked. EXOTIC reran UltraNest with Rp/R* fixed "
                 f"to the input prior ({prior_rprs:.6f}) and treats Tmid, a/Rs, and "
                 "impact parameter/inclination as the fitted transit-shape parameters. "
                 "The quoted Rp/R* uncertainty is a data-only red-noise estimate rather than a "
@@ -6581,12 +6622,26 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         final_diagnostics = None
         available = config.get('available')
         config_available = not callable(available) or available(fit, current_bounds)
-        if callable(final_diagnostics_getter) and bounds_key in current_bounds and config_available:
+        prior_fallback_applied = (
+            key == 'rprs'
+            and bool(getattr(fit, 'rprs_prior_fallback_applied', False))
+        )
+        if prior_fallback_applied:
+            final_diagnostics = None
+        elif callable(final_diagnostics_getter) and bounds_key in current_bounds and config_available:
             final_diagnostics = final_diagnostics_getter(diagnostic_key)
         elif latest_diagnostics.get(key) is not None:
             final_diagnostics = latest_diagnostics[key]
 
-        if history:
+        if prior_fallback_applied:
+            fallback_note = getattr(fit, 'rprs_prior_fallback_note', None) or retry_notes.get(key)
+            note = fallback_note
+            if history:
+                note = (
+                    f"Applied {len(history)} automatic {label} posterior range refit(s), "
+                    "then applied the Rp/R* prior fallback."
+                )
+        elif history:
             note = f"Applied {len(history)} automatic {label} posterior range refit(s)."
             if final_diagnostics and final_diagnostics.get('clipped'):
                 retry_label = "retry" if len(history) == 1 else "retries"
@@ -23149,9 +23204,9 @@ def _main_impl():
             log_info("Rp/R* prior-centered search restriction disabled.")
         if use_prior_rprs_fallback_on_pinned_posterior:
             log_info(
-                "Rp/R* pinned-posterior prior fallback enabled: when Rp/R* expansion is disabled "
-                "and the posterior is edge-pinned, EXOTIC reruns with Rp/R* fixed to the input "
-                "prior and quotes a data-only Rp/R* uncertainty."
+                "Rp/R* pinned-posterior prior fallback enabled: when the posterior remains "
+                "edge-pinned after Rp/R* retry handling, EXOTIC reruns with Rp/R* fixed to "
+                "the input prior and quotes a data-only Rp/R* uncertainty."
             )
         else:
             log_info("Rp/R* pinned-posterior prior fallback disabled per optional_info setting.")

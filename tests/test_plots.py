@@ -641,4 +641,5 @@ def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypat
     assert (tmp_path / "KTMF_QC_Target_2026-03-09.pdf").exists()
     assert any("KTMF\n3.07 / 5.00\nMARGINAL" in text for text in captured_text)
     assert any("0.11 / 0.89" in text for text in captured_text)
-    assert any("2.00" in text for text in captured_text)
+    assert not any("2.00" in text for text in captured_text)
+    assert not any("2.3437" in text for text in captured_text)

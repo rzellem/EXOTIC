@@ -269,9 +269,13 @@ def test_rprs_posterior_retry_clamps_to_configured_search_ceiling(monkeypatch):
         bounds,
     )
 
-    assert len(captured["calls"]) == 2
+    assert len(captured["calls"]) == 3
     assert captured["calls"][1]["bounds"]["rprs"][1] == pytest.approx(0.5)
+    assert "rprs" not in captured["calls"][2]["bounds"]
     assert fit.rprs_posterior_refit_bounds[1] == pytest.approx(0.5)
+    assert fit.rprs_posterior_refit_applied is True
+    assert fit.rprs_prior_fallback_applied is True
+    assert fit.parameters["rprs"] == pytest.approx(0.4)
 
 
 def test_rprs_posterior_retry_does_not_escape_configured_prior_range(monkeypatch):
@@ -328,10 +332,13 @@ def test_rprs_posterior_retry_does_not_escape_configured_prior_range(monkeypatch
         bounds,
     )
 
-    assert len(captured["calls"]) == 1
+    assert len(captured["calls"]) == 2
     assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.09, 0.11])
+    assert "rprs" not in captured["calls"][1]["bounds"]
     assert fit.rprs_posterior_refit_applied is False
-    assert "configured prior-centered search range" in fit.rprs_posterior_refit_note
+    assert fit.rprs_prior_fallback_applied is True
+    assert fit.parameters["rprs"] == pytest.approx(0.1)
+    assert "prior fallback" in fit.rprs_prior_fallback_note
 
 
 def test_rprs_restriction_uses_explicit_search_prior_instead_of_refined_prior(monkeypatch):
@@ -495,6 +502,116 @@ def test_pinned_rprs_without_expansion_reruns_with_prior_value_and_data_error(mo
         fit.empirical_transit_uncertainty["data_rprs_uncertainty"]
     )
     assert "prior fallback" in fit.rprs_prior_fallback_note
+
+
+def test_pinned_rprs_after_retry_cap_reruns_with_prior_value(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR", True)
+
+    def fake_transit(call_times, call_prior):
+        call_times = np.asarray(call_times, dtype=float)
+        depth = float(call_prior["rprs"]) ** 2
+        return 1.0 - depth * (np.abs(call_times) <= 0.01)
+
+    monkeypatch.setattr(exotic_module, "transit", fake_transit)
+
+    captured = {"calls": []}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        fixed_parameter_errors=None,
+        **kwargs,
+    ):
+        call_index = len(captured["calls"])
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": {
+                key: list(value) if isinstance(value, (list, tuple, np.ndarray)) else value
+                for key, value in call_bounds.items()
+            },
+            "fixed_parameter_errors": dict(fixed_parameter_errors or {}),
+        })
+        model = fake_transit(call_times, call_prior)
+        fit = types.SimpleNamespace(
+            time=np.asarray(call_times, dtype=float),
+            data=np.asarray(call_flux, dtype=float),
+            dataerr=np.asarray(call_fluxerr, dtype=float),
+            transit=np.asarray(model, dtype=float),
+            model=np.asarray(model, dtype=float),
+            residuals=np.asarray(call_flux, dtype=float) - np.asarray(model, dtype=float),
+            airmass_model=np.ones_like(model),
+            parameters=dict(call_prior),
+            errors=dict(fixed_parameter_errors or {}),
+            fixed_parameter_errors=dict(fixed_parameter_errors or {}),
+        )
+        fit.errors.setdefault("tmid", 0.001)
+        fit.errors.setdefault("ars", 0.1)
+        fit.errors.setdefault("inc", 0.1)
+
+        def diagnostics(key):
+            if key == "rprs" and "rprs" in call_bounds:
+                return {
+                    "clipped": True,
+                    "edge": "upper",
+                    "mode": call_bounds["rprs"][1],
+                    "std": 0.006,
+                    "bounds": [
+                        call_bounds["rprs"][0] + 0.01,
+                        call_bounds["rprs"][1] + 0.01,
+                    ],
+                    "reason": "posterior peaks against the upper search bound.",
+                }
+            return {
+                "clipped": False,
+                "edge": None,
+                "mode": call_prior.get(key, np.nan),
+                "std": 0.001,
+                "bounds": call_bounds.get(key),
+                "reason": "posterior support is comfortably inside the sampled bounds.",
+            }
+
+        fit.get_parameter_posterior_recenter_diagnostics = diagnostics
+        fit.call_index = call_index
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    times = np.linspace(-0.03, 0.03, 9)
+    prior = {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 89.0, "a2": 0.0}
+    flux = fake_transit(times, prior) + np.array([0.0, 0.004, -0.003, 0.002, -0.004, 0.003, -0.002, 0.004, 0.0])
+    fluxerr = np.full(times.shape, 0.003)
+    airmass = np.ones(times.shape)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        times,
+        flux,
+        fluxerr,
+        airmass,
+        {"tmid": 0.0, "rprs": 0.11, "ars": 10.0, "inc": 89.0, "a2": 0.0},
+        {"rprs": [0.09, 0.11], "tmid": [-0.01, 0.01], "ars": [8.0, 12.0], "inc": [84.0, 90.0]},
+        max_rprs_retries=1,
+        max_ars_retries=0,
+        max_impact_parameter_retries=0,
+        search_restriction_prior={"rprs": 0.1, "ars": 10.0},
+    )
+
+    assert len(captured["calls"]) == 3
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.06, 0.16])
+    assert "rprs" not in captured["calls"][2]["bounds"]
+    assert captured["calls"][2]["prior"]["rprs"] == pytest.approx(0.1)
+    assert fit.rprs_prior_fallback_applied is True
+    assert fit.parameters["rprs"] == pytest.approx(0.1)
+    assert "prior fallback" in fit.rprs_prior_fallback_note
+    assert "then applied the Rp/R* prior fallback" in fit.rprs_posterior_refit_note
 
 
 def test_fast_ultranest_option_defaults_enabled_and_parses_false_values():
@@ -1149,7 +1266,7 @@ def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):
                 for key, value in call_bounds.items()
             },
         })
-        return make_fit(diagnostics_sequence[call_index])
+        return make_fit(diagnostics_sequence[min(call_index, len(diagnostics_sequence) - 1)])
 
     monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
 
@@ -1170,9 +1287,10 @@ def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):
     )
 
     assert RPRS_POSTERIOR_MAX_RETRIES_DEFAULT == 5
-    assert len(captured["calls"]) == 6
+    assert len(captured["calls"]) == 7
+    assert "rprs" not in captured["calls"][-1]["bounds"]
     np.testing.assert_allclose(
-        np.asarray([call["bounds"]["rprs"] for call in captured["calls"]], dtype=float),
+        np.asarray([call["bounds"]["rprs"] for call in captured["calls"][:-1]], dtype=float),
         np.asarray([
             [0.0, 0.125],
             [0.108, 0.208],
@@ -1186,7 +1304,9 @@ def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):
     assert fit.rprs_posterior_refit_count == 5
     assert fit.rprs_posterior_refit_edge == "upper"
     assert fit.rprs_posterior_refit_bounds == pytest.approx([0.156, 0.256])
-    assert "after 5 retries" in fit.rprs_posterior_refit_note
+    assert fit.rprs_prior_fallback_applied is True
+    assert fit.parameters["rprs"] == pytest.approx(0.1)
+    assert "prior fallback" in fit.rprs_prior_fallback_note
 
 
 def test_rprs_posterior_retry_expands_bounds_without_hitting_the_old_0p3_cap(monkeypatch):
@@ -1328,13 +1448,15 @@ def test_rprs_posterior_retry_can_continue_above_the_old_maximum_exoplanet_range
         bounds,
     )
 
-    assert len(captured["calls"]) == 2
+    assert len(captured["calls"]) == 3
     assert captured["calls"][0]["prior"]["rprs"] == pytest.approx(0.35)
     assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([RPRS_SEARCH_BOUND_MIN, 0.35])
     assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.275)
     assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.175, 0.375])
+    assert "rprs" not in captured["calls"][2]["bounds"]
     assert fit.rprs_posterior_refit_applied is True
     assert fit.rprs_posterior_refit_count == 1
+    assert fit.rprs_prior_fallback_applied is True
 
 
 def test_rprs_posterior_retry_expands_lower_edge_down_to_zero(monkeypatch):

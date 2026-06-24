@@ -2168,6 +2168,42 @@ def test_transit_qc_residual_scatter_score_full_credit_floor_and_zero_ceiling():
     assert mid_score < transit_qc_residual_scatter_score(0.02, transit_depth)
 
 
+def test_evaluate_transit_detection_qc_uses_transit_component_depth_for_residual_scatter():
+    transit_component = np.ones(21, dtype=float)
+    transit_component[8:13] = 0.984
+    baseline_trend = np.linspace(0.0, 0.04, transit_component.size)
+    full_model = transit_component + baseline_trend
+    data = full_model + np.array(
+        [
+            0.0002, -0.0001, 0.0001, -0.0002, 0.0000, 0.0001, -0.0001,
+            0.0002, -0.0002, 0.0001, -0.0001, 0.0002, -0.0002, 0.0001,
+            0.0000, -0.0001, 0.0002, -0.0001, 0.0001, 0.0000, -0.0001,
+        ],
+        dtype=float,
+    )
+    fit = types.SimpleNamespace(
+        data=data,
+        dataerr=np.full(data.shape[0], 0.0015, dtype=float),
+        model=full_model,
+        transit=transit_component,
+        airmass=np.ones(data.shape[0], dtype=float),
+        airmass_fit_skipped=True,
+        parameters={"rprs": 0.10, "tmid": 0.5, "inc": 89.0, "a2": 0.0},
+        errors={"rprs": 0.01, "tmid": 0.001, "inc": 0.1, "a2": 0.01},
+        bounds={"rprs": [0.0, 1.0], "tmid": [0.4, 0.6], "inc": [80.0, 90.0]},
+        duration_expected=5.0,
+        duration_measured=5.0,
+    )
+
+    summary = evaluate_transit_detection_qc(fit)
+
+    assert summary["computed"] is True
+    assert summary["transit_depth_for_residual_scatter"] == pytest.approx(0.016, abs=5e-4)
+    assert summary["residual_scatter_to_depth_ratio"] == pytest.approx(
+        summary["residual_scatter"] / summary["transit_depth_for_residual_scatter"]
+    )
+
+
 def test_transit_qc_residual_flatness_summary_penalizes_residual_structure():
     phase = np.linspace(-0.05, 0.05, 80)
     alternating_noise = 0.001 * np.where(np.arange(phase.size) % 2 == 0, -1.0, 1.0)
@@ -2181,8 +2217,16 @@ def test_transit_qc_residual_flatness_summary_penalizes_residual_structure():
         alternating_noise + 0.004 * np.sin(2.0 * np.pi * np.linspace(0.0, 1.0, phase.size)),
         phase,
     )
+    smooth_bowl_summary = transit_qc_residual_flatness_summary(
+        alternating_noise + 0.003 * np.maximum(0.0, 1.0 - (phase / 0.02) ** 2),
+        phase,
+    )
     heteroscedastic_summary = transit_qc_residual_flatness_summary(
         alternating_noise * np.r_[np.ones(40), np.full(40, 4.0)],
+        phase,
+    )
+    one_sided_summary = transit_qc_residual_flatness_summary(
+        alternating_noise - 0.003,
         phase,
     )
 
@@ -2192,8 +2236,15 @@ def test_transit_qc_residual_flatness_summary_penalizes_residual_structure():
     assert trend_summary["score"] < 0.5
     assert curve_summary["score"] < flat_summary["score"]
     assert curve_summary["score"] < 0.6
+    assert smooth_bowl_summary["score"] < flat_summary["score"]
+    assert smooth_bowl_summary["score"] < 0.5
+    assert smooth_bowl_summary["dominant"] == "curvature/sinusoid"
     assert heteroscedastic_summary["score"] < flat_summary["score"]
     assert heteroscedastic_summary["score"] < 0.8
+    assert one_sided_summary["score"] < flat_summary["score"]
+    assert one_sided_summary["score"] < 0.4
+    assert one_sided_summary["dominant"] == "zero bias"
+    assert one_sided_summary["sign_imbalance"] > 0.8
 
 
 def test_transit_qc_residual_flatness_summary_tolerates_one_quiet_patch():

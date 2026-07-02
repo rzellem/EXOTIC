@@ -6940,7 +6940,13 @@ def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatc
     assert myfit.airmass_fit_skipped is True
 
 
-def _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_flux_normalization=Ellipsis):
+def _run_main_until_vertical_flux_bound(
+        monkeypatch,
+        tmp_path,
+        disable_vertical_flux_normalization=Ellipsis,
+        random_seed=123,
+        override=True,
+        nasa_result=None):
     import exotic.exotic as exotic_module
 
     class BoundReached(Exception):
@@ -6996,7 +7002,7 @@ def _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_
         "file_time": "BJD_TDB",
         "file_units": "flux",
         "airmass_already_corrected": False,
-        "random_seed": 123,
+        "random_seed": random_seed,
         "date": "2026-03-19",
     }
     if disable_vertical_flux_normalization is not Ellipsis:
@@ -7009,7 +7015,7 @@ def _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_
         reduce=None,
         prereduced=str(tmp_path / "inits.json"),
         photometry=None,
-        override=True,
+        override=override,
         nasaexoarch=False,
         non_interactive_run=True,
         use_nextastro_astrometry=False,
@@ -7030,6 +7036,15 @@ def _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_
 
     monkeypatch.setattr(exotic_module, "parse_args", lambda: args)
     monkeypatch.setattr(exotic_module, "Inputs", FakeInputs)
+    if nasa_result is not None:
+        class FakeNASAExoplanetArchive:
+            def __init__(self, planet):
+                self.planet = planet
+
+            def planet_info(self):
+                return nasa_result
+
+        monkeypatch.setattr(exotic_module, "NASAExoplanetArchive", FakeNASAExoplanetArchive)
     monkeypatch.setattr(
         exotic_module,
         "get_ld_values",
@@ -7062,6 +7077,18 @@ def test_main_prereduced_respects_disable_vertical_flux_normalization_option(mon
     disabled = _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_flux_normalization=True)
 
     assert disabled is True
+
+
+def test_main_prereduced_generates_seed_after_candidate_falls_back_to_inits(monkeypatch, tmp_path):
+    disabled = _run_main_until_vertical_flux_bound(
+        monkeypatch,
+        tmp_path,
+        random_seed=None,
+        override=False,
+        nasa_result=("TOI-3514.01", True, None),
+    )
+
+    assert disabled is False
 
 
 def test_cli_logs_unhandled_exception_once(monkeypatch):

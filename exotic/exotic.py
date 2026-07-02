@@ -23279,25 +23279,6 @@ def _main_impl():
         else:
             pDict = userpDict
             CandidatePlanetBool = False
-        # Seed random number generator (for run to run consistency)
-        if exotic_infoDict['random_seed']:
-            log_info(f"Setting random number seed to {exotic_infoDict['random_seed']}")
-        else:
-            exotic_infoDict['random_seed'] = int.from_bytes(hashlib.sha256(f"{pDict['pName']}:{pDict['midT']}".encode()).digest()[0:4], byteorder='little')
-            log_info(f"Generated random number seed {exotic_infoDict['random_seed']}")
-        np.random.seed(exotic_infoDict['random_seed'])
-
-        if fitsortext == 1:
-            # Only do the dark correction if user selects this option
-            generalDark = process_dark_frames(exotic_infoDict['darks'])
-            generalBias = process_bias_frames(exotic_infoDict['biases'])
-            generalFlat = process_flat_frames(exotic_infoDict['flats'], generalBias)
-
-            if exotic_infoDict['demosaic_fmt']:
-                demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
-            if exotic_infoDict['demosaic_out']:
-                demosaic_out = exotic_infoDict['demosaic_out']     
-            demosaic_mult = calculate_demosaic_mult(demosaic_out)   
 
         if file_cmd_opt == 2:
             if args.nasaexoarch:
@@ -23319,6 +23300,26 @@ def _main_impl():
                     pDict = userpDict
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+
+        # Seed random number generator (for run to run consistency)
+        if exotic_infoDict['random_seed']:
+            log_info(f"Setting random number seed to {exotic_infoDict['random_seed']}")
+        else:
+            exotic_infoDict['random_seed'] = int.from_bytes(hashlib.sha256(f"{pDict['pName']}:{pDict['midT']}".encode()).digest()[0:4], byteorder='little')
+            log_info(f"Generated random number seed {exotic_infoDict['random_seed']}")
+        np.random.seed(exotic_infoDict['random_seed'])
+
+        if fitsortext == 1:
+            # Only do the dark correction if user selects this option
+            generalDark = process_dark_frames(exotic_infoDict['darks'])
+            generalBias = process_bias_frames(exotic_infoDict['biases'])
+            generalFlat = process_flat_frames(exotic_infoDict['flats'], generalBias)
+
+            if exotic_infoDict['demosaic_fmt']:
+                demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
+            if exotic_infoDict['demosaic_out']:
+                demosaic_out = exotic_infoDict['demosaic_out']     
+            demosaic_mult = calculate_demosaic_mult(demosaic_out)   
 
         # check for Nans + Zeros
         for k in pDict:

@@ -13143,6 +13143,59 @@ def nextastro_photometry_band_candidates(obs_filter):
     return candidates
 
 
+def aavso_vsp_band_for_filter(obs_filter):
+    filter_key = normalize_nextastro_filter_key(obs_filter)
+    direct_map = {
+        'u': 'U',
+        'johnsonu': 'U',
+        'bu': 'U',
+        'b': 'B',
+        'johnsonb': 'B',
+        'photographicb': 'B',
+        'bb': 'B',
+        'pb': 'B',
+        'v': 'V',
+        'johnsonv': 'V',
+        'bv': 'V',
+        'cv': 'V',
+        'clearv': 'V',
+        'clearunfilteredreducedtovsequence': 'V',
+        'mobscv': 'V',
+        'c': 'V',
+        'clear': 'V',
+        'lum': 'V',
+        'luminance': 'V',
+        'r': 'Rc',
+        'rc': 'Rc',
+        'cousinsr': 'Rc',
+        'clearunfilteredreducedtorsequence': 'Rc',
+        'cr': 'Rc',
+        'i': 'Ic',
+        'ic': 'Ic',
+        'cousinsi': 'Ic',
+        'su': 'SU',
+        'sloanu': 'SU',
+        'up': 'SU',
+        'sg': 'SG',
+        'sloang': 'SG',
+        'sdssg': 'SG',
+        'gp': 'SG',
+        'sr': 'SR',
+        'sloanr': 'SR',
+        'sdssr': 'SR',
+        'rp': 'SR',
+        'si': 'SI',
+        'sloani': 'SI',
+        'sdssi': 'SI',
+        'ip': 'SI',
+        'sz': 'SZ',
+        'sloanz': 'SZ',
+        'sdssz': 'SZ',
+        'zp': 'SZ',
+    }
+    return direct_map.get(filter_key, obs_filter)
+
+
 def nextastro_catalog_rows(catalog_response):
     if not isinstance(catalog_response, dict):
         return []
@@ -14071,10 +14124,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
     data = result.json()
     chart_id = data['chartid']
 
-    if obs_filter == "CV":
-        obs_filter = "V"
-    elif obs_filter == "R":
-        obs_filter = "Rc"
+    obs_filter = aavso_vsp_band_for_filter(obs_filter)
 
     if data['photometry']:
         for star in data['photometry']:

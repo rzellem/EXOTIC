@@ -581,21 +581,26 @@ def _finite_plot_float(value):
 def _stellar_variability_reference_label(vsp_param, comparison_label):
     comp_ra = _finite_plot_float(vsp_param.get('comp_ra'))
     comp_dec = _finite_plot_float(vsp_param.get('comp_dec'))
+    details = []
+    comparison_label = str(comparison_label).strip() if comparison_label else ""
+
+    if comparison_label and not comparison_label.lower().startswith("ra="):
+        details.append(f"Label: {comparison_label}")
 
     if comp_ra is not None and comp_dec is not None:
-        return f"RA={comp_ra:.6f}, Dec={comp_dec:.6f}"
+        details.append(f"RA={comp_ra:.6f}, Dec={comp_dec:.6f}")
 
-    return str(comparison_label) if comparison_label else ""
+    if not details and comparison_label:
+        details.append(comparison_label)
+
+    return " | ".join(details)
 
 
-def _stellar_variability_aavso_assumption_label(vsp_param):
-    if not vsp_param.get('is_aavso_vsp', True):
-        return ""
-
+def _stellar_variability_comparison_metadata_label(vsp_param):
     details = []
     observed_filter = vsp_param.get('observed_filter')
     if observed_filter:
-        details.append(f"Observed filter: {observed_filter}")
+        details.append(f"Original filter: {observed_filter}")
 
     comparison_mag = magnitude_text(
         vsp_param.get('mag_band') or 'V',
@@ -603,7 +608,7 @@ def _stellar_variability_aavso_assumption_label(vsp_param):
         vsp_param.get('cmag_err'),
     )
     if comparison_mag is not None:
-        details.append(f"Assumed comparison: {comparison_mag}")
+        details.append(f"Comparison mag: {comparison_mag}")
 
     return " | ".join(details)
 
@@ -631,10 +636,10 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     title_lines = [s_name]
     if reference_label:
         title_lines.append(reference_label)
-    assumption_label = _stellar_variability_aavso_assumption_label(first_param)
-    if assumption_label:
-        title_lines.append(assumption_label)
-    ax.set_title("\n".join(title_lines))
+    metadata_label = _stellar_variability_comparison_metadata_label(first_param)
+    if metadata_label:
+        title_lines.append(metadata_label)
+    ax.set_title("\n".join(title_lines), fontsize=11)
     ax.set_ylabel(f"Magnitude ({band})")
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()

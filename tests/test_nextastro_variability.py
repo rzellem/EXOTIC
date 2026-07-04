@@ -333,6 +333,13 @@ def test_nextastro_photometry_catalog_match_rejects_separations_over_two_arcsec(
     assert match is None
 
 
+def test_aavso_vsp_band_for_filter_uses_observed_filter_aliases():
+    assert exotic_module.aavso_vsp_band_for_filter('MObs CV') == 'V'
+    assert exotic_module.aavso_vsp_band_for_filter('Clear (unfiltered) reduced to V sequence') == 'V'
+    assert exotic_module.aavso_vsp_band_for_filter('Cousins R') == 'Rc'
+    assert exotic_module.aavso_vsp_band_for_filter('Sloan g') == 'SG'
+
+
 def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
@@ -404,7 +411,7 @@ def test_vsp_query_rejects_band_errors_over_limit(monkeypatch):
     vsp_comp_stars, chart_id = exotic_module.vsp_query(
         'frame.fits',
         [100, 100],
-        'CV',
+        'MObs CV',
         1.0,
         user_comp_stars=user_comp_stars,
         user_targ_star=[10, 10],

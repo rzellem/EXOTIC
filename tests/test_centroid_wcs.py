@@ -1173,11 +1173,22 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
         obs_filter="V",
         field_catalog=catalog,
         count=2,
+        colour_term_metadata={
+            "term": 0.2,
+            "term_error": 0.01,
+            "term_index": "B-V",
+        },
     )
 
     assert comp_stars[0] == [220.0, 220.0]
     assert [candidate["color_delta"] for candidate in candidates] == sorted(
         candidate["color_delta"] for candidate in candidates
+    )
+    assert candidates[0]["expected_colour_mismatch_mag"] == pytest.approx(
+        0.2 * candidates[0]["color_delta"]
+    )
+    assert candidates[0]["colour_term_uncertainty_mag"] == pytest.approx(
+        0.01 * candidates[0]["color_delta"]
     )
     assert all(0.5 <= candidate["brightness_ratio"] <= 2.0 for candidate in candidates)
 

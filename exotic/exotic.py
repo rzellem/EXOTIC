@@ -278,6 +278,26 @@ FINAL_RESIDUAL_REJECTION_DEFAULT = True
 FINAL_RESIDUAL_REJECTION_SIGMA = 3.0
 FINAL_RESIDUAL_REJECTION_MAX_CLIP_ITERS = 10
 FINAL_RESIDUAL_REJECTION_MAX_REFITS = 10
+NOISE_BUDGET_COMPONENT_KEYS = (
+    'source',
+    'sky_aperture',
+    'sky_estimate',
+    'read',
+    'dark',
+    'flat',
+    'scintillation',
+    'total',
+)
+NOISE_BUDGET_SKY_MEDIAN_VARIANCE_FACTOR = np.pi / 2.0
+SCINTILLATION_COEFFICIENT_DEFAULT = 0.09
+PSF_EFFECTIVE_NOISE_AREA_FACTOR = 4.0 * np.pi
+NOISE_GAIN_HEADER_KEYS = ('GAIN', 'EGAIN', 'EPERADU', 'E_PER_ADU', 'GAIN_EAD', 'CCDGAIN')
+NOISE_READ_HEADER_KEYS = ('RDNOISE', 'READNOI', 'READNOIS', 'READNSE', 'RN_E', 'RON')
+NOISE_DARK_HEADER_KEYS = ('DARKCUR', 'DARKCURR', 'DARKRATE', 'DCURR', 'DARK_EPS', 'PBDKCURR')
+NOISE_FLAT_HEADER_KEYS = ('FLATERR', 'FLATFR', 'FLATFRAC', 'FFERR', 'FLATUNC')
+NOISE_SCINTILLATION_HEADER_KEYS = ('SCINCOEF', 'SCINTC')
+NOISE_APERTURE_HEADER_KEYS = ('TELAPER', 'APERTURE')
+NOISE_APERTURE_MM_HEADER_KEYS = ('APR-DIA', 'APTDIA', 'APERTMM')
 COMPARISON_PREFLIGHT_FIELD_SCORE_RELATIVE_BAND = 0.25
 COMPARISON_PREFLIGHT_FIELD_SCORE_ABSOLUTE_BAND = 2.5e-4
 PARTIAL_COVERAGE_RPRS_POSTERIOR_MAX_RETRIES = 1
@@ -936,6 +956,9 @@ def annotate_selected_photometry_debug(
     comp_flux,
     raw_ratio,
     initial_sigma_keep_mask,
+    target_flux_error=None,
+    comp_flux_error=None,
+    relative_flux_error=None,
     prefit_raw_ratio_keep_mask=None,
     phase_clip_keep_mask_on_sigma_filtered=None,
 ):
@@ -964,6 +987,12 @@ def annotate_selected_photometry_debug(
         'target_flux': np.asarray(target_flux, dtype=float).copy(),
         'comp_flux': np.asarray(comp_flux, dtype=float).copy(),
         'raw_ratio': np.asarray(raw_ratio, dtype=float).copy(),
+        'target_flux_error': np.asarray(target_flux_error, dtype=float).copy()
+        if target_flux_error is not None else np.full(sigma_keep_mask.shape, np.nan, dtype=float),
+        'comp_flux_error': np.asarray(comp_flux_error, dtype=float).copy()
+        if comp_flux_error is not None else np.full(sigma_keep_mask.shape, np.nan, dtype=float),
+        'relative_flux_error': np.asarray(relative_flux_error, dtype=float).copy()
+        if relative_flux_error is not None else np.full(sigma_keep_mask.shape, np.nan, dtype=float),
         'initial_sigma_keep_mask': sigma_keep_mask.copy(),
         'prefit_raw_ratio_keep_mask': raw_ratio_keep_mask.copy(),
         'phase_clip_keep_mask_on_sigma_filtered': phase_keep_mask.copy(),
@@ -3340,6 +3369,7 @@ def widen_rprs_bounds_to_data_uncertainty_window(bounds, prior):
 
 def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_flux, airmass,
                                                        jd_times=None, adaptive_summary=None,
+                                                       target_flux_error=None, comp_flux_error=None,
                                                        expected_transit_depth=None):
     result = {
         'applied': False,
@@ -3349,6 +3379,9 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'debug_target_flux': np.array([], dtype=float),
         'debug_comp_flux': np.array([], dtype=float),
         'debug_raw_ratio': np.array([], dtype=float),
+        'debug_target_flux_error': np.array([], dtype=float),
+        'debug_comp_flux_error': np.array([], dtype=float),
+        'debug_relative_flux_error': np.array([], dtype=float),
         'initial_sigma_keep_mask': np.array([], dtype=bool),
         'prefit_raw_ratio_keep_mask': np.array([], dtype=bool),
         'time': np.array([], dtype=float),
@@ -3358,6 +3391,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'jd_time': np.array([], dtype=float),
         'target_flux': np.array([], dtype=float),
         'comp_flux': np.array([], dtype=float),
+        'target_flux_error': np.array([], dtype=float),
+        'comp_flux_error': np.array([], dtype=float),
         'source_indices': np.array([], dtype=int),
     }
 
@@ -3366,6 +3401,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         target_flux,
         comp_flux,
         airmass,
+        target_flux_error=target_flux_error,
+        comp_flux_error=comp_flux_error,
         jd_times=jd_times,
         expected_transit_depth=expected_transit_depth,
     )
@@ -3375,6 +3412,9 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'debug_target_flux',
         'debug_comp_flux',
         'debug_raw_ratio',
+        'debug_target_flux_error',
+        'debug_comp_flux_error',
+        'debug_relative_flux_error',
         'initial_sigma_keep_mask',
         'prefit_raw_ratio_keep_mask',
     ):
@@ -3394,6 +3434,12 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
     good_jd_times = np.asarray(prepared['jd_time'], dtype=float)
     good_target_flux = np.asarray(prepared['target_flux'], dtype=float)
     good_comp_flux = np.asarray(prepared['comp_flux'], dtype=float)
+    good_target_flux_error = np.asarray(prepared.get('target_flux_error', []), dtype=float)
+    good_comp_flux_error = np.asarray(prepared.get('comp_flux_error', []), dtype=float)
+    if good_target_flux_error.shape != good_target_flux.shape:
+        good_target_flux_error = np.full(good_target_flux.shape, np.nan, dtype=float)
+    if good_comp_flux_error.shape != good_comp_flux.shape:
+        good_comp_flux_error = np.full(good_comp_flux.shape, np.nan, dtype=float)
     source_indices = np.asarray(prepared['source_indices'], dtype=int)
 
     adaptive_clip_mask = np.zeros(good_times.shape[0], dtype=bool)
@@ -3431,6 +3477,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         good_jd_times = good_jd_times[~adaptive_clip_mask]
         good_target_flux = good_target_flux[~adaptive_clip_mask]
         good_comp_flux = good_comp_flux[~adaptive_clip_mask]
+        good_target_flux_error = good_target_flux_error[~adaptive_clip_mask]
+        good_comp_flux_error = good_comp_flux_error[~adaptive_clip_mask]
         source_indices = source_indices[~adaptive_clip_mask]
 
     relative_flux_mask = relative_flux_filter_mask(good_flux)
@@ -3450,6 +3498,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'jd_time': good_jd_times[relative_flux_mask],
         'target_flux': good_target_flux[relative_flux_mask],
         'comp_flux': good_comp_flux[relative_flux_mask],
+        'target_flux_error': good_target_flux_error[relative_flux_mask],
+        'comp_flux_error': good_comp_flux_error[relative_flux_mask],
         'source_indices': source_indices[relative_flux_mask],
     })
     return result
@@ -3716,6 +3766,7 @@ def score_comparison_candidate_lightcurve_scout(prepared_series, eebls_summary, 
 
 
 def build_comparison_candidate_preflight(times, jd_times, airmass, ld, p_dict, target_flux, comp_flux,
+                                         target_flux_error=None, comp_flux_error=None,
                                          adaptive_summary=None, use_eebls_to_initialize_tmid_and_bounds=True):
     prepared = prepare_comparison_candidate_full_reduction_series(
         times,
@@ -3724,6 +3775,8 @@ def build_comparison_candidate_preflight(times, jd_times, airmass, ld, p_dict, t
         airmass,
         jd_times=jd_times,
         adaptive_summary=adaptive_summary,
+        target_flux_error=target_flux_error,
+        comp_flux_error=comp_flux_error,
         expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
     )
     try:
@@ -3890,6 +3943,8 @@ def match_time_subset_indices(full_times, subset_times, rtol=1e-10, atol=1e-10):
 
 def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, airmass, ld, p_dict,
                                                  jd_times=None,
+                                                 target_flux_error=None,
+                                                 comp_flux_error=None,
                                                  disable_vertical_flux_normalization=False,
                                                  detrend_on_outoftransit_baseline=True,
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
@@ -3911,6 +3966,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         'good_jd_times': np.array([], dtype=float),
         'good_target_flux': np.array([], dtype=float),
         'good_comp_flux': np.array([], dtype=float),
+        'good_target_flux_error': np.array([], dtype=float),
+        'good_comp_flux_error': np.array([], dtype=float),
         'source_indices': np.array([], dtype=int),
         'data_highres': None,
         'duration_samples': np.array([], dtype=float),
@@ -3926,6 +3983,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             airmass,
             jd_times=jd_times,
             adaptive_summary=adaptive_summary,
+            target_flux_error=target_flux_error,
+            comp_flux_error=comp_flux_error,
             expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
         )
     else:
@@ -3945,6 +4004,12 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     good_jd_times = np.asarray(prepared['jd_time'], dtype=float)
     good_target_flux = np.asarray(prepared['target_flux'], dtype=float)
     good_comp_flux = np.asarray(prepared['comp_flux'], dtype=float)
+    good_target_flux_error = np.asarray(prepared.get('target_flux_error', []), dtype=float)
+    good_comp_flux_error = np.asarray(prepared.get('comp_flux_error', []), dtype=float)
+    if good_target_flux_error.shape != good_target_flux.shape:
+        good_target_flux_error = np.full(good_target_flux.shape, np.nan, dtype=float)
+    if good_comp_flux_error.shape != good_comp_flux.shape:
+        good_comp_flux_error = np.full(good_comp_flux.shape, np.nan, dtype=float)
     source_indices = np.asarray(prepared['source_indices'], dtype=int)
 
     prior = build_comparison_candidate_transit_prior(p_dict, ld)
@@ -4037,6 +4102,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_jd_times = good_jd_times[~phase_clip_mask]
             good_target_flux = good_target_flux[~phase_clip_mask]
             good_comp_flux = good_comp_flux[~phase_clip_mask]
+            good_target_flux_error = good_target_flux_error[~phase_clip_mask]
+            good_comp_flux_error = good_comp_flux_error[~phase_clip_mask]
             source_indices = source_indices[~phase_clip_mask]
 
     full_good_times = np.asarray(good_times, dtype=float)
@@ -4046,6 +4113,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     full_good_jd_times = np.asarray(good_jd_times, dtype=float)
     full_good_target_flux = np.asarray(good_target_flux, dtype=float)
     full_good_comp_flux = np.asarray(good_comp_flux, dtype=float)
+    full_good_target_flux_error = np.asarray(good_target_flux_error, dtype=float)
+    full_good_comp_flux_error = np.asarray(good_comp_flux_error, dtype=float)
     full_source_indices = np.asarray(source_indices, dtype=int)
 
     fast_binning = {'applied': False, 'note': None}
@@ -4124,6 +4193,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_jd_times = good_jd_times[final_time_indices]
             good_target_flux = good_target_flux[final_time_indices]
             good_comp_flux = good_comp_flux[final_time_indices]
+            good_target_flux_error = good_target_flux_error[final_time_indices]
+            good_comp_flux_error = good_comp_flux_error[final_time_indices]
             source_indices = source_indices[final_time_indices]
 
     if run_final_residual_rejection and not fast_binning.get('applied'):
@@ -4177,6 +4248,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             clipped_jd_times = good_jd_times[residual_keep_mask]
             clipped_target_flux = good_target_flux[residual_keep_mask]
             clipped_comp_flux = good_comp_flux[residual_keep_mask]
+            clipped_target_flux_error = good_target_flux_error[residual_keep_mask]
+            clipped_comp_flux_error = good_comp_flux_error[residual_keep_mask]
             clipped_source_indices = source_indices[residual_keep_mask]
 
             residual_refit_prior = dict(fit_prior)
@@ -4268,6 +4341,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_jd_times = clipped_jd_times
             good_target_flux = clipped_target_flux
             good_comp_flux = clipped_comp_flux
+            good_target_flux_error = clipped_target_flux_error
+            good_comp_flux_error = clipped_comp_flux_error
             source_indices = clipped_source_indices
         else:
             residual_stop_reason = 'max_refits'
@@ -4304,6 +4379,9 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         prepared['debug_comp_flux'],
         prepared['debug_raw_ratio'],
         prepared['initial_sigma_keep_mask'],
+        target_flux_error=prepared.get('debug_target_flux_error'),
+        comp_flux_error=prepared.get('debug_comp_flux_error'),
+        relative_flux_error=prepared.get('debug_relative_flux_error'),
         prefit_raw_ratio_keep_mask=prepared.get('prefit_raw_ratio_keep_mask'),
         phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
     )
@@ -4319,6 +4397,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         'good_jd_times': full_good_jd_times if fast_binning.get('applied') else np.asarray(good_jd_times, dtype=float),
         'good_target_flux': full_good_target_flux if fast_binning.get('applied') else np.asarray(good_target_flux, dtype=float),
         'good_comp_flux': full_good_comp_flux if fast_binning.get('applied') else np.asarray(good_comp_flux, dtype=float),
+        'good_target_flux_error': full_good_target_flux_error if fast_binning.get('applied') else np.asarray(good_target_flux_error, dtype=float),
+        'good_comp_flux_error': full_good_comp_flux_error if fast_binning.get('applied') else np.asarray(good_comp_flux_error, dtype=float),
         'source_indices': full_source_indices if fast_binning.get('applied') else np.asarray(source_indices, dtype=int),
         'fast_ultranest_binning': fast_binning,
         'fast_fit_good_times': np.asarray(fit_times, dtype=float),
@@ -4477,6 +4557,8 @@ def refit_selected_fast_comparison_on_full_lightcurve(
 
     target_flux_values = aligned_selected_array('good_target_flux')
     comp_flux_values = aligned_selected_array('good_comp_flux')
+    target_flux_error_values = aligned_selected_array('good_target_flux_error')
+    comp_flux_error_values = aligned_selected_array('good_comp_flux_error')
     source_indices = aligned_selected_array('source_indices', dtype=int)
 
     prior = build_full_resolution_final_prior_from_previous_fit(previous_fit, p_dict)
@@ -4662,6 +4744,12 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             retained_comp_flux_values = (
                 None if comp_flux_values is None else comp_flux_values[residual_keep_mask]
             )
+            retained_target_flux_error_values = (
+                None if target_flux_error_values is None else target_flux_error_values[residual_keep_mask]
+            )
+            retained_comp_flux_error_values = (
+                None if comp_flux_error_values is None else comp_flux_error_values[residual_keep_mask]
+            )
             retained_source_indices = (
                 None if source_indices is None else source_indices[residual_keep_mask]
             )
@@ -4761,6 +4849,8 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             jd_times = retained_jd_times
             target_flux_values = retained_target_flux_values
             comp_flux_values = retained_comp_flux_values
+            target_flux_error_values = retained_target_flux_error_values
+            comp_flux_error_values = retained_comp_flux_error_values
             source_indices = retained_source_indices
             pre_ultranest_coverage_assessment = residual_coverage_assessment
         else:
@@ -4858,6 +4948,12 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     if comp_flux_values is not None:
         selected_result['good_comp_flux'] = np.asarray(comp_flux_values, dtype=float)
         selected_result['cflux_fit'] = np.asarray(comp_flux_values, dtype=float)
+    if target_flux_error_values is not None:
+        selected_result['good_target_flux_error'] = np.asarray(target_flux_error_values, dtype=float)
+        selected_result['tflux_fit_error'] = np.asarray(target_flux_error_values, dtype=float)
+    if comp_flux_error_values is not None:
+        selected_result['good_comp_flux_error'] = np.asarray(comp_flux_error_values, dtype=float)
+        selected_result['cflux_fit_error'] = np.asarray(comp_flux_error_values, dtype=float)
     if source_indices is not None:
         selected_result['source_indices'] = np.asarray(source_indices, dtype=int)
     annotate_transit_detection_qc(fit)
@@ -5112,6 +5208,18 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
     target_flux = np.asarray(debug.get('target_flux'), dtype=float)
     comp_flux = np.asarray(debug.get('comp_flux'), dtype=float)
     raw_ratio = np.asarray(debug.get('raw_ratio'), dtype=float)
+    target_flux_error = np.asarray(
+        debug.get('target_flux_error', np.full(times.shape, np.nan)),
+        dtype=float,
+    )
+    comp_flux_error = np.asarray(
+        debug.get('comp_flux_error', np.full(times.shape, np.nan)),
+        dtype=float,
+    )
+    relative_flux_error = np.asarray(
+        debug.get('relative_flux_error', np.full(times.shape, np.nan)),
+        dtype=float,
+    )
     initial_sigma_keep_mask = np.asarray(debug.get('initial_sigma_keep_mask'), dtype=bool)
     prefit_raw_ratio_keep_mask = np.asarray(
         debug.get('prefit_raw_ratio_keep_mask', np.ones(initial_sigma_keep_mask.shape)),
@@ -5129,6 +5237,12 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
         times.shape == target_flux.shape == comp_flux.shape == raw_ratio.shape == initial_sigma_keep_mask.shape
     ):
         return None
+    if target_flux_error.shape != times.shape:
+        target_flux_error = np.full(times.shape, np.nan, dtype=float)
+    if comp_flux_error.shape != times.shape:
+        comp_flux_error = np.full(times.shape, np.nan, dtype=float)
+    if relative_flux_error.shape != times.shape:
+        relative_flux_error = np.full(times.shape, np.nan, dtype=float)
     if prefit_raw_ratio_keep_mask.shape != initial_sigma_keep_mask.shape:
         prefit_raw_ratio_keep_mask = np.ones(initial_sigma_keep_mask.shape, dtype=bool)
 
@@ -5154,6 +5268,9 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
             target_flux,
             comp_flux,
             raw_ratio,
+            target_flux_error,
+            comp_flux_error,
+            relative_flux_error,
             initial_sigma_keep_mask.astype(int),
             prefit_raw_ratio_keep_mask.astype(int),
             phase_keep_full.astype(int),
@@ -5165,11 +5282,12 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
         delimiter=",",
         header=(
             "BJD_TDB,Target Flux,Comp Flux,Raw Ratio,"
+            "Target Flux Error,Comp Flux Error,Relative Flux Error,"
             "Kept After Initial Sigma Clip,Kept After Pre-Fit Raw Ratio Clip,"
             "Kept After Phase Residual Clip"
         ),
         comments="",
-        fmt=["%.8f", "%.8f", "%.8f", "%.8f", "%d", "%d", "%d"],
+        fmt=["%.8f", "%.8f", "%.8f", "%.8f", "%.8f", "%.8f", "%.8f", "%d", "%d", "%d"],
     )
     return output_path
 
@@ -7167,6 +7285,84 @@ def psf_flux_series_from_rows(psf_rows, quality_mask=None):
     if quality_mask is not None:
         flux = mask_series_with_quality(flux, quality_mask)
     return flux
+
+
+def initialize_psf_noise_data(frame_count, comp_star_count):
+    psf_noise_data = {'target': np.full(int(frame_count), np.nan, dtype=float)}
+    for component in NOISE_BUDGET_COMPONENT_KEYS:
+        psf_noise_data[f"target_noise_{component}"] = np.full(int(frame_count), np.nan, dtype=float)
+    for comp_idx in range(comp_star_count):
+        ckey = f"comp{comp_idx + 1}"
+        psf_noise_data[ckey] = np.full(int(frame_count), np.nan, dtype=float)
+        for component in NOISE_BUDGET_COMPONENT_KEYS:
+            psf_noise_data[f"{ckey}_noise_{component}"] = np.full(int(frame_count), np.nan, dtype=float)
+    return psf_noise_data
+
+
+def compute_psf_noise_budget_for_row(data, psf_row, star_index, noise_config=None,
+                                     exposure_s=np.nan, airmass=np.nan, fallback_sigma=np.nan,
+                                     fast_mode=False):
+    psf_row = np.asarray(psf_row, dtype=float).reshape(-1)
+    empty_budget = {component: np.nan for component in NOISE_BUDGET_COMPONENT_KEYS}
+    if psf_row.shape[0] < 5:
+        return empty_budget
+    xc, yc = psf_row[0], psf_row[1]
+    sigma_x, sigma_y = psf_row[3], psf_row[4]
+    if not (
+        np.isfinite(xc)
+        and np.isfinite(yc)
+        and np.isfinite(sigma_x)
+        and np.isfinite(sigma_y)
+        and sigma_x > 0
+        and sigma_y > 0
+    ):
+        return empty_budget
+
+    flux = psf_flux_series_from_rows(psf_row.reshape(1, -1))[0]
+    sigma = psf_sigma_from_fit(psf_row, fallback_sigma=fallback_sigma)
+    if not np.isfinite(sigma) or sigma <= 0:
+        sigma = max(float(np.sqrt(sigma_x * sigma_y)), 1.0)
+    effective_pixels = max(PSF_EFFECTIVE_NOISE_AREA_FACTOR * sigma_x * sigma_y, 1.0)
+    psf_aperture_radius = max(2.5 * sigma, 1.0)
+    psf_annulus_width = max(5.0 * sigma, 3.0)
+    try:
+        sky_geometry = resolve_sky_annulus_geometry(
+            psf_aperture_radius,
+            psf_annulus_width,
+            psf_sigma=sigma,
+        )
+        _, sigmabg, n_sky = skybg_phot(
+            data,
+            star_index,
+            xc,
+            yc,
+            sky_geometry['inner_radius'],
+            sky_geometry['annulus_width'],
+            fast_mode=fast_mode,
+        )
+    except Exception:
+        sigmabg = np.nan
+        n_sky = np.nan
+
+    return compute_photometry_noise_budget(
+        flux,
+        sigmabg,
+        effective_pixels,
+        n_sky,
+        exposure_s=exposure_s,
+        airmass=airmass,
+        noise_config=noise_config,
+    )
+
+
+def store_psf_noise_budget(psf_noise_data, key, frame_index, budget):
+    if not isinstance(psf_noise_data, dict) or key not in psf_noise_data:
+        return
+    psf_noise_data[key][frame_index] = budget.get('total', np.nan)
+    for component in NOISE_BUDGET_COMPONENT_KEYS:
+        component_key = f"{key}_noise_{component}"
+        if component_key in psf_noise_data:
+            psf_noise_data[component_key][frame_index] = budget.get(component, np.nan)
 
 
 def psf_flux_data_source(psf_data, psf_flux_data=None):
@@ -11330,11 +11526,173 @@ def log_lightcurve_filter_diagnostics(diagnostics, header="Lightcurve frame reje
             log_info(f"  {diagnostic_text}")
 
 
+EXPOSURE_TIME_HEADER_KEYS = ("EXPTIME", "EFFEXPT", "EXPOSURE", "EXP", "REQTIME", "EXPREQ")
+BJD_TDB_MID_EXPOSURE_HEADER_KEYS = ("BJD_TDB", "BJD_TBD", "BJD-TDB", "BJD-MID", "TDB-MID", "BJD", "TDB")
+JD_MID_EXPOSURE_HEADER_KEYS = ("JD-MID",)
+MJD_MID_EXPOSURE_HEADER_KEYS = ("MJD-MID",)
+UTC_MID_EXPOSURE_HEADER_KEYS = ("DATE-AVG", "DATE-MID")
+JD_START_EXPOSURE_HEADER_KEYS = ("JD-START", "JD", "JULIAN")
+MJD_START_EXPOSURE_HEADER_KEYS = ("MJD-OBS", "MJD")
+UTC_START_EXPOSURE_HEADER_KEYS = ("DATE-UTC", "DATE-BEG", "DATE-OBS", "UT-OBS")
+UTC_END_EXPOSURE_HEADER_KEYS = ("DATE-END", "END-OBS")
+EXPOSURE_VARIATION_REQUIRE_COMP_STAR_FRACTION = 0.01
+
+
+def header_scalar_value(value):
+    if isinstance(value, tuple) and value:
+        return value[0]
+    return value
+
+
+def finite_header_float(value):
+    value = header_scalar_value(value)
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().upper() in ("", "UNKNOWN", "N/A", "NA", "NULL", "NONE"):
+        return None
+    try:
+        numeric_value = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return numeric_value if np.isfinite(numeric_value) else None
+
+
+def first_header_float(hdr, keys):
+    for key in keys:
+        if key not in hdr:
+            continue
+        numeric_value = finite_header_float(hdr[key])
+        if numeric_value is not None:
+            return key, numeric_value
+    return None, None
+
+
+def header_comment_text(hdr, key):
+    try:
+        return str(hdr.comments[key])
+    except Exception:
+        return ""
+
+
+def exposure_time_spread_fraction(exptimes):
+    values = np.asarray(exptimes, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size < 2:
+        return 0.0
+    spread = float(np.nanmax(values) - np.nanmin(values))
+    if spread <= 0:
+        return 0.0
+    reference = float(np.nanmedian(values))
+    if not np.isfinite(reference) or reference <= 0:
+        return np.inf
+    return spread / reference
+
+
+def exposure_variation_requires_comp_star(exptimes, threshold_fraction=EXPOSURE_VARIATION_REQUIRE_COMP_STAR_FRACTION):
+    spread_fraction = exposure_time_spread_fraction(exptimes)
+    return (np.isfinite(spread_fraction) and spread_fraction > threshold_fraction) or np.isinf(spread_fraction)
+
+
+def resolve_require_comp_star_for_exposure_times(config_value, exptimes):
+    require_comp_star = is_comp_star_required(config_value)
+    if exposure_variation_requires_comp_star(exptimes):
+        spread_percent = 100.0 * exposure_time_spread_fraction(exptimes)
+        if not require_comp_star:
+            log_info(
+                "Exposure times vary by more than 1% across retained frames "
+                f"({spread_percent:.2f}%); requiring a comparison star for this reduction.",
+                warn=True,
+            )
+        return True
+    return require_comp_star
+
+
+def parse_header_datetime_to_jd(hdr, key):
+    if key not in hdr:
+        return None
+
+    value = header_scalar_value(hdr[key])
+    if value is None:
+        return None
+
+    value_text = str(value).strip()
+    if not value_text:
+        return None
+
+    if key == "DATE-OBS" and "T" not in value_text and "TIME-OBS" in hdr:
+        value_text = f"{value_text}T{header_scalar_value(hdr['TIME-OBS'])}"
+    elif key == "UT-OBS" and "DATE-OBS" in hdr and "T" not in value_text:
+        date_text = str(header_scalar_value(hdr["DATE-OBS"])).strip().split("T")[0]
+        value_text = f"{date_text}T{value_text}"
+
+    try:
+        dt = dup.parse(value_text)
+        return Time(dt).jd
+    except Exception:
+        return None
+
+
+def first_header_datetime_jd(hdr, keys):
+    for key in keys:
+        jd_value = parse_header_datetime_to_jd(hdr, key)
+        if jd_value is not None and np.isfinite(jd_value):
+            return key, float(jd_value)
+    return None, None
+
+
+def direct_bjd_tdb_mid_exposure(hdr):
+    return first_header_float(hdr, BJD_TDB_MID_EXPOSURE_HEADER_KEYS)
+
+
+def utc_mid_exposure_jd(hdr):
+    key, jd_mid = first_header_float(hdr, JD_MID_EXPOSURE_HEADER_KEYS)
+    if jd_mid is not None:
+        return key, jd_mid
+
+    key, mjd_mid = first_header_float(hdr, MJD_MID_EXPOSURE_HEADER_KEYS)
+    if mjd_mid is not None:
+        return key, mjd_mid + 2400000.5
+
+    return first_header_datetime_jd(hdr, UTC_MID_EXPOSURE_HEADER_KEYS)
+
+
+def utc_start_exposure_jd(hdr):
+    key, jd_start = first_header_float(hdr, JD_START_EXPOSURE_HEADER_KEYS)
+    if jd_start is not None:
+        return key, jd_start
+
+    key, mjd_start = first_header_float(hdr, MJD_START_EXPOSURE_HEADER_KEYS)
+    if mjd_start is not None:
+        return key, mjd_start + 2400000.5
+
+    return first_header_datetime_jd(hdr, UTC_START_EXPOSURE_HEADER_KEYS)
+
+
+def utc_end_exposure_jd(hdr):
+    return first_header_datetime_jd(hdr, UTC_END_EXPOSURE_HEADER_KEYS)
+
+
+def utc_exposure_midpoint_jd(hdr, exp):
+    key, jd_mid = utc_mid_exposure_jd(hdr)
+    if jd_mid is not None:
+        return key, jd_mid
+
+    start_key, jd_start = utc_start_exposure_jd(hdr)
+    end_key, jd_end = utc_end_exposure_jd(hdr)
+    if jd_start is not None and jd_end is not None and jd_end >= jd_start:
+        return f"{start_key}/{end_key}", 0.5 * (jd_start + jd_end)
+
+    if jd_start is None:
+        return None, None
+
+    return start_key, jd_start + exp / (2.0 * 60.0 * 60.0 * 24.0)
+
+
 def exp_offset(hdr, time_unit, exp):
     """Returns exposure offset (in days) of more than 0 if headers reveals
     the time was estimated at the start of the exposure rather than the middle
     """
-    if 'start' in hdr.comments[time_unit]:
+    if 'start' in header_comment_text(hdr, time_unit).lower():
         return exp / (2.0 * 60.0 * 60.0 * 24.0)
     return 0.0
 
@@ -11370,9 +11728,8 @@ def julian_date(hdr, time_unit, exp):
     return julian_time + offset
 
 def get_exp_time(hdr):
-    exp_list = ["EXPTIME", "EXPOSURE", "EXP"]
-    exp_time = next((exptime for exptime in exp_list if exptime in hdr), None)
-    return hdr[exp_time] if exp_time is not None else 0.0
+    _, exp_time = first_header_float(hdr, EXPOSURE_TIME_HEADER_KEYS)
+    return exp_time if exp_time is not None else 0.0
 
 def img_time_jd(hdr):
     """Converts time from the header file to the Julian Date (JD, if needed)
@@ -11387,17 +11744,9 @@ def img_time_jd(hdr):
     float
         Time of when the image was taken in the JD with exposure offset
     """
-    time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
-
     exp = get_exp_time(hdr)
-    hdr_time = next((time_unit for time_unit in time_list if time_unit in hdr), None)
-
-    if hdr_time == 'MJD_OBS':
-        hdr_time = hdr_time if "epoch" not in hdr.comments[hdr_time] else 'DATE-OBS'
-
-    if hdr_time in ['UT-OBS', 'DATE-OBS']:
-        return ut_date(hdr, hdr_time, exp)
-    return julian_date(hdr, hdr_time, exp)
+    _, jd_mid = utc_exposure_midpoint_jd(hdr, exp)
+    return jd_mid if jd_mid is not None else np.nan
 
 
 def img_time_bjd_tdb(hdr, p_dict, info_dict):
@@ -11416,27 +11765,16 @@ def img_time_bjd_tdb(hdr, p_dict, info_dict):
     float
         Time of when the image was taken in BJD-TDB with exposure offset
     """
-    # Check for BJD time first (preference)
-    time_list = ['BJD_TDB', 'BJD_TBD', 'BJD']
     exp = get_exp_time(hdr)
 
-    hdr_time = next((time for time in time_list if time in hdr), None)
-    # Not found, get julian date
+    _, bjd_time = direct_bjd_tdb_mid_exposure(hdr)
+    if bjd_time is not None:
+        return bjd_time
 
-    if hdr_time is None:
-        time_list = ['UT-OBS', 'JULIAN', 'MJD-OBS', 'DATE-OBS']
-        hdr_time = next((time for time in time_list if time in hdr), None)
-        if hdr_time == 'MJD_OBS':
-            hdr_time = hdr_time if "epoch" not in hdr.comments[hdr_time] else 'DATE-OBS'
-        if hdr_time in ['UT-OBS', 'DATE-OBS']:
-            jd_time = ut_date(hdr, hdr_time, exp)
-        else:
-            jd_time = julian_date(hdr, hdr_time, exp)
-        # And convert to BJD_TDB
-        bjd_time = convert_jd_to_bjd([jd_time], p_dict, info_dict)[0]
-    else:   # Else, already BJD - convert and adjust for exposure
-        bjd_time = julian_date(hdr, hdr_time, exp)
-    return bjd_time
+    _, jd_time = utc_exposure_midpoint_jd(hdr, exp)
+    if jd_time is None:
+        return np.nan
+    return convert_jd_to_bjd([jd_time], p_dict, info_dict)[0]
 
 def air_mass(hdr, ra, dec, lat, long, elevation, time):
     """Scrapes or calculates the airmass at the time of when the image was taken.
@@ -13741,6 +14079,105 @@ def nextastro_catalog_color(row, obs_filter):
     return None
 
 
+def normalize_colour_index_label(value):
+    text = str(value or '').strip().upper().replace(' ', '')
+    aliases = {
+        'B-V': 'B-V',
+        'BV': 'B-V',
+        'BP-RP': 'BP-RP',
+        'BPRP': 'BP-RP',
+        'GBP-GRP': 'BP-RP',
+        'GAIABP-RP': 'BP-RP',
+        'R-I': 'R-I',
+        'RI': 'R-I',
+        'G-R': 'G-R',
+        'GR': 'G-R',
+        'I-Z': 'I-Z',
+        'IZ': 'I-Z',
+        'U-G': 'U-G',
+        'UG': 'U-G',
+    }
+    return aliases.get(text, text)
+
+
+def colour_term_metadata_from_info(info_dict):
+    if not isinstance(info_dict, dict):
+        return {}
+
+    def _number(*keys, nonnegative=False):
+        for key in keys:
+            value = _finite_float(info_dict.get(key))
+            if value is None:
+                continue
+            if value <= -90.0:
+                continue
+            if nonnegative and value < 0.0:
+                continue
+            return float(value)
+        return None
+
+    metadata = {
+        'term': _number('colour_term', 'color_term', 'COLTERM'),
+        'term_error': _number(
+            'colour_term_error',
+            'color_term_error',
+            'COLTERR',
+            nonnegative=True,
+        ),
+        'term_index': normalize_colour_index_label(
+            info_dict.get('colour_term_index')
+            or info_dict.get('color_term_index')
+            or info_dict.get('COLTIDX')
+        ),
+        'bv_term': _number('colour_term_bv', 'color_term_bv', 'COLTBV'),
+        'bv_error': _number(
+            'colour_term_bv_error',
+            'color_term_bv_error',
+            'COLTBVER',
+            'COLTBVERR',
+            nonnegative=True,
+        ),
+        'bprp_term': _number('colour_term_bprp', 'color_term_bprp', 'COLTBPRP'),
+        'bprp_error': _number(
+            'colour_term_bprp_error',
+            'color_term_bprp_error',
+            'CBPRPERR',
+            'COLTBPRPERR',
+            nonnegative=True,
+        ),
+        'equation_filter': (
+            info_dict.get('colour_equation_filter')
+            or info_dict.get('color_equation_filter')
+            or info_dict.get('COLEQFIL')
+        ),
+    }
+    return metadata
+
+
+def colour_term_for_catalog_label(metadata, color_label):
+    if not isinstance(metadata, dict):
+        return None, None
+    normalized_label = normalize_colour_index_label(color_label)
+    if normalized_label == 'B-V':
+        term = metadata.get('bv_term')
+        error = metadata.get('bv_error')
+        if term is not None:
+            return term, error
+    if normalized_label == 'BP-RP':
+        term = metadata.get('bprp_term')
+        error = metadata.get('bprp_error')
+        if term is not None:
+            return term, error
+
+    generic_term = metadata.get('term')
+    generic_index = normalize_colour_index_label(metadata.get('term_index'))
+    if generic_term is not None and (not generic_index or generic_index == normalized_label):
+        return generic_term, metadata.get('term_error')
+    if generic_term is not None and normalized_label not in {'B-V', 'BP-RP'}:
+        return generic_term, metadata.get('term_error')
+    return None, None
+
+
 def nextastro_catalog_nearest_color_row(catalog_response, ra, dec, obs_filter,
                                         max_separation_arcsec=
                                         AUTOMATIC_CALIBRATION_SELECTOR_COLOR_MATCH_RADIUS_ARCSEC):
@@ -13780,7 +14217,8 @@ def select_automatic_optimal_calibration_stars(
         obs_filter,
         field_catalog,
         count=AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT,
-        min_comp_target_sep=REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS):
+        min_comp_target_sep=REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS,
+        colour_term_metadata=None):
     max_count = parse_automatic_calibration_selector_count(count)
     if image_data is None or field_catalog is None:
         return [], []
@@ -13869,6 +14307,16 @@ def select_automatic_optimal_calibration_stars(
         if match is None or color is None:
             continue
         color_delta = abs(color['color'] - target_color['color'])
+        colour_term, colour_term_error = colour_term_for_catalog_label(
+            colour_term_metadata,
+            color['label'],
+        )
+        expected_colour_mismatch_mag = None
+        colour_term_uncertainty_mag = None
+        if colour_term is not None and np.isfinite(colour_term):
+            expected_colour_mismatch_mag = abs(float(colour_term)) * float(color_delta)
+        if colour_term_error is not None and np.isfinite(colour_term_error):
+            colour_term_uncertainty_mag = abs(float(color_delta)) * float(colour_term_error)
         candidates.append({
             'x': float(x_pos),
             'y': float(y_pos),
@@ -13881,12 +14329,30 @@ def select_automatic_optimal_calibration_stars(
             'color_label': color['label'],
             'target_color': target_color['color'],
             'color_delta': float(color_delta),
+            'colour_term': float(colour_term) if colour_term is not None else None,
+            'colour_term_error': (
+                float(colour_term_error) if colour_term_error is not None else None
+            ),
+            'expected_colour_mismatch_mag': (
+                float(expected_colour_mismatch_mag)
+                if expected_colour_mismatch_mag is not None
+                else None
+            ),
+            'colour_term_uncertainty_mag': (
+                float(colour_term_uncertainty_mag)
+                if colour_term_uncertainty_mag is not None
+                else None
+            ),
             'target_flux': float(target_flux),
         })
 
     candidates.sort(
         key=lambda candidate: (
-            candidate['color_delta'],
+            (
+                candidate['expected_colour_mismatch_mag']
+                if candidate.get('expected_colour_mismatch_mag') is not None
+                else candidate['color_delta']
+            ),
             abs(np.log(candidate['brightness_ratio'])),
             -candidate['flux'],
         )
@@ -13911,12 +14377,21 @@ def log_automatic_optimal_calibration_selection(comp_stars, candidates, requeste
         "and ranked by catalog color similarity to the target."
     )
     for index, candidate in enumerate(candidates, start=1):
+        mismatch_text = ""
+        if candidate.get('expected_colour_mismatch_mag') is not None:
+            mismatch_text = (
+                f", expected_colour_mismatch={candidate['expected_colour_mismatch_mag']:.5f} mag"
+            )
+            if candidate.get('colour_term_uncertainty_mag') is not None:
+                mismatch_text += (
+                    f", colour_term_sigma={candidate['colour_term_uncertainty_mag']:.5f} mag"
+                )
         log_info(
             f"  Auto comp #{index}: pixels=[{candidate['x']:.2f}, {candidate['y']:.2f}], "
             f"flux_ratio={candidate['brightness_ratio']:.3f}, "
             f"{candidate['color_label']}={candidate['color']:.3f}, "
             f"target_{candidate['color_label']}={candidate['target_color']:.3f}, "
-            f"delta={candidate['color_delta']:.3f}."
+            f"delta={candidate['color_delta']:.3f}{mismatch_text}."
         )
 
 
@@ -16461,6 +16936,397 @@ def normalize_flux_series_to_approximate_unity(
     return normalized_flux, normalized_unc, float(baseline_level)
 
 
+def is_blank_noise_budget_value(value):
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def coerce_noise_budget_scalar(value, *, require_positive=False, require_nonnegative=False):
+    if is_blank_noise_budget_value(value):
+        return np.nan
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+    if not np.isfinite(scalar):
+        return np.nan
+    if require_positive and scalar <= 0:
+        return np.nan
+    if require_nonnegative and scalar < 0:
+        return np.nan
+    return float(scalar)
+
+
+def noise_budget_value_from_mapping(mapping, keys, *, require_positive=False, require_nonnegative=False):
+    if not isinstance(mapping, dict):
+        return np.nan
+    for key in keys:
+        if key not in mapping:
+            continue
+        value = coerce_noise_budget_scalar(
+            mapping.get(key),
+            require_positive=require_positive,
+            require_nonnegative=require_nonnegative,
+        )
+        if np.isfinite(value):
+            return value
+    return np.nan
+
+
+def noise_budget_value_from_header(header, keys, *, require_positive=False, require_nonnegative=False):
+    if header is None:
+        return np.nan
+    try:
+        header_keys = set(header.keys())
+    except AttributeError:
+        return np.nan
+    upper_lookup = {str(key).upper(): key for key in header_keys}
+    for key in keys:
+        actual_key = upper_lookup.get(str(key).upper())
+        if actual_key is None:
+            continue
+        value = coerce_noise_budget_scalar(
+            header.get(actual_key),
+            require_positive=require_positive,
+            require_nonnegative=require_nonnegative,
+        )
+        if np.isfinite(value):
+            return value
+    return np.nan
+
+
+def resolve_noise_budget_value(info_dict, aliases, header=None, header_keys=(),
+                               *, require_positive=False, require_nonnegative=False):
+    value = noise_budget_value_from_mapping(
+        info_dict,
+        aliases,
+        require_positive=require_positive,
+        require_nonnegative=require_nonnegative,
+    )
+    if np.isfinite(value):
+        return value, 'inits'
+    value = noise_budget_value_from_header(
+        header,
+        header_keys,
+        require_positive=require_positive,
+        require_nonnegative=require_nonnegative,
+    )
+    if np.isfinite(value):
+        return value, 'fits_header'
+    return np.nan, None
+
+
+def noise_budget_config_from_info(info_dict, header=None):
+    info_dict = info_dict if isinstance(info_dict, dict) else {}
+    gain, gain_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'gain_electrons_per_adu',
+            'gain_e_per_adu',
+            'gain',
+            'Gain (e-/ADU)',
+            'CCD Gain (e-/ADU)',
+        ),
+        header=header,
+        header_keys=NOISE_GAIN_HEADER_KEYS,
+        require_positive=True,
+    )
+    if not np.isfinite(gain) or gain <= 0:
+        gain = 1.0
+        gain_source = 'default'
+
+    read_noise, read_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'read_noise_electrons',
+            'read_noise_e',
+            'read_noise',
+            'Read Noise (e-)',
+            'CCD Read Noise (e-)',
+        ),
+        header=header,
+        header_keys=NOISE_READ_HEADER_KEYS,
+        require_nonnegative=True,
+    )
+    dark_current, dark_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'dark_current_electrons_per_second_per_pixel',
+            'dark_current_e_per_s_pix',
+            'dark_current',
+            'Dark Current (e-/s/pix)',
+        ),
+        header=header,
+        header_keys=NOISE_DARK_HEADER_KEYS,
+        require_nonnegative=True,
+    )
+    flat_fraction, flat_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'flat_field_fractional_error',
+            'flat_field_fractional_noise',
+            'flat_field_error_fraction',
+            'Flat Field Fractional Error',
+            'Flat-Field Fractional Error',
+        ),
+        header=header,
+        header_keys=NOISE_FLAT_HEADER_KEYS,
+        require_nonnegative=True,
+    )
+    scintillation_coefficient, scint_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'scintillation_coefficient',
+            'scintillation_noise_coefficient',
+            'Scintillation Coefficient',
+        ),
+        header=header,
+        header_keys=NOISE_SCINTILLATION_HEADER_KEYS,
+        require_positive=True,
+    )
+    telescope_aperture_m, aperture_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'telescope_aperture_m',
+            'telescope_aperture_meters',
+            'Telescope Aperture (m)',
+        ),
+        header=header,
+        header_keys=NOISE_APERTURE_HEADER_KEYS,
+        require_positive=True,
+    )
+    telescope_aperture_cm, aperture_cm_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'telescope_aperture_cm',
+            'Telescope Aperture (cm)',
+        ),
+        require_positive=True,
+    )
+    telescope_aperture_mm, aperture_mm_source = resolve_noise_budget_value(
+        info_dict,
+        (
+            'telescope_aperture_mm',
+            'Telescope Aperture (mm)',
+        ),
+        header=header,
+        header_keys=NOISE_APERTURE_MM_HEADER_KEYS,
+        require_positive=True,
+    )
+    if np.isfinite(telescope_aperture_cm) and telescope_aperture_cm > 0:
+        telescope_aperture_m = telescope_aperture_cm / 100.0
+        aperture_source = aperture_cm_source
+    elif np.isfinite(telescope_aperture_mm) and telescope_aperture_mm > 0:
+        telescope_aperture_m = telescope_aperture_mm / 1000.0
+        aperture_source = aperture_mm_source
+    if not np.isfinite(scintillation_coefficient):
+        scintillation_coefficient = SCINTILLATION_COEFFICIENT_DEFAULT
+        scint_source = 'default'
+
+    enabled_terms = ['source', 'sky_aperture', 'sky_estimate']
+    source_by_term = {'gain': gain_source}
+    optional_terms = {
+        'read': (read_noise, read_source),
+        'dark': (dark_current, dark_source),
+        'flat': (flat_fraction, flat_source),
+    }
+    for term, (value, source) in optional_terms.items():
+        if np.isfinite(value) and value > 0:
+            enabled_terms.append(term)
+            source_by_term[term] = source
+    if np.isfinite(telescope_aperture_m) and telescope_aperture_m > 0:
+        enabled_terms.append('scintillation')
+        source_by_term['scintillation'] = aperture_source
+        source_by_term['scintillation_coefficient'] = scint_source
+
+    return {
+        'gain_e_per_adu': float(gain),
+        'read_noise_electrons': read_noise,
+        'dark_current_electrons_per_second_per_pixel': dark_current,
+        'flat_field_fractional_error': flat_fraction,
+        'scintillation_coefficient': scintillation_coefficient,
+        'telescope_aperture_m': telescope_aperture_m,
+        'elevation_m': coerce_noise_budget_scalar(info_dict.get('elev'), require_nonnegative=True),
+        'enabled_terms': tuple(enabled_terms),
+        'source_by_term': source_by_term,
+    }
+
+
+def format_noise_budget_config_summary(config):
+    if not isinstance(config, dict):
+        return "source, sky_aperture, sky_estimate"
+    parts = []
+    gain = config.get('gain_e_per_adu', 1.0)
+    parts.append(f"gain={gain:.4g} e-/ADU")
+    for term in ('read', 'dark', 'flat', 'scintillation'):
+        if term not in config.get('enabled_terms', ()):
+            continue
+        if term == 'read':
+            parts.append(f"read={config.get('read_noise_electrons'):.4g} e-")
+        elif term == 'dark':
+            parts.append(
+                f"dark={config.get('dark_current_electrons_per_second_per_pixel'):.4g} e-/s/pix"
+            )
+        elif term == 'flat':
+            parts.append(f"flat={config.get('flat_field_fractional_error'):.4g} frac")
+        elif term == 'scintillation':
+            parts.append(f"scintillation D={config.get('telescope_aperture_m'):.4g} m")
+    return ", ".join(parts)
+
+
+def empty_noise_budget_grids(shape):
+    return {
+        component: np.full(shape, np.nan, dtype=float)
+        for component in NOISE_BUDGET_COMPONENT_KEYS
+    }
+
+
+def empty_noise_budget_series(length):
+    return {
+        component: np.full(int(length), np.nan, dtype=float)
+        for component in NOISE_BUDGET_COMPONENT_KEYS
+    }
+
+
+def compute_scintillation_fraction(config, exposure_s=np.nan, airmass=np.nan):
+    if not isinstance(config, dict) or 'scintillation' not in config.get('enabled_terms', ()):
+        return np.nan
+    aperture_m = coerce_noise_budget_scalar(config.get('telescope_aperture_m'), require_positive=True)
+    exposure_s = coerce_noise_budget_scalar(exposure_s, require_positive=True)
+    if not np.isfinite(aperture_m) or not np.isfinite(exposure_s):
+        return np.nan
+    airmass = coerce_noise_budget_scalar(airmass, require_positive=True)
+    if not np.isfinite(airmass):
+        airmass = 1.0
+    elevation_m = coerce_noise_budget_scalar(config.get('elevation_m'), require_nonnegative=True)
+    if not np.isfinite(elevation_m):
+        elevation_m = 0.0
+    coefficient = coerce_noise_budget_scalar(
+        config.get('scintillation_coefficient', SCINTILLATION_COEFFICIENT_DEFAULT),
+        require_positive=True,
+    )
+    if not np.isfinite(coefficient):
+        coefficient = SCINTILLATION_COEFFICIENT_DEFAULT
+    aperture_cm = aperture_m * 100.0
+    return float(
+        coefficient
+        * aperture_cm ** (-2.0 / 3.0)
+        * airmass ** 1.75
+        * np.exp(-elevation_m / 8000.0)
+        / np.sqrt(2.0 * exposure_s)
+    )
+
+
+def compute_photometry_noise_budget(flux_adu, sky_sigma_adu, aperture_pixels, sky_pixels,
+                                    exposure_s=np.nan, airmass=np.nan, noise_config=None):
+    config = noise_config if isinstance(noise_config, dict) else {}
+    gain = coerce_noise_budget_scalar(config.get('gain_e_per_adu', 1.0), require_positive=True)
+    if not np.isfinite(gain):
+        gain = 1.0
+    flux_adu = coerce_noise_budget_scalar(flux_adu)
+    sky_sigma_adu = coerce_noise_budget_scalar(sky_sigma_adu, require_nonnegative=True)
+    aperture_pixels = coerce_noise_budget_scalar(aperture_pixels, require_positive=True)
+    sky_pixels = coerce_noise_budget_scalar(sky_pixels, require_positive=True)
+    exposure_s = coerce_noise_budget_scalar(exposure_s, require_positive=True)
+
+    variances = {component: 0.0 for component in NOISE_BUDGET_COMPONENT_KEYS if component != 'total'}
+    if np.isfinite(flux_adu):
+        variances['source'] = max(float(flux_adu), 0.0) / gain
+    if np.isfinite(sky_sigma_adu) and np.isfinite(aperture_pixels):
+        variances['sky_aperture'] = aperture_pixels * sky_sigma_adu ** 2
+        if np.isfinite(sky_pixels) and sky_pixels > 0:
+            variances['sky_estimate'] = (
+                NOISE_BUDGET_SKY_MEDIAN_VARIANCE_FACTOR
+                * aperture_pixels ** 2
+                * sky_sigma_adu ** 2
+                / sky_pixels
+            )
+
+    read_noise = coerce_noise_budget_scalar(config.get('read_noise_electrons'), require_nonnegative=True)
+    if np.isfinite(read_noise) and np.isfinite(aperture_pixels):
+        variances['read'] = aperture_pixels * (read_noise / gain) ** 2
+
+    dark_current = coerce_noise_budget_scalar(
+        config.get('dark_current_electrons_per_second_per_pixel'),
+        require_nonnegative=True,
+    )
+    if np.isfinite(dark_current) and np.isfinite(exposure_s) and np.isfinite(aperture_pixels):
+        variances['dark'] = aperture_pixels * dark_current * exposure_s / (gain ** 2)
+
+    flux_abs = abs(float(flux_adu)) if np.isfinite(flux_adu) else np.nan
+    flat_fraction = coerce_noise_budget_scalar(
+        config.get('flat_field_fractional_error'),
+        require_nonnegative=True,
+    )
+    if np.isfinite(flat_fraction) and np.isfinite(flux_abs):
+        variances['flat'] = (flat_fraction * flux_abs) ** 2
+
+    scintillation_fraction = compute_scintillation_fraction(config, exposure_s=exposure_s, airmass=airmass)
+    if np.isfinite(scintillation_fraction) and np.isfinite(flux_abs):
+        variances['scintillation'] = (scintillation_fraction * flux_abs) ** 2
+
+    total_variance = float(
+        np.nansum([
+            variance
+            for variance in variances.values()
+            if np.isfinite(variance) and variance >= 0
+        ])
+    )
+    budget = {}
+    for component in NOISE_BUDGET_COMPONENT_KEYS:
+        variance = total_variance if component == 'total' else variances.get(component, 0.0)
+        budget[component] = float(np.sqrt(max(variance, 0.0))) if np.isfinite(variance) else np.nan
+    return budget
+
+
+def valid_flux_error_array(flux_error, shape):
+    if flux_error is None:
+        return None
+    try:
+        values = np.asarray(flux_error, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if values.shape != shape:
+        return None
+    return values
+
+
+def relative_flux_uncertainty_from_star_errors(target_flux, comp_flux,
+                                               target_flux_error=None, comp_flux_error=None):
+    target_flux = np.asarray(target_flux, dtype=float)
+    comp_flux = np.asarray(comp_flux, dtype=float)
+    target_flux_error = valid_flux_error_array(target_flux_error, target_flux.shape)
+    comp_flux_error = valid_flux_error_array(comp_flux_error, comp_flux.shape)
+
+    with np.errstate(invalid='ignore'):
+        target_fallback_error = np.sqrt(target_flux)
+        comp_fallback_error = np.sqrt(comp_flux)
+
+    if target_flux_error is not None:
+        valid_target_error = np.isfinite(target_flux_error) & (target_flux_error > 0)
+        target_sigma = np.where(valid_target_error, target_flux_error, target_fallback_error)
+    else:
+        target_sigma = target_fallback_error
+
+    if comp_flux_error is not None:
+        valid_comp_error = np.isfinite(comp_flux_error) & (comp_flux_error > 0)
+        comp_sigma = np.where(valid_comp_error, comp_flux_error, comp_fallback_error)
+    else:
+        comp_sigma = comp_fallback_error
+
+    if np.allclose(comp_flux, 1.0):
+        return target_sigma
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return np.sqrt(
+            (target_sigma / comp_flux) ** 2
+            + (comp_sigma * target_flux / comp_flux ** 2) ** 2
+        )
+
+
 def weighted_nanpercentile(values, weights, percentile):
     values = np.asarray(values, dtype=float).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
@@ -18422,13 +19288,17 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    use_impactparameter_rather_than_inclination_to_fit=True,
                    plot_time_range=None,
                    use_eebls_to_initialize_tmid_and_bounds=True,
-                   compute_eebls_diagnostics=False):
+                   compute_eebls_diagnostics=False,
+                   target_flux_error=None,
+                   comp_flux_error=None):
     plot_time_range = np.asarray(times if plot_time_range is None else plot_time_range, dtype=float)
     prepared = prepare_lightcurve_fit_input_series(
         times,
         tFlux,
         cFlux,
         airmass,
+        target_flux_error=target_flux_error,
+        comp_flux_error=comp_flux_error,
         jd_times=jd_times,
         expected_transit_depth=expected_transit_depth_from_planet_dict(pDict),
     )
@@ -18440,6 +19310,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     debug_target_flux = prepared['debug_target_flux']
     debug_comp_flux = prepared['debug_comp_flux']
     debug_raw_ratio = prepared['debug_raw_ratio']
+    debug_target_flux_error = prepared.get('debug_target_flux_error')
+    debug_comp_flux_error = prepared.get('debug_comp_flux_error')
+    debug_relative_flux_error = prepared.get('debug_relative_flux_error')
     debug_initial_sigma_keep_mask = prepared['initial_sigma_keep_mask']
     debug_prefit_raw_ratio_keep_mask = prepared['prefit_raw_ratio_keep_mask']
     arrayFinalFlux = prepared['flux']
@@ -18647,6 +19520,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             debug_comp_flux,
             debug_raw_ratio,
             debug_initial_sigma_keep_mask,
+            target_flux_error=debug_target_flux_error,
+            comp_flux_error=debug_comp_flux_error,
+            relative_flux_error=debug_relative_flux_error,
             prefit_raw_ratio_keep_mask=debug_prefit_raw_ratio_keep_mask,
             phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
         )
@@ -18661,6 +19537,8 @@ def diagnose_lightcurve_fit_inputs(
     tflux,
     cflux,
     airmass,
+    target_flux_error=None,
+    comp_flux_error=None,
     enforce_relative_flux_max=True,
     expected_transit_depth=None,
 ):
@@ -18668,6 +19546,8 @@ def diagnose_lightcurve_fit_inputs(
     tflux = np.asarray(tflux, dtype=float)
     cflux = np.asarray(cflux, dtype=float)
     airmass = np.asarray(airmass, dtype=float)
+    target_flux_error = valid_flux_error_array(target_flux_error, tflux.shape)
+    comp_flux_error = valid_flux_error_array(comp_flux_error, cflux.shape)
 
     diagnostics = {
         'input_point_count': int(times.shape[0]),
@@ -18695,6 +19575,8 @@ def diagnose_lightcurve_fit_inputs(
     times_sorted = times[si]
     tflux_sorted = tflux[si]
     cflux_sorted = cflux[si]
+    target_flux_error_sorted = None if target_flux_error is None else target_flux_error[si]
+    comp_flux_error_sorted = None if comp_flux_error is None else comp_flux_error[si]
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio_sorted = np.divide(tflux_sorted, cflux_sorted)
 
@@ -18725,6 +19607,10 @@ def diagnose_lightcurve_fit_inputs(
         times_sorted = times_sorted[relative_flux_mask]
         tflux_sorted = tflux_sorted[relative_flux_mask]
         cflux_sorted = cflux_sorted[relative_flux_mask]
+        if target_flux_error_sorted is not None:
+            target_flux_error_sorted = target_flux_error_sorted[relative_flux_mask]
+        if comp_flux_error_sorted is not None:
+            comp_flux_error_sorted = comp_flux_error_sorted[relative_flux_mask]
         flux_ratio_sorted = flux_ratio_sorted[relative_flux_mask]
         airmass_sorted = airmass[si][relative_flux_mask]
         if diagnostics['relative_flux_point_count'] <= 1:
@@ -18785,13 +19671,10 @@ def diagnose_lightcurve_fit_inputs(
 
     arrayFinalFlux = flux_ratio_sorted[valid_mask]
     f1 = tflux_sorted[valid_mask]
-    sigf1 = f1 ** 0.5
     f2 = cflux_sorted[valid_mask]
-    sigf2 = f2 ** 0.5
-    if np.sum(cflux) == len(cflux):
-        arrayNormUnc = sigf1
-    else:
-        arrayNormUnc = np.sqrt((sigf1 / f2) ** 2 + (sigf2 * f1 / f2 ** 2) ** 2)
+    f1_err = None if target_flux_error_sorted is None else target_flux_error_sorted[valid_mask]
+    f2_err = None if comp_flux_error_sorted is None else comp_flux_error_sorted[valid_mask]
+    arrayNormUnc = relative_flux_uncertainty_from_star_errors(f1, f2, f1_err, f2_err)
     arrayTimes = times_sorted[valid_mask]
     arrayAirmass = airmass_sorted[valid_mask]
 
@@ -18836,6 +19719,8 @@ def prepare_lightcurve_fit_input_series(
     target_flux,
     comp_flux,
     airmass,
+    target_flux_error=None,
+    comp_flux_error=None,
     jd_times=None,
     expected_transit_depth=None,
 ):
@@ -18843,6 +19728,8 @@ def prepare_lightcurve_fit_input_series(
     target_flux = np.asarray(target_flux, dtype=float)
     comp_flux = np.asarray(comp_flux, dtype=float)
     airmass = np.asarray(airmass, dtype=float)
+    target_flux_error = valid_flux_error_array(target_flux_error, target_flux.shape)
+    comp_flux_error = valid_flux_error_array(comp_flux_error, comp_flux.shape)
     jd_times_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
 
     prepared = {
@@ -18853,6 +19740,9 @@ def prepare_lightcurve_fit_input_series(
         'debug_target_flux': np.array([], dtype=float),
         'debug_comp_flux': np.array([], dtype=float),
         'debug_raw_ratio': np.array([], dtype=float),
+        'debug_target_flux_error': np.array([], dtype=float),
+        'debug_comp_flux_error': np.array([], dtype=float),
+        'debug_relative_flux_error': np.array([], dtype=float),
         'initial_sigma_keep_mask': np.array([], dtype=bool),
         'prefit_raw_ratio_keep_mask': np.array([], dtype=bool),
         'time': np.array([], dtype=float),
@@ -18862,6 +19752,8 @@ def prepare_lightcurve_fit_input_series(
         'airmass': np.array([], dtype=float),
         'target_flux': np.array([], dtype=float),
         'comp_flux': np.array([], dtype=float),
+        'target_flux_error': np.array([], dtype=float),
+        'comp_flux_error': np.array([], dtype=float),
         'source_indices': np.array([], dtype=int),
         'skip_airmass_fit': False,
         'approximate_baseline_level': np.nan,
@@ -18883,6 +19775,8 @@ def prepare_lightcurve_fit_input_series(
     times_sorted = times[plot_indices]
     target_flux_sorted = target_flux[plot_indices]
     comp_flux_sorted = comp_flux[plot_indices]
+    target_flux_error_sorted = None if target_flux_error is None else target_flux_error[plot_indices]
+    comp_flux_error_sorted = None if comp_flux_error is None else comp_flux_error[plot_indices]
     source_indices = np.asarray(plot_indices, dtype=int)
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio_sorted = np.divide(target_flux_sorted, comp_flux_sorted)
@@ -18900,6 +19794,10 @@ def prepare_lightcurve_fit_input_series(
         times_sorted = times_sorted[flux_ratio_mask]
         target_flux_sorted = target_flux_sorted[flux_ratio_mask]
         comp_flux_sorted = comp_flux_sorted[flux_ratio_mask]
+        if target_flux_error_sorted is not None:
+            target_flux_error_sorted = target_flux_error_sorted[flux_ratio_mask]
+        if comp_flux_error_sorted is not None:
+            comp_flux_error_sorted = comp_flux_error_sorted[flux_ratio_mask]
         flux_ratio_sorted = flux_ratio_sorted[flux_ratio_mask]
         source_indices = source_indices[flux_ratio_mask]
         if jd_times_array is None:
@@ -18920,6 +19818,22 @@ def prepare_lightcurve_fit_input_series(
     debug_target_flux = np.asarray(target_flux_sorted, dtype=float).copy()
     debug_comp_flux = np.asarray(comp_flux_sorted, dtype=float).copy()
     debug_raw_ratio = np.asarray(flux_ratio_sorted, dtype=float).copy()
+    debug_target_flux_error = (
+        np.asarray(target_flux_error_sorted, dtype=float).copy()
+        if target_flux_error_sorted is not None
+        else np.full(debug_times.shape, np.nan, dtype=float)
+    )
+    debug_comp_flux_error = (
+        np.asarray(comp_flux_error_sorted, dtype=float).copy()
+        if comp_flux_error_sorted is not None
+        else np.full(debug_times.shape, np.nan, dtype=float)
+    )
+    debug_relative_flux_error = relative_flux_uncertainty_from_star_errors(
+        target_flux_sorted,
+        comp_flux_sorted,
+        target_flux_error_sorted,
+        comp_flux_error_sorted,
+    )
 
     dt = np.mean(np.diff(times_sorted))
     ndt = int(25. / 24. / 60. / dt) * 2 + 1
@@ -18971,12 +19885,14 @@ def prepare_lightcurve_fit_input_series(
     flux = flux_ratio_sorted[valid_mask]
     filtered_target_flux = target_flux_sorted[valid_mask]
     filtered_comp_flux = comp_flux_sorted[valid_mask]
-    if np.sum(comp_flux) == len(comp_flux):
-        unc = filtered_target_flux ** 0.5
-    else:
-        sigf1 = filtered_target_flux ** 0.5
-        sigf2 = filtered_comp_flux ** 0.5
-        unc = np.sqrt((sigf1 / filtered_comp_flux) ** 2 + (sigf2 * filtered_target_flux / filtered_comp_flux ** 2) ** 2)
+    filtered_target_flux_error = None if target_flux_error_sorted is None else target_flux_error_sorted[valid_mask]
+    filtered_comp_flux_error = None if comp_flux_error_sorted is None else comp_flux_error_sorted[valid_mask]
+    unc = relative_flux_uncertainty_from_star_errors(
+        filtered_target_flux,
+        filtered_comp_flux,
+        filtered_target_flux_error,
+        filtered_comp_flux_error,
+    )
     fit_times = times_sorted[valid_mask]
     fit_jd_times = jd_times_sorted[valid_mask]
     fit_airmass = airmass_sorted[valid_mask]
@@ -18999,6 +19915,9 @@ def prepare_lightcurve_fit_input_series(
             'debug_target_flux': debug_target_flux,
             'debug_comp_flux': debug_comp_flux,
             'debug_raw_ratio': debug_raw_ratio,
+            'debug_target_flux_error': debug_target_flux_error,
+            'debug_comp_flux_error': debug_comp_flux_error,
+            'debug_relative_flux_error': debug_relative_flux_error,
             'initial_sigma_keep_mask': initial_sigma_keep_mask,
             'prefit_raw_ratio_keep_mask': prefit_raw_ratio_keep_mask,
         })
@@ -19016,6 +19935,9 @@ def prepare_lightcurve_fit_input_series(
         'debug_target_flux': debug_target_flux,
         'debug_comp_flux': debug_comp_flux,
         'debug_raw_ratio': debug_raw_ratio,
+        'debug_target_flux_error': debug_target_flux_error,
+        'debug_comp_flux_error': debug_comp_flux_error,
+        'debug_relative_flux_error': debug_relative_flux_error,
         'initial_sigma_keep_mask': initial_sigma_keep_mask,
         'prefit_raw_ratio_keep_mask': prefit_raw_ratio_keep_mask,
         'time': fit_times[~nanmask],
@@ -19025,6 +19947,10 @@ def prepare_lightcurve_fit_input_series(
         'airmass': fit_airmass[~nanmask],
         'target_flux': filtered_target_flux[~nanmask],
         'comp_flux': filtered_comp_flux[~nanmask],
+        'target_flux_error': np.full(filtered_target_flux.shape, np.nan, dtype=float)[~nanmask]
+        if filtered_target_flux_error is None else filtered_target_flux_error[~nanmask],
+        'comp_flux_error': np.full(filtered_comp_flux.shape, np.nan, dtype=float)[~nanmask]
+        if filtered_comp_flux_error is None else filtered_comp_flux_error[~nanmask],
         'source_indices': source_indices[~nanmask],
         'skip_airmass_fit': should_skip_airmass_fit(fit_airmass[~nanmask]),
         'approximate_baseline_level': approximate_baseline_level,
@@ -20859,7 +21785,8 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                                                  skip_low_comparison_coverage_rejection=False,
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
                                                  use_eebls_to_initialize_tmid_and_bounds=True,
-                                                 psf_flux_data=None):
+                                                 psf_flux_data=None,
+                                                 psf_noise_data=None):
     if photometry_info.get('best_fit_lc') is None or not comp_stars:
         return []
 
@@ -20871,6 +21798,11 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
     if use_psf_photometry:
         psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
         target_flux = psf_flux_series_from_rows(psf_flux_data['target'])
+        target_flux_error = (
+            np.asarray(psf_noise_data.get('target'), dtype=float)
+            if isinstance(psf_noise_data, dict) and 'target' in psf_noise_data
+            else None
+        )
         comp_flux_map = {
             f"comp{comp_index + 1}": psf_flux_series_from_rows(
                 psf_flux_data[f"comp{comp_index + 1}"],
@@ -20883,18 +21815,44 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
             )
             for comp_index in range(len(comp_stars))
         }
+        comp_error_map = {
+            f"comp{comp_index + 1}": mask_series_with_quality(
+                psf_noise_data[f"comp{comp_index + 1}"],
+                psf_quality_mask_for_key(
+                    psf_data,
+                    f"comp{comp_index + 1}",
+                    frame_count,
+                    psf_flux_data=psf_flux_data,
+                ),
+            )
+            for comp_index in range(len(comp_stars))
+            if isinstance(psf_noise_data, dict) and f"comp{comp_index + 1}" in psf_noise_data
+        }
     else:
         aperture_index = photometry_info.get('aperture_index')
         annulus_index = photometry_info.get('annulus_index')
         if aperture_index is None or annulus_index is None:
             return []
         target_flux = np.asarray(aper_data['target'][:, aperture_index, annulus_index], dtype=float)
+        target_flux_error = (
+            np.asarray(aper_data['target_unc'][:, aperture_index, annulus_index], dtype=float)
+            if 'target_unc' in aper_data
+            else None
+        )
         comp_flux_map = {
             f"comp{comp_index + 1}": mask_series_with_quality(
                 aper_data[f"comp{comp_index + 1}"][:, aperture_index, annulus_index],
                 psf_quality_mask_for_key(psf_data, f"comp{comp_index + 1}", frame_count),
             )
             for comp_index in range(len(comp_stars))
+        }
+        comp_error_map = {
+            f"comp{comp_index + 1}": mask_series_with_quality(
+                aper_data[f"comp{comp_index + 1}_unc"][:, aperture_index, annulus_index],
+                psf_quality_mask_for_key(psf_data, f"comp{comp_index + 1}", frame_count),
+            )
+            for comp_index in range(len(comp_stars))
+            if f"comp{comp_index + 1}_unc" in aper_data
         }
 
     candidate_fit_summaries = []
@@ -20920,9 +21878,17 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
             if target_shape_mask.shape[0] != frame_count:
                 target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            candidate_target_flux_error = (
+                None
+                if target_flux_error is None
+                else mask_series_with_quality(target_flux_error, target_shape_mask)
+            )
+            candidate_comp_flux_error = comp_error_map.get(ckey)
             fit_mask = target_shape_mask & robust_target_reference_flux_mask(candidate_target_flux, comp_flux_series)
         else:
             candidate_target_flux = target_flux
+            candidate_target_flux_error = target_flux_error
+            candidate_comp_flux_error = comp_error_map.get(ckey)
             fit_mask = valid_comparison_frame_mask(candidate_target_flux) & valid_comparison_frame_mask(comp_flux_series)
         coverage_count = coverage_summary[ckey]['coverage_count']
         coverage_total_frame_count = coverage_summary[ckey]['coverage_total_frame_count']
@@ -20953,6 +21919,8 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 candidate_target_flux[fit_mask],
                 comp_flux_series[fit_mask],
                 airmass[fit_mask],
+                target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+                comp_flux_error=None if candidate_comp_flux_error is None else candidate_comp_flux_error[fit_mask],
                 enforce_relative_flux_max=False,
                 expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
             )
@@ -20965,6 +21933,8 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 ld,
                 p_dict,
                 jd_times[fit_mask],
+                target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+                comp_flux_error=None if candidate_comp_flux_error is None else candidate_comp_flux_error[fit_mask],
                 allow_mid_transit_range_warning=False,
                 disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                 final_fit_mode='ns',
@@ -21085,6 +22055,50 @@ def build_absolute_comp_ensemble_flux(comp_flux_map, active_keys,
     if not np.isfinite(scale) or scale <= 0:
         scale = 1.0
     return ensemble * scale, member_keys
+
+
+def build_absolute_comp_ensemble_uncertainty(comp_flux_map, comp_error_map, member_keys,
+                                             validity_mask_func=valid_comparison_frame_mask):
+    if not member_keys or not isinstance(comp_error_map, dict):
+        return None
+
+    normalized_variances = []
+    member_medians = []
+    for key in member_keys:
+        if key not in comp_flux_map or key not in comp_error_map:
+            continue
+        flux_values = np.asarray(comp_flux_map[key], dtype=float)
+        error_values = np.asarray(comp_error_map[key], dtype=float)
+        if flux_values.shape != error_values.shape:
+            continue
+        valid_flux_mask = validity_mask_func(flux_values)
+        if np.count_nonzero(valid_flux_mask) < 5:
+            continue
+        member_median = float(bn.nanmedian(flux_values[valid_flux_mask]))
+        if not np.isfinite(member_median) or member_median <= 0:
+            continue
+        valid_error = valid_flux_mask & np.isfinite(error_values) & (error_values > 0)
+        normalized_variance = np.full(flux_values.shape, np.nan, dtype=float)
+        normalized_variance[valid_error] = (error_values[valid_error] / member_median) ** 2
+        normalized_variances.append(normalized_variance)
+        member_medians.append(member_median)
+
+    if not normalized_variances:
+        return None
+
+    variance_stack = np.vstack(normalized_variances)
+    valid_count = np.count_nonzero(np.isfinite(variance_stack), axis=0)
+    summed_variance = np.nansum(variance_stack, axis=0)
+    ensemble_variance = np.full(variance_stack.shape[1], np.nan, dtype=float)
+    valid_frames = valid_count > 0
+    ensemble_variance[valid_frames] = summed_variance[valid_frames] / (valid_count[valid_frames] ** 2)
+    scale = float(np.nanmedian(member_medians))
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 1.0
+    ensemble_unc = np.full(variance_stack.shape[1], np.nan, dtype=float)
+    finite_var = np.isfinite(ensemble_variance) & (ensemble_variance >= 0)
+    ensemble_unc[finite_var] = np.sqrt(ensemble_variance[finite_var]) * scale
+    return ensemble_unc
 
 
 def comparison_star_coverage_summary(comp_flux_map,
@@ -21716,10 +22730,24 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
     }
 
 
+def comparison_field_sort_value(value, zero_tolerance=1.0e-12):
+    if value is None:
+        return np.inf
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return np.inf
+    if not np.isfinite(numeric_value):
+        return np.inf
+    if abs(numeric_value) <= zero_tolerance:
+        return 0.0
+    return numeric_value
+
+
 def comparison_field_sort_key(summary):
     return (
-        np.inf if summary.get('field_score') is None else summary['field_score'],
-        np.inf if summary.get('best_comp_score') is None else summary['best_comp_score'],
+        comparison_field_sort_value(summary.get('field_score')),
+        comparison_field_sort_value(summary.get('best_comp_score')),
     )
 
 
@@ -21728,23 +22756,31 @@ def initialize_aperture_data_store(frame_count, aperture_count, annulus_count, c
     aper_data = {
         'target': np.full(aper_shape, np.nan, dtype=float),
         'target_bg': np.full(aper_shape, np.nan, dtype=float),
+        'target_unc': np.full(aper_shape, np.nan, dtype=float),
     }
+    for component in NOISE_BUDGET_COMPONENT_KEYS:
+        aper_data[f"target_noise_{component}"] = np.full(aper_shape, np.nan, dtype=float)
 
     for comp_idx in range(comp_star_count):
         ckey = f"comp{comp_idx + 1}"
         aper_data[ckey] = np.full(aper_shape, np.nan, dtype=float)
         aper_data[f"{ckey}_bg"] = np.full(aper_shape, np.nan, dtype=float)
+        aper_data[f"{ckey}_unc"] = np.full(aper_shape, np.nan, dtype=float)
+        for component in NOISE_BUDGET_COMPONENT_KEYS:
+            aper_data[f"{ckey}_noise_{component}"] = np.full(aper_shape, np.nan, dtype=float)
 
     return aper_data
 
 
 def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan,
-                               aperture_correction_factors=None):
+                               aperture_correction_factors=None, noise_config=None, exposure_s=np.nan,
+                               airmass=np.nan, return_noise=False):
     flux_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
     bg_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
+    noise_grids = empty_noise_budget_grids(flux_grid.shape) if return_noise else None
 
     if np.isnan(xc) or np.isnan(yc):
-        return flux_grid, bg_grid
+        return (flux_grid, bg_grid, noise_grids) if return_noise else (flux_grid, bg_grid)
 
     mask_method = 'center' if fast_mode else 'exact'
 
@@ -21768,7 +22804,7 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
                         annulus_width=float(annulus_width),
                         psf_sigma=sigma_hint,
                     )
-                    bgflux, _, _ = skybg_phot(
+                    bgflux, sigmabg, n_sky = skybg_phot(
                         data,
                         star_index,
                         xc,
@@ -21779,6 +22815,8 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
                     )
                 else:
                     bgflux = 0
+                    sigmabg = 0
+                    n_sky = 0
 
                 bg_grid[a_idx, an_idx] = bgflux
 
@@ -21786,6 +22824,18 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
                     flux_grid[a_idx, an_idx] = 0
                 else:
                     flux_grid[a_idx, an_idx] = raw_aperture_sum - bgflux * mask_area
+                if return_noise and noise_grids is not None:
+                    budget = compute_photometry_noise_budget(
+                        flux_grid[a_idx, an_idx],
+                        sigmabg,
+                        mask_area,
+                        n_sky,
+                        exposure_s=exposure_s,
+                        airmass=airmass,
+                        noise_config=noise_config,
+                    )
+                    for component, grid in noise_grids.items():
+                        grid[a_idx, an_idx] = budget.get(component, np.nan)
             finally:
                 _record_photometry_stage_timing('aperPhot', perf_counter() - stage_start)
 
@@ -21795,13 +22845,17 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
             valid_factors = np.isfinite(factors) & (factors > 0)
             if np.any(valid_factors):
                 flux_grid[valid_factors, :] *= factors[valid_factors, None]
+                if return_noise and noise_grids is not None:
+                    for grid in noise_grids.values():
+                        grid[valid_factors, :] *= factors[valid_factors, None]
 
-    return flux_grid, bg_grid
+    return (flux_grid, bg_grid, noise_grids) if return_noise else (flux_grid, bg_grid)
 
 
 def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_star_count, aper_data, apertures, annuli,
                                      fast_aperture_mask, adaptive_apertures=False, fallback_sigma=np.nan,
-                                     use_aperture_corrections_and_full_image_fwhm=False):
+                                     use_aperture_corrections_and_full_image_fwhm=False,
+                                     noise_config=None, exposure_s=np.nan, airmass=np.nan):
     target_sigma = psf_sigma_from_fit(psf_data['target'][frame_index], fallback_sigma=fallback_sigma)
     target_fwhm = psf_fwhm_from_sigma(target_sigma)
     field_star_psfs = np.empty((0, 7), dtype=float)
@@ -21839,7 +22893,7 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         )
         aperture_correction_factors = aperture_correction.get('correction_factors')
 
-    target_flux, target_bg = compute_star_aperture_grid(
+    target_flux, target_bg, target_noise = compute_star_aperture_grid(
         image_data,
         0,
         psf_data['target'][frame_index, 0],
@@ -21849,14 +22903,21 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         fast_mode=fast_aperture_mask,
         sigma_hint=frame_sigma,
         aperture_correction_factors=aperture_correction_factors,
+        noise_config=noise_config,
+        exposure_s=exposure_s,
+        airmass=airmass,
+        return_noise=True,
     )
     aper_data['target'][frame_index] = target_flux
     aper_data['target_bg'][frame_index] = target_bg
+    aper_data['target_unc'][frame_index] = target_noise['total']
+    for component in NOISE_BUDGET_COMPONENT_KEYS:
+        aper_data[f"target_noise_{component}"][frame_index] = target_noise[component]
 
     for comp_idx in range(comp_star_count):
         ckey = f"comp{comp_idx + 1}"
         comp_sigma = psf_sigma_from_fit(psf_data[ckey][frame_index], fallback_sigma=frame_sigma)
-        comp_flux, comp_bg = compute_star_aperture_grid(
+        comp_flux, comp_bg, comp_noise = compute_star_aperture_grid(
             image_data,
             comp_idx + 1,
             psf_data[ckey][frame_index, 0],
@@ -21866,9 +22927,16 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
             fast_mode=fast_aperture_mask,
             sigma_hint=comp_sigma,
             aperture_correction_factors=aperture_correction_factors,
+            noise_config=noise_config,
+            exposure_s=exposure_s,
+            airmass=airmass,
+            return_noise=True,
         )
         aper_data[ckey][frame_index] = comp_flux
         aper_data[f"{ckey}_bg"][frame_index] = comp_bg
+        aper_data[f"{ckey}_unc"][frame_index] = comp_noise['total']
+        for component in NOISE_BUDGET_COMPONENT_KEYS:
+            aper_data[f"{ckey}_noise_{component}"][frame_index] = comp_noise[component]
 
     return aperture_correction
 
@@ -21906,6 +22974,7 @@ def auto_tune_aperture_sigma_grid(coarse_apertures_sigma, coarse_annuli_sigma, c
                                   psf_quality_masks=None):
     best_candidate = None
     best_score = np.inf
+    best_sort_key = (np.inf, np.inf)
 
     for a_idx, aperture_sigma in enumerate(coarse_apertures_sigma):
         for an_idx, annulus_sigma in enumerate(coarse_annuli_sigma):
@@ -21925,8 +22994,10 @@ def auto_tune_aperture_sigma_grid(coarse_apertures_sigma, coarse_annuli_sigma, c
                 skip_low_coverage_rejection=skip_low_comparison_coverage_rejection,
             )
             field_score = field_summary['field_score']
-            if np.isfinite(field_score) and comparison_field_sort_key(field_summary) < (best_score, np.inf):
+            candidate_sort_key = comparison_field_sort_key(field_summary)
+            if np.isfinite(field_score) and candidate_sort_key < best_sort_key:
                 best_score = field_score
+                best_sort_key = candidate_sort_key
                 best_candidate = {
                     'aper_sigma': float(aperture_sigma),
                     'annulus_sigma': float(annulus_sigma),
@@ -22109,6 +23180,7 @@ def ranked_comparison_calibration_summaries(comparison_calibration):
 def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
                                                  psf_data, aper_data, target_psf_flux,
                                                  psf_flux_data=None,
+                                                 psf_noise_data=None,
                                                  plot_time_range=None,
                                                  disable_vertical_flux_normalization=False,
                                                  detrend_on_outoftransit_baseline=True,
@@ -22150,8 +23222,18 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
     if method == 'psf':
         target_flux = np.asarray(target_psf_flux, dtype=float)
         psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
+        target_flux_error = (
+            np.asarray(psf_noise_data.get('target'), dtype=float)
+            if isinstance(psf_noise_data, dict) and 'target' in psf_noise_data
+            else None
+        )
     else:
         target_flux = np.asarray(aper_data['target'][:, aperture_index, annulus_index], dtype=float)
+        target_flux_error = (
+            np.asarray(aper_data['target_unc'][:, aperture_index, annulus_index], dtype=float)
+            if isinstance(aper_data, dict) and 'target_unc' in aper_data
+            else None
+        )
 
     adaptive_summary = build_comparison_candidate_adaptive_summary(
         comparison_calibration,
@@ -22205,15 +23287,48 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 for summary in ranked_summaries
                 if summary.get('key') in psf_flux_data
             }
+            comp_error_map = {
+                summary['key']: mask_series_with_quality(
+                    psf_noise_data[summary['key']],
+                    np.asarray(
+                        summary.get(
+                            'psf_quality_keep_mask',
+                            psf_quality_mask_for_key(
+                                psf_data,
+                                summary['key'],
+                                frame_count,
+                                psf_flux_data=psf_flux_data,
+                            ),
+                        ),
+                        dtype=bool,
+                    ),
+                )
+                for summary in ranked_summaries
+                if (
+                    isinstance(psf_noise_data, dict)
+                    and summary.get('key') in psf_noise_data
+                )
+            }
             ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
                 comp_flux_map,
                 active_keys,
+                validity_mask_func=robust_flux_floor_mask,
+            )
+            ensemble_flux_error = build_absolute_comp_ensemble_uncertainty(
+                comp_flux_map,
+                comp_error_map,
+                member_keys,
                 validity_mask_func=robust_flux_floor_mask,
             )
             target_shape_mask = target_psf_shape_quality_mask(target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data))
             if target_shape_mask.shape[0] != frame_count:
                 target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            candidate_target_flux_error = (
+                None
+                if target_flux_error is None
+                else mask_series_with_quality(target_flux_error, target_shape_mask)
+            )
         else:
             comp_flux_map = {
                 summary['key']: mask_series_with_quality(
@@ -22229,13 +23344,34 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 for summary in ranked_summaries
                 if summary.get('key') in aper_data
             }
+            comp_error_map = {
+                summary['key']: mask_series_with_quality(
+                    aper_data[f"{summary['key']}_unc"][:, aperture_index, annulus_index],
+                    np.asarray(
+                        summary.get(
+                            'psf_quality_keep_mask',
+                            psf_quality_mask_for_key(psf_data, summary['key'], frame_count),
+                        ),
+                        dtype=bool,
+                    ),
+                )
+                for summary in ranked_summaries
+                if summary.get('key') in aper_data and f"{summary['key']}_unc" in aper_data
+            }
             ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
                 comp_flux_map,
                 active_keys,
                 validity_mask_func=valid_comparison_frame_mask,
             )
+            ensemble_flux_error = build_absolute_comp_ensemble_uncertainty(
+                comp_flux_map,
+                comp_error_map,
+                member_keys,
+                validity_mask_func=valid_comparison_frame_mask,
+            )
             target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = target_flux
+            candidate_target_flux_error = target_flux_error
 
         if ensemble_flux is not None and member_keys:
             candidate_frame_keep_mask = np.ones(times.shape[0], dtype=bool)
@@ -22261,6 +23397,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 candidate_target_flux[fit_mask],
                 ensemble_flux[fit_mask],
                 airmass[fit_mask],
+                target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+                comp_flux_error=None if ensemble_flux_error is None else ensemble_flux_error[fit_mask],
                 enforce_relative_flux_max=False,
                 expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
             )
@@ -22272,6 +23410,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 p_dict,
                 candidate_target_flux[fit_mask],
                 ensemble_flux[fit_mask],
+                target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+                comp_flux_error=None if ensemble_flux_error is None else ensemble_flux_error[fit_mask],
                 adaptive_summary=adaptive_summary,
                 use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
             )
@@ -22296,6 +23436,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 'ckey': None,
                 'target_flux': candidate_target_flux,
                 'comp_flux': ensemble_flux,
+                'target_flux_error': candidate_target_flux_error,
+                'comp_flux_error': ensemble_flux_error,
                 'fit_mask': fit_mask,
                 'candidate_frame_clip_diagnostic': None,
                 'fit_diagnostics': fit_diagnostics,
@@ -22348,11 +23490,30 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             if target_shape_mask.shape[0] != frame_count:
                 target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            candidate_target_flux_error = (
+                None
+                if target_flux_error is None
+                else mask_series_with_quality(target_flux_error, target_shape_mask)
+            )
             comp_flux = psf_flux_series_from_rows(psf_flux_data[ckey], comp_quality_mask)
+            comp_flux_error = (
+                mask_series_with_quality(psf_noise_data[ckey], comp_quality_mask)
+                if isinstance(psf_noise_data, dict) and ckey in psf_noise_data
+                else None
+            )
         else:
             target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = target_flux
+            candidate_target_flux_error = target_flux_error
             comp_flux = mask_series_with_quality(aper_data[ckey][:, aperture_index, annulus_index], comp_quality_mask)
+            comp_flux_error = (
+                mask_series_with_quality(
+                    aper_data[f"{ckey}_unc"][:, aperture_index, annulus_index],
+                    comp_quality_mask,
+                )
+                if f"{ckey}_unc" in aper_data
+                else None
+            )
 
         candidate_frame_keep_mask = np.asarray(
             comp_summary.get('ensemble_frame_keep_mask', np.ones(times.shape[0], dtype=bool)),
@@ -22390,6 +23551,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             candidate_target_flux[fit_mask],
             comp_flux[fit_mask],
             airmass[fit_mask],
+            target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+            comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
             enforce_relative_flux_max=False,
             expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
         )
@@ -22401,6 +23564,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             p_dict,
             candidate_target_flux[fit_mask],
             comp_flux[fit_mask],
+            target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+            comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
             adaptive_summary=adaptive_summary,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
         )
@@ -22410,6 +23575,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'ckey': ckey,
             'target_flux': candidate_target_flux,
             'comp_flux': comp_flux,
+            'target_flux_error': candidate_target_flux_error,
+            'comp_flux_error': comp_flux_error,
             'fit_mask': fit_mask,
             'candidate_frame_clip_diagnostic': candidate_frame_clip_diagnostic,
             'fit_diagnostics': fit_diagnostics,
@@ -22428,6 +23595,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         ckey = plan['ckey']
         candidate_target_flux = plan.get('target_flux', target_flux)
         comp_flux = plan['comp_flux']
+        candidate_target_flux_error = plan.get('target_flux_error')
+        comp_flux_error = plan.get('comp_flux_error')
         fit_mask = plan['fit_mask']
         candidate_frame_clip_diagnostic = plan.get('candidate_frame_clip_diagnostic')
         fit_diagnostics = plan['fit_diagnostics']
@@ -22451,6 +23620,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             ld,
             p_dict,
             jd_times=jd_times[fit_mask],
+            target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+            comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
             detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
             use_impactparameter_rather_than_inclination_to_fit=
@@ -22467,6 +23638,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
         tflux_fit = final_reduction.get('good_target_flux')
         cflux_fit = final_reduction.get('good_comp_flux')
+        tflux_fit_error = final_reduction.get('good_target_flux_error')
+        cflux_fit_error = final_reduction.get('good_comp_flux_error')
         fit_diagnostics = ensure_lightcurve_fit_failure_reason(
             fit_diagnostics,
             fit_result,
@@ -22553,8 +23726,12 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'good_unc': final_reduction.get('good_unc'),
             'good_airmass': final_reduction.get('good_airmass'),
             'good_jd_times': final_reduction.get('good_jd_times'),
+            'good_target_flux_error': tflux_fit_error,
+            'good_comp_flux_error': cflux_fit_error,
             'tflux_fit': tflux_fit,
             'cflux_fit': cflux_fit,
+            'tflux_fit_error': tflux_fit_error,
+            'cflux_fit_error': cflux_fit_error,
             'source_indices': final_reduction.get('source_indices'),
             'duration_samples': final_reduction.get('duration_samples'),
             'data_highres': final_reduction.get('data_highres'),
@@ -23406,7 +24583,7 @@ def _main_impl():
                 userpDict['ra'] = pDict['ra']
                 userpDict['dec'] = pDict['dec']
             # time sort images
-            times, jd_times = [], []
+            times, jd_times, header_exptimes = [], [], []
             log_info(f"Reading FITS timestamps and converting to BJD_TDB for {len(inputfiles)} frame(s).")
             for file_index, file in enumerate(inputfiles):
                 extension = 0
@@ -23419,6 +24596,7 @@ def _main_impl():
                 times.append(obsTime)
                 plateStatus.setObsTime(obsTime)
                 jd_times.append(img_time_jd(header))
+                header_exptimes.append(get_exp_time(header))
                 completed = file_index + 1
                 if completed == len(inputfiles) or completed % 25 == 0:
                     log_info(f"Timestamp conversion progress: {completed}/{len(inputfiles)}")
@@ -23455,6 +24633,7 @@ def _main_impl():
             si = np.argsort(times)
             times = np.array(times)[si]
             jd_times = np.array(jd_times)[si]
+            header_exptimes = np.array(header_exptimes, dtype=float)[si]
             inputfiles = np.array(inputfiles)[si]
             precheck_inputfile_count = int(len(inputfiles))
             finite_plot_times = times[np.isfinite(times)]
@@ -23482,6 +24661,7 @@ def _main_impl():
             if dropped_wcs_files:
                 times = times[wcs_keep_mask]
                 jd_times = jd_times[wcs_keep_mask]
+                header_exptimes = header_exptimes[wcs_keep_mask]
                 plateStatus.initializeFilenames(list(inputfiles))
             post_wcs_inputfile_count = int(len(inputfiles))
             target_wcs_precheck_inputfiles = np.array(inputfiles, copy=True)
@@ -23501,6 +24681,7 @@ def _main_impl():
                 )
                 times = times[target_wcs_keep_mask]
                 jd_times = jd_times[target_wcs_keep_mask]
+                header_exptimes = header_exptimes[target_wcs_keep_mask]
                 finite_plot_times = times[np.isfinite(times)]
                 full_plot_time_range = None
                 if finite_plot_times.size:
@@ -23549,6 +24730,7 @@ def _main_impl():
                 reference_fallback = pointing_reference_fallback or target_reference_fallback
                 times = times[pointing_keep_mask]
                 jd_times = jd_times[pointing_keep_mask]
+                header_exptimes = header_exptimes[pointing_keep_mask]
                 finite_plot_times = times[np.isfinite(times)]
                 full_plot_time_range = None
                 if finite_plot_times.size:
@@ -23639,6 +24821,7 @@ def _main_impl():
                 inputfiles = inputfiles[inc:]
                 times = times[inc:]
                 jd_times = jd_times[inc:]
+                header_exptimes = header_exptimes[inc:]
                 pointing_alignment_transforms = {}
             plateStatus.setCurrentFilename(inputfiles[0])
             header = get_first_image_header(inputfiles[0])
@@ -23768,6 +24951,7 @@ def _main_impl():
                         obs_filter=exotic_infoDict['filter'],
                         field_catalog=nextastro_field_catalog,
                         count=automatic_comp_count,
+                        colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
                     )
                     log_automatic_optimal_calibration_selection(
                         automatic_comp_stars,
@@ -23832,7 +25016,12 @@ def _main_impl():
             tar_comp_dist = {}
             vsp_num = []
             comp_star_count = len(exotic_infoDict['comp_stars'])
-            require_comp_star = is_comp_star_required(exotic_infoDict.get('require_comp_star', 'y'))
+            psf_noise_data = initialize_psf_noise_data(len(inputfiles), comp_star_count)
+            frame_noise_configs = []
+            require_comp_star = resolve_require_comp_star_for_exposure_times(
+                exotic_infoDict.get('require_comp_star', 'y'),
+                header_exptimes,
+            )
             target_driven_comp_selection = is_target_driven_comp_selection_enabled(
                 exotic_infoDict.get('target_driven_comp_selection', 'n')
             )
@@ -24026,6 +25215,15 @@ def _main_impl():
                                             exotic_infoDict['elev'], jd_times[i]))
 
                 exptimes.append(get_exp_time(image_header))
+                frame_noise_config = noise_budget_config_from_info(exotic_infoDict, image_header)
+                frame_noise_configs.append(frame_noise_config)
+                if i == 0:
+                    log_info(
+                        "Photometry noise budget terms: "
+                        f"{format_noise_budget_config_summary(frame_noise_config)}."
+                    )
+                frame_airmass = airMassList[-1]
+                frame_exposure_s = exptimes[-1]
 
                 # IMAGES
                 imageData = hdul[extension].data
@@ -24140,6 +25338,21 @@ def _main_impl():
                         target_psf_flux_seed_row,
                         0,
                     )
+                    store_psf_noise_budget(
+                        psf_noise_data,
+                        'target',
+                        i,
+                        compute_psf_noise_budget_for_row(
+                            imageData,
+                            psf_flux_data['target'][i],
+                            0,
+                            noise_config=frame_noise_config,
+                            exposure_s=frame_exposure_s,
+                            airmass=frame_airmass,
+                            fallback_sigma=sigma,
+                            fast_mode=fast_aperture_mask,
+                        ),
+                    )
                     for comp_idx, comp_key in enumerate(comp_alignment_keys):
                         comp_psf_flux_seed_row = psf_data[comp_key][i]
                         if comp_key in psf_flux_seed_tracks:
@@ -24148,6 +25361,21 @@ def _main_impl():
                             imageData,
                             comp_psf_flux_seed_row,
                             comp_idx + 1,
+                        )
+                        store_psf_noise_budget(
+                            psf_noise_data,
+                            comp_key,
+                            i,
+                            compute_psf_noise_budget_for_row(
+                                imageData,
+                                psf_flux_data[comp_key][i],
+                                comp_idx + 1,
+                                noise_config=frame_noise_config,
+                                exposure_s=frame_exposure_s,
+                                airmass=frame_airmass,
+                                fallback_sigma=sigma,
+                                fast_mode=fast_aperture_mask,
+                            ),
                         )
 
                 # aperture photometry
@@ -24185,6 +25413,9 @@ def _main_impl():
                         adaptive_apertures=use_adaptive_apertures,
                         fallback_sigma=sigma,
                         use_aperture_corrections_and_full_image_fwhm=use_aperture_corrections_and_full_image_fwhm,
+                        noise_config=frame_noise_config,
+                        exposure_s=frame_exposure_s,
+                        airmass=frame_airmass,
                     )
 
                     if i == coarse_tune_frames - 1:
@@ -24262,6 +25493,9 @@ def _main_impl():
                                     use_aperture_corrections_and_full_image_fwhm=(
                                         use_aperture_corrections_and_full_image_fwhm
                                     ),
+                                    noise_config=frame_noise_configs[backfill_idx],
+                                    exposure_s=exptimes[backfill_idx],
+                                    airmass=airMassList[backfill_idx],
                                 )
                             finally:
                                 if loaded_from_disk:
@@ -24293,6 +25527,9 @@ def _main_impl():
                         adaptive_apertures=use_adaptive_apertures,
                         fallback_sigma=sigma,
                         use_aperture_corrections_and_full_image_fwhm=use_aperture_corrections_and_full_image_fwhm,
+                        noise_config=frame_noise_config,
+                        exposure_s=frame_exposure_s,
+                        airmass=frame_airmass,
                     )
 
                 # close file + delete from memory
@@ -24329,16 +25566,15 @@ def _main_impl():
             airmass = np.array(airMassList)[goodmask]
             psf_data["target"] = psf_data["target"][goodmask]
             psf_flux_data["target"] = psf_flux_data["target"][goodmask]
+            for key in list(psf_noise_data.keys()):
+                psf_noise_data[key] = psf_noise_data[key][goodmask]
             if aper_data is not None:
-                aper_data["target"] = aper_data["target"][goodmask]
-                aper_data["target_bg"] = aper_data["target_bg"][goodmask]
+                for key in list(aper_data.keys()):
+                    aper_data[key] = aper_data[key][goodmask]
             for j in range(len(exotic_infoDict['comp_stars'])):
                 ckey = f"comp{j + 1}"
                 psf_data[ckey] = psf_data[ckey][goodmask]
                 psf_flux_data[ckey] = psf_flux_data[ckey][goodmask]
-                if aper_data is not None:
-                    aper_data[ckey] = aper_data[ckey][goodmask]
-                    aper_data[f"{ckey}_bg"] = aper_data[f"{ckey}_bg"][goodmask]
 
             psf_quality_diagnostics = []
             if use_psf_photometry:
@@ -24476,6 +25712,14 @@ def _main_impl():
                 'comparison_ktmf_metric': np.nan,
                 'comparison_eebls_snr': np.nan,
                 'comparison_transit_delta_bic': np.nan,
+                'noise_budget_summary': (
+                    format_noise_budget_config_summary(frame_noise_configs[0])
+                    if frame_noise_configs else None
+                ),
+                'noise_budget_terms': (
+                    list(frame_noise_configs[0].get('enabled_terms', ()))
+                    if frame_noise_configs else []
+                ),
             }
 
             comparison_calibration = None
@@ -24604,6 +25848,7 @@ def _main_impl():
                     aper_data,
                     tFlux,
                     psf_flux_data=psf_flux_source,
+                    psf_noise_data=psf_noise_data if use_psf_photometry else None,
                     plot_time_range=full_plot_time_range,
                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                     detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
@@ -24661,6 +25906,12 @@ def _main_impl():
                     myfit = selected_attempt['fit']
                     tFlux1 = selected_attempt['tflux_fit']
                     cFlux1 = selected_attempt['cflux_fit']
+                    tFlux1_error = selected_attempt.get('tflux_fit_error')
+                    cFlux1_error = selected_attempt.get('cflux_fit_error')
+                    if tFlux1_error is None or np.shape(tFlux1_error) != np.shape(tFlux1):
+                        tFlux1_error = tFlux1 ** 0.5
+                    if cFlux1_error is None or np.shape(cFlux1_error) != np.shape(cFlux1):
+                        cFlux1_error = cFlux1 ** 0.5
                     selected_source_indices = np.asarray(
                         selected_attempt.get('source_indices', np.arange(len(tFlux1), dtype=int)),
                         dtype=int,
@@ -24757,6 +26008,8 @@ def _main_impl():
                                            selected_fit_good_flux=selected_attempt.get('good_flux'),
                                            selected_fit_good_unc=selected_attempt.get('good_unc'),
                                            selected_fit_good_airmass=selected_attempt.get('good_airmass'),
+                                           selected_fit_good_target_flux_error=selected_attempt.get('tflux_fit_error'),
+                                           selected_fit_good_comp_flux_error=selected_attempt.get('cflux_fit_error'),
                                            selected_fit_duration_samples=selected_attempt.get('duration_samples'),
                                            selected_fit_data_highres=selected_attempt.get('data_highres'),
                                            selected_fit_final_output_dir=selected_attempt.get('final_output_dir'),
@@ -24778,7 +26031,7 @@ def _main_impl():
                                            selected_comparison_transit_qc_summary=selected_attempt.get('transit_qc_summary'))
 
                     flux_values.update(flux_tar=tFlux1, flux_ref=cFlux1,
-                                       flux_unc_tar=tFlux1 ** 0.5, flux_unc_ref=cFlux1 ** 0.5)
+                                       flux_unc_tar=tFlux1_error, flux_unc_ref=cFlux1_error)
 
                     ref_centroid_x = np.full(selected_source_indices.shape, np.nan, dtype=float)
                     ref_centroid_y = np.full(selected_source_indices.shape, np.nan, dtype=float)
@@ -24803,6 +26056,8 @@ def _main_impl():
                                 cFlux = psf_flux_series_from_rows(psf_flux_source[ckey])
                                 vsp_fit, _, _ = fit_lightcurve(
                                     times, tFlux, cFlux, airmass, ld, pDict, jd_times,
+                                    target_flux_error=psf_noise_data.get('target'),
+                                    comp_flux_error=psf_noise_data.get(ckey),
                                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                                     use_impactparameter_rather_than_inclination_to_fit=
                                     use_impactparameter_rather_than_inclination_to_fit,
@@ -24817,13 +26072,27 @@ def _main_impl():
                             best_a = comparison_calibration['a']
                             best_an = comparison_calibration['an']
                             best_target_flux = aper_data['target'][:, best_a, best_an]
+                            best_target_flux_error = (
+                                aper_data['target_unc'][:, best_a, best_an]
+                                if 'target_unc' in aper_data
+                                else None
+                            )
                             for j in vsp_num:
                                 ckey = f"comp{j + 1}"
                                 aper_mask = np.isfinite(aper_data[ckey][:, best_a, best_an])
                                 cFlux = aper_data[ckey][aper_mask][:, best_a, best_an]
+                                cFlux_error = (
+                                    aper_data[f"{ckey}_unc"][aper_mask][:, best_a, best_an]
+                                    if f"{ckey}_unc" in aper_data
+                                    else None
+                                )
                                 vsp_fit, _, _ = fit_lightcurve(
                                     times[aper_mask], best_target_flux[aper_mask], cFlux,
                                     airmass[aper_mask], ld, pDict, jd_times[aper_mask],
+                                    target_flux_error=(
+                                        None if best_target_flux_error is None else best_target_flux_error[aper_mask]
+                                    ),
+                                    comp_flux_error=cFlux_error,
                                     disable_vertical_flux_normalization=disable_vertical_flux_normalization,
                                     use_impactparameter_rather_than_inclination_to_fit=
                                     use_impactparameter_rather_than_inclination_to_fit,
@@ -24978,6 +26247,7 @@ def _main_impl():
                     use_impactparameter_rather_than_inclination_to_fit,
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                     psf_flux_data=psf_flux_source,
+                    psf_noise_data=psf_noise_data if use_psf_photometry else None,
                 )
                 saved_candidate_fit_count = sum(1 for summary in candidate_fit_summaries if summary['fit'] is not None)
                 failed_candidate_fit_count = len(candidate_fit_summaries) - saved_candidate_fit_count

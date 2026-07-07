@@ -1349,6 +1349,8 @@ def build_aavso_photometry_metadata(photometry_info):
         'method': photometry_method_from_info(photometry_info),
         'selected_comparison_star': photometry_info.get('comp_star_num'),
         'selected_comparison_coordinates': photometry_info.get('comp_star_coords'),
+        'noise_budget_summary': photometry_info.get('noise_budget_summary'),
+        'noise_budget_terms': photometry_info.get('noise_budget_terms'),
         'comparison_selection_basis': photometry_info.get('selection_basis'),
         'comparison_selection_metric': photometry_info.get('selection_metric'),
         'comparison_field_score': photometry_info.get('calibration_field_score'),
@@ -1790,6 +1792,12 @@ class OutputFiles:
         params_num.update(format_fit_quality_final_params(fit_quality))
         params_num.update(format_empirical_transit_uncertainty_final_params(empirical_uncertainty))
         params_num.update(format_ktmf_decision_final_params(self.fit, photometry_info))
+        if isinstance(photometry_info, dict) and photometry_info.get('noise_budget_summary'):
+            params_num["Photometry noise budget"] = str(photometry_info.get('noise_budget_summary'))
+            if photometry_info.get('noise_budget_terms'):
+                params_num["Photometry noise budget terms"] = ", ".join(
+                    str(term) for term in photometry_info.get('noise_budget_terms')
+                )
         if getattr(self.fit, 'airmass_fit_skipped', False):
             params_num["Airmass correction"] = getattr(
                 self.fit,

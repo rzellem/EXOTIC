@@ -929,6 +929,64 @@ def test_comp_params_reads_aperture_corrections_and_full_image_fwhm_from_optiona
     assert inputs.info_dict["use_aperture_corrections_and_full_image_fwhm"] is True
 
 
+def test_comp_params_reads_noise_budget_terms_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "gain_electrons_per_adu": 1.7,
+            "read_noise_electrons": 5.2,
+            "dark_current_electrons_per_second_per_pixel": 0.03,
+            "flat_field_fractional_error": 0.004,
+            "telescope_aperture_m": 0.28,
+            "scintillation_coefficient": 0.09,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["gain_electrons_per_adu"] == pytest.approx(1.7)
+    assert inputs.info_dict["read_noise_electrons"] == pytest.approx(5.2)
+    assert inputs.info_dict["dark_current_electrons_per_second_per_pixel"] == pytest.approx(0.03)
+    assert inputs.info_dict["flat_field_fractional_error"] == pytest.approx(0.004)
+    assert inputs.info_dict["telescope_aperture_m"] == pytest.approx(0.28)
+    assert inputs.info_dict["scintillation_coefficient"] == pytest.approx(0.09)
+
+
+def test_comp_params_reads_colour_term_metadata_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "colour_term": -0.045,
+            "colour_term_error": 0.004,
+            "colour_term_index": "r-i",
+            "colour_term_bv": -0.031,
+            "colour_term_bv_error": 0.003,
+            "colour_term_bprp": -0.028,
+            "colour_term_bprp_error": 0.002,
+            "colour_equation_filter": "rp",
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["colour_term"] == pytest.approx(-0.045)
+    assert inputs.info_dict["colour_term_error"] == pytest.approx(0.004)
+    assert inputs.info_dict["colour_term_index"] == "r-i"
+    assert inputs.info_dict["colour_term_bv"] == pytest.approx(-0.031)
+    assert inputs.info_dict["colour_term_bv_error"] == pytest.approx(0.003)
+    assert inputs.info_dict["colour_term_bprp"] == pytest.approx(-0.028)
+    assert inputs.info_dict["colour_term_bprp_error"] == pytest.approx(0.002)
+    assert inputs.info_dict["colour_equation_filter"] == "rp"
+
+
 class DummyResponse:
     def __init__(self, payload):
         self._payload = payload

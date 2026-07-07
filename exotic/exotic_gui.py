@@ -432,6 +432,7 @@ def main():
                 "Restrict a/Rs Search Range": "Set optional_info 'restrict_a/Rs_range' to y to restrict a/Rs to a prior-centered percentage window. Set 'restrict_a/Rs_range_percentage' to control the half-width. Defaults y and 10.",
                 "Sparse Posterior Live-Point Retry": "Set optional_info 'use_sparse_posterior_live_point_retry' to y to rank comparison-star candidates at the configured UltraNest live-point count, then continue the chosen final comparison-star fit with 5x additional minimum live points using its retained final-pass bounds. Standalone final fits still only continue when Rp/Rs, Tmid, or a/Rs posteriors are too sparse. Set to n to disable. Default y.",
                 "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
+                "Photometry Noise Budget": "Optional noise terms for raw-image photometry: gain_electrons_per_adu, read_noise_electrons, dark_current_electrons_per_second_per_pixel, flat_field_fractional_error, telescope_aperture_m, and scintillation_coefficient. Leave null to ignore an optional term.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
                 "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
@@ -1612,6 +1613,12 @@ def main():
                     "restrict_a/Rs_range_percentage": 10.0,
                     "use_sparse_posterior_live_point_retry": "y",
                     "use_adaptive_apertures": False,
+                    "gain_electrons_per_adu": null,
+                    "read_noise_electrons": null,
+                    "dark_current_electrons_per_second_per_pixel": null,
+                    "flat_field_fractional_error": null,
+                    "telescope_aperture_m": null,
+                    "scintillation_coefficient": null,
                     "Use target-driven comp selection rather than comp-driven comp selection": "n",
                     "require_comp_star": "y"
                 }
@@ -1670,6 +1677,12 @@ def main():
                     "use_prior_Rp/Rs_when_posterior_pinned": "y",
                     "use_sparse_posterior_live_point_retry": "y",
                     "use_adaptive_apertures": False,
+                    "gain_electrons_per_adu": null,
+                    "read_noise_electrons": null,
+                    "dark_current_electrons_per_second_per_pixel": null,
+                    "flat_field_fractional_error": null,
+                    "telescope_aperture_m": null,
+                    "scintillation_coefficient": null,
                     "Use target-driven comp selection rather than comp-driven comp selection": "n",
                     "require_comp_star": "y"
                 }

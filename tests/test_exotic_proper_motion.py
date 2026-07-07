@@ -120,6 +120,7 @@ from exotic.exotic import (
     comparison_candidate_fit_selection_reason,
     comparison_star_coverage_summary,
     comparison_star_stability_summary,
+    compute_photometry_noise_budget,
     configure_windows_multiprocessing_main_spec,
     deduplicate_comparison_star_coords,
     diagnose_lightcurve_fit_inputs,
@@ -145,6 +146,7 @@ from exotic.exotic import (
     log_comparison_calibration_fit_attempt_summaries,
     log_comparison_candidate_fit_summaries,
     log_target_fit_candidate_summaries,
+    noise_budget_config_from_info,
     normalize_flux_series_to_approximate_unity,
     phase_bin_sigma_clip,
     parse_deviation_from_expected_transit_in_qc_sigma,
@@ -466,10 +468,11 @@ def test_save_selected_photometry_debug_series_writes_stage_masks(tmp_path):
     assert output_path.exists()
 
     rows = np.loadtxt(output_path, delimiter=",", skiprows=1)
-    assert rows.shape == (3, 7)
-    assert rows[:, 4].astype(int).tolist() == [1, 0, 1]
-    assert rows[:, 5].astype(int).tolist() == [1, 1, 1]
-    assert rows[:, 6].astype(int).tolist() == [1, 0, 0]
+    assert rows.shape == (3, 10)
+    assert np.isnan(rows[:, 4:7]).all()
+    assert rows[:, 7].astype(int).tolist() == [1, 0, 1]
+    assert rows[:, 8].astype(int).tolist() == [1, 1, 1]
+    assert rows[:, 9].astype(int).tolist() == [1, 0, 0]
 
 
 def test_finalize_comparison_candidate_phase_clips_before_nested_fit(monkeypatch):
@@ -1171,6 +1174,64 @@ def test_is_comp_star_required_parses_values():
     assert is_comp_star_required(None) is True
     assert is_comp_star_required("y") is True
     assert is_comp_star_required("n") is False
+
+
+def test_mixed_exposure_times_force_comparison_star_requirement():
+    import exotic.exotic as exotic_module
+
+    assert exotic_module.exposure_time_spread_fraction([60.0, 60.3, 60.5]) < 0.01
+    assert not exotic_module.exposure_variation_requires_comp_star([60.0, 60.3, 60.5])
+    assert exotic_module.resolve_require_comp_star_for_exposure_times("n", [60.0, 60.3, 60.5]) is False
+
+    assert exotic_module.exposure_time_spread_fraction([60.0, 61.0]) > 0.01
+    assert exotic_module.exposure_variation_requires_comp_star([60.0, 61.0])
+    assert exotic_module.resolve_require_comp_star_for_exposure_times("n", [60.0, 61.0]) is True
+
+
+def test_img_time_bjd_tdb_prefers_direct_mid_exposure_bjd(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    header = exotic_module.fits.Header()
+    header["BJD_TDB"] = 2461152.1287422837
+    header["DATE-AVG"] = "2026-04-22T15:05:23.333333"
+    header["DATE-UTC"] = "2026-04-22T15:05:08.333333"
+    header["EXPTIME"] = 30.0
+
+    monkeypatch.setattr(
+        exotic_module,
+        "convert_jd_to_bjd",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("conversion should not run")),
+    )
+
+    assert exotic_module.img_time_bjd_tdb(header, {}, {}) == pytest.approx(2461152.1287422837)
+
+
+def test_img_time_bjd_tdb_uses_nina_date_avg_before_start_time(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    header = exotic_module.fits.Header()
+    header["DATE-AVG"] = "2026-04-22T15:05:23.333333"
+    header["DATE-UTC"] = "2026-04-22T15:05:08.333333"
+    header["EXPTIME"] = 10.0
+
+    converted_inputs = []
+
+    def fake_convert_jd_to_bjd(values, _p_dict, _info_dict):
+        converted_inputs.extend(values)
+        return np.asarray(values, dtype=float) + 0.25
+
+    monkeypatch.setattr(exotic_module, "convert_jd_to_bjd", fake_convert_jd_to_bjd)
+
+    expected_midpoint_jd = exotic_module.Time("2026-04-22T15:05:23.333333", scale="utc").jd
+    expected_start_plus_exposure_jd = (
+        exotic_module.Time("2026-04-22T15:05:08.333333", scale="utc").jd
+        + 5.0 / 86400.0
+    )
+
+    assert exotic_module.img_time_jd(header) == pytest.approx(expected_midpoint_jd)
+    assert exotic_module.img_time_bjd_tdb(header, {}, {}) == pytest.approx(expected_midpoint_jd + 0.25)
+    assert converted_inputs == pytest.approx([expected_midpoint_jd])
+    assert converted_inputs[0] != pytest.approx(expected_start_plus_exposure_jd, abs=1e-9)
 
 
 def test_is_target_driven_comp_selection_enabled_parses_values():
@@ -5227,7 +5288,7 @@ def test_fit_ranked_comparison_calibration_candidates_can_evaluate_all_qc_passes
 
     assert call_markers == [50, 40, 30]
     assert result["stopped_after_first_qc_pass"] is False
-    assert result["selection_metric"] == "ktmf"
+    assert result["selection_metric"] == "ktmf_combined_quality"
     assert result["selected_result"]["comp_index"] == 2
     assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.80)
 
@@ -5678,7 +5739,7 @@ def test_fit_ranked_comparison_calibration_candidates_saves_outputs_for_complete
 
     assert call_markers == [50, 40]
     assert len(result["attempts"]) == 2
-    assert result["selection_metric"] == "ktmf"
+    assert result["selection_metric"] == "ktmf_combined_quality"
     assert result["selected_result"]["comp_index"] == 1
     assert [attempt["final_output_dir"] for attempt in result["attempts"]] == [
         str(tmp_path / "comp1"),
@@ -5706,7 +5767,7 @@ def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_s
             residual_level = 0.01
             eebls_snr = 4.0
         else:
-            residual_level = 0.02
+            residual_level = 0.012
             eebls_snr = 7.5
 
         residuals = residual_level * np.array([-1.0, 1.0, -1.0, 1.0, -1.0, 1.0], dtype=float)
@@ -5768,8 +5829,8 @@ def test_fit_ranked_comparison_calibration_candidates_can_prefer_highest_eebls_s
     assert result["selection_metric"] == "eebls_snr"
     assert result["selected_result"]["comp_index"] == 1
     assert result["selected_result"]["eebls_snr"] == pytest.approx(7.5)
-    assert "highest EEBLS SNR" in result["selected_result"]["selection_reason"]
-    assert result["attempts"][0]["selection_reason"].startswith("not selected: EEBLS SNR")
+    assert "highest selection-pass EEBLS SNR" in result["selected_result"]["selection_reason"]
+    assert result["attempts"][0]["selection_reason"].startswith("not selected: selection-pass EEBLS SNR")
 
 
 def test_fit_ranked_comparison_calibration_candidates_logs_per_comp_run_reporting(monkeypatch):
@@ -6486,7 +6547,7 @@ def test_fit_ranked_comparison_calibration_candidates_falls_back_to_best_qc_reje
     )
 
     assert [attempt["rejected_by_transit_qc"] for attempt in result["attempts"]] == [True, True]
-    assert result["selection_metric"] == "ktmf"
+    assert result["selection_metric"] == "ktmf_combined_quality"
     assert result["selected_result"]["comp_index"] == 1
     assert result["selected_result"]["selected_despite_transit_qc"] is True
     assert result["selected_result"]["ktmf_metric"] == pytest.approx(4.80)
@@ -6623,6 +6684,97 @@ def test_prepare_lightcurve_fit_input_series_normalizes_ratio_around_unity():
     assert np.nanmedian(prepared["debug_raw_ratio"]) == pytest.approx(3.0)
     assert prepared["approximate_baseline_level"] == pytest.approx(3.0)
     assert np.nanmedian(prepared["flux"]) == pytest.approx(1.0)
+
+
+def test_prepare_lightcurve_fit_input_series_uses_per_star_flux_errors(monkeypatch):
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
+    )
+
+    times = np.linspace(0.0, 0.05, 6)
+    target_flux = np.full(6, 400.0)
+    comp_flux = np.full(6, 100.0)
+    target_error = np.full(6, 20.0)
+    comp_error = np.full(6, 5.0)
+
+    prepared = prepare_lightcurve_fit_input_series(
+        times,
+        target_flux,
+        comp_flux,
+        np.linspace(1.0, 1.5, 6),
+        target_flux_error=target_error,
+        comp_flux_error=comp_error,
+    )
+
+    propagated_relative_error = np.sqrt((20.0 / 100.0) ** 2 + (5.0 * 400.0 / 100.0 ** 2) ** 2)
+    assert prepared["applied"] is True
+    assert np.nanmedian(prepared["debug_relative_flux_error"]) == pytest.approx(propagated_relative_error)
+    assert np.nanmedian(prepared["unc"]) == pytest.approx(propagated_relative_error / 4.0)
+    assert np.allclose(prepared["target_flux_error"], target_error)
+    assert np.allclose(prepared["comp_flux_error"], comp_error)
+
+
+def test_compute_photometry_noise_budget_includes_optional_terms():
+    config = {
+        "gain_e_per_adu": 2.0,
+        "read_noise_electrons": 4.0,
+        "dark_current_electrons_per_second_per_pixel": 0.1,
+        "flat_field_fractional_error": 0.01,
+        "telescope_aperture_m": 0.3,
+        "scintillation_coefficient": 0.09,
+        "elevation_m": 100.0,
+        "enabled_terms": (
+            "source",
+            "sky_aperture",
+            "sky_estimate",
+            "read",
+            "dark",
+            "flat",
+            "scintillation",
+        ),
+    }
+
+    budget = compute_photometry_noise_budget(
+        10000.0,
+        3.0,
+        50.0,
+        200.0,
+        exposure_s=60.0,
+        airmass=1.2,
+        noise_config=config,
+    )
+
+    assert budget["source"] == pytest.approx(np.sqrt(10000.0 / 2.0))
+    assert budget["read"] == pytest.approx(np.sqrt(50.0 * (4.0 / 2.0) ** 2))
+    assert budget["dark"] == pytest.approx(np.sqrt(50.0 * 0.1 * 60.0 / 2.0 ** 2))
+    assert budget["flat"] == pytest.approx(100.0)
+    assert budget["scintillation"] > 0
+    assert budget["total"] > budget["flat"]
+
+
+def test_noise_budget_config_reads_inits_and_header_values():
+    header = {
+        "GAIN": 1.5,
+        "RDNOISE": 7.0,
+        "DARKCURR": 0.02,
+        "FLATERR": 0.003,
+        "APR-DIA": 250.0,
+    }
+    config = noise_budget_config_from_info(
+        {
+            "read_noise_electrons": 5.0,
+        },
+        header=header,
+    )
+
+    assert config["gain_e_per_adu"] == pytest.approx(1.5)
+    assert config["read_noise_electrons"] == pytest.approx(5.0)
+    assert config["dark_current_electrons_per_second_per_pixel"] == pytest.approx(0.02)
+    assert config["flat_field_fractional_error"] == pytest.approx(0.003)
+    assert config["telescope_aperture_m"] == pytest.approx(0.25)
+    assert "read" in config["enabled_terms"]
+    assert "flat" in config["enabled_terms"]
 
 
 def test_prepare_lightcurve_fit_input_series_clips_prefit_raw_ratio_outliers(monkeypatch):

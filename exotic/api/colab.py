@@ -384,6 +384,12 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "pick_comparison_by_eebls_snr": "y",
             "use_impactparameter_rather_than_inclination_to_fit": "y",
             "use_adaptive_apertures": false,
+            "gain_electrons_per_adu": null,
+            "read_noise_electrons": null,
+            "dark_current_electrons_per_second_per_pixel": null,
+            "flat_field_fractional_error": null,
+            "telescope_aperture_m": null,
+            "scintillation_coefficient": null,
             "require_comp_star": "y"
     }
 }

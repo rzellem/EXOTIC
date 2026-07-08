@@ -78,6 +78,13 @@ TRANSIT_MODEL_UNCERTAINTY_KEYS = (
 )
 BASELINE_MODEL_UNCERTAINTY_KEYS = ('a0', 'a1', 'a2')
 MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT = 2000
+EXPOSURE_SMEARING_EXPOSURE_TIME_KEY = '_exposure_time_days'
+EXPOSURE_SMEARING_SUPERSAMPLE_KEY = '_exposure_smearing_supersample'
+EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY = '_exposure_smearing_change_tolerance'
+DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE = 7
+DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE = 1.0e-5
+MIN_EXPOSURE_SMEARING_SECONDS = 1.0
+EXPOSURE_SMEARING_TRANSIT_WINDOW_PADDING_FACTOR = 2.0
 ULTRANEST_INFLATED_ERROR_REPLACEMENT_FACTOR = 3.0
 ULTRANEST_LOCAL_UNCERTAINTY_MAX_DELTA_CHI2 = 9.0
 
@@ -140,12 +147,170 @@ def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):
     return gw, nearest.astype(int)
 
 
-def transit(times, values):
+def _instantaneous_transit(times, values):
     model = pytransit([values['u0'], values['u1'], values['u2'], values['u3']],
                       values['rprs'], values['per'], values['ars'],
                       values['ecc'], values['inc'], values['omega'],
                       values['tmid'], times, method='claret', precision=3)
     return model
+
+
+def _exposure_time_days_for_times(values, shape):
+    try:
+        exposure_time_days = values.get(EXPOSURE_SMEARING_EXPOSURE_TIME_KEY)
+    except AttributeError:
+        return None
+    if exposure_time_days is None:
+        return None
+
+    try:
+        exposure_time_days = np.asarray(exposure_time_days, dtype=float)
+    except (TypeError, ValueError):
+        return None
+
+    if exposure_time_days.shape == ():
+        exposure_time_days = np.full(shape, float(exposure_time_days), dtype=float)
+    elif exposure_time_days.shape != shape:
+        return None
+    else:
+        exposure_time_days = np.array(exposure_time_days, dtype=float, copy=True)
+
+    minimum_exposure_days = MIN_EXPOSURE_SMEARING_SECONDS / 86400.0
+    finite_positive = np.isfinite(exposure_time_days) & (exposure_time_days > minimum_exposure_days)
+    if not np.any(finite_positive):
+        return None
+
+    exposure_time_days[~finite_positive] = 0.0
+    return exposure_time_days
+
+
+def _exposure_smearing_supersample(values):
+    try:
+        sample_count = int(values.get(EXPOSURE_SMEARING_SUPERSAMPLE_KEY, DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE))
+    except (AttributeError, TypeError, ValueError):
+        sample_count = DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE
+    sample_count = max(3, sample_count)
+    if sample_count % 2 == 0:
+        sample_count += 1
+    return sample_count
+
+
+def _exposure_smearing_change_tolerance(values):
+    try:
+        tolerance = float(values.get(
+            EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY,
+            DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE,
+        ))
+    except (AttributeError, TypeError, ValueError):
+        tolerance = DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE
+    if not np.isfinite(tolerance) or tolerance < 0:
+        tolerance = DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE
+    return tolerance
+
+
+def _exposure_smearing_candidate_mask(times, exposure_time_days, values):
+    candidate = (
+        np.isfinite(times)
+        & np.isfinite(exposure_time_days)
+        & (exposure_time_days > MIN_EXPOSURE_SMEARING_SECONDS / 86400.0)
+    )
+    if not np.any(candidate):
+        return candidate
+
+    try:
+        period = float(values['per'])
+        tmid = float(values['tmid'])
+    except (KeyError, TypeError, ValueError):
+        return candidate
+    if not np.isfinite(period) or period <= 0 or not np.isfinite(tmid):
+        return candidate
+
+    duration = transit_duration(values)
+    if not np.isfinite(duration) or duration <= 0:
+        return candidate
+
+    max_exposure = np.nanmax(exposure_time_days[candidate])
+    if not np.isfinite(max_exposure) or max_exposure <= 0:
+        return np.zeros(times.shape, dtype=bool)
+
+    half_window = (
+        0.5 * duration
+        + (0.5 + EXPOSURE_SMEARING_TRANSIT_WINDOW_PADDING_FACTOR) * max_exposure
+    )
+    phase_days = get_phase(times[candidate], period, tmid) * period
+    narrowed = np.abs(phase_days) <= half_window
+    candidate_indices = np.flatnonzero(candidate)
+    candidate[candidate_indices] = narrowed
+    return candidate
+
+
+def transit(times, values):
+    model = _instantaneous_transit(times, values)
+    exposure_time_days = _exposure_time_days_for_times(values, np.asarray(times).shape)
+    if exposure_time_days is None:
+        return model
+
+    try:
+        times_array = np.asarray(times, dtype=float)
+        model_array = np.asarray(model, dtype=float)
+    except (TypeError, ValueError):
+        return model
+    if model_array.shape != times_array.shape:
+        return model
+
+    flat_times = times_array.reshape(-1)
+    flat_model = model_array.reshape(-1).copy()
+    flat_exposure_time_days = exposure_time_days.reshape(-1)
+    candidate_mask = _exposure_smearing_candidate_mask(
+        flat_times,
+        flat_exposure_time_days,
+        values,
+    )
+    candidate_indices = np.flatnonzero(candidate_mask)
+    if candidate_indices.size == 0:
+        return model_array
+
+    candidate_times = flat_times[candidate_indices]
+    candidate_exposures = flat_exposure_time_days[candidate_indices]
+    half_exposures = 0.5 * candidate_exposures
+    try:
+        start_model = np.asarray(
+            _instantaneous_transit(candidate_times - half_exposures, values),
+            dtype=float,
+        ).reshape(-1)
+        end_model = np.asarray(
+            _instantaneous_transit(candidate_times + half_exposures, values),
+            dtype=float,
+        ).reshape(-1)
+    except Exception:
+        return model_array
+    if start_model.shape != candidate_times.shape or end_model.shape != candidate_times.shape:
+        return model_array
+
+    center_model = flat_model[candidate_indices]
+    model_change = np.maximum.reduce((
+        np.abs(start_model - center_model),
+        np.abs(end_model - center_model),
+        np.abs(end_model - start_model),
+    ))
+    active_indices = candidate_indices[model_change > _exposure_smearing_change_tolerance(values)]
+    if active_indices.size == 0:
+        return model_array
+
+    sample_count = _exposure_smearing_supersample(values)
+    offsets = (np.arange(sample_count, dtype=float) + 0.5) / sample_count - 0.5
+    active_times = flat_times[active_indices]
+    active_exposures = flat_exposure_time_days[active_indices]
+    sample_times = (active_times[:, None] + active_exposures[:, None] * offsets[None, :]).reshape(-1)
+    try:
+        sample_model = np.asarray(_instantaneous_transit(sample_times, values), dtype=float)
+    except Exception:
+        return model_array
+    if sample_model.size != active_indices.size * sample_count:
+        return model_array
+
+    flat_model[active_indices] = sample_model.reshape(active_indices.size, sample_count).mean(axis=1)
+    return flat_model.reshape(model_array.shape)
 
 
 def impact_parameter_scale(values):
@@ -502,6 +667,29 @@ def binner(arr, n, err=''):
         return arr, err
 
 
+def normalize_exposure_times_seconds_to_days(exposure_times_seconds, reference_shape):
+    if exposure_times_seconds is None:
+        return None
+    try:
+        exposure_times_seconds = np.asarray(exposure_times_seconds, dtype=float)
+    except (TypeError, ValueError):
+        return None
+
+    if exposure_times_seconds.shape == ():
+        exposure_times_seconds = np.full(reference_shape, float(exposure_times_seconds), dtype=float)
+    elif exposure_times_seconds.shape != reference_shape:
+        return None
+    else:
+        exposure_times_seconds = np.array(exposure_times_seconds, dtype=float, copy=True)
+
+    valid = np.isfinite(exposure_times_seconds) & (exposure_times_seconds > MIN_EXPOSURE_SMEARING_SECONDS)
+    if not np.any(valid):
+        return None
+
+    exposure_times_seconds[~valid] = 0.0
+    return exposure_times_seconds / 86400.0
+
+
 class lc_fitter(object):
 
     def __init__(
@@ -523,6 +711,9 @@ class lc_fitter(object):
         fixed_parameter_errors=None,
         fixed_flux_baseline=False,
         ultranest_min_num_live_points=None,
+        exposure_times_seconds=None,
+        exposure_smearing_supersample=DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE,
+        exposure_smearing_change_tolerance=DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE,
     ):
         self.time = time
         self.data = data
@@ -547,6 +738,28 @@ class lc_fitter(object):
         )
         self.fixed_flux_baseline = bool(fixed_flux_baseline)
         self.ultranest_min_num_live_points = ultranest_min_num_live_points
+        self.exposure_times_days = normalize_exposure_times_seconds_to_days(
+            exposure_times_seconds,
+            np.asarray(time).shape,
+        )
+        self.exposure_smearing_supersample = _exposure_smearing_supersample({
+            EXPOSURE_SMEARING_SUPERSAMPLE_KEY: exposure_smearing_supersample,
+        })
+        self.exposure_smearing_change_tolerance = _exposure_smearing_change_tolerance({
+            EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY: exposure_smearing_change_tolerance,
+        })
+        self.exposure_smearing_available = self.exposure_times_days is not None
+        if self.exposure_smearing_available:
+            finite_exposures = self.exposure_times_days[
+                np.isfinite(self.exposure_times_days) & (self.exposure_times_days > 0)
+            ]
+            self.exposure_smearing_median_seconds = (
+                float(np.nanmedian(finite_exposures) * 86400.0)
+                if finite_exposures.size
+                else np.nan
+            )
+        else:
+            self.exposure_smearing_median_seconds = np.nan
         self._ultranest_resume_context = None
         self.results = None
         self.sampled_keys = list(bounds.keys())
@@ -608,7 +821,7 @@ class lc_fitter(object):
             return values
 
         try:
-            model = transit(self.time, values)
+            model = self._transit_model(self.time, values)
             model = np.asarray(model, dtype=float) * airmass_trend(
                 values.get('a2', 0),
                 self.airmass,
@@ -670,6 +883,41 @@ class lc_fitter(object):
             return plot_time_range
         return normalize_time_range(self.time)
 
+    def _exposure_times_for_model_times(self, times):
+        exposure_times_days = getattr(self, 'exposure_times_days', None)
+        if exposure_times_days is None:
+            return None
+
+        times = np.asarray(times, dtype=float)
+        source_times = np.asarray(self.time, dtype=float)
+        if (
+            times.shape == source_times.shape
+            and exposure_times_days.shape == source_times.shape
+            and np.allclose(times, source_times, rtol=0.0, atol=0.0)
+        ):
+            return exposure_times_days
+
+        finite_exposures = exposure_times_days[
+            np.isfinite(exposure_times_days) & (exposure_times_days > 0)
+        ]
+        if finite_exposures.size == 0:
+            return None
+        return float(np.nanmedian(finite_exposures))
+
+    def _values_with_exposure_smearing(self, values, times):
+        exposure_times_days = self._exposure_times_for_model_times(times)
+        if exposure_times_days is None:
+            return values
+
+        smeared_values = copy.deepcopy(values)
+        smeared_values[EXPOSURE_SMEARING_EXPOSURE_TIME_KEY] = exposure_times_days
+        smeared_values[EXPOSURE_SMEARING_SUPERSAMPLE_KEY] = self.exposure_smearing_supersample
+        smeared_values[EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY] = self.exposure_smearing_change_tolerance
+        return smeared_values
+
+    def _transit_model(self, times, values):
+        return transit(times, self._values_with_exposure_smearing(values, times))
+
     def _update_plot_geometry(self):
         plot_time_range = self._get_plot_time_range()
         self.phase = get_plot_phase(self.time, self.parameters['per'], self.parameters['tmid'], plot_time_range)
@@ -679,7 +927,7 @@ class lc_fitter(object):
         else:
             self.time_upsample = np.linspace(plot_time_range[0], plot_time_range[1], 1000)
 
-        self.transit_upsample = transit(self.time_upsample, self.parameters)
+        self.transit_upsample = self._transit_model(self.time_upsample, self.parameters)
         self.phase_upsample = get_plot_phase(
             self.time_upsample,
             self.parameters['per'],
@@ -743,7 +991,7 @@ class lc_fitter(object):
 
     def _normalized_model_for_plot_times(self, times, values):
         values = self._values_with_analytic_flux_baseline(values)
-        model = np.asarray(transit(times, values), dtype=float)
+        model = np.asarray(self._transit_model(times, values), dtype=float)
         if np.ndim(self.airmass) == 2:
             return model
 
@@ -3164,7 +3412,7 @@ class lc_fitter(object):
         def lc2min_nneighbor(pars):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
-            lightcurve = transit(self.time, self.prior)
+            lightcurve = self._transit_model(self.time, self.prior)
             detrended = self.data / lightcurve
             wf = weightedflux(detrended, self.gw, self.nearest)
             model = lightcurve * wf
@@ -3173,7 +3421,7 @@ class lc_fitter(object):
         def lc2min_airmass(pars):
             for i in range(len(pars)):
                 self.prior[freekeys[i]] = pars[i]
-            model = transit(self.time, self.prior)
+            model = self._transit_model(self.time, self.prior)
             model *= airmass_trend(
                 self.prior.get('a2', 0),
                 self.airmass,
@@ -3234,7 +3482,7 @@ class lc_fitter(object):
         self.create_fit_variables()
 
     def create_fit_variables(self):
-        self.transit = transit(self.time, self.parameters)
+        self.transit = self._transit_model(self.time, self.parameters)
         self._apply_fixed_parameter_errors()
         self._update_plot_geometry()
         if np.ndim(self.airmass) != 2:
@@ -3582,7 +3830,7 @@ class lc_fitter(object):
                 duration_log_residual = np.log(duration / expected_duration)
                 duration_loglike = -0.5 * (duration_log_residual / sigma_log_duration) ** 2
             try:
-                model = np.asarray(transit(time, physical), dtype=float)
+                model = np.asarray(self._transit_model(time, physical), dtype=float)
                 if sampled_a2_index is not None:
                     model *= np.exp(float(pars[sampled_a2_index]) * centered_airmass)
                 elif fixed_airmass_scale is not None:

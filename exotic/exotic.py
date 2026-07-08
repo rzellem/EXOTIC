@@ -3060,7 +3060,11 @@ def estimate_transit_duration_samples_from_fit(fit, sample_count=1000, grid_size
         return None, np.array([], dtype=float)
 
     baseline_parameters = dict(parameters)
-    baseline_model = transit(transit_times, baseline_parameters)
+    fit_transit_model = getattr(fit, '_transit_model', None)
+    if callable(fit_transit_model):
+        baseline_model = fit_transit_model(transit_times, baseline_parameters)
+    else:
+        baseline_model = transit(transit_times, baseline_parameters)
     dt = float(np.nanmean(np.diff(transit_times)))
     if not np.isfinite(dt) or dt <= 0:
         return baseline_model, np.array([], dtype=float)
@@ -3370,6 +3374,8 @@ def widen_rprs_bounds_to_data_uncertainty_window(bounds, prior):
 def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_flux, airmass,
                                                        jd_times=None, adaptive_summary=None,
                                                        target_flux_error=None, comp_flux_error=None,
+                                                       exposure_times_seconds=None,
+                                                       gain_e_per_adu=None,
                                                        expected_transit_depth=None):
     result = {
         'applied': False,
@@ -3389,6 +3395,7 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'unc': np.array([], dtype=float),
         'airmass': np.array([], dtype=float),
         'jd_time': np.array([], dtype=float),
+        'exposure_time_seconds': None,
         'target_flux': np.array([], dtype=float),
         'comp_flux': np.array([], dtype=float),
         'target_flux_error': np.array([], dtype=float),
@@ -3404,6 +3411,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         target_flux_error=target_flux_error,
         comp_flux_error=comp_flux_error,
         jd_times=jd_times,
+        exposure_times_seconds=exposure_times_seconds,
+        gain_e_per_adu=gain_e_per_adu,
         expected_transit_depth=expected_transit_depth,
     )
     result['filter_diagnostics'] = prepared.get('filter_diagnostics', [])
@@ -3432,6 +3441,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
     good_unc = np.asarray(prepared['unc'], dtype=float)
     good_airmass = np.asarray(prepared['airmass'], dtype=float)
     good_jd_times = np.asarray(prepared['jd_time'], dtype=float)
+    good_exposure_times = prepared.get('exposure_time_seconds')
+    good_exposure_times = None if good_exposure_times is None else np.asarray(good_exposure_times, dtype=float)
     good_target_flux = np.asarray(prepared['target_flux'], dtype=float)
     good_comp_flux = np.asarray(prepared['comp_flux'], dtype=float)
     good_target_flux_error = np.asarray(prepared.get('target_flux_error', []), dtype=float)
@@ -3475,6 +3486,8 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         good_unc = good_unc[~adaptive_clip_mask]
         good_airmass = good_airmass[~adaptive_clip_mask]
         good_jd_times = good_jd_times[~adaptive_clip_mask]
+        if good_exposure_times is not None:
+            good_exposure_times = good_exposure_times[~adaptive_clip_mask]
         good_target_flux = good_target_flux[~adaptive_clip_mask]
         good_comp_flux = good_comp_flux[~adaptive_clip_mask]
         good_target_flux_error = good_target_flux_error[~adaptive_clip_mask]
@@ -3496,6 +3509,9 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'unc': good_unc[relative_flux_mask],
         'airmass': good_airmass[relative_flux_mask],
         'jd_time': good_jd_times[relative_flux_mask],
+        'exposure_time_seconds': (
+            None if good_exposure_times is None else good_exposure_times[relative_flux_mask]
+        ),
         'target_flux': good_target_flux[relative_flux_mask],
         'comp_flux': good_comp_flux[relative_flux_mask],
         'target_flux_error': good_target_flux_error[relative_flux_mask],
@@ -3767,6 +3783,8 @@ def score_comparison_candidate_lightcurve_scout(prepared_series, eebls_summary, 
 
 def build_comparison_candidate_preflight(times, jd_times, airmass, ld, p_dict, target_flux, comp_flux,
                                          target_flux_error=None, comp_flux_error=None,
+                                         exposure_times_seconds=None,
+                                         gain_e_per_adu=None,
                                          adaptive_summary=None, use_eebls_to_initialize_tmid_and_bounds=True):
     prepared = prepare_comparison_candidate_full_reduction_series(
         times,
@@ -3777,6 +3795,8 @@ def build_comparison_candidate_preflight(times, jd_times, airmass, ld, p_dict, t
         adaptive_summary=adaptive_summary,
         target_flux_error=target_flux_error,
         comp_flux_error=comp_flux_error,
+        exposure_times_seconds=exposure_times_seconds,
+        gain_e_per_adu=gain_e_per_adu,
         expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
     )
     try:
@@ -3945,6 +3965,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
                                                  jd_times=None,
                                                  target_flux_error=None,
                                                  comp_flux_error=None,
+                                                 exposure_times_seconds=None,
+                                                 gain_e_per_adu=None,
                                                  disable_vertical_flux_normalization=False,
                                                  detrend_on_outoftransit_baseline=True,
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
@@ -3964,6 +3986,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         'good_unc': np.array([], dtype=float),
         'good_airmass': np.array([], dtype=float),
         'good_jd_times': np.array([], dtype=float),
+        'good_exposure_times_seconds': None,
         'good_target_flux': np.array([], dtype=float),
         'good_comp_flux': np.array([], dtype=float),
         'good_target_flux_error': np.array([], dtype=float),
@@ -3985,6 +4008,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             adaptive_summary=adaptive_summary,
             target_flux_error=target_flux_error,
             comp_flux_error=comp_flux_error,
+            exposure_times_seconds=exposure_times_seconds,
+            gain_e_per_adu=gain_e_per_adu,
             expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
         )
     else:
@@ -4002,6 +4027,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     good_unc = np.asarray(prepared['unc'], dtype=float)
     good_airmass = np.asarray(prepared['airmass'], dtype=float)
     good_jd_times = np.asarray(prepared['jd_time'], dtype=float)
+    good_exposure_times = prepared.get('exposure_time_seconds')
+    good_exposure_times = None if good_exposure_times is None else np.asarray(good_exposure_times, dtype=float)
     good_target_flux = np.asarray(prepared['target_flux'], dtype=float)
     good_comp_flux = np.asarray(prepared['comp_flux'], dtype=float)
     good_target_flux_error = np.asarray(prepared.get('target_flux_error', []), dtype=float)
@@ -4066,6 +4093,13 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     ensure_pre_final_ultranest_baseline_bounds(prior, bounds, good_flux, fit_a2=True)
 
     debug_phase_clip_keep_mask = None
+    prefit_kwargs = {
+        'jd_times': good_jd_times,
+        'mode': 'lm',
+        'use_impactparameter_rather_than_inclination_to_fit':
+        use_impactparameter_rather_than_inclination_to_fit,
+    }
+    add_exposure_times_to_lc_fitter_kwargs(prefit_kwargs, good_exposure_times)
     prefit = lc_fitter(
         good_times,
         good_flux,
@@ -4073,9 +4107,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         good_airmass,
         prior,
         bounds,
-        jd_times=good_jd_times,
-        mode='lm',
-        use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        **prefit_kwargs,
     )
     if (
         run_final_fit_phase_residual_clip
@@ -4100,6 +4132,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_unc = good_unc[~phase_clip_mask]
             good_airmass = good_airmass[~phase_clip_mask]
             good_jd_times = good_jd_times[~phase_clip_mask]
+            if good_exposure_times is not None:
+                good_exposure_times = good_exposure_times[~phase_clip_mask]
             good_target_flux = good_target_flux[~phase_clip_mask]
             good_comp_flux = good_comp_flux[~phase_clip_mask]
             good_target_flux_error = good_target_flux_error[~phase_clip_mask]
@@ -4111,6 +4145,9 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     full_good_unc = np.asarray(good_unc, dtype=float)
     full_good_airmass = np.asarray(good_airmass, dtype=float)
     full_good_jd_times = np.asarray(good_jd_times, dtype=float)
+    full_good_exposure_times = (
+        None if good_exposure_times is None else np.asarray(good_exposure_times, dtype=float)
+    )
     full_good_target_flux = np.asarray(good_target_flux, dtype=float)
     full_good_comp_flux = np.asarray(good_comp_flux, dtype=float)
     full_good_target_flux_error = np.asarray(good_target_flux_error, dtype=float)
@@ -4123,6 +4160,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     fit_unc = full_good_unc
     fit_airmass = full_good_airmass
     fit_jd_times = full_good_jd_times
+    fit_exposure_times = full_good_exposure_times
     if run_fast_ultranest_before_final_run:
         fast_binning = build_fast_ultranest_lightcurve_series(
             full_good_times,
@@ -4130,6 +4168,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             full_good_unc,
             full_good_airmass,
             jd_times=full_good_jd_times,
+            exposure_times_seconds=full_good_exposure_times,
         )
         if fast_binning.get('applied'):
             log_info(fast_binning['note'])
@@ -4138,6 +4177,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             fit_unc = fast_binning['unc']
             fit_airmass = fast_binning['airmass']
             fit_jd_times = fast_binning['jd_times']
+            fit_exposure_times = fast_binning.get('exposure_times_seconds')
 
     fit_prior = dict(prior)
     fit_bounds = clone_lightcurve_bounds(bounds)
@@ -4159,6 +4199,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         fit_prior,
         fit_bounds,
         jd_times=fit_jd_times,
+        exposure_times_seconds=fit_exposure_times,
         skip_airmass_fit=skip_final_airmass_fit,
         airmass_skip_note=airmass_skip_note,
         disable_vertical_flux_normalization=disable_vertical_flux_normalization,
@@ -4191,6 +4232,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_times = good_times[final_time_indices]
             good_airmass = good_airmass[final_time_indices]
             good_jd_times = good_jd_times[final_time_indices]
+            if good_exposure_times is not None:
+                good_exposure_times = good_exposure_times[final_time_indices]
             good_target_flux = good_target_flux[final_time_indices]
             good_comp_flux = good_comp_flux[final_time_indices]
             good_target_flux_error = good_target_flux_error[final_time_indices]
@@ -4246,6 +4289,9 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             clipped_unc = good_unc[residual_keep_mask]
             clipped_airmass = good_airmass[residual_keep_mask]
             clipped_jd_times = good_jd_times[residual_keep_mask]
+            clipped_exposure_times = (
+                None if good_exposure_times is None else good_exposure_times[residual_keep_mask]
+            )
             clipped_target_flux = good_target_flux[residual_keep_mask]
             clipped_comp_flux = good_comp_flux[residual_keep_mask]
             clipped_target_flux_error = good_target_flux_error[residual_keep_mask]
@@ -4281,6 +4327,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
                 residual_refit_prior,
                 residual_refit_bounds,
                 jd_times=clipped_jd_times,
+                exposure_times_seconds=clipped_exposure_times,
                 skip_airmass_fit=skip_final_airmass_fit,
                 airmass_skip_note=airmass_skip_note,
                 disable_vertical_flux_normalization=disable_vertical_flux_normalization,
@@ -4339,6 +4386,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             good_unc = clipped_unc
             good_airmass = clipped_airmass
             good_jd_times = clipped_jd_times
+            good_exposure_times = clipped_exposure_times
             good_target_flux = clipped_target_flux
             good_comp_flux = clipped_comp_flux
             good_target_flux_error = clipped_target_flux_error
@@ -4395,6 +4443,11 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         'good_unc': full_good_unc if fast_binning.get('applied') else np.asarray(good_unc, dtype=float),
         'good_airmass': full_good_airmass if fast_binning.get('applied') else np.asarray(good_airmass, dtype=float),
         'good_jd_times': full_good_jd_times if fast_binning.get('applied') else np.asarray(good_jd_times, dtype=float),
+        'good_exposure_times_seconds': (
+            full_good_exposure_times
+            if fast_binning.get('applied')
+            else None if good_exposure_times is None else np.asarray(good_exposure_times, dtype=float)
+        ),
         'good_target_flux': full_good_target_flux if fast_binning.get('applied') else np.asarray(good_target_flux, dtype=float),
         'good_comp_flux': full_good_comp_flux if fast_binning.get('applied') else np.asarray(good_comp_flux, dtype=float),
         'good_target_flux_error': full_good_target_flux_error if fast_binning.get('applied') else np.asarray(good_target_flux_error, dtype=float),
@@ -4406,6 +4459,9 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         'fast_fit_good_unc': np.asarray(fitted_unc, dtype=float),
         'fast_fit_good_airmass': np.asarray(fit_airmass, dtype=float),
         'fast_fit_good_jd_times': None if fit_jd_times is None else np.asarray(fit_jd_times, dtype=float),
+        'fast_fit_good_exposure_times_seconds': (
+            None if fit_exposure_times is None else np.asarray(fit_exposure_times, dtype=float)
+        ),
         'fast_fit_prior': fit_prior,
         'fast_fit_bounds': fit_bounds,
         'skip_airmass_fit': skip_final_airmass_fit,
@@ -4529,6 +4585,8 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     airmass = np.asarray(selected_result.get('good_airmass'), dtype=float)
     jd_times = selected_result.get('good_jd_times')
     jd_times = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    exposure_times = selected_result.get('good_exposure_times_seconds')
+    exposure_times = None if exposure_times is None else np.asarray(exposure_times, dtype=float)
     if not (times.shape == flux_values.shape == flux_errors.shape == airmass.shape):
         log_info(
             "Warning: Could not run the full-resolution selected comparison-star final fit "
@@ -4538,6 +4596,8 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         return None
     if jd_times is not None and jd_times.shape != times.shape:
         jd_times = None
+    if exposure_times is not None and exposure_times.shape != times.shape:
+        exposure_times = None
 
     original_times = times.copy()
     base_filter_diagnostics = [
@@ -4674,6 +4734,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         prior,
         bounds,
         jd_times=jd_times,
+        exposure_times_seconds=exposure_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         max_rprs_retries=0,
         max_ars_retries=0,
@@ -4738,6 +4799,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             retained_unc = fit_unc[residual_keep_mask]
             retained_airmass = airmass[residual_keep_mask]
             retained_jd_times = None if jd_times is None else jd_times[residual_keep_mask]
+            retained_exposure_times = None if exposure_times is None else exposure_times[residual_keep_mask]
             retained_target_flux_values = (
                 None if target_flux_values is None else target_flux_values[residual_keep_mask]
             )
@@ -4796,6 +4858,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
                 residual_refit_prior,
                 residual_refit_bounds,
                 jd_times=retained_jd_times,
+                exposure_times_seconds=retained_exposure_times,
                 use_impactparameter_rather_than_inclination_to_fit=
                 use_impactparameter_rather_than_inclination_to_fit,
                 max_rprs_retries=0,
@@ -4847,6 +4910,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             fit_unc = retained_unc
             airmass = retained_airmass
             jd_times = retained_jd_times
+            exposure_times = retained_exposure_times
             target_flux_values = retained_target_flux_values
             comp_flux_values = retained_comp_flux_values
             target_flux_error_values = retained_target_flux_error_values
@@ -5371,6 +5435,17 @@ def callable_accepts_keyword(callable_obj, keyword):
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     )
+
+
+def add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, exposure_times_seconds):
+    if exposure_times_seconds is None or not callable_accepts_keyword(lc_fitter, 'exposure_times_seconds'):
+        return fit_kwargs
+    try:
+        exposure_times = np.asarray(exposure_times_seconds, dtype=float)
+    except (TypeError, ValueError):
+        return fit_kwargs
+    fit_kwargs['exposure_times_seconds'] = exposure_times
+    return fit_kwargs
 
 
 def get_configured_ultranest_min_num_live_points():
@@ -6235,6 +6310,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     prior,
     bounds,
     jd_times=None,
+    exposure_times_seconds=None,
     use_impactparameter_rather_than_inclination_to_fit=True,
     max_rprs_retries=RPRS_POSTERIOR_MAX_RETRIES_DEFAULT,
     duration_prior=None,
@@ -6408,6 +6484,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'use_impactparameter_rather_than_inclination_to_fit':
             use_impactparameter_rather_than_inclination_to_fit,
         }
+        add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, exposure_times_seconds)
         if isinstance(duration_prior, dict) and duration_prior.get('applied'):
             fit_kwargs['duration_prior'] = duration_prior
         if keep_ultranest_sampler and callable_accepts_keyword(lc_fitter, 'keep_ultranest_sampler'):
@@ -8984,6 +9061,7 @@ def build_fast_ultranest_lightcurve_series(
     flux_errors,
     airmass,
     jd_times=None,
+    exposure_times_seconds=None,
     max_points=FAST_ULTRANEST_MAX_BINNED_POINTS,
     min_points_to_bin=FAST_ULTRANEST_MIN_POINTS_TO_BIN,
 ):
@@ -8992,6 +9070,7 @@ def build_fast_ultranest_lightcurve_series(
     flux_errors = np.asarray(flux_errors, dtype=float)
     airmass = np.asarray(airmass, dtype=float)
     jd_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    exposure_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
 
     base_result = {
         'applied': False,
@@ -9001,6 +9080,7 @@ def build_fast_ultranest_lightcurve_series(
         'unc': flux_errors,
         'airmass': airmass,
         'jd_times': jd_array,
+        'exposure_times_seconds': exposure_array,
         'original_point_count': int(times.shape[0]),
         'binned_point_count': int(times.shape[0]),
         'bin_indices': None,
@@ -9011,6 +9091,9 @@ def build_fast_ultranest_lightcurve_series(
         return base_result
     if jd_array is not None and jd_array.shape != times.shape:
         base_result['note'] = 'Skipped; JD timestamps were not aligned for fast UltraNest binning.'
+        return base_result
+    if exposure_array is not None and exposure_array.shape != times.shape:
+        base_result['note'] = 'Skipped; exposure times were not aligned for fast UltraNest binning.'
         return base_result
 
     point_count = int(times.shape[0])
@@ -9032,6 +9115,8 @@ def build_fast_ultranest_lightcurve_series(
     )
     if jd_array is not None:
         valid &= np.isfinite(jd_array)
+    if exposure_array is not None:
+        valid &= np.isfinite(exposure_array)
     if np.count_nonzero(valid) <= target_points:
         base_result['note'] = 'Skipped; too few finite points remained for fast UltraNest binning.'
         return base_result
@@ -9047,6 +9132,7 @@ def build_fast_ultranest_lightcurve_series(
     binned_unc = []
     binned_airmass = []
     binned_jd = [] if jd_array is not None else None
+    binned_exposure = [] if exposure_array is not None else None
     for chunk in chunks:
         chunk_unc = flux_errors[chunk]
         weights = np.zeros(chunk_unc.shape, dtype=float)
@@ -9062,6 +9148,8 @@ def build_fast_ultranest_lightcurve_series(
         binned_airmass.append(_weighted_mean_with_fallback(airmass[chunk], weights))
         if jd_array is not None:
             binned_jd.append(_weighted_mean_with_fallback(jd_array[chunk], weights))
+        if exposure_array is not None:
+            binned_exposure.append(_weighted_mean_with_fallback(exposure_array[chunk], weights))
 
     binned_time = np.asarray(binned_time, dtype=float)
     binned_flux = np.asarray(binned_flux, dtype=float)
@@ -9077,6 +9165,9 @@ def build_fast_ultranest_lightcurve_series(
     if binned_jd is not None:
         binned_jd = np.asarray(binned_jd, dtype=float)
         finite_binned &= np.isfinite(binned_jd)
+    if binned_exposure is not None:
+        binned_exposure = np.asarray(binned_exposure, dtype=float)
+        finite_binned &= np.isfinite(binned_exposure)
 
     if np.count_nonzero(finite_binned) < LIGHTCURVE_MIN_VALID_POINTS:
         base_result['note'] = 'Skipped; fast UltraNest binning produced too few finite bins.'
@@ -9090,6 +9181,7 @@ def build_fast_ultranest_lightcurve_series(
         'unc': binned_unc[finite_binned],
         'airmass': binned_airmass[finite_binned],
         'jd_times': None if binned_jd is None else binned_jd[finite_binned],
+        'exposure_times_seconds': None if binned_exposure is None else binned_exposure[finite_binned],
         'binned_point_count': int(np.count_nonzero(finite_binned)),
         'bin_indices': [chunk.tolist() for i, chunk in enumerate(chunks) if finite_binned[i]],
         'note': (
@@ -10283,6 +10375,7 @@ def build_final_fit_prefit_refinement_plan(
     bounds,
     fit,
     jd_times=None,
+    exposure_times_seconds=None,
     baseline_duration_multiplier=FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
 ):
     times = np.asarray(times, dtype=float)
@@ -10290,6 +10383,9 @@ def build_final_fit_prefit_refinement_plan(
     flux_errors = np.asarray(flux_errors, dtype=float)
     airmass = np.asarray(airmass, dtype=float)
     jd_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    exposure_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
+    if exposure_array is not None and exposure_array.shape != times.shape:
+        exposure_array = None
 
     original_tmid_bounds = clone_lightcurve_bounds(bounds).get('tmid')
     base_plan = {
@@ -10308,6 +10404,7 @@ def build_final_fit_prefit_refinement_plan(
         'unc': flux_errors,
         'airmass': airmass,
         'jd_times': jd_array,
+        'exposure_times_seconds': exposure_array,
         'prior': dict(prior),
         'bounds': clone_lightcurve_bounds(bounds),
     }
@@ -10413,6 +10510,7 @@ def build_final_fit_prefit_refinement_plan(
     refined_unc = flux_errors[keep_mask]
     refined_airmass = airmass[keep_mask]
     refined_jd_times = None if jd_array is None else jd_array[keep_mask]
+    refined_exposure_times = None if exposure_array is None else exposure_array[keep_mask]
 
     refined_prior = dict(prior)
     if isinstance(fit_parameters, dict):
@@ -10438,6 +10536,7 @@ def build_final_fit_prefit_refinement_plan(
         'unc': refined_unc,
         'airmass': refined_airmass,
         'jd_times': refined_jd_times,
+        'exposure_times_seconds': refined_exposure_times,
         'prior': refined_prior,
         'bounds': refined_bounds,
     })
@@ -10459,6 +10558,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     prior,
     bounds,
     jd_times=None,
+    exposure_times_seconds=None,
     skip_airmass_fit=False,
     airmass_skip_note=None,
     disable_vertical_flux_normalization=False,
@@ -10482,6 +10582,9 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         if isinstance(search_restriction_prior, dict)
         else dict(prior) if isinstance(prior, dict) else {}
     )
+    exposure_times_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
+    if exposure_times_array is not None and exposure_times_array.shape != np.asarray(times).shape:
+        exposure_times_array = None
     search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
         search_restriction_prior,
         times,
@@ -10525,6 +10628,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         prior,
         bounds,
         jd_times=jd_times,
+        exposure_times_seconds=exposure_times_array,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         duration_prior=duration_prior,
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
@@ -10551,6 +10655,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         effective_bounds,
         fit,
         jd_times=jd_times,
+        exposure_times_seconds=exposure_times_array,
         baseline_duration_multiplier=baseline_duration_multiplier,
     )
     working_times = prefit_plan['times']
@@ -10558,6 +10663,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     working_unc = prefit_plan['unc']
     working_airmass = prefit_plan['airmass']
     working_jd_times = prefit_plan['jd_times']
+    working_exposure_times = prefit_plan.get('exposure_times_seconds')
     working_prior = prefit_plan['prior']
     working_bounds = prefit_plan['bounds']
 
@@ -10578,6 +10684,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             working_prior,
             working_bounds,
             jd_times=working_jd_times,
+            exposure_times_seconds=working_exposure_times,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
             keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
@@ -10674,6 +10781,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             baseline_constrained_prior,
             baseline_constrained_bounds,
             jd_times=working_jd_times,
+            exposure_times_seconds=working_exposure_times,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
             keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
@@ -10808,6 +10916,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         refit_prior,
         refit_bounds,
         jd_times=working_jd_times,
+        exposure_times_seconds=working_exposure_times,
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         duration_prior=duration_prior,
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
@@ -11365,6 +11474,7 @@ def apply_lightcurve_mask(lightcurve, mask, sort_index=None):
         'airmass',
         'transit',
         'jd_times',
+        'exposure_times_days',
         'phase',
         'residuals',
         'model',
@@ -11600,10 +11710,10 @@ def resolve_require_comp_star_for_exposure_times(config_value, exptimes):
         if not require_comp_star:
             log_info(
                 "Exposure times vary by more than 1% across retained frames "
-                f"({spread_percent:.2f}%); requiring a comparison star for this reduction.",
+                f"({spread_percent:.2f}%); target-only/no-comparison photometry will scale "
+                "source counts to a common exposure time before fitting.",
                 warn=True,
             )
-        return True
     return require_comp_star
 
 
@@ -17327,6 +17437,69 @@ def relative_flux_uncertainty_from_star_errors(target_flux, comp_flux,
         )
 
 
+def exposure_scale_factors_to_max(exposure_times_seconds):
+    if exposure_times_seconds is None:
+        return None
+    try:
+        exposure_times = np.asarray(exposure_times_seconds, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if exposure_times.ndim != 1:
+        return None
+
+    valid = np.isfinite(exposure_times) & (exposure_times > 0)
+    if not np.any(valid):
+        return None
+
+    max_exposure = float(np.nanmax(exposure_times[valid]))
+    if not np.isfinite(max_exposure) or max_exposure <= 0:
+        return None
+
+    factors = np.ones(exposure_times.shape, dtype=float)
+    factors[valid] = max_exposure / exposure_times[valid]
+    return factors
+
+
+def source_flux_uncertainty_from_counts(flux_adu, gain_e_per_adu=None):
+    try:
+        gain = float(gain_e_per_adu)
+    except (TypeError, ValueError):
+        gain = 1.0
+    if not np.isfinite(gain) or gain <= 0:
+        gain = 1.0
+
+    flux_adu = np.asarray(flux_adu, dtype=float)
+    with np.errstate(invalid='ignore'):
+        return np.sqrt(np.maximum(flux_adu, 0.0) / gain)
+
+
+def scale_target_only_flux_to_common_exposure(target_flux, target_flux_error, comp_flux,
+                                             exposure_times_seconds=None, gain_e_per_adu=None):
+    target_flux = np.asarray(target_flux, dtype=float)
+    comp_flux = np.asarray(comp_flux, dtype=float)
+    target_flux_error = valid_flux_error_array(target_flux_error, target_flux.shape)
+
+    if target_flux.ndim != 1 or comp_flux.shape != target_flux.shape:
+        return target_flux, target_flux_error
+    if not np.allclose(comp_flux, 1.0, equal_nan=False):
+        return target_flux, target_flux_error
+
+    scale_factors = exposure_scale_factors_to_max(exposure_times_seconds)
+    if scale_factors is None or scale_factors.shape != target_flux.shape:
+        return target_flux, target_flux_error
+    if np.allclose(scale_factors, 1.0, rtol=1e-12, atol=1e-12):
+        return target_flux, target_flux_error
+
+    scaled_flux = target_flux * scale_factors
+    fallback_error = source_flux_uncertainty_from_counts(target_flux, gain_e_per_adu)
+    if target_flux_error is None:
+        scaled_error = fallback_error * scale_factors
+    else:
+        valid_error = np.isfinite(target_flux_error) & (target_flux_error > 0)
+        scaled_error = np.where(valid_error, target_flux_error, fallback_error) * scale_factors
+    return scaled_flux, scaled_error
+
+
 def weighted_nanpercentile(values, weights, percentile):
     values = np.asarray(values, dtype=float).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
@@ -19290,7 +19463,9 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                    use_eebls_to_initialize_tmid_and_bounds=True,
                    compute_eebls_diagnostics=False,
                    target_flux_error=None,
-                   comp_flux_error=None):
+                   comp_flux_error=None,
+                   exposure_times_seconds=None,
+                   gain_e_per_adu=None):
     plot_time_range = np.asarray(times if plot_time_range is None else plot_time_range, dtype=float)
     prepared = prepare_lightcurve_fit_input_series(
         times,
@@ -19300,6 +19475,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         target_flux_error=target_flux_error,
         comp_flux_error=comp_flux_error,
         jd_times=jd_times,
+        exposure_times_seconds=exposure_times_seconds,
+        gain_e_per_adu=gain_e_per_adu,
         expected_transit_depth=expected_transit_depth_from_planet_dict(pDict),
     )
     if not prepared.get('applied'):
@@ -19321,6 +19498,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     arrayNormUnc = prepared['unc']
     arrayTimes = prepared['time']
     arrayJDTimes = prepared['jd_time']
+    arrayExposureTimes = prepared.get('exposure_time_seconds')
+    arrayExposureTimes = None if arrayExposureTimes is None else np.asarray(arrayExposureTimes, dtype=float)
     arrayAirmass = prepared['airmass']
     skip_airmass_fit = prepared['skip_airmass_fit']
 
@@ -19404,6 +19583,13 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     if np.isnan(arrayTimes).any() or np.isnan(arrayFinalFlux).any() or np.isnan(arrayNormUnc).any():
         log_info("\nWarning: NANs in time, flux or error", warn=True)
 
+    fit_kwargs = {
+        'jd_times': arrayJDTimes,
+        'mode': 'lm',
+        'use_impactparameter_rather_than_inclination_to_fit':
+        use_impactparameter_rather_than_inclination_to_fit,
+    }
+    add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, arrayExposureTimes)
     myfit = lc_fitter(
         arrayTimes,
         arrayFinalFlux,
@@ -19411,9 +19597,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         arrayAirmass,
         prior,
         mybounds,
-        jd_times=arrayJDTimes,
-        mode='lm',
-        use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+        **fit_kwargs,
     )
     myfit = apply_plot_time_range(myfit, plot_time_range)
     annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
@@ -19441,10 +19625,19 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             arrayNormUnc = arrayNormUnc[~phase_clip_mask]
             arrayTimes = arrayTimes[~phase_clip_mask]
             arrayJDTimes = arrayJDTimes[~phase_clip_mask]
+            if arrayExposureTimes is not None:
+                arrayExposureTimes = arrayExposureTimes[~phase_clip_mask]
             arrayAirmass = arrayAirmass[~phase_clip_mask]
             f1 = f1[~phase_clip_mask]
             f2 = f2[~phase_clip_mask]
 
+            fit_kwargs = {
+                'jd_times': arrayJDTimes,
+                'mode': 'lm',
+                'use_impactparameter_rather_than_inclination_to_fit':
+                use_impactparameter_rather_than_inclination_to_fit,
+            }
+            add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, arrayExposureTimes)
             myfit = lc_fitter(
                 arrayTimes,
                 arrayFinalFlux,
@@ -19452,9 +19645,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
                 arrayAirmass,
                 prior,
                 mybounds,
-                jd_times=arrayJDTimes,
-                mode='lm',
-                use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
+                **fit_kwargs,
             )
             myfit = apply_plot_time_range(myfit, plot_time_range)
             annotate_airmass_fit(myfit, arrayAirmass, skip_airmass_fit)
@@ -19491,6 +19682,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             nested_refinement['prior'],
             nested_refinement['bounds'],
             jd_times=arrayJDTimes,
+            exposure_times_seconds=arrayExposureTimes,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
             search_restriction_prior=search_restriction_prior,
@@ -19722,6 +19914,8 @@ def prepare_lightcurve_fit_input_series(
     target_flux_error=None,
     comp_flux_error=None,
     jd_times=None,
+    exposure_times_seconds=None,
+    gain_e_per_adu=None,
     expected_transit_depth=None,
 ):
     times = np.asarray(times, dtype=float)
@@ -19731,6 +19925,7 @@ def prepare_lightcurve_fit_input_series(
     target_flux_error = valid_flux_error_array(target_flux_error, target_flux.shape)
     comp_flux_error = valid_flux_error_array(comp_flux_error, comp_flux.shape)
     jd_times_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    exposure_times_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
 
     prepared = {
         'applied': False,
@@ -19749,6 +19944,7 @@ def prepare_lightcurve_fit_input_series(
         'flux': np.array([], dtype=float),
         'unc': np.array([], dtype=float),
         'jd_time': None,
+        'exposure_time_seconds': None,
         'airmass': np.array([], dtype=float),
         'target_flux': np.array([], dtype=float),
         'comp_flux': np.array([], dtype=float),
@@ -19770,6 +19966,16 @@ def prepare_lightcurve_fit_input_series(
 
     if jd_times_array is not None and jd_times_array.shape != times.shape:
         jd_times_array = None
+    if exposure_times_array is not None and exposure_times_array.shape != times.shape:
+        exposure_times_array = None
+
+    target_flux, target_flux_error = scale_target_only_flux_to_common_exposure(
+        target_flux,
+        target_flux_error,
+        comp_flux,
+        exposure_times_seconds=exposure_times_array,
+        gain_e_per_adu=gain_e_per_adu,
+    )
 
     plot_indices = np.argsort(times)
     times_sorted = times[plot_indices]
@@ -19777,6 +19983,7 @@ def prepare_lightcurve_fit_input_series(
     comp_flux_sorted = comp_flux[plot_indices]
     target_flux_error_sorted = None if target_flux_error is None else target_flux_error[plot_indices]
     comp_flux_error_sorted = None if comp_flux_error is None else comp_flux_error[plot_indices]
+    exposure_times_sorted = None if exposure_times_array is None else exposure_times_array[plot_indices]
     source_indices = np.asarray(plot_indices, dtype=int)
     with np.errstate(divide='ignore', invalid='ignore'):
         flux_ratio_sorted = np.divide(target_flux_sorted, comp_flux_sorted)
@@ -19798,6 +20005,8 @@ def prepare_lightcurve_fit_input_series(
             target_flux_error_sorted = target_flux_error_sorted[flux_ratio_mask]
         if comp_flux_error_sorted is not None:
             comp_flux_error_sorted = comp_flux_error_sorted[flux_ratio_mask]
+        if exposure_times_sorted is not None:
+            exposure_times_sorted = exposure_times_sorted[flux_ratio_mask]
         flux_ratio_sorted = flux_ratio_sorted[flux_ratio_mask]
         source_indices = source_indices[flux_ratio_mask]
         if jd_times_array is None:
@@ -19887,6 +20096,7 @@ def prepare_lightcurve_fit_input_series(
     filtered_comp_flux = comp_flux_sorted[valid_mask]
     filtered_target_flux_error = None if target_flux_error_sorted is None else target_flux_error_sorted[valid_mask]
     filtered_comp_flux_error = None if comp_flux_error_sorted is None else comp_flux_error_sorted[valid_mask]
+    filtered_exposure_times = None if exposure_times_sorted is None else exposure_times_sorted[valid_mask]
     unc = relative_flux_uncertainty_from_star_errors(
         filtered_target_flux,
         filtered_comp_flux,
@@ -19944,6 +20154,7 @@ def prepare_lightcurve_fit_input_series(
         'flux': normalized_flux,
         'unc': normalized_unc,
         'jd_time': fit_jd_times[~nanmask],
+        'exposure_time_seconds': None if filtered_exposure_times is None else filtered_exposure_times[~nanmask],
         'airmass': fit_airmass[~nanmask],
         'target_flux': filtered_target_flux[~nanmask],
         'comp_flux': filtered_comp_flux[~nanmask],
@@ -20091,7 +20302,11 @@ def fitted_lightcurve_model_at(fit, times, airmass):
         return np.array([], dtype=float)
 
     try:
-        transit_model = np.asarray(transit(times, parameters), dtype=float)
+        fit_transit_model = getattr(fit, '_transit_model', None)
+        if callable(fit_transit_model):
+            transit_model = np.asarray(fit_transit_model(times, parameters), dtype=float)
+        else:
+            transit_model = np.asarray(transit(times, parameters), dtype=float)
     except Exception:
         return np.array([], dtype=float)
     if transit_model.shape != times.shape:
@@ -20141,20 +20356,56 @@ def fitted_lightcurve_scatter_on_dataset(fit, times, flux_values, airmass):
 
 
 def evaluate_lightcurve_candidate(task):
-    (
-        times,
-        tflux,
-        cflux,
-        airmass,
-        ld,
-        p_dict,
-        jd_times,
-        plot_time_range,
-        disable_vertical_flux_normalization,
-        use_impactparameter_rather_than_inclination_to_fit,
-        use_eebls_to_initialize_tmid_and_bounds,
-        compute_eebls_diagnostics,
-    ) = task
+    exposure_times_seconds = None
+    gain_e_per_adu = None
+    if len(task) == 14:
+        (
+            times,
+            tflux,
+            cflux,
+            airmass,
+            ld,
+            p_dict,
+            jd_times,
+            plot_time_range,
+            disable_vertical_flux_normalization,
+            use_impactparameter_rather_than_inclination_to_fit,
+            use_eebls_to_initialize_tmid_and_bounds,
+            compute_eebls_diagnostics,
+            exposure_times_seconds,
+            gain_e_per_adu,
+        ) = task
+    elif len(task) == 13:
+        (
+            times,
+            tflux,
+            cflux,
+            airmass,
+            ld,
+            p_dict,
+            jd_times,
+            plot_time_range,
+            disable_vertical_flux_normalization,
+            use_impactparameter_rather_than_inclination_to_fit,
+            use_eebls_to_initialize_tmid_and_bounds,
+            compute_eebls_diagnostics,
+            exposure_times_seconds,
+        ) = task
+    else:
+        (
+            times,
+            tflux,
+            cflux,
+            airmass,
+            ld,
+            p_dict,
+            jd_times,
+            plot_time_range,
+            disable_vertical_flux_normalization,
+            use_impactparameter_rather_than_inclination_to_fit,
+            use_eebls_to_initialize_tmid_and_bounds,
+            compute_eebls_diagnostics,
+        ) = task
     fit_diagnostics = diagnose_lightcurve_fit_inputs(
         times,
         tflux,
@@ -20178,6 +20429,8 @@ def evaluate_lightcurve_candidate(task):
         plot_time_range=plot_time_range,
         use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
         compute_eebls_diagnostics=compute_eebls_diagnostics,
+        exposure_times_seconds=exposure_times_seconds,
+        gain_e_per_adu=gain_e_per_adu,
     )
     fit_diagnostics = ensure_lightcurve_fit_failure_reason(
         fit_diagnostics,
@@ -20352,6 +20605,8 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
                               use_impactparameter_rather_than_inclination_to_fit=True,
                               use_eebls_to_initialize_tmid_and_bounds=True,
                               compute_eebls_diagnostics=True,
+                              exposure_times_seconds=None,
+                              gain_e_per_adu=None,
                               psf_flux_data=None):
     candidate_mask = np.asarray(candidate['mask'], dtype=bool)
 
@@ -20390,6 +20645,8 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
         use_impactparameter_rather_than_inclination_to_fit,
         use_eebls_to_initialize_tmid_and_bounds,
         compute_eebls_diagnostics,
+        None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)[candidate_mask],
+        gain_e_per_adu,
     )
 
 
@@ -20405,6 +20662,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
                                         use_impactparameter_rather_than_inclination_to_fit=True,
                                         use_eebls_to_initialize_tmid_and_bounds=True,
                                         pick_comparison_by_eebls_snr=True,
+                                        exposure_times_seconds=None,
+                                        gain_e_per_adu=None,
                                         psf_flux_data=None):
     candidate_jobs = build_target_fit_candidate_jobs(
         psf_data,
@@ -20454,6 +20713,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
             compute_eebls_diagnostics=True,
+            exposure_times_seconds=exposure_times_seconds,
+            gain_e_per_adu=gain_e_per_adu,
             psf_flux_data=psf_flux_data,
         )
         for candidate in evaluated_candidates
@@ -21786,7 +22047,9 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                                                  use_impactparameter_rather_than_inclination_to_fit=True,
                                                  use_eebls_to_initialize_tmid_and_bounds=True,
                                                  psf_flux_data=None,
-                                                 psf_noise_data=None):
+                                                 psf_noise_data=None,
+                                                 exposure_times_seconds=None,
+                                                 gain_e_per_adu=None):
     if photometry_info.get('best_fit_lc') is None or not comp_stars:
         return []
 
@@ -21942,6 +22205,12 @@ def fit_lightcurve_to_every_comparison_candidate(times, jd_times, airmass, ld, p
                 plot_time_range=plot_time_range,
                 use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
                 compute_eebls_diagnostics=True,
+                exposure_times_seconds=(
+                    None
+                    if exposure_times_seconds is None
+                    else np.asarray(exposure_times_seconds, dtype=float)[fit_mask]
+                ),
+                gain_e_per_adu=gain_e_per_adu,
             )
             fit_diagnostics = ensure_lightcurve_fit_failure_reason(
                 fit_diagnostics,
@@ -23202,7 +23471,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  save_dir=None,
                                                  planet_name=None,
                                                  observation_date=None,
-                                                 use_ensemble_photometry_rather_than_single_comp=False):
+                                                 use_ensemble_photometry_rather_than_single_comp=False,
+                                                 exposure_times_seconds=None,
+                                                 gain_e_per_adu=None):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
     if not ranked_summaries:
         return {
@@ -23219,6 +23490,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         frame_count = target_psf_flux.shape[0]
     else:
         frame_count = aper_data['target'].shape[0]
+    exposure_times_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
+    if exposure_times_array is not None and exposure_times_array.shape != times.shape:
+        exposure_times_array = None
     if method == 'psf':
         target_flux = np.asarray(target_psf_flux, dtype=float)
         psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
@@ -23412,6 +23686,10 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 ensemble_flux[fit_mask],
                 target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
                 comp_flux_error=None if ensemble_flux_error is None else ensemble_flux_error[fit_mask],
+                exposure_times_seconds=(
+                    None if exposure_times_array is None else exposure_times_array[fit_mask]
+                ),
+                gain_e_per_adu=gain_e_per_adu,
                 adaptive_summary=adaptive_summary,
                 use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
             )
@@ -23566,6 +23844,10 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             comp_flux[fit_mask],
             target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
             comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
+            exposure_times_seconds=(
+                None if exposure_times_array is None else exposure_times_array[fit_mask]
+            ),
+            gain_e_per_adu=gain_e_per_adu,
             adaptive_summary=adaptive_summary,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
         )
@@ -23622,6 +23904,10 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             jd_times=jd_times[fit_mask],
             target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
             comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
+            exposure_times_seconds=(
+                None if exposure_times_array is None else exposure_times_array[fit_mask]
+            ),
+            gain_e_per_adu=gain_e_per_adu,
             disable_vertical_flux_normalization=disable_vertical_flux_normalization,
             detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
             use_impactparameter_rather_than_inclination_to_fit=
@@ -23726,6 +24012,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'good_unc': final_reduction.get('good_unc'),
             'good_airmass': final_reduction.get('good_airmass'),
             'good_jd_times': final_reduction.get('good_jd_times'),
+            'good_exposure_times_seconds': final_reduction.get('good_exposure_times_seconds'),
             'good_target_flux_error': tflux_fit_error,
             'good_comp_flux_error': cflux_fit_error,
             'tflux_fit': tflux_fit,
@@ -25564,6 +25851,8 @@ def _main_impl():
             times = times[goodmask]
             jd_times = jd_times[goodmask]
             airmass = np.array(airMassList)[goodmask]
+            exposure_times_seconds = np.asarray(exptimes, dtype=float)[goodmask]
+            exptimes = exposure_times_seconds.tolist()
             psf_data["target"] = psf_data["target"][goodmask]
             psf_flux_data["target"] = psf_flux_data["target"][goodmask]
             for key in list(psf_noise_data.keys()):
@@ -25689,6 +25978,11 @@ def _main_impl():
                 'flux_unc_tar': None,
                 'flux_unc_ref': None
             }
+            fallback_gain_e_per_adu = (
+                frame_noise_configs[0].get('gain_e_per_adu')
+                if frame_noise_configs
+                else None
+            )
 
             centroid_positions = {
                 'x_targ': None,
@@ -25870,6 +26164,8 @@ def _main_impl():
                     observation_date=exotic_infoDict['date'],
                     use_ensemble_photometry_rather_than_single_comp=
                     use_ensemble_photometry_rather_than_single_comp,
+                    exposure_times_seconds=exposure_times_seconds,
+                    gain_e_per_adu=fallback_gain_e_per_adu,
                 )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -26008,6 +26304,9 @@ def _main_impl():
                                            selected_fit_good_flux=selected_attempt.get('good_flux'),
                                            selected_fit_good_unc=selected_attempt.get('good_unc'),
                                            selected_fit_good_airmass=selected_attempt.get('good_airmass'),
+                                           selected_fit_good_exposure_times_seconds=selected_attempt.get(
+                                               'good_exposure_times_seconds'
+                                           ),
                                            selected_fit_good_target_flux_error=selected_attempt.get('tflux_fit_error'),
                                            selected_fit_good_comp_flux_error=selected_attempt.get('cflux_fit_error'),
                                            selected_fit_duration_samples=selected_attempt.get('duration_samples'),
@@ -26063,6 +26362,8 @@ def _main_impl():
                                     use_impactparameter_rather_than_inclination_to_fit,
                                     plot_time_range=full_plot_time_range,
                                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                                    exposure_times_seconds=exposure_times_seconds,
+                                    gain_e_per_adu=fallback_gain_e_per_adu,
                                 )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
@@ -26098,6 +26399,8 @@ def _main_impl():
                                     use_impactparameter_rather_than_inclination_to_fit,
                                     plot_time_range=full_plot_time_range,
                                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                                    exposure_times_seconds=exposure_times_seconds[aper_mask],
+                                    gain_e_per_adu=fallback_gain_e_per_adu,
                                 )
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
@@ -26248,6 +26551,8 @@ def _main_impl():
                     use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
                     psf_flux_data=psf_flux_source,
                     psf_noise_data=psf_noise_data if use_psf_photometry else None,
+                    exposure_times_seconds=exposure_times_seconds,
+                    gain_e_per_adu=fallback_gain_e_per_adu,
                 )
                 saved_candidate_fit_count = sum(1 for summary in candidate_fit_summaries if summary['fit'] is not None)
                 failed_candidate_fit_count = len(candidate_fit_summaries) - saved_candidate_fit_count
@@ -26353,6 +26658,18 @@ def _main_impl():
 
             goodTimes = best_fit_lc.time
             goodAirmasses = best_fit_lc.airmass
+            goodExposureTimes = None
+            fit_exposure_days = getattr(best_fit_lc, 'exposure_times_days', None)
+            if fit_exposure_days is not None:
+                fit_exposure_days = np.asarray(fit_exposure_days, dtype=float)
+                if fit_exposure_days.shape == np.shape(goodTimes):
+                    goodExposureTimes = fit_exposure_days * 86400.0
+            selected_good_exposure_times = photometry_info.get('selected_fit_good_exposure_times_seconds')
+            if (
+                selected_good_exposure_times is not None
+                and np.shape(selected_good_exposure_times) == np.shape(goodTimes)
+            ):
+                goodExposureTimes = np.asarray(selected_good_exposure_times, dtype=float)
 
             if reuse_selected_full_reduction_fit:
                 selected_good_flux = photometry_info.get('selected_fit_good_flux')
@@ -26414,6 +26731,8 @@ def _main_impl():
             goodFluxes = goodFluxes[relative_flux_mask]
             goodNormUnc = goodNormUnc[relative_flux_mask]
             goodAirmasses = goodAirmasses[relative_flux_mask]
+            if goodExposureTimes is not None:
+                goodExposureTimes = goodExposureTimes[relative_flux_mask]
 
             centroid_positions.update(x_targ=centroid_positions['x_targ'][relative_flux_mask],
                                       y_targ=centroid_positions['y_targ'][relative_flux_mask],
@@ -26585,6 +26904,15 @@ def _main_impl():
             goodFluxes = goodFluxes[relative_flux_mask]
             goodNormUnc = goodNormUnc[relative_flux_mask]
             goodAirmasses = goodAirmasses[relative_flux_mask]
+            try:
+                prereduced_exposure = float(exotic_infoDict.get('exposure', np.nan))
+            except (TypeError, ValueError):
+                prereduced_exposure = np.nan
+            goodExposureTimes = (
+                np.full(goodTimes.shape, prereduced_exposure, dtype=float)
+                if np.isfinite(prereduced_exposure) and prereduced_exposure > 0
+                else None
+            )
             goodFluxes, goodNormUnc, _ = normalize_flux_series_to_approximate_unity(
                 goodFluxes,
                 goodNormUnc,
@@ -26737,6 +27065,7 @@ def _main_impl():
                 goodAirmasses,
                 prior,
                 mybounds,
+                exposure_times_seconds=goodExposureTimes,
                 skip_airmass_fit=skip_final_airmass_fit,
                 airmass_skip_note=airmass_skip_note,
                 disable_vertical_flux_normalization=disable_vertical_flux_normalization,
@@ -26793,7 +27122,11 @@ def _main_impl():
         # estimate transit duration
         pars = dict(**myfit.parameters)
         times = np.linspace(np.min(myfit.time), np.max(myfit.time), 1000)
-        data_highres = transit(times, pars)
+        fit_transit_model = getattr(myfit, '_transit_model', None)
+        if callable(fit_transit_model):
+            data_highres = fit_transit_model(times, pars)
+        else:
+            data_highres = transit(times, pars)
         dt = np.diff(times).mean()
         durs = []
         for r in range(1000):

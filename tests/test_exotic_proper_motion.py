@@ -1176,8 +1176,15 @@ def test_is_comp_star_required_parses_values():
     assert is_comp_star_required("n") is False
 
 
-def test_mixed_exposure_times_force_comparison_star_requirement():
+def test_mixed_exposure_times_keep_target_only_allowed_with_scaling_warning(monkeypatch):
     import exotic.exotic as exotic_module
+
+    messages = []
+    monkeypatch.setattr(
+        exotic_module,
+        "log_info",
+        lambda message, **kwargs: messages.append((message, kwargs)),
+    )
 
     assert exotic_module.exposure_time_spread_fraction([60.0, 60.3, 60.5]) < 0.01
     assert not exotic_module.exposure_variation_requires_comp_star([60.0, 60.3, 60.5])
@@ -1185,7 +1192,9 @@ def test_mixed_exposure_times_force_comparison_star_requirement():
 
     assert exotic_module.exposure_time_spread_fraction([60.0, 61.0]) > 0.01
     assert exotic_module.exposure_variation_requires_comp_star([60.0, 61.0])
-    assert exotic_module.resolve_require_comp_star_for_exposure_times("n", [60.0, 61.0]) is True
+    assert exotic_module.resolve_require_comp_star_for_exposure_times("n", [60.0, 61.0]) is False
+    assert exotic_module.resolve_require_comp_star_for_exposure_times("y", [60.0, 61.0]) is True
+    assert any("scale source counts to a common exposure time" in message for message, _ in messages)
 
 
 def test_img_time_bjd_tdb_prefers_direct_mid_exposure_bjd(monkeypatch):
@@ -6715,6 +6724,36 @@ def test_prepare_lightcurve_fit_input_series_uses_per_star_flux_errors(monkeypat
     assert np.allclose(prepared["comp_flux_error"], comp_error)
 
 
+def test_prepare_lightcurve_fit_input_series_scales_target_only_counts_to_max_exposure(monkeypatch):
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
+    )
+
+    times = np.linspace(0.0, 0.05, 6)
+    target_flux = np.array([100.0, 200.0, 200.0, 200.0, 300.0, 300.0])
+    comp_flux = np.ones(6)
+    exposure_times = np.array([30.0, 60.0, 60.0, 60.0, 60.0, 60.0])
+
+    prepared = prepare_lightcurve_fit_input_series(
+        times,
+        target_flux,
+        comp_flux,
+        np.linspace(1.0, 1.5, 6),
+        exposure_times_seconds=exposure_times,
+        gain_e_per_adu=2.0,
+    )
+
+    expected_flux = np.array([200.0, 200.0, 200.0, 200.0, 300.0, 300.0])
+    expected_error = np.sqrt(target_flux / 2.0) * np.array([2.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+
+    assert prepared["applied"] is True
+    assert prepared["debug_target_flux"] == pytest.approx(expected_flux)
+    assert prepared["target_flux"] == pytest.approx(expected_flux)
+    assert prepared["target_flux_error"] == pytest.approx(expected_error)
+    assert prepared["debug_relative_flux_error"] == pytest.approx(expected_error)
+
+
 def test_compute_photometry_noise_budget_includes_optional_terms():
     config = {
         "gain_e_per_adu": 2.0,
@@ -7003,6 +7042,68 @@ def test_fit_lightcurve_can_disable_impact_parameter_parameterization(monkeypatc
     )
 
     assert captured["flags"] == [False]
+
+
+def test_fit_lightcurve_forwards_exposure_times_to_fitter(monkeypatch):
+    captured = {}
+
+    def fake_lc_fitter(
+        times,
+        fluxes,
+        flux_unc,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        mode=None,
+        use_impactparameter_rather_than_inclination_to_fit=True,
+        exposure_times_seconds=None,
+    ):
+        captured["times"] = np.asarray(times, dtype=float)
+        captured["exposure_times_seconds"] = None if exposure_times_seconds is None else np.asarray(
+            exposure_times_seconds,
+            dtype=float,
+        )
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
+    )
+
+    times = np.linspace(0.0, 0.05, 6)
+    exposure_times = np.array([60.0, 60.0, 90.0, 90.0, 120.0, 120.0])
+    tflux = np.full(times.shape[0], 2.0)
+    cflux = np.full(times.shape[0], 2.0)
+    airmass = np.linspace(1.0, 1.5, times.shape[0])
+    jd_times = 2460000.0 + times
+    ld = [0.1, 0.1, 0.1, 0.1]
+    p_dict = {
+        "rprs": 0.1,
+        "aRs": 15.0,
+        "pPer": 1.0,
+        "inc": 89.0,
+        "ecc": 0.0,
+        "omega": 0.0,
+        "midT": 0.02,
+        "midTUnc": 0.001,
+        "pPerUnc": 0.001,
+    }
+
+    fit_lightcurve(
+        times,
+        tflux,
+        cflux,
+        airmass,
+        ld,
+        p_dict,
+        jd_times,
+        exposure_times_seconds=exposure_times,
+    )
+
+    assert captured["times"] == pytest.approx(times)
+    assert captured["exposure_times_seconds"] == pytest.approx(exposure_times)
 
 
 def test_build_initial_ars_bounds_prefers_published_uncertainty_when_available(monkeypatch):

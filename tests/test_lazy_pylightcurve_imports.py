@@ -90,6 +90,90 @@ def test_imports_eagerly_load_pylightcurve_without_noise():
     assert "LOUD-STDERR" not in result.stderr
 
 
+def test_transit_supersamples_points_with_significant_exposure_smearing():
+    script = textwrap.dedent(
+        """
+        import sys
+        import tempfile
+        import types
+        from pathlib import Path
+
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_dir = root / "pylightcurve"
+            model_dir = package_dir / "models"
+            model_dir.mkdir(parents=True)
+
+            (package_dir / "__init__.py").write_text("", encoding="utf-8")
+            (model_dir / "__init__.py").write_text("", encoding="utf-8")
+            (model_dir / "exoplanet_lc.py").write_text(
+                "import numpy as np\\n"
+                "def transit(*args, **kwargs):\\n"
+                "    times = np.asarray(args[-1], dtype=float)\\n"
+                "    return 1.0 + times ** 2\\n"
+                "def eclipse_mid_time(*args, **kwargs): return 0.0\\n",
+                encoding="utf-8",
+            )
+
+            sys.path.insert(0, str(root))
+            for name in list(sys.modules):
+                if name == "exotic.api.elca" or name.startswith("pylightcurve"):
+                    sys.modules.pop(name)
+
+            fake_ultranest = types.ModuleType("ultranest")
+            fake_ultranest.ReactiveNestedSampler = type("ReactiveNestedSampler", (), {})
+            sys.modules["ultranest"] = fake_ultranest
+            fake_plotting = types.ModuleType("plotting")
+            fake_plotting.corner = lambda *args, **kwargs: None
+            sys.modules["plotting"] = fake_plotting
+            sys.modules["exotic.api.plotting"] = fake_plotting
+            fake_ultranest_utils = types.ModuleType("ultranest_utils")
+            fake_ultranest_utils.run_reactive_sampler = lambda *args, **kwargs: None
+            sys.modules["ultranest_utils"] = fake_ultranest_utils
+            sys.modules["exotic.api.ultranest_utils"] = fake_ultranest_utils
+
+            import exotic.api.elca as elca
+
+            values = {
+                "u0": 0.0,
+                "u1": 0.0,
+                "u2": 0.0,
+                "u3": 0.0,
+                "rprs": 0.1,
+                "per": 1.0,
+                "ars": 10.0,
+                "ecc": 0.0,
+                "inc": 90.0,
+                "omega": 90.0,
+                "tmid": 0.0,
+                elca.EXPOSURE_SMEARING_EXPOSURE_TIME_KEY: np.array([3600.0 / 86400.0]),
+                elca.EXPOSURE_SMEARING_SUPERSAMPLE_KEY: 5,
+                elca.EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY: 0.0,
+            }
+
+            result = elca.transit(np.array([0.0]), values)
+            offsets = (np.arange(5, dtype=float) + 0.5) / 5.0 - 0.5
+            expected = np.mean(1.0 + ((3600.0 / 86400.0) * offsets) ** 2)
+            assert np.allclose(result, [expected])
+            assert result[0] > 1.0
+            print("smearing-ok")
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "smearing-ok" in result.stdout
+
+
 def test_import_exotic_avoids_unused_astroquery_modules():
     script = textwrap.dedent(
         """

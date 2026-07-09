@@ -217,9 +217,10 @@ def transit_duration_days(parameters):
     if not np.isfinite(chord_sq) or chord_sq <= 0 or impact_scale <= 0:
         return np.nan
 
-    argument = math.sqrt(chord_sq) / (impact_scale * sin_inc)
+    argument = math.sqrt(chord_sq) / (ars * sin_inc)
     argument = float(np.clip(argument, -1.0, 1.0))
-    duration = (period / math.pi) * math.asin(argument)
+    eccentric_speed_factor = math.sqrt(1.0 - ecc ** 2) / denominator
+    duration = (period / math.pi) * math.asin(argument) * eccentric_speed_factor
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
 
 

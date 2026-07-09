@@ -1226,11 +1226,12 @@ def transit_qc_geometry_contact_duration(parameters, contact_radius):
     if not np.isfinite(chord_sq) or chord_sq <= 0:
         return np.nan
 
-    argument = np.sqrt(chord_sq) / (impact_scale * sin_inc)
+    argument = np.sqrt(chord_sq) / (ars * sin_inc)
     if not np.isfinite(argument):
         return np.nan
     argument = float(np.clip(argument, -1.0, 1.0))
-    duration = (period / np.pi) * np.arcsin(argument)
+    eccentric_speed_factor = np.sqrt(1.0 - ecc ** 2) / denominator
+    duration = (period / np.pi) * np.arcsin(argument) * eccentric_speed_factor
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
 
 
@@ -8406,9 +8407,10 @@ def estimate_transit_duration_from_prior_geometry(prior):
     if not np.isfinite(chord_sq) or chord_sq <= 0 or not np.isfinite(impact_scale) or impact_scale <= 0:
         return np.nan
 
-    argument = np.sqrt(chord_sq) / (impact_scale * sin_inc)
+    argument = np.sqrt(chord_sq) / (ars * sin_inc)
     argument = float(np.clip(argument, -1.0, 1.0))
-    duration = (period / np.pi) * np.arcsin(argument)
+    eccentric_speed_factor = np.sqrt(1.0 - ecc ** 2) / max(np.finfo(float).eps, 1.0 + ecc * np.sin(omega))
+    duration = (period / np.pi) * np.arcsin(argument) * eccentric_speed_factor
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
 
 

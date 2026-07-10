@@ -3601,6 +3601,35 @@ def partial_transit_geometry_prior_assumption_fixed_error(key, prior, search_res
     return 0.0
 
 
+def estimate_fixed_airmass_coefficient_error(flux_values, flux_errors, airmass):
+    flux_values = np.asarray([] if flux_values is None else flux_values, dtype=float)
+    flux_errors = np.asarray([] if flux_errors is None else flux_errors, dtype=float)
+    airmass = np.asarray([] if airmass is None else airmass, dtype=float)
+    if not (flux_values.shape == flux_errors.shape == airmass.shape):
+        return None
+
+    finite = (
+        np.isfinite(flux_values)
+        & (flux_values > 0)
+        & np.isfinite(flux_errors)
+        & (flux_errors > 0)
+        & np.isfinite(airmass)
+    )
+    if int(np.count_nonzero(finite)) < 2:
+        return None
+
+    airmass_span_value = np.nanmax(airmass[finite]) - np.nanmin(airmass[finite])
+    if not np.isfinite(airmass_span_value) or airmass_span_value <= 0:
+        return None
+
+    relative_errors = flux_errors[finite] / np.maximum(flux_values[finite], np.finfo(float).eps)
+    relative_error = float(np.nanmedian(relative_errors))
+    if not np.isfinite(relative_error) or relative_error < 0:
+        return None
+
+    return float(relative_error / airmass_span_value)
+
+
 def partial_transit_geometry_prior_assumption_note(mode, assessment, sampled_parameters):
     observed_segment = assessment.get('observed_segment') or 'partial transit'
     pre_points = int(assessment.get('pre_ingress_points', 0) or 0)
@@ -3637,6 +3666,7 @@ def apply_partial_transit_geometry_prior_assumption(
     bounds,
     assessment,
     flux_values=None,
+    flux_errors=None,
     airmass=None,
     fixed_parameter_errors=None,
     search_restriction_prior=None,
@@ -3683,6 +3713,14 @@ def apply_partial_transit_geometry_prior_assumption(
     else:
         for key in ('a0', 'a1', 'a2'):
             local_bounds.pop(key, None)
+        if 'a2' in local_prior and 'a2' not in local_fixed_errors:
+            a2_error = estimate_fixed_airmass_coefficient_error(
+                flux_values,
+                flux_errors,
+                airmass,
+            )
+            if a2_error is not None:
+                local_fixed_errors['a2'] = a2_error
 
     sampled_parameters = list(local_bounds.keys())
     payload.update({
@@ -4504,6 +4542,7 @@ def coerce_fixed_baseline_error(value, default=None):
 
 
 def baseline_fixed_errors_from_fit(fit):
+    parameters = getattr(fit, 'parameters', {}) if fit is not None else {}
     errors = getattr(fit, 'errors', {}) if fit is not None else {}
     fixed_errors = {}
     if isinstance(errors, dict):
@@ -4513,6 +4552,18 @@ def baseline_fixed_errors_from_fit(fit):
                 fixed_errors[key] = value
     if 'a0' in fixed_errors and 'a1' not in fixed_errors:
         fixed_errors['a1'] = fixed_errors['a0']
+    if (
+        isinstance(parameters, dict)
+        and 'a2' in parameters
+        and 'a2' not in fixed_errors
+    ):
+        a2_error = estimate_fixed_airmass_coefficient_error(
+            getattr(fit, 'data', None),
+            getattr(fit, 'dataerr', None),
+            getattr(fit, 'airmass', None),
+        )
+        if a2_error is not None:
+            fixed_errors['a2'] = a2_error
     return fixed_errors
 
 
@@ -6464,6 +6515,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 local_bounds,
                 pre_ultranest_coverage_assessment,
                 flux_values=flux_values,
+                flux_errors=flux_errors,
                 airmass=airmass,
                 fixed_parameter_errors=effective_fixed_parameter_errors,
                 search_restriction_prior=restriction_reference_prior,
@@ -6522,6 +6574,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             current_bounds,
             pre_ultranest_coverage_assessment,
             flux_values=flux_values,
+            flux_errors=flux_errors,
             airmass=airmass,
             fixed_parameter_errors=base_fixed_parameter_errors,
             search_restriction_prior=restriction_reference_prior,
@@ -10051,7 +10104,12 @@ def fit_airmass_baseline_parameters_on_out_of_transit(
     if covariance is not None and fit_a2 and covariance.shape[0] >= 2:
         a2_error = float(np.sqrt(max(covariance[1, 1], 0.0)))
     else:
-        a2_error = 0.0 if not fit_a2 else np.nan
+        a2_error = (
+            estimate_fixed_airmass_coefficient_error(y, yerr, airmass[finite_mask])
+            if not fit_a2 else np.nan
+        )
+        if a2_error is None:
+            a2_error = 0.0
 
     if not np.isfinite(a0_error) or a0_error <= 0:
         a0_error = float(np.nanmedian(yerr))
@@ -27245,8 +27303,34 @@ def _main_impl():
         if getattr(myfit, 'airmass_fit_skipped', False):
             log_info(f"                 Airmass correction: {myfit.airmass_correction_note}")
         else:
-            log_info(f"               Airmass coefficient 1: {round_to_2(myfit.parameters['a1'], myfit.errors['a1'])} +/- {round_to_2(myfit.errors['a1'])}")
-            log_info(f"               Airmass coefficient 2: {round_to_2(myfit.parameters['a2'], myfit.errors['a2'])} +/- {round_to_2(myfit.errors['a2'])}")
+            fit_parameters = getattr(myfit, 'parameters', {}) or {}
+            fit_errors = getattr(myfit, 'errors', {}) or {}
+            airmass_scale_key = 'a1' if 'a1' in fit_parameters else 'a0'
+            if airmass_scale_key in fit_parameters:
+                airmass_scale_error = fit_errors.get(airmass_scale_key)
+                if airmass_scale_error is not None and np.isfinite(airmass_scale_error):
+                    log_info(
+                        f"               Airmass coefficient 1: "
+                        f"{round_to_2(fit_parameters[airmass_scale_key], airmass_scale_error)} "
+                        f"+/- {round_to_2(airmass_scale_error)}"
+                    )
+                else:
+                    log_info(
+                        f"               Airmass coefficient 1: "
+                        f"{round_to_2(fit_parameters[airmass_scale_key])} (fixed; uncertainty unavailable)"
+                    )
+            if 'a2' in fit_parameters:
+                a2_error = fit_errors.get('a2')
+                if a2_error is not None and np.isfinite(a2_error):
+                    log_info(
+                        f"               Airmass coefficient 2: "
+                        f"{round_to_2(fit_parameters['a2'], a2_error)} +/- {round_to_2(a2_error)}"
+                    )
+                else:
+                    log_info(
+                        f"               Airmass coefficient 2: "
+                        f"{round_to_2(fit_parameters['a2'])} (fixed; uncertainty unavailable)"
+                    )
         if isinstance(transit_qc, dict) and transit_qc:
             residual_scatter = transit_qc.get('residual_scatter', np.nan)
             if np.isfinite(residual_scatter):

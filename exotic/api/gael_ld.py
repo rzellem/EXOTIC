@@ -42,8 +42,10 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import quote
+from urllib.parse import unquote
 
 import requests
 
@@ -55,6 +57,8 @@ _LDTK_HTTP_FALLBACK_BASE_URLS = (
 )
 _LDTK_HTTP_FALLBACK_ENV = "EXOTIC_LDTK_FALLBACK_BASE_URL"
 _LDTK_DOWNLOAD_TIMEOUT = (10, 120)
+_LDTK_INDEX_TIMEOUT = (10, 60)
+_LDTK_ORIGINAL_GET_SERVER_FILE_LIST = None
 _LDTK_ORIGINAL_DOWNLOAD_UNCACHED_FILES = None
 
 
@@ -91,6 +95,90 @@ def _quote_url_path(*parts):
 def _ldtk_http_fallback_url(base_url, client, ldtk_file):
     path = _quote_url_path(client.edir, ldtk_file._zstr, ldtk_file.name)
     return f"{base_url}/{path}"
+
+
+def _ldtk_http_fallback_index_url(base_url, *parts):
+    path = _quote_url_path(*parts)
+    if path:
+        return f"{base_url}/{path}/"
+    return f"{base_url}/"
+
+
+class _HrefParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.hrefs = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "a":
+            return
+        for name, value in attrs:
+            if name.lower() == "href" and value:
+                self.hrefs.append(value)
+                return
+
+
+def _http_index_names(url):
+    response = requests.get(url, timeout=_LDTK_INDEX_TIMEOUT)
+    try:
+        response.raise_for_status()
+        parser = _HrefParser()
+        parser.feed(response.text)
+    finally:
+        response.close()
+
+    names = []
+    for href in parser.hrefs:
+        href = unquote(href.split("?", 1)[0].split("#", 1)[0]).strip("/")
+        if not href or href in (".", "..") or "/" in href:
+            continue
+        names.append(href)
+    return names
+
+
+def _get_ldtk_server_file_list_from_http_mirror(client, base_url):
+    root_url = _ldtk_http_fallback_index_url(base_url, client.edir)
+    zdirs = sorted(name for name in _http_index_names(root_url) if ".txt" not in name.lower())
+    if not zdirs:
+        raise RuntimeError(f"No PHOENIX metallicity directories found at {root_url}")
+
+    log.warning(
+        "Trying PHOENIX HTTP fallback index at %s for %d metallicity directories.",
+        base_url,
+        len(zdirs),
+    )
+
+    files_in_server = {}
+    for zdir in zdirs:
+        zdir_url = _ldtk_http_fallback_index_url(base_url, client.edir, zdir)
+        files_in_server[zdir] = sorted(
+            name for name in _http_index_names(zdir_url) if ".txt" not in name.lower()
+        )
+    return files_in_server
+
+
+def _get_ldtk_server_file_list_from_http(client):
+    base_urls = _ldtk_http_fallback_base_urls()
+    if not base_urls:
+        raise RuntimeError(
+            f"LDTk FTP file listing failed and {_LDTK_HTTP_FALLBACK_ENV} is empty, "
+            "so EXOTIC cannot try the HTTP PHOENIX fallback."
+        )
+
+    log.warning(
+        "LDTk FTP file listing failed; trying PHOENIX HTTP fallback mirrors in order: %s",
+        ", ".join(base_urls),
+    )
+
+    last_error = None
+    for base_url in base_urls:
+        try:
+            return _get_ldtk_server_file_list_from_http_mirror(client, base_url)
+        except Exception as mirror_error:
+            last_error = mirror_error
+            log.warning("PHOENIX HTTP fallback index failed at %s: %s", base_url, mirror_error)
+
+    raise RuntimeError("All PHOENIX HTTP fallback indexes failed.") from last_error
 
 
 def _download_file(url, local_path):
@@ -167,12 +255,32 @@ def _download_ldtk_uncached_files_from_http(client, force=False):
 
 
 def _install_ldtk_http_fallback():
+    global _LDTK_ORIGINAL_GET_SERVER_FILE_LIST
     global _LDTK_ORIGINAL_DOWNLOAD_UNCACHED_FILES
 
     try:
         from ldtk.client import Client
     except Exception:
         return
+
+    if not getattr(Client.get_server_file_list, "_exotic_http_fallback", False):
+        _LDTK_ORIGINAL_GET_SERVER_FILE_LIST = Client.get_server_file_list
+
+        def get_server_file_list_with_http_fallback(self):
+            try:
+                return _LDTK_ORIGINAL_GET_SERVER_FILE_LIST(self)
+            except Exception as ftp_error:
+                try:
+                    log.warning("LDTk FTP file listing failed with %s", ftp_error)
+                    return _get_ldtk_server_file_list_from_http(self)
+                except Exception as fallback_error:
+                    raise RuntimeError(
+                        "LDTk could not list PHOENIX files from the default FTP server "
+                        "or the EXOTIC HTTP fallback."
+                    ) from fallback_error
+
+        get_server_file_list_with_http_fallback._exotic_http_fallback = True
+        Client.get_server_file_list = get_server_file_list_with_http_fallback
 
     if getattr(Client.download_uncached_files, "_exotic_http_fallback", False):
         return

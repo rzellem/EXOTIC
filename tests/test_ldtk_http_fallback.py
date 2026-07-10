@@ -8,8 +8,9 @@ from exotic.api import gael_ld  # noqa: E402
 
 
 class DummyResponse:
-    def __init__(self, chunks):
+    def __init__(self, chunks=None, text=""):
         self._chunks = chunks
+        self.text = text
         self.closed = False
 
     def raise_for_status(self):
@@ -113,3 +114,59 @@ def test_ldtk_download_wrapper_tries_original_before_http_fallback(monkeypatch, 
 
     assert Client.download_uncached_files(client, force=True) is False
     assert calls == [("ftp", True), ("http", True)]
+
+
+def test_ldtk_file_list_wrapper_uses_http_fallback_when_ftp_listing_fails(monkeypatch):
+    from ldtk.client import Client
+
+    class ClientStub:
+        edir = "SpecInt50FITS/PHOENIX-ACES-AGSS-COND-SPECINT-2011"
+
+    calls = []
+    requested_urls = []
+
+    def fake_original(self):
+        calls.append("ftp")
+        raise TimeoutError("ftp listing timed out")
+
+    def fake_get(url, timeout):
+        requested_urls.append(url)
+        if url.endswith("PHOENIX-ACES-AGSS-COND-SPECINT-2011/"):
+            return DummyResponse(text="""
+                <a href="../">../</a>
+                <a href="README.txt">README.txt</a>
+                <a href="Z%2B0.5/">Z+0.5/</a>
+                <a href="Z-0.0/">Z-0.0/</a>
+            """)
+        if url.endswith("Z%2B0.5/"):
+            return DummyResponse(text="""
+                <a href="../">../</a>
+                <a href="lte02300%2B0.00%2B0.5.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits">
+                    lte02300+0.00+0.5.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits
+                </a>
+            """)
+        if url.endswith("Z-0.0/"):
+            return DummyResponse(text="""
+                <a href="../">../</a>
+                <a href="lte02300-0.00-0.0.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits">
+                    lte02300-0.00-0.0.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits
+                </a>
+            """)
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setenv(gael_ld._LDTK_HTTP_FALLBACK_ENV, "https://mirror.example/PHOENIX")
+    monkeypatch.setattr(gael_ld, "_LDTK_ORIGINAL_GET_SERVER_FILE_LIST", fake_original)
+    monkeypatch.setattr(gael_ld.requests, "get", fake_get)
+
+    files = Client.get_server_file_list(ClientStub())
+
+    assert calls == ["ftp"]
+    assert requested_urls == [
+        "https://mirror.example/PHOENIX/SpecInt50FITS/PHOENIX-ACES-AGSS-COND-SPECINT-2011/",
+        "https://mirror.example/PHOENIX/SpecInt50FITS/PHOENIX-ACES-AGSS-COND-SPECINT-2011/Z%2B0.5/",
+        "https://mirror.example/PHOENIX/SpecInt50FITS/PHOENIX-ACES-AGSS-COND-SPECINT-2011/Z-0.0/",
+    ]
+    assert files == {
+        "Z+0.5": ["lte02300+0.00+0.5.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits"],
+        "Z-0.0": ["lte02300-0.00-0.0.PHOENIX-ACES-AGSS-COND-SPECINT-2011.fits"],
+    }

@@ -1806,19 +1806,38 @@ class OutputFiles:
             )
         else:
             if 'a0' in self.fit.parameters:
-                params_num["Baseline flux (a0)"] = (
-                    f"{round_to_2(self.fit.parameters['a0'], self.fit.errors['a0'])} +/- "
-                    f"{round_to_2(self.fit.errors['a0'])}"
-                )
+                a0_error = self.fit.errors.get('a0') if isinstance(self.fit.errors, dict) else None
+                if a0_error is not None and np.isfinite(a0_error):
+                    params_num["Baseline flux (a0)"] = (
+                        f"{round_to_2(self.fit.parameters['a0'], a0_error)} +/- "
+                        f"{round_to_2(a0_error)}"
+                    )
+                else:
+                    params_num["Baseline flux (a0)"] = (
+                        f"{round_to_2(self.fit.parameters['a0'])} (fixed; uncertainty unavailable)"
+                    )
             else:
-                params_num["Flux normalization (a1)"] = (
-                    f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
-                    f"{round_to_2(self.fit.errors['a1'])}"
-                )
-            params_num["Airmass coefficient 2 (a2)"] = (
-                f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
-                f"{round_to_2(self.fit.errors['a2'])}"
-            )
+                a1_error = self.fit.errors.get('a1') if isinstance(self.fit.errors, dict) else None
+                if a1_error is not None and np.isfinite(a1_error):
+                    params_num["Flux normalization (a1)"] = (
+                        f"{round_to_2(self.fit.parameters['a1'], a1_error)} +/- "
+                        f"{round_to_2(a1_error)}"
+                    )
+                else:
+                    params_num["Flux normalization (a1)"] = (
+                        f"{round_to_2(self.fit.parameters['a1'])} (fixed; uncertainty unavailable)"
+                    )
+            if 'a2' in self.fit.parameters:
+                a2_error = self.fit.errors.get('a2') if isinstance(self.fit.errors, dict) else None
+                if a2_error is not None and np.isfinite(a2_error):
+                    params_num["Airmass coefficient 2 (a2)"] = (
+                        f"{round_to_2(self.fit.parameters['a2'], a2_error)} +/- "
+                        f"{round_to_2(a2_error)}"
+                    )
+                else:
+                    params_num["Airmass coefficient 2 (a2)"] = (
+                        f"{round_to_2(self.fit.parameters['a2'])} (fixed; uncertainty unavailable)"
+                    )
 
         if isinstance(transit_qc, dict) and transit_qc:
             qc_status = transit_qc.get('status')

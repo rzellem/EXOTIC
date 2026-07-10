@@ -983,6 +983,103 @@ def test_selected_fast_candidate_final_refit_uses_full_series_and_fixed_baseline
     assert "a2" not in captured["bounds"]
 
 
+def test_selected_fast_candidate_final_refit_estimates_missing_fixed_a2_error(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "selected_final_live_point_target", lambda *args, **kwargs: (200, None))
+    captured = {}
+
+    def fake_run_nested(
+        times,
+        flux_values,
+        flux_errors,
+        airmass,
+        prior,
+        bounds,
+        jd_times=None,
+        **kwargs,
+    ):
+        captured["fixed_parameter_errors"] = dict(kwargs.get("fixed_parameter_errors", {}))
+        fit = types.SimpleNamespace(
+            time=np.asarray(times, dtype=float),
+            data=np.asarray(flux_values, dtype=float),
+            dataerr=np.asarray(flux_errors, dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            parameters=dict(prior),
+            errors=dict(kwargs.get("fixed_parameter_errors", {})),
+            residuals=np.zeros(len(times), dtype=float),
+            transit=np.ones(len(times), dtype=float),
+            duration_measured=0.04,
+            duration_expected=0.04,
+            transit_qc={"status": "pass", "summary": "ok"},
+            transit_qc_status="pass",
+        )
+        fit.get_parameter_posterior_samples = lambda key: np.linspace(0.0, 1.0, 1500)
+        return fit
+
+    monkeypatch.setattr(exotic_module, "run_nested_lightcurve_fit_with_rprs_posterior_retry", fake_run_nested)
+
+    previous_fit = types.SimpleNamespace(
+        fast_ultranest_binning_applied=True,
+        parameters={
+            "rprs": 0.1,
+            "ars": 10.0,
+            "per": 1.0,
+            "tmid": 0.5,
+            "inc": 89.0,
+            "u0": 0.1,
+            "u1": 0.1,
+            "u2": 0.1,
+            "u3": 0.1,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.03,
+            "a1": 1.03,
+            "a2": 0.12,
+        },
+        errors={"a0": 0.02, "a1": 0.02, "rprs": 0.001, "tmid": 0.001, "ars": 0.1},
+        data=np.ones(40, dtype=float),
+        dataerr=np.full(40, 0.01, dtype=float),
+        airmass=np.linspace(1.0, 1.4, 40),
+        bounds={
+            "rprs": [0.05, 0.15],
+            "tmid": [0.49, 0.51],
+            "ars": [9.0, 11.0],
+            "inc": [85.0, 90.0],
+            "a0": [0.95, 1.05],
+            "a2": [-3.0, 3.0],
+        },
+    )
+    times = np.linspace(0.0, 1.0, 80)
+    selected_result = {
+        "fit": previous_fit,
+        "good_times": times,
+        "good_flux": np.ones(80),
+        "good_unc": np.full(80, 0.01),
+        "good_airmass": np.linspace(1.0, 1.3, 80),
+        "good_jd_times": 2460000.0 + times,
+    }
+
+    returned = refit_selected_fast_comparison_on_full_lightcurve(
+        selected_result,
+        {
+            "midT": 0.5,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        detrend_on_outoftransit_baseline=False,
+    )
+
+    assert returned is not None
+    assert captured["fixed_parameter_errors"]["a0"] == pytest.approx(0.02)
+    assert captured["fixed_parameter_errors"]["a2"] == pytest.approx(0.025)
+
+
 def test_selected_fast_candidate_final_refit_reruns_after_residual_rejection(monkeypatch):
     import exotic.exotic as exotic_module
 
@@ -1755,6 +1852,7 @@ def test_one_sided_partial_coverage_fixes_geometry_and_samples_tmid_only(monkeyp
     assert captured["fixed_parameter_errors"]["rprs"] == pytest.approx(0.002)
     assert captured["fixed_parameter_errors"]["ars"] == pytest.approx(0.3)
     assert captured["fixed_parameter_errors"]["inc"] == pytest.approx(0.4)
+    assert captured["fixed_parameter_errors"]["a2"] == pytest.approx(0.025)
     assert fit.partial_transit_geometry_prior_assumption_applied is True
     assert fit.partial_transit_geometry_prior_assumption_mode == "tmid_only"
     assert fit.partial_transit_geometry_prior_assumption_sampled_parameters == ["tmid"]

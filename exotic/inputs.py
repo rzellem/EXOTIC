@@ -209,6 +209,7 @@ class Inputs:
             'fast_aperture_mask': False, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'prefer_pixel_values_over_wcs_for_target': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
+            'stellar_variability_only': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
             'use_eebls_to_initialize_tmid_and_bounds': 'y',
@@ -226,6 +227,9 @@ class Inputs:
             'use_adaptive_apertures': False, 'bad_wcs_threshold_percent': 3.0,
             'use_aperture_corrections_and_full_image_fwhm': False,
             'pointing_rejection_sigma': None,
+            'reject_overexposed_stars': True,
+            'saturation_value': 65535.0,
+            'overexposure_threshold_fraction': 0.9,
             'gain_electrons_per_adu': None,
             'read_noise_electrons': None,
             'dark_current_electrons_per_second_per_pixel': None,
@@ -472,6 +476,12 @@ class Inputs:
                 'disable vertical flux normalization',
                 'Disable vertical flux normalization',
             ),
+            'stellar_variability_only': (
+                'stellar_variability_only',
+                'stellar variability only',
+                'Stellar Variability Only',
+                'Stellar Variability Only? (y/n)',
+            ),
             'detect_bad_pixels_before_photometry': (
                 'detect_bad_pixels_before_photometry',
                 'Detect Bad Pixels Before Photometry? (y/n)',
@@ -554,6 +564,22 @@ class Inputs:
                 'use_aperture_corrections_and_full_image_fwhm',
                 'Use Aperture Corrections and Full Image FWHM? (y/n)',
                 'Use Aperture Corrections And Full Image FWHM? (y/n)',
+            ),
+            'reject_overexposed_stars': (
+                'reject_overexposed_stars',
+                'Reject Overexposed Stars? (y/n)',
+                'Reject Overexposed Target and Comparison Stars? (y/n)',
+            ),
+            'saturation_value': (
+                'saturation_value',
+                'saturation_value_adu',
+                'Saturation Value',
+                'SATURATE',
+            ),
+            'overexposure_threshold_fraction': (
+                'overexposure_threshold_fraction',
+                'Overexposure Threshold Fraction',
+                'Saturation Rejection Threshold Fraction',
             ),
             'skip_low_comparison_coverage_rejection': (
                 'skip_low_comparison_coverage_rejection',

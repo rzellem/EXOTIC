@@ -922,6 +922,81 @@ def _plot_final_residual_rejected_points(ax_lc, ax_res, fit):
 
 
 def plot_final_lightcurve(fit, high_res, targ_name, save, date):
+    if getattr(fit, 'stellar_variability_only', False):
+        flux = np.asarray(getattr(fit, 'detrended', getattr(fit, 'data', [])), dtype=float)
+        flux_err = np.asarray(getattr(fit, 'detrendederr', getattr(fit, 'dataerr', [])), dtype=float)
+        obs_time = np.asarray(getattr(fit, 'time', []), dtype=float)
+        if obs_time.shape != flux.shape:
+            obs_time = np.arange(flux.shape[0], dtype=float)
+        finite = np.isfinite(obs_time) & np.isfinite(flux)
+        if flux_err.shape != flux.shape:
+            flux_err = np.full(flux.shape, np.nan, dtype=float)
+        if np.any(finite):
+            time_offset = float(np.nanmin(obs_time[finite]))
+            plot_time = obs_time - time_offset
+            x_label = f"Time [BJD_TDB - {time_offset:.5f}]"
+        else:
+            time_offset = 0.0
+            plot_time = obs_time
+            x_label = "Point index"
+
+        f, (ax_lc, ax_res) = plt.subplots(
+            2,
+            1,
+            figsize=(10, 7),
+            sharex=True,
+            gridspec_kw={'height_ratios': [3, 1]},
+        )
+        ax_lc.set_title(targ_name)
+        ax_lc.errorbar(
+            plot_time[finite],
+            flux[finite],
+            yerr=flux_err[finite],
+            fmt='ko',
+            ms=4,
+            elinewidth=1,
+            alpha=0.85,
+            label="Out-of-transit target/reference flux",
+        )
+        if hasattr(fit, 'time_upsample') and hasattr(fit, 'transit_upsample'):
+            model_time = np.asarray(fit.time_upsample, dtype=float) - time_offset
+            model_flux = np.asarray(fit.transit_upsample, dtype=float)
+        elif np.any(finite):
+            model_time = np.linspace(np.nanmin(plot_time[finite]), np.nanmax(plot_time[finite]), 1000)
+            model_flux = np.ones(model_time.shape, dtype=float)
+        else:
+            model_time = np.array([], dtype=float)
+            model_flux = np.array([], dtype=float)
+        if model_time.size and model_flux.size:
+            model_order = np.argsort(model_time)
+            ax_lc.plot(model_time[model_order], model_flux[model_order], 'r', lw=2, label="Flat reference")
+        ax_lc.set_ylabel("Normalized Flux")
+        ax_lc.legend(loc='best')
+
+        residual_percent = (flux - 1.0) * 100.0
+        ax_res.axhline(0.0, color='r', lw=1.5)
+        ax_res.errorbar(
+            plot_time[finite],
+            residual_percent[finite],
+            yerr=flux_err[finite] * 100.0,
+            fmt='ko',
+            ms=4,
+            elinewidth=1,
+            alpha=0.85,
+        )
+        ax_res.set_xlabel(x_label)
+        ax_res.set_ylabel("O-C [%]")
+        f.tight_layout()
+
+        Path(save).mkdir(parents=True, exist_ok=True)
+        try:
+            f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="png"), bbox_inches="tight")
+            f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="pdf"), bbox_inches="tight")
+        except Exception:
+            pass
+        plt.close(f)
+        return
+
     empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
     if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
         empirical_uncertainty = fit_empirical_transit_uncertainty(fit)

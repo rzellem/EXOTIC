@@ -98,6 +98,7 @@ from exotic.exotic import (
     GAUSSIAN_SIGMA_TO_FWHM,
     adaptive_aperture_outlier_mask,
     annotate_transit_qc_expected_values,
+    aperture_contains_overexposed_pixel,
     auto_tune_aperture_sigma_grid,
     build_aperture_correction_profile,
     build_initial_ars_bounds,
@@ -148,6 +149,9 @@ from exotic.exotic import (
     log_target_fit_candidate_summaries,
     noise_budget_config_from_info,
     normalize_flux_series_to_approximate_unity,
+    parse_overexposure_threshold_fraction,
+    parse_saturation_value,
+    saturation_value_from_header,
     phase_bin_sigma_clip,
     parse_deviation_from_expected_transit_in_qc_sigma,
     prepare_final_fit_lightcurve_series,
@@ -181,6 +185,7 @@ from exotic.exotic import (
     summarize_prior_transit_coverage,
     should_skip_airmass_fit,
     should_use_eebls_to_initialize_tmid_and_bounds,
+    should_reject_overexposed_stars,
     should_fit_lightcurve_to_every_comparison_candidate,
     should_detect_bad_pixels_before_photometry,
     should_use_aperture_photometry,
@@ -1309,6 +1314,35 @@ def test_should_use_aperture_corrections_and_full_image_fwhm_parses_values():
     assert should_use_aperture_corrections_and_full_image_fwhm(True) is True
 
 
+def test_overexposure_rejection_config_parsers_default_and_override():
+    assert should_reject_overexposed_stars(None) is True
+    assert should_reject_overexposed_stars("y") is True
+    assert should_reject_overexposed_stars("n") is False
+    assert should_reject_overexposed_stars(False) is False
+
+    assert parse_saturation_value(None) == pytest.approx(65535.0)
+    assert parse_saturation_value("") == pytest.approx(65535.0)
+    assert parse_saturation_value("42000") == pytest.approx(42000.0)
+    assert parse_saturation_value(-1) == pytest.approx(65535.0)
+    assert parse_saturation_value("not-a-number") == pytest.approx(65535.0)
+
+    assert parse_overexposure_threshold_fraction(None) == pytest.approx(0.9)
+    assert parse_overexposure_threshold_fraction("0.75") == pytest.approx(0.75)
+    assert parse_overexposure_threshold_fraction(1.0) == pytest.approx(1.0)
+    assert parse_overexposure_threshold_fraction(0) == pytest.approx(0.9)
+    assert parse_overexposure_threshold_fraction(1.5) == pytest.approx(0.9)
+
+
+def test_saturation_value_from_header_uses_cecilia_microobservatory_value():
+    assert saturation_value_from_header({"TELESCOP": "Cecilia "}) == pytest.approx(4096.0)
+    assert saturation_value_from_header({
+        "TELESCOP": "Cecilia ",
+        "SATURATE": 65535.0,
+    }) == pytest.approx(4096.0)
+    assert saturation_value_from_header({"SATURATE": 76500.0}) == pytest.approx(76500.0)
+    assert saturation_value_from_header({}) is None
+
+
 def test_should_use_eebls_to_initialize_tmid_and_bounds_parses_values():
     assert should_use_eebls_to_initialize_tmid_and_bounds(None) is True
     assert should_use_eebls_to_initialize_tmid_and_bounds("y") is True
@@ -1692,6 +1726,40 @@ def test_compute_star_aperture_grid_applies_aperture_correction_factors():
     )
 
     np.testing.assert_allclose(corrected_flux[:, 0], raw_flux[:, 0] * np.array([2.0, 1.25]))
+
+
+def test_aperture_contains_overexposed_pixel_checks_aperture_only(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    class FakeMask:
+        def __init__(self, xc, yc, radius):
+            self.x0 = int(np.floor(xc - radius))
+            self.x1 = int(np.ceil(xc + radius)) + 1
+            self.y0 = int(np.floor(yc - radius))
+            self.y1 = int(np.ceil(yc + radius)) + 1
+            y, x = np.mgrid[self.y0:self.y1, self.x0:self.x1]
+            self.data = (((x - xc) ** 2 + (y - yc) ** 2) <= radius ** 2).astype(float)
+
+        def cutout(self, data):
+            return np.asarray(data)[self.y0:self.y1, self.x0:self.x1]
+
+    class FakeCircularAperture:
+        def __init__(self, positions, r):
+            self.xc, self.yc = positions[0]
+            self.r = r
+
+        def to_mask(self, method="exact"):
+            return [FakeMask(self.xc, self.yc, self.r)]
+
+    monkeypatch.setattr(exotic_module, "CircularAperture", FakeCircularAperture)
+
+    data = np.zeros((20, 20), dtype=float)
+    data[10, 10] = 90.0
+    data[2, 2] = 100.0
+
+    assert aperture_contains_overexposed_pixel(data, 10.0, 10.0, 2.5, 80.0) is True
+    assert aperture_contains_overexposed_pixel(data, 10.0, 10.0, 2.5, 95.0) is False
+    assert aperture_contains_overexposed_pixel(data, 10.0, 10.0, 2.5, 90.0) is False
 
 
 def test_populate_aperture_data_skips_field_star_corrections_when_disabled(monkeypatch):
@@ -2787,6 +2855,60 @@ def test_select_comparison_calibrated_photometry_masks_psf_quality_before_apertu
     assert comp1_summary["coverage_count"] == frame_count - 1
     assert comp1_summary["ensemble_frame_rejected_count"] == 0
     assert np.isnan(comp1_summary["ensemble_ratio_series"][7])
+
+
+def test_select_comparison_calibrated_photometry_masks_overexposed_comp_measurements():
+    frame_count = 24
+    airmass = np.linspace(1.2, 1.0, frame_count)
+
+    def build_psf_rows():
+        rows = np.zeros((frame_count, 7), dtype=float)
+        rows[:, 0] = 10.0
+        rows[:, 1] = 20.0
+        rows[:, 2] = 200.0
+        rows[:, 3] = 1.0
+        rows[:, 4] = 1.0
+        return rows
+
+    psf_data = {
+        "target": build_psf_rows(),
+        "comp1": build_psf_rows(),
+        "comp2": build_psf_rows(),
+    }
+    aper_data = {
+        "target": np.full((frame_count, 1, 1), 1000.0),
+        "target_bg": np.full((frame_count, 1, 1), 10.0),
+    }
+    for key in ("comp1", "comp2"):
+        aper_data[key] = np.full((frame_count, 1, 1), 100.0)
+        aper_data[f"{key}_bg"] = np.full((frame_count, 1, 1), 10.0)
+
+    comp_overexposed_masks = {
+        "comp1": np.zeros(frame_count, dtype=bool),
+        "comp2": np.zeros(frame_count, dtype=bool),
+    }
+    comp_overexposed_masks["comp2"][5] = True
+    aper_data["comp2"][5, 0, 0] = np.nan
+
+    calibration = select_comparison_calibrated_photometry(
+        psf_data,
+        aper_data,
+        apers=np.array([2.5]),
+        annuli=np.array([10.0]),
+        airmass=airmass,
+        comp_stars=[[10.0, 20.0], [30.0, 40.0]],
+        sigma=1.0,
+        use_psf_photometry=False,
+        use_aperture_photometry=True,
+        comp_overexposed_masks=comp_overexposed_masks,
+    )
+    comp2_summary = calibration["comp_summaries"][1]
+
+    assert comp2_summary["overexposure_rejected_count"] == 1
+    assert comp2_summary["coverage_count"] == frame_count - 1
+    assert np.isnan(comp2_summary["ensemble_ratio_series"][5])
+    assert calibration["best_comp_index"] == 0
+    assert calibration["comp_summaries"][0]["coverage_count"] == frame_count
 
 
 def test_cheap_lightcurve_prescore_treats_large_ratio_flag_as_noop():
@@ -6794,7 +6916,8 @@ def test_compute_photometry_noise_budget_includes_optional_terms():
 
 def test_noise_budget_config_reads_inits_and_header_values():
     header = {
-        "GAIN": 1.5,
+        "GAIN": 99.0,
+        "EGAIN": 1.5,
         "RDNOISE": 7.0,
         "DARKCURR": 0.02,
         "FLATERR": 0.003,

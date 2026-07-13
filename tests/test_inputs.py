@@ -76,6 +76,76 @@ def test_comp_params_defaults_aavso_comp_to_no(tmp_path):
     assert inputs.info_dict["aavso_comp"] == "n"
 
 
+def test_comp_params_defaults_stellar_variability_only_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["stellar_variability_only"] is False
+
+
+def test_comp_params_reads_stellar_variability_only_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "stellar_variability_only": True,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["stellar_variability_only"] is True
+
+
+def test_comp_params_defaults_overexposure_rejection_options(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["reject_overexposed_stars"] is True
+    assert inputs.info_dict["saturation_value"] == pytest.approx(65535.0)
+    assert inputs.info_dict["overexposure_threshold_fraction"] == pytest.approx(0.9)
+
+
+def test_comp_params_reads_overexposure_rejection_options_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "Reject Overexposed Stars? (y/n)": False,
+            "Saturation Value": 42000,
+            "Overexposure Threshold Fraction": 0.75,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["reject_overexposed_stars"] is False
+    assert inputs.info_dict["saturation_value"] == pytest.approx(42000.0)
+    assert inputs.info_dict["overexposure_threshold_fraction"] == pytest.approx(0.75)
+
+
 def test_complete_red_uses_fits_x_y_binning_when_pixel_bin_missing(tmp_path, monkeypatch):
     image_dir = tmp_path / "images"
     image_dir.mkdir()

@@ -1643,6 +1643,90 @@ class OutputFiles:
             extension="json",
         )
 
+        if getattr(self.fit, 'stellar_variability_only', False):
+            exclusion = getattr(self.fit, 'stellar_variability_transit_exclusion', {}) or {}
+            scatter = getattr(self.fit, 'stellar_variability_scatter', np.nan)
+            params_num = {
+                "Analysis Mode": "Stellar variability only",
+                "Transit model fitting": "Skipped",
+                "Out-of-transit lightcurve point count": str(len(getattr(self.fit, 'time', []))),
+                "Predicted in-transit points excluded": str(exclusion.get('rejected_point_count', 0)),
+            }
+            duration = exclusion.get('duration_days', np.nan)
+            if np.isfinite(duration):
+                params_num["Excluded transit-window duration (day)"] = f"{duration:.8f}"
+            if np.isfinite(scatter):
+                params_num["Residual scatter around flat stellar-variability model"] = f"{scatter * 100.0:.4f} %"
+            note = exclusion.get('note')
+            if note:
+                params_num["Transit-window exclusion note"] = str(note)
+            if getattr(self.fit, 'airmass_fit_skipped', False):
+                params_num["Airmass correction"] = getattr(
+                    self.fit,
+                    'airmass_correction_note',
+                    "Skipped; no airmass correction applied.",
+                )
+            if isinstance(photometry_info, dict) and photometry_info.get('noise_budget_summary'):
+                params_num["Photometry noise budget"] = str(photometry_info.get('noise_budget_summary'))
+                if photometry_info.get('noise_budget_terms'):
+                    params_num["Photometry noise budget terms"] = ", ".join(
+                        str(term) for term in photometry_info.get('noise_budget_terms')
+                    )
+
+            if vsp_params:
+                params_num["Variable Reference Star"] = stellar_variability_reference_summary(vsp_params[0])
+                params_num["Variable Reference Measurement"] = (
+                    f"Remeasured {len(vsp_params)} out-of-transit target/reference point(s) "
+                    "against the stellar-variability reference catalog star; AID rows list the "
+                    "BJD_TDB timestamps used."
+                )
+
+            if phot_opt:
+                if comp_star == 'ensemble':
+                    reference_text = "ensemble"
+                else:
+                    reference_text = (
+                        f"#{comp_star} - {comp_coords}"
+                        if comp_star is not None and min_aper is not None and min_aper >= 0
+                        else str(comp_star)
+                    )
+                params_num["Stellar Variability Reference Star"] = reference_text
+                if min_aper == 0:
+                    params_num["Optimal Method"] = "PSF photometry"
+                else:
+                    if adaptive_summary:
+                        params_num["Adaptive Aperture Scale"] = f"{adaptive_summary['aperture_sigma']:.2f} sigma"
+                        params_num["Adaptive Annulus Scale"] = f"{adaptive_summary['annulus_sigma']:.2f} sigma"
+                        params_num["Optimal Aperture"] = (
+                            f"{adaptive_summary['aperture_median']:.2f} +/- "
+                            f"{adaptive_summary['aperture_std']:.2f} px"
+                        )
+                        params_num["Aperture Range"] = (
+                            f"{adaptive_summary['aperture_min']:.2f} to "
+                            f"{adaptive_summary['aperture_max']:.2f} px"
+                        )
+                        params_num["Optimal Annulus"] = (
+                            f"{adaptive_summary['annulus_median']:.2f} +/- "
+                            f"{adaptive_summary['annulus_std']:.2f} px"
+                        )
+                        params_num["Annulus Range"] = (
+                            f"{adaptive_summary['annulus_min']:.2f} to "
+                            f"{adaptive_summary['annulus_max']:.2f} px"
+                        )
+                    else:
+                        params_num["Optimal Aperture"] = f"{abs(min_aper)}"
+                        params_num["Optimal Annulus"] = f"{min_annul}"
+
+            final_params = {'FINAL STELLAR VARIABILITY PARAMETERS': params_num}
+            with params_file.open('w') as f:
+                dump(final_params, f, indent=4)
+            if publish_to_root:
+                root_params_file = self.dir / params_file.name
+                if root_params_file != params_file:
+                    root_params_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(params_file, root_params_file)
+            return
+
         transit_qc = getattr(self.fit, 'transit_qc', None)
         fit_quality = build_fit_quality_metadata(self.fit)
         empirical_uncertainty = fit_empirical_transit_uncertainty(self.fit, fit_quality=fit_quality)
@@ -2306,7 +2390,7 @@ def save_comp_star_calibration_summary(save_dir, target_name, date, method_label
         handle.write("comp_star,x_pixel,y_pixel,selected,suitability_score,ensemble_score,pairwise_median_score,"
                      "pairwise_max_score,self_score,valid_pair_count,coverage_count,coverage_peer_median,"
                      "coverage_min_required,coverage_rejected,suitability_outlier_rejected,"
-                     "psf_quality_rejected_count,ensemble_frame_rejected_count,"
+                     "psf_quality_rejected_count,overexposure_rejected_count,ensemble_frame_rejected_count,"
                      "ensemble_frame_required_valid_pairs\n")
 
         for summary in comp_summaries:
@@ -2328,6 +2412,7 @@ def save_comp_star_calibration_summary(save_dir, target_name, date, method_label
                 summary.get('coverage_rejected'),
                 summary.get('suitability_outlier_rejected'),
                 summary.get('psf_quality_rejected_count', 0),
+                summary.get('overexposure_rejected_count', 0),
                 summary.get('ensemble_frame_rejected_count', 0),
                 summary.get('ensemble_frame_required_valid_pairs', 0),
             ]

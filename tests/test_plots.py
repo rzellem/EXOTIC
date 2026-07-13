@@ -1,6 +1,8 @@
 import matplotlib
 matplotlib.use("Agg")
 
+from types import SimpleNamespace
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
@@ -66,6 +68,40 @@ def test_plot_obs_stats_applies_relative_flux_mask(tmp_path, monkeypatch):
     np.testing.assert_array_equal(captured[0][0], fit.time)
     np.testing.assert_array_equal(captured[0][1], np.array([14.0, 7.0, 21.0]))
     assert (tmp_path / "temp" / "Observing_Statistics_target_2026-03-09.png").exists()
+
+
+def test_stellar_variability_final_lightcurve_plots_by_time(tmp_path, monkeypatch):
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.array([2461229.5, 2461229.6, 2461229.8]),
+        detrended=np.array([1.0, 1.01, 0.99]),
+        detrendederr=np.array([0.001, 0.001, 0.001]),
+        time_upsample=np.array([2461229.5, 2461229.8]),
+        transit_upsample=np.ones(2),
+    )
+    captured_errorbar_x = []
+    captured_labels = []
+
+    original_errorbar = Axes.errorbar
+    original_set_xlabel = Axes.set_xlabel
+
+    def spy_errorbar(self, x, *args, **kwargs):
+        captured_errorbar_x.append(np.asarray(x, dtype=float))
+        return original_errorbar(self, x, *args, **kwargs)
+
+    def spy_set_xlabel(self, xlabel, *args, **kwargs):
+        captured_labels.append(xlabel)
+        return original_set_xlabel(self, xlabel, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
+    monkeypatch.setattr(Axes, "set_xlabel", spy_set_xlabel)
+
+    plot_final_lightcurve(fit, np.ones(2), "Target", str(tmp_path), "2026-07-08")
+
+    np.testing.assert_allclose(captured_errorbar_x[0], np.array([0.0, 0.1, 0.3]), atol=1.0e-8)
+    assert captured_labels[-1].startswith("Time [BJD_TDB - 2461229.50000]")
+    assert captured_labels[-1] != "Orbital Phase"
+    assert (tmp_path / "FinalLightCurve_Target_2026-07-08.png").exists()
 
 
 def test_plot_obs_stats_uses_supplied_background_series(tmp_path, monkeypatch):

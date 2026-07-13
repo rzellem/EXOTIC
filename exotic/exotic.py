@@ -71,6 +71,7 @@ import threading
 import traceback
 from concurrent.futures import ProcessPoolExecutor as _ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from time import sleep, perf_counter
+from types import SimpleNamespace
 # Image alignment import
 import astroalign as aa
 aa.PIXEL_TOL = 1
@@ -244,6 +245,13 @@ _mid_transit_warning_reported = False
 RELATIVE_FLUX_MAX = 2.0  # Legacy threshold retained for compatibility; no longer used as a hard rejection cap.
 AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
 LIGHTCURVE_MIN_VALID_POINTS = 5
+STELLAR_VARIABILITY_ONLY_DEFAULT = False
+REJECT_OVEREXPOSED_STARS_DEFAULT = True
+SATURATION_VALUE_DEFAULT = 65535.0
+OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT = 0.9
+MICROOBSERVATORY_TELESCOP_SATURATION_VALUES = {
+    'cecilia': 4096.0,
+}
 COMPARISON_STAR_MIN_COVERAGE_FRACTION = 0.8
 COMPARISON_STAR_MIN_VALID_FRAMES = 5
 COMPARISON_STAR_COVERAGE_SIGMA = 3.0  # Legacy constant; coverage rejection is fraction-based.
@@ -291,7 +299,7 @@ NOISE_BUDGET_COMPONENT_KEYS = (
 NOISE_BUDGET_SKY_MEDIAN_VARIANCE_FACTOR = np.pi / 2.0
 SCINTILLATION_COEFFICIENT_DEFAULT = 0.09
 PSF_EFFECTIVE_NOISE_AREA_FACTOR = 4.0 * np.pi
-NOISE_GAIN_HEADER_KEYS = ('GAIN', 'EGAIN', 'EPERADU', 'E_PER_ADU', 'GAIN_EAD', 'CCDGAIN')
+NOISE_GAIN_HEADER_KEYS = ('EGAIN', 'EPERADU', 'E_PER_ADU', 'GAIN_EAD', 'CCDGAIN', 'GAIN')
 NOISE_READ_HEADER_KEYS = ('RDNOISE', 'READNOI', 'READNOIS', 'READNSE', 'RN_E', 'RON')
 NOISE_DARK_HEADER_KEYS = ('DARKCUR', 'DARKCURR', 'DARKRATE', 'DCURR', 'DARK_EPS', 'PBDKCURR')
 NOISE_FLAT_HEADER_KEYS = ('FLATERR', 'FLATFR', 'FLATFRAC', 'FFERR', 'FLATUNC')
@@ -3519,6 +3527,362 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'source_indices': source_indices[relative_flux_mask],
     })
     return result
+
+
+def stellar_variability_scatter_from_flux(flux_values):
+    flux_values = np.asarray(flux_values, dtype=float)
+    valid = np.isfinite(flux_values) & (flux_values > 0)
+    if np.count_nonzero(valid) < LIGHTCURVE_MIN_VALID_POINTS:
+        return np.nan
+    values = flux_values[valid]
+    center = bn.nanmedian(values)
+    if not np.isfinite(center):
+        return np.nan
+    scatter = robust_scatter(values - center)
+    return float(scatter) if np.isfinite(scatter) and scatter >= 0 else np.nan
+
+
+def prepare_stellar_variability_only_direct_series(times, target_flux, comp_flux, airmass,
+                                                   jd_times=None, target_flux_error=None,
+                                                   comp_flux_error=None,
+                                                   exposure_times_seconds=None,
+                                                   inherited_diagnostics=None):
+    result = {
+        'applied': False,
+        'failure_reason': (
+            "the raw comparison-candidate photometry did not yield a usable "
+            "stellar-variability light curve."
+        ),
+        'filter_diagnostics': list(inherited_diagnostics or []),
+        'time': np.array([], dtype=float),
+        'flux': np.array([], dtype=float),
+        'unc': np.array([], dtype=float),
+        'airmass': np.array([], dtype=float),
+        'jd_time': np.array([], dtype=float),
+        'exposure_time_seconds': None,
+        'target_flux': np.array([], dtype=float),
+        'comp_flux': np.array([], dtype=float),
+        'target_flux_error': np.array([], dtype=float),
+        'comp_flux_error': np.array([], dtype=float),
+        'source_indices': np.array([], dtype=int),
+    }
+
+    times = np.asarray(times, dtype=float).reshape(-1)
+    target_flux = np.asarray(target_flux, dtype=float).reshape(-1)
+    comp_flux = np.asarray(comp_flux, dtype=float).reshape(-1)
+    airmass = np.asarray(airmass, dtype=float).reshape(-1)
+    if jd_times is None:
+        jd_times = times
+    jd_times = np.asarray(jd_times, dtype=float).reshape(-1)
+    if not (times.shape == target_flux.shape == comp_flux.shape == airmass.shape == jd_times.shape):
+        result['failure_reason'] = "stellar-variability input arrays did not have matching lengths."
+        return result
+
+    if target_flux_error is None:
+        target_flux_error = np.sqrt(np.clip(np.abs(target_flux), 1.0, None))
+    target_flux_error = np.asarray(target_flux_error, dtype=float).reshape(-1)
+    if target_flux_error.shape != target_flux.shape:
+        target_flux_error = np.sqrt(np.clip(np.abs(target_flux), 1.0, None))
+    if comp_flux_error is None:
+        comp_flux_error = np.sqrt(np.clip(np.abs(comp_flux), 1.0, None))
+    comp_flux_error = np.asarray(comp_flux_error, dtype=float).reshape(-1)
+    if comp_flux_error.shape != comp_flux.shape:
+        comp_flux_error = np.sqrt(np.clip(np.abs(comp_flux), 1.0, None))
+
+    exposure_times = None
+    if exposure_times_seconds is not None:
+        exposure_times = np.asarray(exposure_times_seconds, dtype=float).reshape(-1)
+        if exposure_times.shape != times.shape:
+            exposure_times = None
+
+    valid = (
+        np.isfinite(times)
+        & np.isfinite(target_flux)
+        & np.isfinite(comp_flux)
+        & np.isfinite(airmass)
+        & (target_flux > 0)
+        & (comp_flux > 0)
+    )
+    diagnostic = build_time_rejection_diagnostic(
+        "Stellar-variability direct finite/positive filter",
+        times,
+        valid,
+        note=(
+            "Dropped non-finite or non-positive target/reference photometry while building a "
+            "stellar-variability-only light curve without transit fitting."
+        ),
+    )
+    if diagnostic is not None:
+        result['filter_diagnostics'].append(diagnostic)
+    if np.count_nonzero(valid) < LIGHTCURVE_MIN_VALID_POINTS:
+        result['failure_reason'] = (
+            "too few valid points remained after finite/positive filtering for "
+            "stellar-variability-only analysis."
+        )
+        return result
+
+    source_indices = np.arange(times.shape[0], dtype=int)
+    times = times[valid]
+    target_flux = target_flux[valid]
+    comp_flux = comp_flux[valid]
+    airmass = airmass[valid]
+    jd_times = jd_times[valid]
+    target_flux_error = target_flux_error[valid]
+    comp_flux_error = comp_flux_error[valid]
+    source_indices = source_indices[valid]
+    if exposure_times is not None:
+        exposure_times = exposure_times[valid]
+
+    raw_ratio = target_flux / comp_flux
+    relative_unc = np.abs(raw_ratio) * np.sqrt(
+        (target_flux_error / target_flux) ** 2
+        + (comp_flux_error / comp_flux) ** 2
+    )
+    positive_unc = relative_unc[np.isfinite(relative_unc) & (relative_unc > 0)]
+    fallback_unc = float(np.nanmedian(positive_unc)) if positive_unc.size else 1.0e-6
+    relative_unc = np.where(np.isfinite(relative_unc) & (relative_unc > 0), relative_unc, fallback_unc)
+    norm_flux, norm_unc, _ = normalize_flux_series_to_approximate_unity(raw_ratio, relative_unc)
+
+    relative_flux_mask = relative_flux_filter_mask(norm_flux) & np.isfinite(norm_unc) & (norm_unc > 0)
+    diagnostic = build_time_rejection_diagnostic(
+        "Stellar-variability direct relative-flux filter",
+        times,
+        relative_flux_mask,
+        note="Dropped invalid normalized target/reference flux values before stellar-variability analysis.",
+    )
+    if diagnostic is not None:
+        result['filter_diagnostics'].append(diagnostic)
+    if np.count_nonzero(relative_flux_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+        result['failure_reason'] = (
+            "too few valid normalized target/reference points remained for "
+            "stellar-variability-only analysis."
+        )
+        return result
+
+    result.update({
+        'applied': True,
+        'failure_reason': None,
+        'time': times[relative_flux_mask],
+        'flux': norm_flux[relative_flux_mask],
+        'unc': norm_unc[relative_flux_mask],
+        'airmass': airmass[relative_flux_mask],
+        'jd_time': jd_times[relative_flux_mask],
+        'exposure_time_seconds': (
+            None if exposure_times is None else exposure_times[relative_flux_mask]
+        ),
+        'target_flux': target_flux[relative_flux_mask],
+        'comp_flux': comp_flux[relative_flux_mask],
+        'target_flux_error': target_flux_error[relative_flux_mask],
+        'comp_flux_error': comp_flux_error[relative_flux_mask],
+        'source_indices': source_indices[relative_flux_mask],
+    })
+    return result
+
+
+def build_stellar_variability_only_lightcurve(
+    prepared,
+    p_dict,
+    filter_diagnostics=None,
+    comp_index=None,
+    comp_label=None,
+    comp_position=None,
+    method_label=None,
+    plot_time_range=None,
+):
+    if prepared is None or not prepared.get('applied'):
+        return None
+
+    base_times = np.asarray(prepared.get('time'), dtype=float)
+    oot_mask, exclusion_summary = stellar_variability_out_of_transit_mask(base_times, p_dict)
+    filter_diagnostics = list(filter_diagnostics or [])
+    exclusion_diagnostic = build_time_rejection_diagnostic(
+        "Stellar-variability transit-window exclusion",
+        base_times,
+        oot_mask,
+        note=exclusion_summary.get('note'),
+    )
+    if exclusion_diagnostic is not None:
+        filter_diagnostics.append(exclusion_diagnostic)
+
+    if np.count_nonzero(oot_mask) < LIGHTCURVE_MIN_VALID_POINTS:
+        return None
+
+    time = base_times[oot_mask]
+    data = np.asarray(prepared.get('flux'), dtype=float)[oot_mask]
+    dataerr = np.asarray(prepared.get('unc'), dtype=float)[oot_mask]
+    airmass = np.asarray(prepared.get('airmass'), dtype=float)[oot_mask]
+    jd_times = np.asarray(prepared.get('jd_time'), dtype=float)[oot_mask]
+    source_indices = np.asarray(prepared.get('source_indices'), dtype=int)[oot_mask]
+    exposure_times_seconds = prepared.get('exposure_time_seconds')
+    if exposure_times_seconds is not None:
+        exposure_times_seconds = np.asarray(exposure_times_seconds, dtype=float)[oot_mask]
+        exposure_times_days = exposure_times_seconds / 86400.0
+    else:
+        exposure_times_days = None
+
+    finite = (
+        np.isfinite(time)
+        & np.isfinite(data)
+        & np.isfinite(dataerr)
+        & (data > 0)
+        & (dataerr > 0)
+        & np.isfinite(airmass)
+    )
+    if np.count_nonzero(finite) < LIGHTCURVE_MIN_VALID_POINTS:
+        return None
+
+    time = time[finite]
+    data = data[finite]
+    dataerr = dataerr[finite]
+    airmass = airmass[finite]
+    jd_times = jd_times[finite]
+    source_indices = source_indices[finite]
+    if exposure_times_days is not None:
+        exposure_times_days = exposure_times_days[finite]
+        exposure_times_seconds = exposure_times_seconds[finite]
+
+    phase = get_phase(time, p_dict.get('pPer', 1.0), p_dict.get('midT', np.nan))
+    if np.any(np.isfinite(time)):
+        time_upsample = np.linspace(np.nanmin(time), np.nanmax(time), 1000)
+    else:
+        time_upsample = np.array([], dtype=float)
+    phase_upsample = get_phase(time_upsample, p_dict.get('pPer', 1.0), p_dict.get('midT', np.nan))
+    flat_model = np.ones(time.shape, dtype=float)
+    flat_upsample = np.ones(time_upsample.shape, dtype=float)
+    scatter = stellar_variability_scatter_from_flux(data)
+    residuals = data - 1.0
+
+    parameters = {
+        'tmid': p_dict.get('midT', np.nan),
+        'per': p_dict.get('pPer', np.nan),
+        'rprs': p_dict.get('rprs', np.nan),
+        'ars': p_dict.get('aRs', np.nan),
+        'inc': p_dict.get('inc', np.nan),
+        'ecc': p_dict.get('ecc', 0.0),
+        'omega': p_dict.get('omega', 0.0),
+        'a0': 1.0,
+        'a1': 1.0,
+        'a2': 0.0,
+    }
+    errors = {
+        'tmid': p_dict.get('midTUnc', np.nan),
+        'per': p_dict.get('pPerUnc', np.nan),
+        'rprs': p_dict.get('rprsUnc', np.nan),
+        'ars': p_dict.get('aRsUnc', np.nan),
+        'inc': p_dict.get('incUnc', np.nan),
+        'a0': 0.0,
+        'a1': 0.0,
+        'a2': 0.0,
+    }
+
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=time,
+        jd_times=jd_times,
+        data=data,
+        dataerr=dataerr,
+        airmass=airmass,
+        airmass_model=np.ones(time.shape, dtype=float),
+        wf=np.ones(time.shape, dtype=float),
+        transit=flat_model,
+        model=flat_model,
+        detrended=data,
+        detrendederr=dataerr,
+        residuals=residuals,
+        phase=phase,
+        time_upsample=time_upsample,
+        phase_upsample=phase_upsample,
+        transit_upsample=flat_upsample,
+        exposure_times_days=exposure_times_days,
+        parameters=parameters,
+        errors=errors,
+        bounds={},
+        sample_parameters={},
+        sample_errors={},
+        ns_type=None,
+        chi2=float(np.nansum((residuals / dataerr) ** 2)) if dataerr.size else np.nan,
+        frame_filter_diagnostics=filter_diagnostics,
+        stellar_variability_reference_comp_index=comp_index,
+        stellar_variability_reference_label=comp_label,
+        stellar_variability_reference_position=comp_position,
+        stellar_variability_method_label=method_label,
+        stellar_variability_scatter=scatter,
+        stellar_variability_transit_exclusion=exclusion_summary,
+        stellar_variability_source_indices=source_indices,
+        stellar_variability_target_flux=np.asarray(prepared.get('target_flux'), dtype=float)[oot_mask][finite],
+        stellar_variability_comp_flux=np.asarray(prepared.get('comp_flux'), dtype=float)[oot_mask][finite],
+        stellar_variability_target_flux_error=np.asarray(prepared.get('target_flux_error'), dtype=float)[oot_mask][finite],
+        stellar_variability_comp_flux_error=np.asarray(prepared.get('comp_flux_error'), dtype=float)[oot_mask][finite],
+        stellar_variability_exposure_times_seconds=exposure_times_seconds,
+        airmass_fit_skipped=True,
+        airmass_correction_note="Skipped in stellar-variability-only mode; no transit/systematics model was fit.",
+        transit_qc={
+            'status': 'SKIPPED',
+            'summary': 'Stellar variability only mode skipped transit fitting.',
+            'residual_scatter': scatter,
+        },
+    )
+    fit = apply_plot_time_range(fit, time if plot_time_range is None else plot_time_range)
+    return fit
+
+
+def build_stellar_variability_only_lightcurve_from_fluxes(
+    times,
+    target_flux,
+    comp_flux,
+    airmass,
+    p_dict,
+    jd_times=None,
+    adaptive_summary=None,
+    target_flux_error=None,
+    comp_flux_error=None,
+    exposure_times_seconds=None,
+    gain_e_per_adu=None,
+    filter_diagnostics=None,
+    comp_index=None,
+    comp_label=None,
+    comp_position=None,
+    method_label=None,
+    plot_time_range=None,
+):
+    prepared = prepare_comparison_candidate_full_reduction_series(
+        times,
+        target_flux,
+        comp_flux,
+        airmass,
+        jd_times=jd_times,
+        adaptive_summary=adaptive_summary,
+        target_flux_error=target_flux_error,
+        comp_flux_error=comp_flux_error,
+        exposure_times_seconds=exposure_times_seconds,
+        gain_e_per_adu=gain_e_per_adu,
+        expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
+    )
+    if not prepared.get('applied'):
+        prepared = prepare_stellar_variability_only_direct_series(
+            times,
+            target_flux,
+            comp_flux,
+            airmass,
+            jd_times=jd_times,
+            target_flux_error=target_flux_error,
+            comp_flux_error=comp_flux_error,
+            exposure_times_seconds=exposure_times_seconds,
+            inherited_diagnostics=prepared.get('filter_diagnostics', []),
+        )
+    diagnostics = list(filter_diagnostics or [])
+    diagnostics.extend(prepared.get('filter_diagnostics', []))
+    fit = build_stellar_variability_only_lightcurve(
+        prepared,
+        p_dict,
+        filter_diagnostics=diagnostics,
+        comp_index=comp_index,
+        comp_label=comp_label,
+        comp_position=comp_position,
+        method_label=method_label,
+        plot_time_range=plot_time_range,
+    )
+    return fit, prepared
 
 
 def comparison_candidate_coverage_priority(assessment):
@@ -8259,6 +8623,108 @@ def should_use_aperture_corrections_and_full_image_fwhm(config_value):
     return False
 
 
+def should_reject_overexposed_stars(config_value):
+    if config_value is None:
+        return REJECT_OVEREXPOSED_STARS_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'reject_overexposed_stars' value; keeping overexposed-star rejection enabled.",
+        warn=True,
+    )
+    return REJECT_OVEREXPOSED_STARS_DEFAULT
+
+
+def parse_saturation_value(config_value):
+    if config_value is None:
+        return SATURATION_VALUE_DEFAULT
+    if isinstance(config_value, str) and not config_value.strip():
+        return SATURATION_VALUE_DEFAULT
+    try:
+        value = float(config_value)
+    except (TypeError, ValueError):
+        value = np.nan
+    if np.isfinite(value) and value > 0:
+        return float(value)
+
+    log_info(
+        "Warning: Invalid 'saturation_value' value; using 65535 for overexposure rejection.",
+        warn=True,
+    )
+    return SATURATION_VALUE_DEFAULT
+
+
+def parse_saturation_value_adu(config_value):
+    return parse_saturation_value(config_value)
+
+
+def header_value_case_insensitive(header, key):
+    if not header:
+        return None
+    try:
+        return header[key]
+    except Exception:
+        pass
+    key_lower = str(key).lower()
+    try:
+        items = header.items()
+    except Exception:
+        return None
+    for header_key, header_value in items:
+        if str(header_key).lower() == key_lower:
+            return header_value
+    return None
+
+
+def microobservatory_saturation_value_from_header(header):
+    telescop = header_value_case_insensitive(header, 'TELESCOP')
+    telescop = header_scalar_value(telescop)
+    if telescop is None:
+        return None
+    return MICROOBSERVATORY_TELESCOP_SATURATION_VALUES.get(str(telescop).strip().lower())
+
+
+def saturation_value_from_header(header):
+    microobservatory_saturation = microobservatory_saturation_value_from_header(header)
+    if microobservatory_saturation is not None:
+        return microobservatory_saturation
+
+    saturate = header_value_case_insensitive(header, 'SATURATE')
+    saturate = finite_header_float(saturate)
+    if saturate is not None and saturate > 0:
+        return float(saturate)
+    return None
+
+
+def parse_overexposure_threshold_fraction(config_value):
+    if config_value is None:
+        return OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT
+    if isinstance(config_value, str) and not config_value.strip():
+        return OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT
+    try:
+        value = float(config_value)
+    except (TypeError, ValueError):
+        value = np.nan
+    if np.isfinite(value) and 0 < value <= 1:
+        return float(value)
+
+    log_info(
+        "Warning: Invalid 'overexposure_threshold_fraction' value; "
+        f"using {OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT:.1f} for overexposure rejection.",
+        warn=True,
+    )
+    return OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT
+
+
 def should_ignore_header_wcs(config_value):
     if config_value is None:
         return False
@@ -8385,6 +8851,27 @@ def is_vertical_flux_normalization_disabled(config_value):
     return False
 
 
+def should_run_stellar_variability_only(config_value):
+    if config_value is None:
+        return STELLAR_VARIABILITY_ONLY_DEFAULT
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'stellar_variability_only' value; using default false.",
+        warn=True,
+    )
+    return STELLAR_VARIABILITY_ONLY_DEFAULT
+
+
 def is_out_of_transit_baseline_detrending_enabled(config_value):
     if config_value is None:
         return True
@@ -8463,6 +8950,80 @@ def estimate_transit_duration_from_prior_geometry(prior):
     argument = float(np.clip(argument, -1.0, 1.0))
     duration = (period / np.pi) * np.arcsin(argument)
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
+
+
+def stellar_variability_transit_prior_from_planet_dict(p_dict):
+    return {
+        'per': p_dict.get('pPer'),
+        'rprs': p_dict.get('rprs'),
+        'ars': p_dict.get('aRs'),
+        'inc': p_dict.get('inc'),
+        'ecc': p_dict.get('ecc', 0.0),
+        'omega': p_dict.get('omega', 0.0),
+    }
+
+
+def stellar_variability_out_of_transit_mask(times, p_dict):
+    times = np.asarray(times, dtype=float)
+    keep = np.isfinite(times)
+    summary = {
+        'applied': False,
+        'input_point_count': int(np.count_nonzero(np.isfinite(times))),
+        'kept_point_count': int(np.count_nonzero(keep)),
+        'rejected_point_count': 0,
+        'duration_days': np.nan,
+        'start_ingress_to_end_egress_days': np.nan,
+        'period_days': np.nan,
+        'reference_tmid': np.nan,
+        'note': "Transit-window exclusion was not applied.",
+    }
+    if times.size == 0:
+        summary['note'] = "Transit-window exclusion skipped; no light-curve points were available."
+        return keep, summary
+
+    try:
+        period = float(p_dict.get('pPer'))
+        reference_tmid = float(p_dict.get('midT'))
+    except (TypeError, ValueError):
+        period = np.nan
+        reference_tmid = np.nan
+
+    duration = estimate_transit_duration_from_prior_geometry(
+        stellar_variability_transit_prior_from_planet_dict(p_dict)
+    )
+    summary.update({
+        'duration_days': duration,
+        'start_ingress_to_end_egress_days': duration,
+        'period_days': period,
+        'reference_tmid': reference_tmid,
+    })
+    if (
+        not np.isfinite(period)
+        or period <= 0
+        or not np.isfinite(reference_tmid)
+        or not np.isfinite(duration)
+        or duration <= 0
+    ):
+        summary['note'] = (
+            "Transit-window exclusion skipped; EXOTIC could not estimate a finite ingress-to-egress "
+            "window from the supplied planetary parameters."
+        )
+        return keep, summary
+
+    epochs = np.rint((times - reference_tmid) / period)
+    nearest_tmid = reference_tmid + epochs * period
+    in_transit = keep & (np.abs(times - nearest_tmid) <= 0.5 * duration)
+    keep = keep & ~in_transit
+    summary.update({
+        'applied': bool(np.any(in_transit)),
+        'kept_point_count': int(np.count_nonzero(keep)),
+        'rejected_point_count': int(np.count_nonzero(in_transit)),
+        'note': (
+            f"Excluded {int(np.count_nonzero(in_transit))} point(s) inside the predicted "
+            "start-ingress to end-egress transit window before stellar-variability analysis."
+        ),
+    })
+    return keep, summary
 
 
 def _cacheable_duration_prior_scalar(value):
@@ -11053,6 +11614,45 @@ def psf_sigma_from_fit(psf_row, fallback_sigma=np.nan):
     return np.nan
 
 
+def overexposure_aperture_radius_from_psf_row(psf_row, fallback_sigma=np.nan):
+    sigma = psf_sigma_from_fit(psf_row, fallback_sigma=fallback_sigma)
+    if not np.isfinite(sigma) or sigma <= 0:
+        sigma = 1.0
+    return max(float(APERTURE_SIGMA_MAX) * float(sigma), 1.0)
+
+
+def aperture_contains_overexposed_pixel(data, xc, yc, aperture_radius, threshold_value,
+                                        fast_mode=False):
+    if not (
+        np.isfinite(xc)
+        and np.isfinite(yc)
+        and np.isfinite(aperture_radius)
+        and aperture_radius > 0
+        and np.isfinite(threshold_value)
+        and threshold_value > 0
+    ):
+        return False
+
+    try:
+        aperture = CircularAperture(positions=[(float(xc), float(yc))], r=float(aperture_radius))
+        mask_method = 'center' if fast_mode else 'exact'
+        mask = aperture.to_mask(method=mask_method)[0]
+        data_cutout = mask.cutout(data)
+    except Exception:
+        return False
+
+    if data_cutout is None:
+        return False
+
+    cutout = np.asarray(data_cutout, dtype=float)
+    weights = np.asarray(mask.data, dtype=float)
+    valid_pixels = np.isfinite(cutout) & np.isfinite(weights) & (weights > 0)
+    if not np.any(valid_pixels):
+        return False
+
+    return bool(np.nanmax(cutout[valid_pixels]) > float(threshold_value))
+
+
 def representative_psf_sigma(psf_rows, fallback_sigma=np.nan):
     try:
         sigmas = np.asarray(psf_rows[:, 3], dtype=float) + np.asarray(psf_rows[:, 4], dtype=float)
@@ -11541,6 +12141,12 @@ def apply_lightcurve_mask(lightcurve, mask, sort_index=None):
         'dataerr',
         'airmass_model',
         'wf',
+        'stellar_variability_source_indices',
+        'stellar_variability_target_flux',
+        'stellar_variability_comp_flux',
+        'stellar_variability_target_flux_error',
+        'stellar_variability_comp_flux_error',
+        'stellar_variability_exposure_times_seconds',
     )
 
     for attr in array_attrs:
@@ -21520,6 +22126,8 @@ def comparison_selection_metric_label(selection_metric):
         return "First QC PASS"
     if selection_metric == 'promising_partial':
         return "Promising Partial"
+    if selection_metric == 'stellar_variability_scatter':
+        return "Out-of-transit scatter"
     if selection_metric == 'comparison_field_rank':
         return "Comparison-Field Rank"
     if selection_metric == 'ktmf':
@@ -23084,6 +23692,7 @@ def initialize_aperture_data_store(frame_count, aperture_count, annulus_count, c
         'target': np.full(aper_shape, np.nan, dtype=float),
         'target_bg': np.full(aper_shape, np.nan, dtype=float),
         'target_unc': np.full(aper_shape, np.nan, dtype=float),
+        'target_overexposed': np.zeros(frame_count, dtype=bool),
     }
     for component in NOISE_BUDGET_COMPONENT_KEYS:
         aper_data[f"target_noise_{component}"] = np.full(aper_shape, np.nan, dtype=float)
@@ -23093,10 +23702,44 @@ def initialize_aperture_data_store(frame_count, aperture_count, annulus_count, c
         aper_data[ckey] = np.full(aper_shape, np.nan, dtype=float)
         aper_data[f"{ckey}_bg"] = np.full(aper_shape, np.nan, dtype=float)
         aper_data[f"{ckey}_unc"] = np.full(aper_shape, np.nan, dtype=float)
+        aper_data[f"{ckey}_overexposed"] = np.zeros(frame_count, dtype=bool)
         for component in NOISE_BUDGET_COMPONENT_KEYS:
             aper_data[f"{ckey}_noise_{component}"] = np.full(aper_shape, np.nan, dtype=float)
 
     return aper_data
+
+
+def mask_aperture_star_frame(aper_data, key, frame_index):
+    if not isinstance(aper_data, dict) or key not in aper_data:
+        return
+    frame_index = int(frame_index)
+    for suffix in ('', '_bg', '_unc'):
+        data_key = f"{key}{suffix}"
+        if data_key in aper_data:
+            aper_data[data_key][frame_index, :, :] = np.nan
+    for component in NOISE_BUDGET_COMPONENT_KEYS:
+        noise_key = f"{key}_noise_{component}"
+        if noise_key in aper_data:
+            aper_data[noise_key][frame_index, :, :] = np.nan
+    overexposed_key = f"{key}_overexposed"
+    if overexposed_key in aper_data:
+        aper_data[overexposed_key][frame_index] = True
+
+
+def apply_overexposure_masks_to_aperture_frame(aper_data, frame_index, target_overexposed,
+                                               comp_overexposed_masks=None):
+    if target_overexposed:
+        mask_aperture_star_frame(aper_data, 'target', frame_index)
+
+    if not isinstance(comp_overexposed_masks, dict):
+        return
+    for key, mask in comp_overexposed_masks.items():
+        try:
+            is_overexposed = bool(np.asarray(mask, dtype=bool)[int(frame_index)])
+        except (IndexError, TypeError, ValueError):
+            is_overexposed = False
+        if is_overexposed:
+            mask_aperture_star_frame(aper_data, key, frame_index)
 
 
 def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan,
@@ -23376,7 +24019,8 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
                                            skip_low_comparison_coverage_rejection=False,
                                            use_psf_photometry=True,
                                            use_aperture_photometry=True,
-                                           psf_flux_data=None):
+                                           psf_flux_data=None,
+                                           comp_overexposed_masks=None):
     candidate_summaries = []
     comp_star_count = len(comp_stars)
     psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
@@ -23385,16 +24029,34 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
         return None
 
     frame_count = len(airmass)
+    overexposure_masks = {}
+    for comp_idx in range(comp_star_count):
+        ckey = f"comp{comp_idx + 1}"
+        mask = None
+        if isinstance(comp_overexposed_masks, dict) and ckey in comp_overexposed_masks:
+            mask = np.asarray(comp_overexposed_masks[ckey], dtype=bool)
+        elif isinstance(aper_data, dict) and f"{ckey}_overexposed" in aper_data:
+            mask = np.asarray(aper_data[f"{ckey}_overexposed"], dtype=bool)
+        if mask is not None and mask.shape[0] == frame_count:
+            overexposure_masks[ckey] = mask
+        else:
+            overexposure_masks[ckey] = np.zeros(frame_count, dtype=bool)
     centroid_psf_quality_masks = {
-        f"comp{comp_idx + 1}": psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count)
+        f"comp{comp_idx + 1}": (
+            psf_quality_mask_for_key(psf_data, f"comp{comp_idx + 1}", frame_count)
+            & ~overexposure_masks[f"comp{comp_idx + 1}"]
+        )
         for comp_idx in range(comp_star_count)
     }
     psf_quality_masks = {
-        f"comp{comp_idx + 1}": psf_quality_mask_for_key(
-            psf_data,
-            f"comp{comp_idx + 1}",
-            frame_count,
-            psf_flux_data=psf_flux_data,
+        f"comp{comp_idx + 1}": (
+            psf_quality_mask_for_key(
+                psf_data,
+                f"comp{comp_idx + 1}",
+                frame_count,
+                psf_flux_data=psf_flux_data,
+            )
+            & ~overexposure_masks[f"comp{comp_idx + 1}"]
         )
         for comp_idx in range(comp_star_count)
     }
@@ -23469,6 +24131,11 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
             comp_summary['psf_quality_rejected_count'] = int(np.count_nonzero(~quality_mask))
         else:
             comp_summary['psf_quality_rejected_count'] = 0
+        overexposure_mask = overexposure_masks.get(comp_summary['key'])
+        comp_summary['overexposure_rejected_count'] = (
+            int(np.count_nonzero(overexposure_mask))
+            if overexposure_mask is not None else 0
+        )
         comp_summary['selection_reason'] = comparison_calibration_selection_reason(
             comp_summary,
             best_candidate['best_comp_score'],
@@ -23502,6 +24169,370 @@ def ranked_comparison_calibration_summaries(comparison_calibration):
         )
     )
     return ranked_summaries
+
+
+def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict, comparison_calibration,
+                                               psf_data, aper_data, target_psf_flux,
+                                               psf_flux_data=None,
+                                               psf_noise_data=None,
+                                               plot_time_range=None,
+                                               use_adaptive_apertures=False,
+                                               adaptive_aperture_values=None,
+                                               adaptive_annulus_values=None,
+                                               fallback_sigma=np.nan,
+                                               exposure_times_seconds=None,
+                                               gain_e_per_adu=None):
+    ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
+    if not ranked_summaries:
+        return {
+            'ranked_summaries': [],
+            'attempts': [],
+            'selected_result': None,
+            'selection_metric': 'stellar_variability_scatter',
+        }
+
+    method = comparison_calibration['method']
+    method_label = comparison_calibration.get('method_label', method)
+    aperture_index = comparison_calibration.get('a')
+    annulus_index = comparison_calibration.get('an')
+    if method == 'psf':
+        frame_count = target_psf_flux.shape[0]
+        target_flux = np.asarray(target_psf_flux, dtype=float)
+        psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
+        target_flux_error = (
+            np.asarray(psf_noise_data.get('target'), dtype=float)
+            if isinstance(psf_noise_data, dict) and 'target' in psf_noise_data
+            else None
+        )
+    else:
+        frame_count = aper_data['target'].shape[0]
+        target_flux = np.asarray(aper_data['target'][:, aperture_index, annulus_index], dtype=float)
+        target_flux_error = (
+            np.asarray(aper_data['target_unc'][:, aperture_index, annulus_index], dtype=float)
+            if isinstance(aper_data, dict) and 'target_unc' in aper_data
+            else None
+        )
+
+    exposure_times_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
+    if exposure_times_array is not None and exposure_times_array.shape != times.shape:
+        exposure_times_array = None
+
+    adaptive_summary = build_comparison_candidate_adaptive_summary(
+        comparison_calibration,
+        psf_data,
+        use_adaptive_apertures=use_adaptive_apertures,
+        adaptive_aperture_values=adaptive_aperture_values,
+        adaptive_annulus_values=adaptive_annulus_values,
+        fallback_sigma=fallback_sigma,
+    )
+    field_image_keep_mask = np.asarray(
+        comparison_calibration.get('field_image_keep_mask', np.ones(times.shape[0], dtype=bool)),
+        dtype=bool,
+    )
+    if field_image_keep_mask.shape != times.shape:
+        field_image_keep_mask = np.ones(times.shape[0], dtype=bool)
+    field_image_clip_diagnostic = None
+    if np.any(~field_image_keep_mask):
+        required_pairs = comparison_calibration.get('image_outlier_required_valid_pairs', 0)
+        sigma_threshold = comparison_calibration.get('image_outlier_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
+        field_image_clip_diagnostic = build_time_rejection_diagnostic(
+            "Comparison-field image clip",
+            times,
+            field_image_keep_mask,
+            note=(
+                "Dropped frames flagged after comparison-star suitability clipping because every "
+                f"valid pairwise comparison was more than {sigma_threshold:.2f} sigma from its flat-line median "
+                f"(min valid pair count={required_pairs})."
+            ),
+        )
+
+    attempts = []
+    for field_rank, comp_summary in enumerate(ranked_summaries):
+        comp_index = comp_summary['comp_index']
+        ckey = comp_summary.get('key', f"comp{comp_index + 1}")
+        comp_quality_mask = np.asarray(
+            comp_summary.get(
+                'psf_quality_keep_mask',
+                psf_quality_mask_for_key(
+                    psf_data,
+                    ckey,
+                    frame_count,
+                    psf_flux_data=psf_flux_data if method == 'psf' else None,
+                ),
+            ),
+            dtype=bool,
+        )
+        if comp_quality_mask.shape[0] != frame_count:
+            comp_quality_mask = psf_quality_mask_for_key(
+                psf_data,
+                ckey,
+                frame_count,
+                psf_flux_data=psf_flux_data if method == 'psf' else None,
+            )
+
+        if method == 'psf':
+            target_shape_mask = target_psf_shape_quality_mask(
+                target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data),
+                psf_quality_rows_for_key(psf_data, ckey, psf_flux_data=psf_flux_data),
+            )
+            if target_shape_mask.shape[0] != frame_count:
+                target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            candidate_target_flux_error = (
+                None if target_flux_error is None else mask_series_with_quality(target_flux_error, target_shape_mask)
+            )
+            comp_flux = psf_flux_series_from_rows(psf_flux_data[ckey], comp_quality_mask)
+            comp_flux_error = (
+                mask_series_with_quality(psf_noise_data[ckey], comp_quality_mask)
+                if isinstance(psf_noise_data, dict) and ckey in psf_noise_data
+                else None
+            )
+        else:
+            target_shape_mask = np.ones(frame_count, dtype=bool)
+            candidate_target_flux = target_flux
+            candidate_target_flux_error = target_flux_error
+            comp_flux = mask_series_with_quality(aper_data[ckey][:, aperture_index, annulus_index], comp_quality_mask)
+            comp_flux_error = (
+                mask_series_with_quality(
+                    aper_data[f"{ckey}_unc"][:, aperture_index, annulus_index],
+                    comp_quality_mask,
+                )
+                if f"{ckey}_unc" in aper_data
+                else None
+            )
+
+        candidate_frame_keep_mask = np.asarray(
+            comp_summary.get('ensemble_frame_keep_mask', np.ones(times.shape[0], dtype=bool)),
+            dtype=bool,
+        )
+        if candidate_frame_keep_mask.shape != times.shape:
+            candidate_frame_keep_mask = np.ones(times.shape[0], dtype=bool)
+        candidate_frame_clip_diagnostic = None
+        candidate_frame_diagnostic_keep_mask = candidate_frame_keep_mask | ~field_image_keep_mask
+        if np.any(~candidate_frame_diagnostic_keep_mask):
+            required_pairs = comp_summary.get(
+                'ensemble_frame_required_valid_pairs',
+                COMPARISON_CANDIDATE_FRAME_OUTLIER_MIN_VALID_PAIRS,
+            )
+            sigma_threshold = comp_summary.get('ensemble_frame_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
+            candidate_frame_clip_diagnostic = build_time_rejection_diagnostic(
+                "Comparison-candidate ensemble clip",
+                times,
+                candidate_frame_diagnostic_keep_mask,
+                note=(
+                    "Dropped frames where this comparison star disagreed with the comparison-star ensemble "
+                    f"before target fitting; same-direction pairwise majority exceeded {sigma_threshold:.2f} sigma "
+                    f"(min confirming pair count={required_pairs})."
+                ),
+            )
+
+        fit_mask = field_image_keep_mask & candidate_frame_keep_mask & comp_quality_mask & target_shape_mask
+        if method == 'psf':
+            fit_mask &= robust_target_reference_flux_mask(candidate_target_flux, comp_flux)
+        else:
+            fit_mask &= valid_comparison_frame_mask(candidate_target_flux) & valid_comparison_frame_mask(comp_flux)
+
+        fit_diagnostics = diagnose_lightcurve_fit_inputs(
+            times[fit_mask],
+            candidate_target_flux[fit_mask],
+            comp_flux[fit_mask],
+            airmass[fit_mask],
+            target_flux_error=None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask],
+            comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
+            enforce_relative_flux_max=False,
+            expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
+        )
+        external_filter_diagnostics = []
+        if field_image_clip_diagnostic is not None:
+            external_filter_diagnostics.append(field_image_clip_diagnostic)
+        if candidate_frame_clip_diagnostic is not None:
+            external_filter_diagnostics.append(candidate_frame_clip_diagnostic)
+
+        fit_result = None
+        prepared = None
+        if fit_diagnostics.get('failure_reason') is None:
+            fit_result, prepared = build_stellar_variability_only_lightcurve_from_fluxes(
+                times[fit_mask],
+                candidate_target_flux[fit_mask],
+                comp_flux[fit_mask],
+                airmass[fit_mask],
+                p_dict,
+                jd_times=jd_times[fit_mask],
+                adaptive_summary=adaptive_summary,
+                target_flux_error=(
+                    None if candidate_target_flux_error is None else candidate_target_flux_error[fit_mask]
+                ),
+                comp_flux_error=None if comp_flux_error is None else comp_flux_error[fit_mask],
+                exposure_times_seconds=(
+                    None if exposure_times_array is None else exposure_times_array[fit_mask]
+                ),
+                gain_e_per_adu=gain_e_per_adu,
+                filter_diagnostics=external_filter_diagnostics,
+                comp_index=comp_index,
+                comp_label=comp_summary.get('label', f"Comp {comp_index + 1}"),
+                comp_position=comp_summary.get('position'),
+                method_label=method_label,
+                plot_time_range=plot_time_range,
+            )
+            if fit_result is not None:
+                original_indices = np.flatnonzero(fit_mask)
+                source_indices = np.asarray(fit_result.stellar_variability_source_indices, dtype=int)
+                if source_indices.size and np.max(source_indices) < original_indices.size:
+                    fit_result.stellar_variability_source_indices = original_indices[source_indices]
+                else:
+                    fit_result.stellar_variability_source_indices = np.array([], dtype=int)
+            elif prepared is not None and prepared.get('applied'):
+                fit_diagnostics = dict(fit_diagnostics)
+                exclusion = stellar_variability_out_of_transit_mask(prepared.get('time'), p_dict)[1]
+                fit_diagnostics.update({
+                    'failed_stage': 'stellar_variability_transit_window',
+                    'failure_reason': (
+                        "too few out-of-transit points remained after excluding the predicted "
+                        "start-ingress to end-egress transit window."
+                    ),
+                    'transit_window_rejected_point_count': exclusion.get('rejected_point_count', 0),
+                })
+            else:
+                fit_diagnostics = ensure_lightcurve_fit_failure_reason(
+                    fit_diagnostics,
+                    fit_result,
+                    failed_stage='stellar_variability_photometry',
+                    failure_reason=(
+                        "the raw comparison-candidate photometry did not yield a usable "
+                        "out-of-transit stellar-variability light curve."
+                    ),
+                )
+
+        source_indices = np.asarray(
+            getattr(fit_result, 'stellar_variability_source_indices', np.array([], dtype=int)),
+            dtype=int,
+        )
+        tflux_fit = getattr(fit_result, 'stellar_variability_target_flux', np.array([], dtype=float))
+        cflux_fit = getattr(fit_result, 'stellar_variability_comp_flux', np.array([], dtype=float))
+        tflux_fit_error = getattr(fit_result, 'stellar_variability_target_flux_error', np.array([], dtype=float))
+        cflux_fit_error = getattr(fit_result, 'stellar_variability_comp_flux_error', np.array([], dtype=float))
+        scatter = getattr(fit_result, 'stellar_variability_scatter', np.nan)
+        exclusion_summary = getattr(fit_result, 'stellar_variability_transit_exclusion', {})
+
+        attempt = {
+            'rank': field_rank,
+            'field_rank': field_rank,
+            'comp_index': comp_index,
+            'ckey': ckey,
+            'label': comp_summary.get('label', f"Comp {comp_index + 1}"),
+            'position': comp_summary.get('position'),
+            'aggregate_score': comp_summary.get('aggregate_score', np.inf),
+            'coverage_count': comp_summary.get('coverage_count', 0),
+            'coverage_total_frame_count': comp_summary.get('coverage_total_frame_count', 0),
+            'coverage_reference_count': comp_summary.get('coverage_reference_count', np.nan),
+            'coverage_min_required_count': comp_summary.get('coverage_min_required_count', 0),
+            'coverage_rejected': comp_summary.get('coverage_rejected', False),
+            'ensemble_frame_rejected_count': comp_summary.get('ensemble_frame_rejected_count', 0),
+            'ensemble_frame_required_valid_pairs': comp_summary.get('ensemble_frame_required_valid_pairs', 0),
+            'fit': fit_result,
+            'full_reduction_fit': fit_result,
+            'good_times': np.asarray(getattr(fit_result, 'time', np.array([], dtype=float)), dtype=float),
+            'good_flux': np.asarray(getattr(fit_result, 'detrended', np.array([], dtype=float)), dtype=float),
+            'good_unc': np.asarray(getattr(fit_result, 'detrendederr', np.array([], dtype=float)), dtype=float),
+            'good_airmass': np.asarray(getattr(fit_result, 'airmass', np.array([], dtype=float)), dtype=float),
+            'good_jd_times': np.asarray(getattr(fit_result, 'jd_times', np.array([], dtype=float)), dtype=float),
+            'good_exposure_times_seconds': getattr(
+                fit_result,
+                'stellar_variability_exposure_times_seconds',
+                None,
+            ),
+            'good_target_flux_error': tflux_fit_error,
+            'good_comp_flux_error': cflux_fit_error,
+            'tflux_fit': tflux_fit,
+            'cflux_fit': cflux_fit,
+            'tflux_fit_error': tflux_fit_error,
+            'cflux_fit_error': cflux_fit_error,
+            'source_indices': source_indices,
+            'duration_samples': np.array(
+                [exclusion_summary.get('duration_days', np.nan)],
+                dtype=float,
+            ),
+            'data_highres': np.ones(1000, dtype=float),
+            'fit_diagnostics': fit_diagnostics,
+            'eebls_snr': np.nan,
+            'transit_delta_bic': np.nan,
+            'residual_scatter': scatter,
+            'target_model_scatter_basis': 'out-of-transit normalized target/reference scatter',
+            'projected_full_residual_scatter': scatter,
+            'selection_scatter': scatter,
+            'selection_scatter_basis': 'out-of-transit normalized target/reference scatter',
+            'target_comp_scatter': target_comp_flux_scatter(tflux_fit, cflux_fit),
+            'ktmf_metric': np.nan,
+            'ktmf_contributions': [],
+            'fit_point_count': int(np.asarray(tflux_fit).size),
+            'failure_reason': fit_diagnostics.get('failure_reason'),
+            'parameter_summary': None,
+            'transit_qc_status': 'SKIPPED',
+            'transit_qc_summary': 'Stellar variability only mode skipped transit fitting.',
+            'rejected_by_transit_qc': False,
+            'selected': False,
+            'selection_reason': None,
+            'full_reduction_applied': fit_result is not None,
+            'full_reduction_note': (
+                "completed the stellar-variability-only reduction without fitting a transit model."
+                if fit_result is not None else None
+            ),
+            'stellar_variability_transit_exclusion': exclusion_summary,
+            'reuse_selected_full_reduction_fit': fit_result is not None,
+        }
+        attempts.append(attempt)
+        scatter_text = format_residual_scatter(scatter)
+        if fit_result is None:
+            log_info(
+                f"  {attempt['label']}: no usable stellar-variability-only light curve "
+                f"({attempt['failure_reason']})."
+            )
+        else:
+            rejected = exclusion_summary.get('rejected_point_count', 0)
+            log_info(
+                f"  {attempt['label']}: out-of-transit scatter={scatter_text}; "
+                f"used {attempt['fit_point_count']} point(s), excluded {rejected} predicted in-transit point(s)."
+            )
+
+    eligible_attempts = [
+        attempt for attempt in attempts
+        if attempt.get('fit') is not None and np.isfinite(attempt.get('selection_scatter', np.nan))
+    ]
+    selected_result = None
+    if eligible_attempts:
+        selected_result = min(
+            eligible_attempts,
+            key=lambda attempt: (
+                attempt.get('selection_scatter', np.inf),
+                attempt.get('aggregate_score', np.inf),
+                attempt.get('field_rank', np.inf),
+            ),
+        )
+        selected_result['selected'] = True
+        selected_result['selection_reason'] = (
+            "selected: lowest out-of-transit normalized target/reference scatter among "
+            "comparison-star calibration candidates"
+        )
+        selected_scatter = selected_result.get('selection_scatter', np.nan)
+        for attempt in attempts:
+            if attempt is selected_result:
+                continue
+            if attempt.get('fit') is None:
+                continue
+            attempt['selection_reason'] = (
+                "not selected: out-of-transit normalized target/reference scatter "
+                f"{format_residual_scatter(attempt.get('selection_scatter', np.nan))} was higher than "
+                f"the selected {format_residual_scatter(selected_scatter)}"
+            )
+
+    return {
+        'ranked_summaries': ranked_summaries,
+        'attempts': attempts,
+        'selected_result': selected_result,
+        'selection_metric': 'stellar_variability_scatter',
+        'stopped_after_first_qc_pass': False,
+        'stopped_after_promising_partial': False,
+    }
 
 
 def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
@@ -24706,6 +25737,15 @@ def _main_impl():
                 ),
             )
         )
+        stellar_variability_only = should_run_stellar_variability_only(
+            exotic_infoDict.get('stellar_variability_only', STELLAR_VARIABILITY_ONLY_DEFAULT)
+        )
+        if stellar_variability_only:
+            use_eebls_tmid_initializer = False
+            pick_comparison_by_eebls_snr = False
+            run_fast_ultranest_before_final_run = False
+            run_final_residual_rejection = False
+            run_final_fit_phase_residual_clip = False
         use_legacy_psf_flux_mode = should_use_legacy_psf_flux_mode(
             exotic_infoDict.get(
                 'use_legacy_psf_flux',
@@ -24825,6 +25865,12 @@ def _main_impl():
                 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
             )
         )
+        if stellar_variability_only:
+            use_sparse_posterior_live_point_retry = False
+            log_info(
+                "Stellar-variability-only mode enabled: EXOTIC will run the normal photometry and "
+                "comparison-star selection, discard predicted ingress-to-egress points, and skip transit fitting."
+            )
         if use_sparse_posterior_live_point_retry:
             if run_fast_ultranest_before_final_run:
                 log_info(
@@ -25362,6 +26408,11 @@ def _main_impl():
             vsp_num = []
             comp_star_count = len(exotic_infoDict['comp_stars'])
             psf_noise_data = initialize_psf_noise_data(len(inputfiles), comp_star_count)
+            target_overexposed_frame_mask = np.zeros(len(inputfiles), dtype=bool)
+            comp_overexposed_masks = {
+                f"comp{comp_idx + 1}": np.zeros(len(inputfiles), dtype=bool)
+                for comp_idx in range(comp_star_count)
+            }
             frame_noise_configs = []
             require_comp_star = resolve_require_comp_star_for_exposure_times(
                 exotic_infoDict.get('require_comp_star', 'y'),
@@ -25402,6 +26453,34 @@ def _main_impl():
             use_aperture_corrections_and_full_image_fwhm = should_use_aperture_corrections_and_full_image_fwhm(
                 exotic_infoDict.get('use_aperture_corrections_and_full_image_fwhm', False)
             )
+            reject_overexposed_stars = should_reject_overexposed_stars(
+                exotic_infoDict.get('reject_overexposed_stars', REJECT_OVEREXPOSED_STARS_DEFAULT)
+            )
+            configured_saturation_value = parse_saturation_value(
+                exotic_infoDict.get(
+                    'saturation_value',
+                    exotic_infoDict.get('saturation_value_adu', SATURATION_VALUE_DEFAULT),
+                )
+            )
+            header_saturation_value = saturation_value_from_header(header)
+            saturation_value = configured_saturation_value
+            if (
+                header_saturation_value is not None
+                and configured_saturation_value == SATURATION_VALUE_DEFAULT
+            ):
+                saturation_value = header_saturation_value
+                exotic_infoDict['saturation_value'] = saturation_value
+                log_info(
+                    f"Using FITS header-derived saturation_value={saturation_value:.1f} "
+                    "for overexposure rejection."
+                )
+            overexposure_threshold_fraction = parse_overexposure_threshold_fraction(
+                exotic_infoDict.get(
+                    'overexposure_threshold_fraction',
+                    OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT,
+                )
+            )
+            overexposure_threshold = saturation_value * overexposure_threshold_fraction
             if not use_psf_photometry and not use_aperture_photometry:
                 log_info("Error: both PSF and aperture photometry are disabled in optional_info.", error=True)
                 return
@@ -25418,6 +26497,15 @@ def _main_impl():
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "
                     "light curve will use non-rejected comparison stars as a combined reference."
                 )
+            if reject_overexposed_stars:
+                log_info(
+                    "Overexposed-star rejection enabled: target frames and comparison-star measurements "
+                    f"with aperture pixels above {overexposure_threshold:.1f} will be rejected "
+                    f"(saturation_value={saturation_value:.1f}, "
+                    f"threshold_fraction={overexposure_threshold_fraction:.3f})."
+                )
+            else:
+                log_info("Overexposed-star rejection disabled per optional_info setting.")
             if not use_deviation_from_expected_transit_in_qc:
                 log_info("Expected-value transit QC deviation checks disabled per optional_info setting.")
             if target_driven_comp_selection:
@@ -25669,6 +26757,56 @@ def _main_impl():
                         comp_alignment_keys,
                     )
 
+                if reject_overexposed_stars:
+                    target_row = np.asarray(psf_data['target'][i], dtype=float)
+                    target_radius = overexposure_aperture_radius_from_psf_row(
+                        target_row,
+                        fallback_sigma=sigma,
+                    )
+                    if aperture_contains_overexposed_pixel(
+                        imageData,
+                        target_row[0] if target_row.size > 0 else np.nan,
+                        target_row[1] if target_row.size > 1 else np.nan,
+                        target_radius,
+                        overexposure_threshold,
+                        fast_mode=fast_aperture_mask,
+                    ):
+                        target_overexposed_frame_mask[i] = True
+                        plateStatus.overexposedWarning(
+                            0,
+                            target_row[0] if target_row.size > 0 else np.nan,
+                            target_row[1] if target_row.size > 1 else np.nan,
+                            overexposure_threshold,
+                        )
+                        psf_data['target'][i, :] = np.nan
+                        psf_flux_data['target'][i, :] = np.nan
+                        hdul.close()
+                        del hdul
+                        del imageData
+                        continue
+
+                    for comp_idx, comp_key in enumerate(comp_alignment_keys):
+                        comp_row = np.asarray(psf_data[comp_key][i], dtype=float)
+                        comp_radius = overexposure_aperture_radius_from_psf_row(
+                            comp_row,
+                            fallback_sigma=sigma,
+                        )
+                        if aperture_contains_overexposed_pixel(
+                            imageData,
+                            comp_row[0] if comp_row.size > 0 else np.nan,
+                            comp_row[1] if comp_row.size > 1 else np.nan,
+                            comp_radius,
+                            overexposure_threshold,
+                            fast_mode=fast_aperture_mask,
+                        ):
+                            comp_overexposed_masks[comp_key][i] = True
+                            plateStatus.overexposedWarning(
+                                comp_idx + 1,
+                                comp_row[0] if comp_row.size > 0 else np.nan,
+                                comp_row[1] if comp_row.size > 1 else np.nan,
+                                overexposure_threshold,
+                            )
+
                 if use_psf_photometry:
                     psf_flux_row_fitter = (
                         fit_legacy_psf_photometry_flux_row
@@ -25699,6 +26837,9 @@ def _main_impl():
                         ),
                     )
                     for comp_idx, comp_key in enumerate(comp_alignment_keys):
+                        if comp_overexposed_masks.get(comp_key, np.zeros(len(inputfiles), dtype=bool))[i]:
+                            psf_flux_data[comp_key][i, :] = np.nan
+                            continue
                         comp_psf_flux_seed_row = psf_data[comp_key][i]
                         if comp_key in psf_flux_seed_tracks:
                             comp_psf_flux_seed_row = psf_flux_seed_tracks[comp_key][i]
@@ -25762,6 +26903,12 @@ def _main_impl():
                         exposure_s=frame_exposure_s,
                         airmass=frame_airmass,
                     )
+                    apply_overexposure_masks_to_aperture_frame(
+                        coarse_aper_data,
+                        i,
+                        target_overexposed_frame_mask[i],
+                        comp_overexposed_masks,
+                    )
 
                     if i == coarse_tune_frames - 1:
                         subset_airmass = np.asarray(airMassList[:coarse_tune_frames], dtype=float)
@@ -25809,6 +26956,15 @@ def _main_impl():
 
                         log_info(f"Backfilling refined aperture photometry for the first {coarse_tune_frames} frame(s).")
                         for backfill_idx in range(coarse_tune_frames):
+                            if target_overexposed_frame_mask[backfill_idx]:
+                                apply_overexposure_masks_to_aperture_frame(
+                                    aper_data,
+                                    backfill_idx,
+                                    True,
+                                    comp_overexposed_masks,
+                                )
+                                coarse_frame_cache[backfill_idx] = None
+                                continue
                             backfill_image = coarse_frame_cache[backfill_idx]
                             loaded_from_disk = False
                             if backfill_image is None:
@@ -25841,6 +26997,12 @@ def _main_impl():
                                     noise_config=frame_noise_configs[backfill_idx],
                                     exposure_s=exptimes[backfill_idx],
                                     airmass=airMassList[backfill_idx],
+                                )
+                                apply_overexposure_masks_to_aperture_frame(
+                                    aper_data,
+                                    backfill_idx,
+                                    target_overexposed_frame_mask[backfill_idx],
+                                    comp_overexposed_masks,
                                 )
                             finally:
                                 if loaded_from_disk:
@@ -25876,6 +27038,12 @@ def _main_impl():
                         exposure_s=frame_exposure_s,
                         airmass=frame_airmass,
                     )
+                    apply_overexposure_masks_to_aperture_frame(
+                        aper_data,
+                        i,
+                        target_overexposed_frame_mask[i],
+                        comp_overexposed_masks,
+                    )
 
                 # close file + delete from memory
                 hdul.close()
@@ -25890,6 +27058,26 @@ def _main_impl():
             badmask = np.isnan(psf_data["target"][:, 0]) | (psf_data["target"][:, 0] == 0)
             if aper_data is not None:
                 badmask = badmask | (aper_data["target"][:, 0, 0] == 0) | np.isnan(aper_data["target"][:, 0, 0])
+            if reject_overexposed_stars and target_overexposed_frame_mask.shape == badmask.shape:
+                target_overexposure_diagnostic = build_time_rejection_diagnostic(
+                    "Target overexposure filter",
+                    times,
+                    ~target_overexposed_frame_mask,
+                    note=(
+                        "Dropped frames before photometry selection because one or more target aperture pixels "
+                        f"exceeded {overexposure_threshold:.1f} "
+                        f"({overexposure_threshold_fraction:.3f} of saturation_value={saturation_value:.1f})."
+                    ),
+                )
+                if (
+                    target_overexposure_diagnostic is not None
+                    and target_overexposure_diagnostic['dropped_point_count'] > 0
+                ):
+                    log_lightcurve_filter_diagnostics(
+                        [target_overexposure_diagnostic],
+                        header="Target overexposure frame rejections before photometry selection",
+                    )
+                badmask = badmask | target_overexposed_frame_mask
             goodmask = ~badmask
             global_frame_filter_diagnostic = build_time_rejection_diagnostic(
                 "Target centroid/aperture validity filter",
@@ -25918,6 +27106,11 @@ def _main_impl():
             if aper_data is not None:
                 for key in list(aper_data.keys()):
                     aper_data[key] = aper_data[key][goodmask]
+            target_overexposed_frame_mask = target_overexposed_frame_mask[goodmask]
+            comp_overexposed_masks = {
+                key: np.asarray(mask, dtype=bool)[goodmask]
+                for key, mask in comp_overexposed_masks.items()
+            }
             for j in range(len(exotic_infoDict['comp_stars'])):
                 ckey = f"comp{j + 1}"
                 psf_data[ckey] = psf_data[ckey][goodmask]
@@ -26087,6 +27280,7 @@ def _main_impl():
                 use_psf_photometry=use_psf_photometry,
                 use_aperture_photometry=use_aperture_photometry,
                 psf_flux_data=psf_flux_source,
+                comp_overexposed_masks=comp_overexposed_masks,
             )
 
             if comparison_calibration is not None:
@@ -26137,11 +27331,16 @@ def _main_impl():
                         psf_quality_text = (
                             f", psf_quality_rejects={summary['psf_quality_rejected_count']}"
                         )
+                    overexposure_text = ""
+                    if summary.get('overexposure_rejected_count', 0) > 0:
+                        overexposure_text = (
+                            f", overexposure_rejects={summary['overexposure_rejected_count']}"
+                        )
                     log_info(
                         f"  {summary['label']}{selected_label} ({position_text}): suitability={aggregate_text}, "
                         f"ensemble={ensemble_text}, pairwise_median={pairwise_text}, "
                         f"valid_pairs={summary['valid_pair_count']}, {coverage_text}"
-                        f"{psf_quality_text}{ensemble_frame_text}, "
+                        f"{psf_quality_text}{overexposure_text}{ensemble_frame_text}, "
                         f"reason={summary['selection_reason']}"
                     )
 
@@ -26189,42 +27388,67 @@ def _main_impl():
                 except Exception as e:
                     log_info(f"Warning: Could not save comparison-star calibration outputs ({e}).", warn=True)
 
-                comparison_fit_search = fit_ranked_comparison_calibration_candidates(
-                    times,
-                    jd_times,
-                    airmass,
-                    ld,
-                    pDict,
-                    comparison_calibration,
-                    psf_data,
-                    aper_data,
-                    tFlux,
-                    psf_flux_data=psf_flux_source,
-                    psf_noise_data=psf_noise_data if use_psf_photometry else None,
-                    plot_time_range=full_plot_time_range,
-                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                    detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
-                    use_impactparameter_rather_than_inclination_to_fit=
-                    use_impactparameter_rather_than_inclination_to_fit,
-                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
-                    pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
-                    exit_at_first_qc_pass_solution=exit_at_first_qc_pass_solution,
-                    final_fit_baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
-                    use_adaptive_apertures=use_adaptive_apertures,
-                    adaptive_aperture_values=aperture_values,
-                    adaptive_annulus_values=annulus_values,
-                    fallback_sigma=sigma_display,
-                    run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
-                    run_final_fit_phase_residual_clip=run_final_fit_phase_residual_clip,
-                    run_final_residual_rejection=run_final_residual_rejection,
-                    save_dir=exotic_infoDict['save'],
-                    planet_name=pDict['pName'],
-                    observation_date=exotic_infoDict['date'],
-                    use_ensemble_photometry_rather_than_single_comp=
-                    use_ensemble_photometry_rather_than_single_comp,
-                    exposure_times_seconds=exposure_times_seconds,
-                    gain_e_per_adu=fallback_gain_e_per_adu,
-                )
+                if stellar_variability_only:
+                    log_info(
+                        "Stellar-variability-only mode: selecting comparison photometry by "
+                        "out-of-transit target/reference scatter without fitting transit models."
+                    )
+                    comparison_fit_search = select_stellar_variability_only_photometry(
+                        times,
+                        jd_times,
+                        airmass,
+                        pDict,
+                        comparison_calibration,
+                        psf_data,
+                        aper_data,
+                        tFlux,
+                        psf_flux_data=psf_flux_source,
+                        psf_noise_data=psf_noise_data if use_psf_photometry else None,
+                        plot_time_range=full_plot_time_range,
+                        use_adaptive_apertures=use_adaptive_apertures,
+                        adaptive_aperture_values=aperture_values,
+                        adaptive_annulus_values=annulus_values,
+                        fallback_sigma=sigma_display,
+                        exposure_times_seconds=exposure_times_seconds,
+                        gain_e_per_adu=fallback_gain_e_per_adu,
+                    )
+                else:
+                    comparison_fit_search = fit_ranked_comparison_calibration_candidates(
+                        times,
+                        jd_times,
+                        airmass,
+                        ld,
+                        pDict,
+                        comparison_calibration,
+                        psf_data,
+                        aper_data,
+                        tFlux,
+                        psf_flux_data=psf_flux_source,
+                        psf_noise_data=psf_noise_data if use_psf_photometry else None,
+                        plot_time_range=full_plot_time_range,
+                        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                        detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+                        use_impactparameter_rather_than_inclination_to_fit=
+                        use_impactparameter_rather_than_inclination_to_fit,
+                        use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                        pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
+                        exit_at_first_qc_pass_solution=exit_at_first_qc_pass_solution,
+                        final_fit_baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
+                        use_adaptive_apertures=use_adaptive_apertures,
+                        adaptive_aperture_values=aperture_values,
+                        adaptive_annulus_values=annulus_values,
+                        fallback_sigma=sigma_display,
+                        run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
+                        run_final_fit_phase_residual_clip=run_final_fit_phase_residual_clip,
+                        run_final_residual_rejection=run_final_residual_rejection,
+                        save_dir=exotic_infoDict['save'],
+                        planet_name=pDict['pName'],
+                        observation_date=exotic_infoDict['date'],
+                        use_ensemble_photometry_rather_than_single_comp=
+                        use_ensemble_photometry_rather_than_single_comp,
+                        exposure_times_seconds=exposure_times_seconds,
+                        gain_e_per_adu=fallback_gain_e_per_adu,
+                    )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
                 ]
@@ -26271,7 +27495,9 @@ def _main_impl():
                         dtype=int,
                     )
                     selected_attempt_label = selected_attempt.get('label', 'comparison candidate')
-                    if selected_attempt.get('search_stopped_after_qc_pass', False):
+                    if stellar_variability_only:
+                        selection_basis = 'stellar_variability_scatter'
+                    elif selected_attempt.get('search_stopped_after_qc_pass', False):
                         selection_basis = 'first_qc_pass'
                     elif selected_attempt.get('search_stopped_after_promising_partial', False):
                         selection_basis = 'promising_partial'
@@ -26283,7 +27509,14 @@ def _main_impl():
                         selection_basis = 'comparison_field'
                     else:
                         selection_basis = 'comparison_field_retry'
-                    if selection_basis == 'first_qc_pass':
+                    if selection_basis == 'stellar_variability_scatter':
+                        log_info(
+                            "Stellar-variability-only comparison selection chose "
+                            f"{selected_attempt_label} with {comparison_calibration['method_label']} "
+                            "because it had the lowest out-of-transit target/reference scatter "
+                            f"({format_residual_scatter(selected_attempt.get('selection_scatter', np.nan))})."
+                        )
+                    elif selection_basis == 'first_qc_pass':
                         log_info(
                             "Comparison-star calibration target-fit selection chose "
                             f"{selected_attempt_label} with {comparison_calibration['method_label']} "
@@ -26372,6 +27605,7 @@ def _main_impl():
                                            selected_fit_final_output_dir=selected_attempt.get('final_output_dir'),
                                            calibration_field_score=comparison_calibration['field_score'],
                                            selection_basis=selection_basis,
+                                           stellar_variability_only=stellar_variability_only,
                                            selection_metric=comparison_fit_search.get('selection_metric', 'ktmf'),
                                            selected_comparison_selection_reason=selected_attempt.get('selection_reason'),
                                            selected_comparison_attempt=compact_comparison_attempt_for_output(selected_attempt),
@@ -26411,18 +27645,39 @@ def _main_impl():
                             for j in vsp_num:
                                 ckey = f"comp{j + 1}"
                                 cFlux = psf_flux_series_from_rows(psf_flux_source[ckey])
-                                vsp_fit, _, _ = fit_lightcurve(
-                                    times, tFlux, cFlux, airmass, ld, pDict, jd_times,
-                                    target_flux_error=psf_noise_data.get('target'),
-                                    comp_flux_error=psf_noise_data.get(ckey),
-                                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                                    use_impactparameter_rather_than_inclination_to_fit=
-                                    use_impactparameter_rather_than_inclination_to_fit,
-                                    plot_time_range=full_plot_time_range,
-                                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
-                                    exposure_times_seconds=exposure_times_seconds,
-                                    gain_e_per_adu=fallback_gain_e_per_adu,
-                                )
+                                if stellar_variability_only:
+                                    vsp_fit, _ = build_stellar_variability_only_lightcurve_from_fluxes(
+                                        times,
+                                        tFlux,
+                                        cFlux,
+                                        airmass,
+                                        pDict,
+                                        jd_times=jd_times,
+                                        target_flux_error=psf_noise_data.get('target'),
+                                        comp_flux_error=psf_noise_data.get(ckey),
+                                        exposure_times_seconds=exposure_times_seconds,
+                                        gain_e_per_adu=fallback_gain_e_per_adu,
+                                        comp_index=j,
+                                        comp_label=f"Comp {j + 1}",
+                                        comp_position=exotic_infoDict['comp_stars'][j],
+                                        method_label=comparison_calibration['method_label'],
+                                        plot_time_range=full_plot_time_range,
+                                    )
+                                else:
+                                    vsp_fit, _, _ = fit_lightcurve(
+                                        times, tFlux, cFlux, airmass, ld, pDict, jd_times,
+                                        target_flux_error=psf_noise_data.get('target'),
+                                        comp_flux_error=psf_noise_data.get(ckey),
+                                        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                                        use_impactparameter_rather_than_inclination_to_fit=
+                                        use_impactparameter_rather_than_inclination_to_fit,
+                                        plot_time_range=full_plot_time_range,
+                                        use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                                        exposure_times_seconds=exposure_times_seconds,
+                                        gain_e_per_adu=fallback_gain_e_per_adu,
+                                    )
+                                if vsp_fit is None:
+                                    continue
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
                                     'pos': exotic_infoDict['comp_stars'][j]
@@ -26445,21 +27700,51 @@ def _main_impl():
                                     if f"{ckey}_unc" in aper_data
                                     else None
                                 )
-                                vsp_fit, _, _ = fit_lightcurve(
-                                    times[aper_mask], best_target_flux[aper_mask], cFlux,
-                                    airmass[aper_mask], ld, pDict, jd_times[aper_mask],
-                                    target_flux_error=(
-                                        None if best_target_flux_error is None else best_target_flux_error[aper_mask]
-                                    ),
-                                    comp_flux_error=cFlux_error,
-                                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-                                    use_impactparameter_rather_than_inclination_to_fit=
-                                    use_impactparameter_rather_than_inclination_to_fit,
-                                    plot_time_range=full_plot_time_range,
-                                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
-                                    exposure_times_seconds=exposure_times_seconds[aper_mask],
-                                    gain_e_per_adu=fallback_gain_e_per_adu,
+                                aper_exposure_times = (
+                                    None
+                                    if exposure_times_seconds is None
+                                    else exposure_times_seconds[aper_mask]
                                 )
+                                if stellar_variability_only:
+                                    vsp_fit, _ = build_stellar_variability_only_lightcurve_from_fluxes(
+                                        times[aper_mask],
+                                        best_target_flux[aper_mask],
+                                        cFlux,
+                                        airmass[aper_mask],
+                                        pDict,
+                                        jd_times=jd_times[aper_mask],
+                                        target_flux_error=(
+                                            None
+                                            if best_target_flux_error is None
+                                            else best_target_flux_error[aper_mask]
+                                        ),
+                                        comp_flux_error=cFlux_error,
+                                        exposure_times_seconds=aper_exposure_times,
+                                        gain_e_per_adu=fallback_gain_e_per_adu,
+                                        comp_index=j,
+                                        comp_label=f"Comp {j + 1}",
+                                        comp_position=exotic_infoDict['comp_stars'][j],
+                                        method_label=comparison_calibration['method_label'],
+                                        plot_time_range=full_plot_time_range,
+                                    )
+                                else:
+                                    vsp_fit, _, _ = fit_lightcurve(
+                                        times[aper_mask], best_target_flux[aper_mask], cFlux,
+                                        airmass[aper_mask], ld, pDict, jd_times[aper_mask],
+                                        target_flux_error=(
+                                            None if best_target_flux_error is None else best_target_flux_error[aper_mask]
+                                        ),
+                                        comp_flux_error=cFlux_error,
+                                        disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                                        use_impactparameter_rather_than_inclination_to_fit=
+                                        use_impactparameter_rather_than_inclination_to_fit,
+                                        plot_time_range=full_plot_time_range,
+                                        use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                                        exposure_times_seconds=aper_exposure_times,
+                                        gain_e_per_adu=fallback_gain_e_per_adu,
+                                    )
+                                if vsp_fit is None:
+                                    continue
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
                                     'pos': exotic_infoDict['comp_stars'][j]
@@ -26530,14 +27815,19 @@ def _main_impl():
             selected_method_label = selected_photometry_method_label(photometry_info)
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
             adaptive_summary = photometry_info.get('adaptive_summary')
+            comparison_star_log_label = (
+                "Stellar Variability Reference Star"
+                if stellar_variability_only
+                else "Transit Fit Comparison Star"
+            )
             if photometry_info['min_aperture'] == 0:  # psf
                 if photometry_info.get('comp_star_num') == 'ensemble':
-                    log_info("Transit Fit Comparison Star: ensemble")
+                    log_info(f"{comparison_star_log_label}: ensemble")
                 else:
-                    log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
+                    log_info(f"{comparison_star_log_label}: #{photometry_info['comp_star_num']}")
                 log_info("Optimal Method: PSF photometry")
             elif photometry_info['min_aperture'] < 0:  # no comp star
-                log_info("Transit Fit Comparison Star: None")
+                log_info(f"{comparison_star_log_label}: None")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {abs(display_aperture):.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -26550,9 +27840,9 @@ def _main_impl():
                     log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             else:
                 if photometry_info.get('comp_star_num') == 'ensemble':
-                    log_info("Transit Fit Comparison Star: ensemble")
+                    log_info(f"{comparison_star_log_label}: ensemble")
                 else:
-                    log_info(f"Transit Fit Comparison Star: #{photometry_info['comp_star_num']}")
+                    log_info(f"{comparison_star_log_label}: #{photometry_info['comp_star_num']}")
                 if adaptive_summary is not None:
                     log_info(f"Optimal Aperture: {display_aperture:.2f} +/- {adaptive_summary['aperture_std']:.2f} px")
                     log_info(f"Optimal Annulus: {display_annulus:.2f} +/- {adaptive_summary['annulus_std']:.2f} px")
@@ -26590,7 +27880,13 @@ def _main_impl():
                     warn=True,
                 )
 
-            if fit_every_comparison_candidate and exotic_infoDict['comp_stars']:
+            if fit_every_comparison_candidate and stellar_variability_only:
+                log_info(
+                    "Skipping fit_lightcurve_to_every_comparison_candidate because "
+                    "stellar-variability-only mode does not fit transit models."
+                )
+
+            if fit_every_comparison_candidate and not stellar_variability_only and exotic_infoDict['comp_stars']:
                 candidate_fit_summaries = fit_lightcurve_to_every_comparison_candidate(
                     times,
                     jd_times,
@@ -26907,7 +28203,7 @@ def _main_impl():
                                                       wcs_file=wcs_file)
                 else:
                     log_info(
-                        "Skipping AID magnitude output because no transit-fit comparison star was selected.",
+                        "Skipping AID magnitude output because no reference comparison star was selected.",
                         warn=True,
                     )
 
@@ -26988,15 +28284,172 @@ def _main_impl():
             return
 
         log_info("\n")
-        log_info("****************************************")
-        log_info("Fitting a Light Curve Model to Your Data")
-        log_info("****************************************\n")
+        if stellar_variability_only:
+            log_info("****************************************")
+            log_info("Preparing Stellar Variability Light Curve")
+            log_info("****************************************\n")
+        else:
+            log_info("****************************************")
+            log_info("Fitting a Light Curve Model to Your Data")
+            log_info("****************************************\n")
 
         reuse_selected_final_model = bool(
             fitsortext == 1
             and photometry_info.get('reuse_selected_full_reduction_fit', False)
             and photometry_info.get('best_fit_lc') is not None
         )
+
+        if stellar_variability_only:
+            if reuse_selected_final_model:
+                myfit = photometry_info['best_fit_lc']
+                goodTimes = np.asarray(getattr(myfit, 'time', goodTimes), dtype=float)
+                goodAirmasses = np.asarray(getattr(myfit, 'airmass', goodAirmasses), dtype=float)
+                reused_flux = photometry_info.get('selected_fit_good_flux')
+                reused_unc = photometry_info.get('selected_fit_good_unc')
+                if reused_flux is not None and np.shape(reused_flux) == np.shape(goodTimes):
+                    goodFluxes = np.asarray(reused_flux, dtype=float)
+                else:
+                    goodFluxes = np.asarray(getattr(myfit, 'detrended', goodFluxes), dtype=float)
+                if reused_unc is not None and np.shape(reused_unc) == np.shape(goodTimes):
+                    goodNormUnc = np.asarray(reused_unc, dtype=float)
+                else:
+                    goodNormUnc = np.asarray(getattr(myfit, 'detrendederr', goodNormUnc), dtype=float)
+                log_info(
+                    "Using the selected comparison-star stellar-variability light curve for final outputs; "
+                    "no transit model fit is being run."
+                )
+            else:
+                prepared_variability = {
+                    'applied': True,
+                    'time': np.asarray(goodTimes, dtype=float),
+                    'flux': np.asarray(goodFluxes, dtype=float),
+                    'unc': np.asarray(goodNormUnc, dtype=float),
+                    'airmass': np.asarray(goodAirmasses, dtype=float),
+                    'jd_time': np.asarray(goodTimes, dtype=float),
+                    'exposure_time_seconds': goodExposureTimes,
+                    'target_flux': np.asarray(goodFluxes, dtype=float),
+                    'comp_flux': np.ones(np.shape(goodFluxes), dtype=float),
+                    'target_flux_error': np.asarray(goodNormUnc, dtype=float),
+                    'comp_flux_error': np.full(np.shape(goodFluxes), np.nan, dtype=float),
+                    'source_indices': np.arange(np.shape(goodFluxes)[0], dtype=int),
+                }
+                myfit = build_stellar_variability_only_lightcurve(
+                    prepared_variability,
+                    pDict,
+                    method_label="pre-reduced light curve",
+                    plot_time_range=full_plot_time_range,
+                )
+                if myfit is None:
+                    log_info(
+                        "Error: stellar-variability-only mode could not build a usable "
+                        "out-of-transit light curve from the supplied pre-reduced data.",
+                        error=True,
+                    )
+                    return
+
+            if np.any(np.isfinite(myfit.time)):
+                times = np.linspace(np.nanmin(myfit.time), np.nanmax(myfit.time), 1000)
+            else:
+                times = np.array([], dtype=float)
+            data_highres = np.ones(times.shape, dtype=float)
+            exclusion = getattr(myfit, 'stellar_variability_transit_exclusion', {}) or {}
+            duration = exclusion.get('duration_days', np.nan)
+            durs = [duration] if np.isfinite(duration) else []
+
+            plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+
+            if fitsortext == 1:
+                observing_background_series = build_observing_background_series(
+                    psf_data,
+                    aper_data,
+                    photometry_info,
+                    len(exotic_infoDict['comp_stars']),
+                )
+                plot_obs_stats(myfit, exotic_infoDict['comp_stars'], psf_data, obs_stats_sort_index,
+                               obs_stats_keep_mask, pDict['pName'],
+                               exotic_infoDict['save'], exotic_infoDict['date'],
+                               relative_flux_mask=None,
+                               background_series=observing_background_series)
+
+            log_info("\n*********************************************************")
+            log_info("FINAL STELLAR VARIABILITY ANALYSIS\n")
+            log_info("                Analysis Mode: stellar variability only")
+            log_info("        Transit model fitting: skipped")
+            scatter = getattr(myfit, 'stellar_variability_scatter', np.nan)
+            if np.isfinite(scatter):
+                log_info(f"   Out-of-transit scatter: {format_residual_scatter(scatter)}")
+            log_info(f"      Light-curve point count: {len(myfit.time)}")
+            rejected_points = exclusion.get('rejected_point_count', 0)
+            log_info(f" Predicted in-transit points excluded: {rejected_points}")
+            if np.isfinite(duration):
+                log_info(f" Excluded transit-window duration [day]: {round_to_2(duration)}")
+            if fitsortext == 1:
+                display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
+                if bestCompStar == 'ensemble':
+                    log_info(" Stellar Variability Reference Star: ensemble")
+                elif bestCompStar is not None:
+                    log_info(f" Stellar Variability Reference Star: #{bestCompStar} - {comp_coords}")
+                else:
+                    log_info(" Stellar Variability Reference Star: None")
+                if photometry_info.get('min_aperture') == 0:
+                    log_info("                       Optimal Method: PSF photometry")
+                else:
+                    log_info(f"                    Optimal Aperture: {abs(np.round(display_aperture, 2))}")
+                    log_info(f"                     Optimal Annulus: {np.round(display_annulus, 2)}")
+            log_info("*********************************************************")
+
+            if vsp_params:
+                AIDoutput_files = AIDOutputFiles(myfit, pDict, exotic_infoDict, auid, chart_id, vsp_params)
+            output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
+            error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
+
+            try:
+                phase = np.asarray(getattr(myfit, 'phase', get_phase(myfit.time, pDict['pPer'], pDict['midT'])))
+                output_files.final_lightcurve(phase)
+            except Exception as e:
+                log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
+            try:
+                if fitsortext == 1:
+                    display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
+                    output_files.final_planetary_params(phot_opt=True, vsp_params=vsp_params,
+                                                        comp_star=bestCompStar, comp_coords=comp_coords,
+                                                        min_aper=np.round(display_aperture, 2),
+                                                        min_annul=np.round(display_annulus, 2),
+                                                        adaptive_summary=photometry_info.get('adaptive_summary'),
+                                                        photometry_info=photometry_info,
+                                                        publish_to_root=True)
+                else:
+                    output_files.final_planetary_params(
+                        phot_opt=False,
+                        vsp_params=vsp_params,
+                        publish_to_root=True,
+                    )
+            except Exception as e:
+                log_info(f"\nError: Could not create FinalParams.json. {error_txt}\n\t{e}", error=True)
+            try:
+                if fitsortext == 1:
+                    output_files.plate_status(plateStatus)
+            except Exception as e:
+                log_info(f"\nError: Could not create plate_status.csv. {error_txt}\n\t{e}", error=True)
+            try:
+                if vsp_params:
+                    AIDoutput_files.aavso()
+            except Exception as e:
+                log_info(f"\nError: Could not create AID_AAVSO.txt. {error_txt}\n\t{e}", error=True)
+
+            log_info("Output Files Saved")
+
+            log_info("\n************************")
+            log_info("End of Reduction Process")
+            log_info("************************")
+
+            log_info("\n\n************************")
+            log_info("EXOTIC has successfully run!!!")
+            log_info("It is now safe to close this window.")
+            log_info("************************")
+
+            log.debug("Stopped ...")
+            return
 
         ##########################
         # NESTED SAMPLING FITTING

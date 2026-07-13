@@ -8,6 +8,7 @@ class PlateStatus:
         self.logfunc = logfunc
         self.errorcodes.add("outofframe_target")
         self.errorcodes.add("lowflux_target")
+        self.errorcodes.add("overexposed_target")
         self.errorcodes.add("skybg_target")
         self.errorcodes.add("fits_error")
         self.errorcodes.add("alignment_error")
@@ -24,6 +25,7 @@ class PlateStatus:
         for i in range(compCount):
             self.errorcodes.add(f"outofframe_comp{i+1}")
             self.errorcodes.add(f"lowflux_comp{i+1}")
+            self.errorcodes.add(f"overexposed_comp{i+1}")
             self.errorcodes.add(f"skybg_comp{i+1}")            
     # Sets current filename (for any reported errors) - sets starIndex=0 (target)
     def setCurrentFilename(self, filename: str):
@@ -60,6 +62,14 @@ class PlateStatus:
         else:
             self._logError(f"lowflux_comp{starIndex}",
                 f"Measured flux for Comparison star #{starIndex} is low in file {self.filename} - are you sure there is a star at [{xc:.1f}, {yc:.1f}]?")
+    # Report overexposure warning for star index (0=target, 1+=comp #N)
+    def overexposedWarning(self, starIndex: int, xc: float, yc: float, threshold: float):
+        if starIndex == 0:  # Target star
+            self._logError("overexposed_target",
+                f"Target star is overexposed in file {self.filename}; aperture pixels near [{xc:.1f}, {yc:.1f}] exceeded {threshold:.1f}.")
+        else:
+            self._logError(f"overexposed_comp{starIndex}",
+                f"Comparison star #{starIndex} is overexposed in file {self.filename}; aperture pixels near [{xc:.1f}, {yc:.1f}] exceeded {threshold:.1f}.")
     # Report sky background warning for start ;index' (0=target, 1+=comp #N)
     def skyBackgroundWarning(self, starIndex: int, xc: float, yc: float):
         if starIndex == 0:  # Target star

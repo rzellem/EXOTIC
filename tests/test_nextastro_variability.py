@@ -1005,3 +1005,86 @@ def test_vsx_variable_parses_default_vsx_object_list(monkeypatch):
     is_variable = exotic_module.vsx_variable(ra=88.79292, dec=7.40706)
 
     assert is_variable is True
+
+
+def _stellar_variability_only_planet_dict():
+    return {
+        'pName': 'Synthetic b',
+        'sName': 'Synthetic',
+        'pPer': 1.0,
+        'pPerUnc': 0.0001,
+        'midT': 10.0,
+        'midTUnc': 0.0001,
+        'rprs': 0.1,
+        'rprsUnc': 0.001,
+        'aRs': 12.0,
+        'aRsUnc': 0.2,
+        'inc': 89.0,
+        'incUnc': 0.1,
+        'ecc': 0.0,
+        'omega': 90.0,
+    }
+
+
+def test_stellar_variability_out_of_transit_mask_excludes_predicted_transit_window():
+    p_dict = _stellar_variability_only_planet_dict()
+    duration = exotic_module.estimate_transit_duration_from_prior_geometry(
+        exotic_module.stellar_variability_transit_prior_from_planet_dict(p_dict)
+    )
+    times = np.array([
+        p_dict['midT'] - duration,
+        p_dict['midT'],
+        p_dict['midT'] + 0.49 * duration,
+        p_dict['midT'] + duration,
+    ])
+
+    keep_mask, summary = exotic_module.stellar_variability_out_of_transit_mask(times, p_dict)
+
+    assert keep_mask.tolist() == [True, False, False, True]
+    assert summary['applied'] is True
+    assert summary['rejected_point_count'] == 2
+    assert summary['duration_days'] == pytest.approx(duration)
+
+
+def test_build_stellar_variability_only_lightcurve_discards_transit_points(monkeypatch):
+    p_dict = _stellar_variability_only_planet_dict()
+    duration = exotic_module.estimate_transit_duration_from_prior_geometry(
+        exotic_module.stellar_variability_transit_prior_from_planet_dict(p_dict)
+    )
+    offsets = np.array([-3.0, -2.2, -1.4, -0.7, -0.1, 0.0, 0.1, 0.7, 1.4, 2.2, 3.0]) * duration
+    times = p_dict['midT'] + offsets
+    target_flux = np.full(times.shape, 10000.0)
+    comp_flux = np.full(times.shape, 10000.0)
+    flux_err = np.full(times.shape, 20.0)
+    airmass = np.ones(times.shape)
+
+    monkeypatch.setattr(
+        exotic_module,
+        'get_phase',
+        lambda t, per, tmid: ((np.asarray(t, dtype=float) - tmid) / per + 0.5) % 1.0 - 0.5,
+    )
+
+    fit, prepared = exotic_module.build_stellar_variability_only_lightcurve_from_fluxes(
+        times,
+        target_flux,
+        comp_flux,
+        airmass,
+        p_dict,
+        jd_times=times,
+        target_flux_error=flux_err,
+        comp_flux_error=flux_err,
+        exposure_times_seconds=np.full(times.shape, 60.0),
+        gain_e_per_adu=1.0,
+        comp_index=0,
+        comp_label="Comp 1",
+        comp_position=[1, 2],
+        method_label="PSF photometry",
+    )
+
+    assert prepared['applied'] is True
+    assert fit is not None
+    assert fit.stellar_variability_only is True
+    assert np.all(fit.transit == 1.0)
+    assert fit.stellar_variability_transit_exclusion['rejected_point_count'] == 3
+    assert not np.any(np.isclose(fit.time, p_dict['midT']))
+    assert len(fit.time) == times.size - 3

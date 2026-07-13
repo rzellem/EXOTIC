@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -119,6 +120,50 @@ def test_prior_depth_respects_inclination_for_non_transiting_geometry():
     summary = fit_transit_depth_summary(fit, prior_parameters=prior)
 
     assert summary["prior_observable_depth"] == pytest.approx(0.0)
+
+
+def test_final_params_writes_stellar_variability_only_payload(tmp_path):
+    (tmp_path / "temp").mkdir()
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.arange(6, dtype=float),
+        stellar_variability_scatter=0.00123,
+        stellar_variability_transit_exclusion={
+            'rejected_point_count': 2,
+            'duration_days': 0.083,
+            'note': 'Excluded synthetic transit-window points.',
+        },
+        airmass_fit_skipped=True,
+        airmass_correction_note=(
+            "Skipped in stellar-variability-only mode; no transit/systematics model was fit."
+        ),
+    )
+    p_dict = {'pName': 'Syntheticb'}
+    i_dict = {'save': str(tmp_path), 'date': '2020-01-01'}
+
+    OutputFiles(fit, p_dict, i_dict, [0.083]).final_planetary_params(
+        phot_opt=True,
+        vsp_params=None,
+        comp_star=2,
+        comp_coords=[10, 20],
+        min_aper=0,
+        min_annul=15,
+        photometry_info={'noise_budget_summary': 'gain only'},
+        publish_to_root=True,
+    )
+
+    temp_file = next((tmp_path / "temp").glob("FinalParams_Syntheticb_2020-01-01.json"))
+    root_file = tmp_path / temp_file.name
+    payload = json.loads(temp_file.read_text())
+
+    params = payload["FINAL STELLAR VARIABILITY PARAMETERS"]
+    assert params["Analysis Mode"] == "Stellar variability only"
+    assert params["Transit model fitting"] == "Skipped"
+    assert params["Predicted in-transit points excluded"] == "2"
+    assert params["Residual scatter around flat stellar-variability model"] == "0.1230 %"
+    assert params["Stellar Variability Reference Star"] == "#2 - [10, 20]"
+    assert params["Optimal Method"] == "PSF photometry"
+    assert root_file.exists()
 
 
 def aavso_json_header(output_text, header_name):
@@ -479,6 +524,7 @@ def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
     text = summary_path.read_text()
     assert "# Selected comparison star,1" in text
     assert "suitability_outlier_rejected" in text
+    assert "overexposure_rejected_count" in text
     assert "Comp 1,101,202,true" in text
 
 

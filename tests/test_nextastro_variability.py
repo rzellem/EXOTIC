@@ -705,6 +705,33 @@ def test_stellar_variability_derives_catalog_magnitude_from_full_field(monkeypat
     assert params[0]['derived_reference_anchor_labels'] == ['NextAstro-67890']
 
 
+def test_derived_catalog_reference_skips_missing_anchor_fit():
+    class DummyFit:
+        data = np.array([1.0, 1.01, 0.99], dtype=float)
+
+    label, star = exotic_module.derived_catalog_reference_for_selected_comp(
+        {
+            0: {'myfit': DummyFit(), 'pos': [10, 10]},
+            1: None,
+        },
+        [[10, 10], [20, 20]],
+        {
+            'Anchor': {
+                'pos': [20, 20],
+                'mag': 12.0,
+                'error': 0.03,
+                'mag_band': 'V',
+            },
+        },
+        [1],
+        0,
+        observed_filter='V',
+    )
+
+    assert label is None
+    assert star is None
+
+
 def test_stellar_variability_rejects_g_catalog_anchor_for_clearv(monkeypatch, tmp_path):
     logged = []
 

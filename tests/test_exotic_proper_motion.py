@@ -1728,6 +1728,24 @@ def test_compute_star_aperture_grid_applies_aperture_correction_factors():
     np.testing.assert_allclose(corrected_flux[:, 0], raw_flux[:, 0] * np.array([2.0, 1.25]))
 
 
+def test_compute_star_aperture_grid_ignores_invalid_aperture_geometry():
+    image = np.ones((20, 20), dtype=float)
+
+    flux, bg = compute_star_aperture_grid(
+        image,
+        0,
+        10.0,
+        10.0,
+        np.array([np.nan]),
+        np.array([0.0]),
+    )
+
+    assert flux.shape == (1, 1)
+    assert bg.shape == (1, 1)
+    assert np.isnan(flux[0, 0])
+    assert np.isnan(bg[0, 0])
+
+
 def test_aperture_contains_overexposed_pixel_checks_aperture_only(monkeypatch):
     import exotic.exotic as exotic_module
 
@@ -1814,6 +1832,21 @@ def test_resolve_frame_aperture_radii_scales_sigma_grid():
 
     assert np.allclose(apertures, np.array([3.0, 4.5]))
     assert np.allclose(annuli, np.array([12.0, 15.0]))
+
+
+def test_resolve_frame_aperture_radii_accepts_scalar_values():
+    apertures, annuli = resolve_frame_aperture_radii(
+        2.0,
+        8.0,
+        adaptive_apertures=True,
+        frame_sigma=1.5,
+        fallback_sigma=1.0,
+    )
+
+    assert apertures.shape == (1,)
+    assert annuli.shape == (1,)
+    assert apertures[0] == pytest.approx(3.0)
+    assert annuli[0] == pytest.approx(12.0)
 
 
 def test_resolve_sky_annulus_geometry_enforces_fwhm_floor_and_min_sky_pixels():

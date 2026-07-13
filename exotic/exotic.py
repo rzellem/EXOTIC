@@ -11804,8 +11804,8 @@ def build_observing_background_series(psf_data, aper_data, photometry_info, comp
 
 def resolve_frame_aperture_radii(apertures, annuli, adaptive_apertures=False, frame_sigma=np.nan,
                                  fallback_sigma=np.nan):
-    aperture_values = np.asarray(apertures, dtype=float)
-    annulus_values = np.asarray(annuli, dtype=float)
+    aperture_values = np.asarray(apertures, dtype=float).reshape(-1)
+    annulus_values = np.asarray(annuli, dtype=float).reshape(-1)
 
     if not adaptive_apertures:
         return aperture_values, annulus_values
@@ -19126,6 +19126,13 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
             'allow_high_error_catalog_reference': allow_high_error_catalog_reference,
         })
 
+    try:
+        lc_fit.stellar_variability_params = vsp_params
+        lc_fit.stellar_variability_target_name = s_name
+        lc_fit.stellar_variability_reference_label = display_label
+    except Exception:
+        pass
+
     plot_stellar_variability(vsp_params, save, s_name, display_label)
     return vsp_params
 
@@ -19289,7 +19296,12 @@ def derived_catalog_reference_for_selected_comp(fit_lc_refs, comp_stars, vsp_com
     if best_comp is None or best_comp not in fit_lc_refs:
         return None, None
 
-    selected_fit = fit_lc_refs[best_comp].get('myfit')
+    selected_ref = fit_lc_refs.get(best_comp)
+    if not isinstance(selected_ref, dict):
+        return None, None
+    selected_fit = selected_ref.get('myfit')
+    if selected_fit is None:
+        return None, None
     selected_pos = comp_stars[best_comp]
     selected_ra, selected_dec = None, None
     if comp_ra_dec is not None and best_comp < len(comp_ra_dec):
@@ -19326,7 +19338,14 @@ def derived_catalog_reference_for_selected_comp(fit_lc_refs, comp_stars, vsp_com
         ):
             continue
 
-        ratio = aligned_reference_curve_ratio(selected_fit, fit_lc_refs[anchor_index].get('myfit'))
+        anchor_ref = fit_lc_refs.get(anchor_index)
+        if not isinstance(anchor_ref, dict):
+            continue
+        anchor_fit = anchor_ref.get('myfit')
+        if anchor_fit is None:
+            continue
+
+        ratio = aligned_reference_curve_ratio(selected_fit, anchor_fit)
         if ratio.size == 0:
             continue
 
@@ -23745,16 +23764,20 @@ def apply_overexposure_masks_to_aperture_frame(aper_data, frame_index, target_ov
 def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan,
                                aperture_correction_factors=None, noise_config=None, exposure_s=np.nan,
                                airmass=np.nan, return_noise=False):
+    apertures = np.asarray(apertures, dtype=float).reshape(-1)
+    annuli = np.asarray(annuli, dtype=float).reshape(-1)
     flux_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
     bg_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
     noise_grids = empty_noise_budget_grids(flux_grid.shape) if return_noise else None
 
-    if np.isnan(xc) or np.isnan(yc):
+    if not (np.isfinite(xc) and np.isfinite(yc)):
         return (flux_grid, bg_grid, noise_grids) if return_noise else (flux_grid, bg_grid)
 
     mask_method = 'center' if fast_mode else 'exact'
 
     for a_idx, aperture_radius in enumerate(apertures):
+        if not np.isfinite(aperture_radius) or aperture_radius <= 0:
+            continue
         aperture = CircularAperture(positions=[(xc, yc)], r=float(aperture_radius))
         mask = aperture.to_mask(method=mask_method)[0]
         data_cutout = mask.cutout(data)
@@ -23766,6 +23789,8 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
             raw_aperture_sum = (mask.data * data_cutout).sum()
 
         for an_idx, annulus_width in enumerate(annuli):
+            if not np.isfinite(annulus_width) or annulus_width < 0:
+                continue
             stage_start = perf_counter()
             try:
                 if annulus_width > 0:
@@ -28355,6 +28380,13 @@ def _main_impl():
             exclusion = getattr(myfit, 'stellar_variability_transit_exclusion', {}) or {}
             duration = exclusion.get('duration_days', np.nan)
             durs = [duration] if np.isfinite(duration) else []
+            if vsp_params:
+                try:
+                    myfit.stellar_variability_params = vsp_params
+                    myfit.stellar_variability_target_name = pDict.get('sName', pDict.get('pName'))
+                    myfit.stellar_variability_reference_label = vsp_params[0].get('cname')
+                except Exception:
+                    pass
 
             plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
 
@@ -28649,6 +28681,14 @@ def _main_impl():
             tmask = data < 1
             durs.append(tmask.sum() * dt)
 
+        if vsp_params:
+            try:
+                myfit.stellar_variability_params = vsp_params
+                myfit.stellar_variability_target_name = pDict.get('sName', pDict.get('pName'))
+                myfit.stellar_variability_reference_label = vsp_params[0].get('cname')
+            except Exception:
+                pass
+
         plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
         plot_prior_posterior_comparison(myfit, pDict, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
         plot_ktmf_qc_metrics(myfit, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
@@ -28691,12 +28731,15 @@ def _main_impl():
         empirical_uncertainty = getattr(myfit, 'empirical_transit_uncertainty', None)
         if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
             empirical_uncertainty = fit_empirical_transit_uncertainty(myfit)
+        rprs_model_error = _finite_float(getattr(myfit, 'errors', {}).get('rprs', np.nan), default=np.nan)
+        rprs_prior_error = _finite_float(pDict.get('rprsUnc', np.nan), default=np.nan)
+        rprs_error_fallback = rprs_model_error if np.isfinite(rprs_model_error) else rprs_prior_error
         rprs_report_error = _finite_float(
             (empirical_uncertainty or {}).get('combined_rprs_uncertainty'),
-            default=myfit.errors['rprs'],
+            default=rprs_error_fallback,
         )
         if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
-            rprs_report_error = myfit.errors['rprs']
+            rprs_report_error = rprs_error_fallback
         tmid_report_error = fit_parameter_model_data_uncertainty(
             myfit,
             'tmid',

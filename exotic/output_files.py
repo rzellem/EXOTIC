@@ -10,6 +10,7 @@ try:
         format_magnitude_error,
         format_magnitude,
         magnitude_text,
+        normalized_magnitude_error,
         round_to_2,
         rounded_magnitude_error,
         rounded_magnitude_value,
@@ -21,6 +22,7 @@ except ImportError:
         format_magnitude_error,
         format_magnitude,
         magnitude_text,
+        normalized_magnitude_error,
         round_to_2,
         rounded_magnitude_error,
         rounded_magnitude_value,
@@ -98,6 +100,27 @@ def finite_float(value, default=np.nan):
     except (TypeError, ValueError):
         return default
     return value if np.isfinite(value) else default
+
+
+def apparent_magnitude_calibration_from_vsp_params(vsp_params):
+    rows = []
+    for vsp_p in vsp_params or []:
+        mag = finite_float(vsp_p.get('mag'))
+        mag_err = normalized_magnitude_error(vsp_p.get('mag_err'))
+        if not np.isfinite(mag) or mag_err is None:
+            continue
+        rows.append((mag, mag_err, vsp_p.get('mag_band') or 'V'))
+
+    if not rows:
+        return None
+
+    magnitudes = np.array([row[0] for row in rows], dtype=float)
+    magnitude_errors = np.array([row[1] for row in rows], dtype=float)
+    return {
+        'baseline_magnitude': float(np.nanmedian(magnitudes)),
+        'baseline_error': float(np.nanmedian(magnitude_errors)),
+        'band': rows[0][2],
+    }
 
 
 def aavso_json_safe(value):
@@ -1561,6 +1584,28 @@ def fit_parameter_model_data_uncertainty(fit, parameter_name, empirical_uncertai
     return float(model_error * empirical_red_noise_error_scale(empirical_uncertainty))
 
 
+def fit_rprs_report_error(fit, empirical_uncertainty=None):
+    if empirical_uncertainty is None:
+        empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
+    if not isinstance(empirical_uncertainty, dict):
+        empirical_uncertainty = {}
+
+    report_error = finite_float(empirical_uncertainty.get('combined_rprs_uncertainty'))
+    if np.isfinite(report_error) and report_error >= 0:
+        return report_error
+
+    errors = getattr(fit, 'errors', {}) or {}
+    report_error = finite_float(errors.get('rprs'))
+    if np.isfinite(report_error) and report_error >= 0:
+        return report_error
+
+    report_error = finite_float(getattr(fit, 'rprs_prior_fallback_data_uncertainty', np.nan))
+    if np.isfinite(report_error) and report_error >= 0:
+        return report_error
+
+    return np.nan
+
+
 def fit_impact_parameter_value_error(fit, errors_override=None):
     parameters = getattr(fit, 'parameters', {}) or {}
     errors = getattr(fit, 'errors', {}) or {}
@@ -1624,14 +1669,68 @@ class OutputFiles:
             extension="csv",
         )
 
+        if getattr(self.fit, 'stellar_variability_only', False):
+            vsp_params = getattr(self.fit, 'stellar_variability_params', None) or []
+            with params_file.open('w') as f:
+                target_name = self.p_dict.get('sName', self.p_dict['pName'])
+                f.write(f"# FINAL STELLAR VARIABILITY TIMESERIES OF {target_name}\n")
+                f.write("# BJD_TDB,Magnitude,Uncertainty,Band,Airmass\n")
+                for vsp_p in vsp_params:
+                    time_value = finite_float(vsp_p.get('time'))
+                    mag_value = format_magnitude(vsp_p.get('mag'), default=None)
+                    mag_error = format_magnitude_error(vsp_p.get('mag_err'), default=None)
+                    if not np.isfinite(time_value) or mag_value is None or mag_error is None:
+                        continue
+                    band = vsp_p.get('mag_band') or self.i_dict.get('filter') or 'V'
+                    airmass = finite_float(vsp_p.get('airmass'))
+                    airmass_text = f"{airmass}" if np.isfinite(airmass) else "na"
+                    f.write(f"{time_value}, {mag_value}, {mag_error}, {band}, {airmass_text}\n")
+            return
+
+        magnitude_calibration = apparent_magnitude_calibration_from_vsp_params(
+            getattr(self.fit, 'stellar_variability_params', None)
+        )
+
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
-            f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
+            if magnitude_calibration is None:
+                f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
+            else:
+                f.write(
+                    "# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass,"
+                    "Apparent Magnitude,Magnitude Uncertainty,Band\n"
+                )
 
             for bjd, phase, flux, fluxerr, model, am in zip(self.fit.time, phase, self.fit.detrended,
                                                             self.fit.dataerr / self.fit.airmass_model,
                                                             self.fit.transit, self.fit.airmass_model):
-                f.write(f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}\n")
+                row = f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}"
+                if magnitude_calibration is not None:
+                    flux_value = finite_float(flux)
+                    flux_error = finite_float(fluxerr)
+                    if np.isfinite(flux_value) and flux_value > 0:
+                        apparent_mag = (
+                            magnitude_calibration['baseline_magnitude']
+                            - (2.5 * np.log10(flux_value))
+                        )
+                        if np.isfinite(flux_error) and flux_error >= 0:
+                            flux_mag_error = abs(2.5 * flux_error / (flux_value * np.log(10)))
+                            apparent_mag_error = (
+                                magnitude_calibration['baseline_error'] ** 2
+                                + flux_mag_error ** 2
+                            ) ** 0.5
+                        else:
+                            apparent_mag_error = magnitude_calibration['baseline_error']
+                        mag_text = format_magnitude(apparent_mag, default="na")
+                        mag_error_text = format_magnitude_error(apparent_mag_error, default="na")
+                    else:
+                        mag_text = "na"
+                        mag_error_text = "na"
+                    row = (
+                        f"{row}, {mag_text}, {mag_error_text}, "
+                        f"{magnitude_calibration['band']}"
+                    )
+                f.write(f"{row}\n")
 
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
                                min_annul=None, adaptive_summary=None, photometry_info=None,
@@ -1747,9 +1846,12 @@ class OutputFiles:
                         qc_residual_scatter = float(abs(residuals.reshape(-1)[0]) / median_flux)
 
         headline_params = format_transit_qc_headline_final_params(transit_qc)
-        rprs_report_error = finite_float(empirical_uncertainty.get('combined_rprs_uncertainty'))
+        rprs_report_error = fit_rprs_report_error(
+            self.fit,
+            empirical_uncertainty=empirical_uncertainty,
+        )
         if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
-            rprs_report_error = self.fit.errors['rprs']
+            rprs_report_error = finite_float(self.p_dict.get('rprsUnc'))
         tmid_report_error = fit_parameter_model_data_uncertainty(
             self.fit,
             'tmid',
@@ -2065,6 +2167,9 @@ class OutputFiles:
         detrend_model = aavso_detrend_model(self.fit)
         qc_metadata = build_aavso_qc_metadata(self.fit)
         fit_quality_metadata = build_fit_quality_metadata(self.fit)
+        rprs_report_error = fit_rprs_report_error(self.fit)
+        if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
+            rprs_report_error = finite_float(self.p_dict.get('rprsUnc'))
         ktmf_decision_metadata = build_ktmf_decision_metadata(self.fit, photometry_info)
         photometry_metadata = build_aavso_photometry_metadata(photometry_info)
         aperture_metadata = build_aavso_aperture_metadata(photometry_info)
@@ -2124,7 +2229,7 @@ class OutputFiles:
                     f",u3={round_to_2(ld3[0], ld3[1])} +/- {round_to_2(ld3[1])}\n"
                     f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
                     f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
-                    f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
+                    f",Rp/R*={round_to_2(self.fit.parameters['rprs'], rprs_report_error)} +/- {round_to_2(rprs_report_error)}"
                     f",inc={round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- {round_to_2(self.fit.errors['inc'])}"
                     f",{aavso_airmass_terms[0][0]}={aavso_airmass_terms[0][1]} +/- {aavso_airmass_terms[0][2]}"
                     f",{aavso_airmass_terms[1][0]}={aavso_airmass_terms[1][1]} +/- {aavso_airmass_terms[1][2]}\n"
@@ -2223,6 +2328,9 @@ class AIDOutputFiles:
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     aavso_airmass_terms = aavso_airmass_results(fit)
+    rprs_report_error = fit_rprs_report_error(fit)
+    if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
+        rprs_report_error = finite_float(planet_dict.get('rprsUnc'))
     priors = {
         'Period': {
             'value': str(round_to_2(planet_dict['pPer'], planet_dict['pPerUnc'])),
@@ -2286,8 +2394,8 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
             'units': "BJD_TDB"
         },
         'Rp/R*': {
-            'value': str(round_to_2(fit.parameters['rprs'], fit.errors['rprs'])),
-            'uncertainty': str(round_to_2(fit.errors['rprs']))
+            'value': str(round_to_2(fit.parameters['rprs'], rprs_report_error)),
+            'uncertainty': str(round_to_2(rprs_report_error))
         },
         'inc': {
             'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),

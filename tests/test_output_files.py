@@ -11,6 +11,7 @@ from exotic.output_files import (
     PRIOR_OBSERVABLE_DEPTH_LABEL,
     AIDOutputFiles,
     OutputFiles,
+    aavso_dicts,
     fit_empirical_transit_uncertainty,
     fit_impact_parameter_value_error,
     save_comp_star_calibration_summary,
@@ -164,6 +165,65 @@ def test_final_params_writes_stellar_variability_only_payload(tmp_path):
     assert params["Stellar Variability Reference Star"] == "#2 - [10, 20]"
     assert params["Optimal Method"] == "PSF photometry"
     assert root_file.exists()
+
+
+def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
+    (tmp_path / "temp").mkdir()
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        stellar_variability_params=[
+            {
+                "time": 2461229.89899,
+                "mag": 13.7378,
+                "mag_err": 0.0042,
+                "mag_band": "r",
+                "airmass": 1.193135,
+            },
+            {
+                "time": 2461229.90109,
+                "mag": 13.7401,
+                "mag_err": 0.0044,
+                "mag_band": "r",
+                "airmass": 1.1984942,
+            },
+        ],
+    )
+    p_dict = {'pName': 'WASP-194 b', 'sName': 'WASP-194'}
+    i_dict = {'save': str(tmp_path), 'date': '2026-07-08', 'filter': 'SR'}
+
+    OutputFiles(fit, p_dict, i_dict, []).final_lightcurve(np.array([]))
+
+    output_text = next((tmp_path / "temp").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
+
+    assert "# FINAL STELLAR VARIABILITY TIMESERIES OF WASP-194" in output_text
+    assert "# BJD_TDB,Magnitude,Uncertainty,Band,Airmass" in output_text
+    assert "2461229.89899, 13.738, 0.004, r, 1.193135" in output_text
+    assert "Flux" not in output_text
+
+
+def test_final_lightcurve_adds_transit_apparent_magnitude_columns_when_calibrated(tmp_path):
+    (tmp_path / "temp").mkdir()
+    fit = SimpleNamespace(
+        time=np.array([2461229.9, 2461229.91]),
+        detrended=np.array([1.0, 0.99]),
+        dataerr=np.array([0.001, 0.001]),
+        airmass_model=np.ones(2),
+        transit=np.array([1.0, 0.99]),
+        stellar_variability_params=[
+            {"time": 2461229.9, "mag": 13.739, "mag_err": 0.001, "mag_band": "r"},
+            {"time": 2461229.91, "mag": 13.741, "mag_err": 0.002, "mag_band": "r"},
+        ],
+    )
+    p_dict = {'pName': 'WASP-194 b', 'sName': 'WASP-194'}
+    i_dict = {'save': str(tmp_path), 'date': '2026-07-08', 'filter': 'SR'}
+
+    OutputFiles(fit, p_dict, i_dict, []).final_lightcurve(np.array([0.1, 0.2]))
+
+    output_text = next((tmp_path / "temp").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
+
+    assert "Apparent Magnitude,Magnitude Uncertainty,Band" in output_text
+    assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, 13.740" in output_text
+    assert output_text.rstrip().endswith(", r")
 
 
 def aavso_json_header(output_text, header_name):
@@ -581,6 +641,59 @@ def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path
     assert "RA=10.1000000" in reference
     assert "Dec=-20.2000000" in reference
     assert "V=12.345 +/- 0.067" in reference
+
+
+def test_transit_outputs_use_rprs_fallback_uncertainty_when_model_error_missing(tmp_path):
+    fit = DummyFit()
+    fit.errors.pop("rprs")
+    fit.rprs_prior_fallback_applied = True
+    fit.rprs_prior_fallback_data_uncertainty = 0.005
+    fit.rprs_prior_fallback_note = "Rp/R* fixed to prior."
+    (tmp_path / "temp").mkdir()
+
+    p_dict = {
+        "pName": "HAT-P-32 b",
+        "pPer": 2.15,
+        "pPerUnc": 0.001,
+        "rprs": 0.1,
+        "rprsUnc": 0.001,
+        "aRs": 12.0,
+        "aRsUnc": 0.4,
+        "inc": 88.5,
+        "incUnc": 0.2,
+        "ecc": 0.0,
+    }
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "filter": "V",
+        "filter_desc": "Johnson V",
+        "wl_min": None,
+        "wl_max": None,
+    }
+
+    OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+    final_params = json.loads(
+        (tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json").read_text(encoding="utf-8")
+    )["FINAL PLANETARY PARAMETERS"]
+
+    assert "0.005" in final_params["Ratio of Planet to Stellar Radius (Rp/R*)"]
+
+    _, _, results = aavso_dicts(
+        p_dict,
+        fit,
+        i_dict,
+        [0.1],
+        (0.1, 0.01),
+        (0.2, 0.02),
+        (0.3, 0.03),
+        (0.4, 0.04),
+    )
+
+    assert results["Rp/R*"]["uncertainty"] == "0.005"
 
 
 def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp_path):

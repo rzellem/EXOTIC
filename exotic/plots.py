@@ -649,6 +649,71 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     plt.close(fig)
 
 
+def _stellar_variability_magnitude_series(vsp_params):
+    rows = []
+    for vsp_p in vsp_params or []:
+        time_value = _finite_plot_float(vsp_p.get('time'))
+        mag_value = _finite_plot_float(vsp_p.get('mag'))
+        mag_err = normalized_magnitude_error(vsp_p.get('mag_err'))
+        if (
+            time_value is None
+            or mag_value is None
+            or mag_err is None
+            or not is_usable_apparent_magnitude(mag_value)
+        ):
+            continue
+        rows.append((time_value, mag_value, mag_err, vsp_p))
+
+    if not rows:
+        return None
+
+    rows.sort(key=lambda row: row[0])
+    times = np.array([row[0] for row in rows], dtype=float)
+    magnitudes = np.array([row[1] for row in rows], dtype=float)
+    magnitude_errors = np.array([row[2] for row in rows], dtype=float)
+    return times, magnitudes, magnitude_errors, rows[0][3]
+
+
+def _stellar_variability_apparent_magnitude_calibration(fit):
+    series = _stellar_variability_magnitude_series(
+        getattr(fit, 'stellar_variability_params', None)
+    )
+    if series is None:
+        return None
+    _, magnitudes, _, first_param = series
+    finite = np.isfinite(magnitudes)
+    if not np.any(finite):
+        return None
+    return {
+        'baseline_magnitude': float(np.nanmedian(magnitudes[finite])),
+        'band': first_param.get('mag_band') or 'V',
+    }
+
+
+def _add_apparent_magnitude_axis(ax_lc, fit):
+    calibration = _stellar_variability_apparent_magnitude_calibration(fit)
+    if calibration is None:
+        return False
+    baseline_magnitude = calibration['baseline_magnitude']
+
+    def flux_to_magnitude(flux):
+        flux = np.asarray(flux, dtype=float)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            return baseline_magnitude - (2.5 * np.log10(flux))
+
+    def magnitude_to_flux(magnitude):
+        magnitude = np.asarray(magnitude, dtype=float)
+        with np.errstate(over='ignore', invalid='ignore'):
+            return 10 ** ((baseline_magnitude - magnitude) / 2.5)
+
+    secondary_axis = ax_lc.secondary_yaxis(
+        'right',
+        functions=(flux_to_magnitude, magnitude_to_flux),
+    )
+    secondary_axis.set_ylabel(f"Apparent Magnitude ({calibration['band']})")
+    return True
+
+
 # Observation statistics series selection
 def _select_plot_rows(rows, sort_index=None, sigma_mask=None, relative_flux_mask=None):
     rows = np.asarray(rows)
@@ -923,69 +988,37 @@ def _plot_final_residual_rejected_points(ax_lc, ax_res, fit):
 
 def plot_final_lightcurve(fit, high_res, targ_name, save, date):
     if getattr(fit, 'stellar_variability_only', False):
-        flux = np.asarray(getattr(fit, 'detrended', getattr(fit, 'data', [])), dtype=float)
-        flux_err = np.asarray(getattr(fit, 'detrendederr', getattr(fit, 'dataerr', [])), dtype=float)
-        obs_time = np.asarray(getattr(fit, 'time', []), dtype=float)
-        if obs_time.shape != flux.shape:
-            obs_time = np.arange(flux.shape[0], dtype=float)
-        finite = np.isfinite(obs_time) & np.isfinite(flux)
-        if flux_err.shape != flux.shape:
-            flux_err = np.full(flux.shape, np.nan, dtype=float)
-        if np.any(finite):
-            time_offset = float(np.nanmin(obs_time[finite]))
-            plot_time = obs_time - time_offset
-            x_label = f"Time [BJD_TDB - {time_offset:.5f}]"
-        else:
-            time_offset = 0.0
-            plot_time = obs_time
-            x_label = "Point index"
-
-        f, (ax_lc, ax_res) = plt.subplots(
-            2,
-            1,
-            figsize=(10, 7),
-            sharex=True,
-            gridspec_kw={'height_ratios': [3, 1]},
+        series = _stellar_variability_magnitude_series(
+            getattr(fit, 'stellar_variability_params', None)
         )
-        ax_lc.set_title(targ_name)
+        if series is None:
+            return
+
+        obs_time, magnitudes, magnitude_errors, first_param = series
+        f, ax_lc = plt.subplots(figsize=(8, 5))
+        title_name = getattr(fit, 'stellar_variability_target_name', targ_name)
+        title_lines = [title_name]
+        reference_label = _stellar_variability_reference_label(
+            first_param,
+            getattr(fit, 'stellar_variability_reference_label', first_param.get('cname')),
+        )
+        if reference_label:
+            title_lines.append(reference_label)
+        metadata_label = _stellar_variability_comparison_metadata_label(first_param)
+        if metadata_label:
+            title_lines.append(metadata_label)
+
+        ax_lc.set_title("\n".join(title_lines), fontsize=11)
         ax_lc.errorbar(
-            plot_time[finite],
-            flux[finite],
-            yerr=flux_err[finite],
-            fmt='ko',
-            ms=4,
-            elinewidth=1,
-            alpha=0.85,
-            label="Out-of-transit target/reference flux",
+            obs_time,
+            magnitudes,
+            yerr=magnitude_errors,
+            color="tomato",
+            fmt='.',
         )
-        if hasattr(fit, 'time_upsample') and hasattr(fit, 'transit_upsample'):
-            model_time = np.asarray(fit.time_upsample, dtype=float) - time_offset
-            model_flux = np.asarray(fit.transit_upsample, dtype=float)
-        elif np.any(finite):
-            model_time = np.linspace(np.nanmin(plot_time[finite]), np.nanmax(plot_time[finite]), 1000)
-            model_flux = np.ones(model_time.shape, dtype=float)
-        else:
-            model_time = np.array([], dtype=float)
-            model_flux = np.array([], dtype=float)
-        if model_time.size and model_flux.size:
-            model_order = np.argsort(model_time)
-            ax_lc.plot(model_time[model_order], model_flux[model_order], 'r', lw=2, label="Flat reference")
-        ax_lc.set_ylabel("Normalized Flux")
-        ax_lc.legend(loc='best')
-
-        residual_percent = (flux - 1.0) * 100.0
-        ax_res.axhline(0.0, color='r', lw=1.5)
-        ax_res.errorbar(
-            plot_time[finite],
-            residual_percent[finite],
-            yerr=flux_err[finite] * 100.0,
-            fmt='ko',
-            ms=4,
-            elinewidth=1,
-            alpha=0.85,
-        )
-        ax_res.set_xlabel(x_label)
-        ax_res.set_ylabel("O-C [%]")
+        band = first_param.get('mag_band') or 'V'
+        ax_lc.set_ylabel(f"Magnitude ({band})")
+        ax_lc.set_xlabel("Time [BJD_TDB]")
         f.tight_layout()
 
         Path(save).mkdir(parents=True, exist_ok=True)
@@ -1022,6 +1055,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
     _plot_final_residual_rejected_points(ax_lc, ax_res, fit)
     if drew_data_scatter_band:
         ax_lc.legend(loc='best')
+    _add_apparent_magnitude_axis(ax_lc, fit)
 
     Path(save).mkdir(parents=True, exist_ok=True)
     try:

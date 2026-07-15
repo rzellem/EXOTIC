@@ -10,6 +10,7 @@ from matplotlib.axes import Axes
 
 from exotic.plots import (
     _format_parameter_value,
+    _short_ktmf_label,
     plot_fov,
     plot_adaptive_aperture_diagnostics,
     plot_comp_star_candidate_lightcurve_fits,
@@ -785,3 +786,7 @@ def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypat
     assert any("0.11 / 0.89" in text for text in captured_text)
     assert not any("2.00" in text for text in captured_text)
     assert not any("2.3437" in text for text in captured_text)
+
+
+def test_ktmf_plot_shortens_tmid_posterior_gaussianity_label():
+    assert _short_ktmf_label("Tmid Posterior Gaussianity") == "Tmid Gaussianity"

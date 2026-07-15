@@ -115,6 +115,7 @@ from exotic.exotic import (
     transit_qc_residual_scatter_score,
     transit_qc_residual_flatness_summary,
     transit_qc_sampling_summary,
+    transit_qc_tmid_gaussianity_summary,
     apply_comparison_star_suitability_outlier_rejection,
     comparison_calibration_selection_reason,
     comparison_candidate_triangle_plot_output_path,
@@ -2434,6 +2435,9 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
         "residual_scatter_to_depth_ratio": 0.5,
         "residual_flatness_score": 0.5,
         "residual_flatness_detail": "curve=0.50",
+        "tmid_gaussianity_score": 0.8,
+        "tmid_gaussianity_score_uncertainty": 0.04,
+        "tmid_gaussianity_detail": "strongly Gaussian-like",
         "rprs_sigma": 6.0,
         "duration_ratio": 1.0,
         "eebls_depth_snr": 8.0,
@@ -2445,10 +2449,12 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
     assert "Model Evidence" not in contributions_by_label
     assert "Delta BIC" not in contributions_by_label
     assert "Delta chi2" not in contributions_by_label
-    scale = 5.0 / (2.0 + 0.7 + 1.0 + 0.75 + 1.3)
+    scale = 5.0 / (2.0 + 0.7 + 1.0 + 1.0 + 0.75 + 1.3)
     assert contributions_by_label["Deviation From Expected Value"]["max_points"] == pytest.approx(2.0 * scale)
     assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7 * scale)
     assert contributions_by_label["Residual Flatness"]["max_points"] == pytest.approx(1.0 * scale)
+    assert contributions_by_label["Tmid Posterior Gaussianity"]["max_points"] == pytest.approx(1.0 * scale)
+    assert contributions_by_label["Tmid Posterior Gaussianity"]["score_uncertainty"] == pytest.approx(0.04)
     assert "Rp/R* Significance" not in contributions_by_label
     assert contributions_by_label["Duration Consistency"]["max_points"] == pytest.approx(0.75 * scale)
     assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(1.3 * scale)
@@ -2460,10 +2466,75 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
         2.0 * 0.6
         + 0.7 * 1.0
         + 1.0 * 0.5
+        + 1.0 * 0.8
         + 0.75 * 1.0
         + 1.3 * (1.0 - np.exp(-2.0))
     )
     assert ktmf_metric == pytest.approx(expected_ktmf)
+
+
+class _TmidPosteriorFit:
+    def __init__(self, values, weights=None, sampled_keys=("tmid",)):
+        self.values = np.asarray(values, dtype=float)
+        self.weights = None if weights is None else np.asarray(weights, dtype=float)
+        self.sampled_keys = list(sampled_keys)
+        self.bounds = {"tmid": [float(np.min(self.values)), float(np.max(self.values))]}
+
+    def _get_triangle_plot_samples(self):
+        return self.values[:, np.newaxis], np.zeros(self.values.size), self.weights
+
+
+def test_tmid_posterior_gaussianity_distinguishes_gaussian_flat_skewed_and_multimodal_shapes():
+    rng = np.random.default_rng(20260715)
+    center = 2460835.82621
+    gaussian_values = center + rng.normal(0.0, 0.0015, 5000)
+    flat_values = np.linspace(center - 0.006, center + 0.006, 5000)
+    skewed_values = center + 0.002 * (rng.lognormal(-1.0, 0.5, 5000) - 0.42)
+    multimodal_values = center + np.concatenate([
+        rng.normal(-0.003, 0.0005, 2500),
+        rng.normal(0.003, 0.0005, 2500),
+    ])
+
+    gaussian = transit_qc_tmid_gaussianity_summary(_TmidPosteriorFit(gaussian_values))
+    flat = transit_qc_tmid_gaussianity_summary(_TmidPosteriorFit(flat_values))
+    skewed = transit_qc_tmid_gaussianity_summary(_TmidPosteriorFit(skewed_values))
+    multimodal = transit_qc_tmid_gaussianity_summary(_TmidPosteriorFit(multimodal_values))
+
+    assert gaussian["available"] is True
+    assert gaussian["score"] > 0.90
+    assert np.isfinite(gaussian["score_uncertainty"])
+    assert "strongly Gaussian-like" in gaussian["detail"]
+    assert flat["score"] < 0.05
+    assert skewed["score"] < 0.60
+    assert multimodal["score"] < 0.20
+
+
+def test_tmid_posterior_gaussianity_uses_ultranest_sample_weights():
+    rng = np.random.default_rng(717)
+    center = 2460835.82621
+    flat_values = np.linspace(center - 0.01, center + 0.01, 6000)
+    gaussian_values = center + rng.normal(0.0, 0.001, 2500)
+    values = np.concatenate([flat_values, gaussian_values])
+    weights = np.concatenate([
+        np.full(flat_values.size, 1e-8),
+        np.ones(gaussian_values.size),
+    ])
+
+    summary = transit_qc_tmid_gaussianity_summary(_TmidPosteriorFit(values, weights=weights))
+
+    assert summary["available"] is True
+    assert summary["effective_sample_count"] == pytest.approx(2500.0, rel=1e-4)
+    assert summary["score"] > 0.85
+
+
+def test_tmid_posterior_gaussianity_is_unavailable_when_tmid_was_fixed():
+    summary = transit_qc_tmid_gaussianity_summary(
+        _TmidPosteriorFit(np.linspace(0.0, 1.0, 500), sampled_keys=())
+    )
+
+    assert summary["available"] is False
+    assert not np.isfinite(summary["score"])
+    assert "fixed rather than sampled" in summary["detail"]
 
 
 def test_transit_qc_residual_scatter_score_full_credit_floor_and_zero_ceiling():
@@ -2634,7 +2705,7 @@ def test_compute_transit_qc_ktmf_omits_prior_assumed_rprs_component():
     assert ktmf_metric == pytest.approx(expected_ktmf)
 
 
-def test_compute_transit_qc_ktmf_uses_only_residual_and_eebls_for_prior_assumed_geometry():
+def test_compute_transit_qc_ktmf_adds_tmid_gaussianity_for_prior_assumed_geometry():
     summary = {
         "geometry_prior_assumed": True,
         "geometry_prior_assumed_note": "Transit geometry was fixed to priors.",
@@ -2647,6 +2718,9 @@ def test_compute_transit_qc_ktmf_uses_only_residual_and_eebls_for_prior_assumed_
         "sampling_score": 1.0,
         "sampling_detail": "ingress=4, egress=4",
         "eebls_depth_snr": 8.0,
+        "tmid_gaussianity_score": 0.75,
+        "tmid_gaussianity_score_uncertainty": 0.05,
+        "tmid_gaussianity_detail": "broadly Gaussian-like",
     }
 
     ktmf_metric, contributions = compute_transit_qc_ktmf(summary)
@@ -2657,12 +2731,15 @@ def test_compute_transit_qc_ktmf_uses_only_residual_and_eebls_for_prior_assumed_
     assert contributions_by_label["Sampling / Cadence"]["available"] is False
     assert "fixed to priors" in contributions_by_label["Duration Consistency"]["detail"]
 
-    scale = 5.0 / (0.7 + 1.3)
+    scale = 5.0 / (0.7 + 1.0 + 1.3)
     assert contributions_by_label["Residual Scatter Around Full Model Fit"]["max_points"] == pytest.approx(0.7 * scale)
+    assert contributions_by_label["Tmid Posterior Gaussianity"]["max_points"] == pytest.approx(1.0 * scale)
+    assert contributions_by_label["Tmid Posterior Gaussianity"]["score"] == pytest.approx(0.75)
     assert contributions_by_label["EEBLS Depth SNR"]["max_points"] == pytest.approx(1.3 * scale)
 
     expected_ktmf = scale * (
         0.7 * 1.0
+        + 1.0 * 0.75
         + 1.3 * (1.0 - np.exp(-2.0))
     )
     assert ktmf_metric == pytest.approx(expected_ktmf)

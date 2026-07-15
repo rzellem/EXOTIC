@@ -12,6 +12,7 @@ from exotic.output_files import (
     AIDOutputFiles,
     OutputFiles,
     aavso_dicts,
+    build_aavso_qc_metadata,
     fit_empirical_transit_uncertainty,
     fit_impact_parameter_value_error,
     save_comp_star_calibration_summary,
@@ -1238,6 +1239,10 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
         "ktmf_metric": 4.63,
         "delta_bic": 18.4,
         "delta_chi2": 27.1,
+        "tmid_gaussianity_score": 0.94,
+        "tmid_gaussianity_score_uncertainty": 0.03,
+        "tmid_gaussianity_effective_sample_count": 1840.0,
+        "tmid_gaussianity_detail": "strongly Gaussian-like",
         "ktmf_contributions": [
             {
                 "label": "EEBLS Depth SNR",
@@ -1246,7 +1251,16 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
                 "max_points": 0.80,
                 "score": 0.93,
                 "detail": "5.80",
-            }
+            },
+            {
+                "label": "Tmid Posterior Gaussianity",
+                "available": True,
+                "points": 0.94,
+                "max_points": 1.00,
+                "score": 0.94,
+                "score_uncertainty": 0.03,
+                "detail": "strongly Gaussian-like",
+            },
         ],
     }
     (tmp_path / "temp").mkdir()
@@ -1321,6 +1335,12 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
     assert "Comp 1" in final_params["KTMF comparison candidate 1"]
     assert "not selected: KTMF" in final_params["KTMF comparison candidate 1"]
     assert "Residual Scatter Around Full Model Fit" in final_params["KTMF selected comparison contribution 1"]
+    assert "Tmid Posterior Gaussianity" in final_params["KTMF target contribution 2"]
+
+    qc_metadata = build_aavso_qc_metadata(fit)
+    assert qc_metadata["tmid_gaussianity_score"] == pytest.approx(0.94)
+    assert qc_metadata["tmid_gaussianity_score_uncertainty"] == pytest.approx(0.03)
+    assert qc_metadata["tmid_gaussianity_effective_sample_count"] == pytest.approx(1840.0)
 
 
 def test_final_planetary_params_reports_absolute_fit_quality(tmp_path):

@@ -107,6 +107,7 @@ import requests
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion, gaussian_filter, label as ndimage_label, maximum_filter, median_filter
+from scipy.special import ndtri
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
@@ -443,10 +444,14 @@ TRANSIT_QC_DEFAULT_A2_BOUNDS = (-3.0, 3.0)
 TRANSIT_QC_USE_DEVIATION_FROM_EXPECTED_DEFAULT = True
 TRANSIT_QC_DEVIATION_SIGMA_DEFAULT = 5.0
 TRANSIT_QC_RPRS_DEVIATION_SYSTEMATIC_FLOOR_FRACTION = 0.05
+TRANSIT_QC_TMID_GAUSSIANITY_MIN_EFFECTIVE_SAMPLES = 200
+TRANSIT_QC_TMID_GAUSSIANITY_BOOTSTRAP_DRAWS = 48
+TRANSIT_QC_TMID_GAUSSIANITY_BOOTSTRAP_MAX_SAMPLES = 2000
 TRANSIT_QC_KTMF_COMPONENT_MAX_POINTS = {
     'deviation_from_expected_value': 2.0,
     'residual_scatter': 0.7,
     'residual_flatness': 1.0,
+    'tmid_gaussianity': 1.0,
     'duration_consistency': 0.75,
     'eebls_depth_snr': 1.3,
     'sampling': 0.7,
@@ -2030,6 +2035,179 @@ def evaluate_transit_qc_expected_value_deviation(fit, sigma_threshold, enabled=T
     return summary
 
 
+def _transit_qc_weighted_quantiles(values, probabilities, weights=None):
+    values = np.asarray(values, dtype=float).reshape(-1)
+    probabilities = np.asarray(probabilities, dtype=float)
+    finite_mask = np.isfinite(values)
+
+    finite_weights = None
+    if weights is not None:
+        weights = np.asarray(weights, dtype=float).reshape(-1)
+        if weights.shape == values.shape:
+            finite_mask &= np.isfinite(weights) & (weights >= 0)
+            finite_weights = weights[finite_mask]
+            if finite_weights.size == 0 or np.sum(finite_weights) <= 0:
+                finite_weights = None
+
+    finite_values = values[finite_mask]
+    if finite_values.size == 0:
+        return np.full(probabilities.shape, np.nan, dtype=float)
+    if finite_weights is None:
+        return np.nanpercentile(finite_values, 100.0 * probabilities)
+
+    order = np.argsort(finite_values)
+    sorted_values = finite_values[order]
+    sorted_weights = finite_weights[order]
+    cumulative = np.cumsum(sorted_weights)
+    total = cumulative[-1]
+    if not np.isfinite(total) or total <= 0:
+        return np.nanpercentile(finite_values, 100.0 * probabilities)
+
+    cumulative = (cumulative - 0.5 * sorted_weights) / total
+    cumulative = np.clip(cumulative, 0.0, 1.0)
+    return np.interp(probabilities, cumulative, sorted_values)
+
+
+def _transit_qc_tmid_gaussianity_shape(values, weights=None):
+    probabilities = np.linspace(0.02, 0.98, 49)
+    posterior_quantiles = _transit_qc_weighted_quantiles(values, probabilities, weights)
+    q16, q50, q84 = _transit_qc_weighted_quantiles(values, [0.16, 0.50, 0.84], weights)
+    robust_sigma = float((q84 - q16) / 2.0)
+    minimum_scale = np.finfo(float).eps * max(1.0, abs(float(q50)))
+    if (
+        not np.all(np.isfinite(posterior_quantiles))
+        or not np.isfinite(q50)
+        or not np.isfinite(robust_sigma)
+        or robust_sigma <= minimum_scale
+    ):
+        return np.nan, np.nan, np.nan, robust_sigma
+
+    standardized_quantiles = (posterior_quantiles - q50) / robust_sigma
+    gaussian_template = ndtri(probabilities)
+    # A uniform distribution has q84-q16 = 0.68 of its full width, so its
+    # robust sigma is 0.34 of that width after applying the same scaling.
+    flat_template = (probabilities - 0.5) / 0.34
+    gaussian_distance = float(np.mean((standardized_quantiles - gaussian_template) ** 2))
+    flat_distance = float(np.mean((standardized_quantiles - flat_template) ** 2))
+
+    if not np.isfinite(gaussian_distance) or not np.isfinite(flat_distance):
+        return np.nan, gaussian_distance, flat_distance, robust_sigma
+    if flat_distance <= np.finfo(float).eps:
+        score = 0.0
+    else:
+        score = float(np.clip(1.0 - gaussian_distance / flat_distance, 0.0, 1.0))
+    return score, gaussian_distance, flat_distance, robust_sigma
+
+
+def transit_qc_tmid_gaussianity_summary(fit):
+    summary = {
+        'available': False,
+        'score': np.nan,
+        'score_uncertainty': np.nan,
+        'gaussian_distance': np.nan,
+        'flat_distance': np.nan,
+        'effective_sample_count': 0.0,
+        'sample_count': 0,
+        'robust_sigma': np.nan,
+        'detail': 'Tmid posterior Gaussianity is unavailable.',
+    }
+    if fit is None:
+        return summary
+
+    sampled_keys = getattr(fit, 'sampled_keys', None)
+    if sampled_keys is not None and 'tmid' not in list(sampled_keys):
+        summary['detail'] = 'Tmid was fixed rather than sampled; posterior Gaussianity is not scored.'
+        return summary
+
+    sample_matrix, sample_weights = _fit_posterior_sample_matrix(fit, ['tmid'])
+    if sample_matrix.size == 0 or sample_matrix.shape[0] == 0:
+        summary['detail'] = 'Weighted Tmid posterior samples are unavailable.'
+        return summary
+
+    values = np.asarray(sample_matrix[:, 0], dtype=float).reshape(-1)
+    finite_mask = np.isfinite(values)
+    parameter_weights = None
+    if sample_weights is not None:
+        sample_weights = np.asarray(sample_weights, dtype=float).reshape(-1)
+        if sample_weights.shape == values.shape:
+            finite_mask &= np.isfinite(sample_weights) & (sample_weights >= 0)
+            parameter_weights = sample_weights[finite_mask]
+            if parameter_weights.size == 0 or np.sum(parameter_weights) <= 0:
+                parameter_weights = None
+
+    values = values[finite_mask]
+    sample_count = int(values.size)
+    effective_sample_count = _effective_sample_count(parameter_weights, sample_count)
+    summary['sample_count'] = sample_count
+    summary['effective_sample_count'] = float(effective_sample_count)
+    if sample_count < 2:
+        summary['detail'] = 'Too few finite Tmid posterior samples to assess Gaussianity.'
+        return summary
+    if effective_sample_count < TRANSIT_QC_TMID_GAUSSIANITY_MIN_EFFECTIVE_SAMPLES:
+        summary['detail'] = (
+            'Tmid posterior Gaussianity is not scored because effective samples '
+            f'{effective_sample_count:.0f} < {TRANSIT_QC_TMID_GAUSSIANITY_MIN_EFFECTIVE_SAMPLES}.'
+        )
+        return summary
+
+    score, gaussian_distance, flat_distance, robust_sigma = _transit_qc_tmid_gaussianity_shape(
+        values,
+        parameter_weights,
+    )
+    summary.update({
+        'score': score,
+        'gaussian_distance': gaussian_distance,
+        'flat_distance': flat_distance,
+        'robust_sigma': robust_sigma,
+    })
+    if not np.isfinite(score):
+        summary['detail'] = 'Tmid posterior Gaussianity is unavailable because its robust width is degenerate.'
+        return summary
+
+    bootstrap_size = int(np.clip(
+        round(effective_sample_count),
+        TRANSIT_QC_TMID_GAUSSIANITY_MIN_EFFECTIVE_SAMPLES,
+        TRANSIT_QC_TMID_GAUSSIANITY_BOOTSTRAP_MAX_SAMPLES,
+    ))
+    choice_probabilities = None
+    if parameter_weights is not None:
+        choice_probabilities = parameter_weights / np.sum(parameter_weights)
+    rng = np.random.default_rng(24601)
+    bootstrap_indices = rng.choice(
+        sample_count,
+        size=(TRANSIT_QC_TMID_GAUSSIANITY_BOOTSTRAP_DRAWS, bootstrap_size),
+        replace=True,
+        p=choice_probabilities,
+    )
+    bootstrap_scores = []
+    for indices in bootstrap_indices:
+        bootstrap_score, _, _, _ = _transit_qc_tmid_gaussianity_shape(values[indices])
+        if np.isfinite(bootstrap_score):
+            bootstrap_scores.append(float(bootstrap_score))
+    if len(bootstrap_scores) > 1:
+        summary['score_uncertainty'] = float(np.std(bootstrap_scores, ddof=1))
+
+    if score >= 0.85:
+        interpretation = 'strongly Gaussian-like'
+    elif score >= 0.60:
+        interpretation = 'broadly Gaussian-like'
+    elif score >= 0.20:
+        interpretation = 'weakly Gaussian-like'
+    else:
+        interpretation = 'flat-like or strongly non-Gaussian'
+    uncertainty = summary['score_uncertainty']
+    uncertainty_text = f' +/- {uncertainty:.2f}' if np.isfinite(uncertainty) else ''
+    summary.update({
+        'available': True,
+        'detail': (
+            f'{interpretation}; weighted-quantile score={score:.2f}{uncertainty_text}, '
+            f'effective samples={effective_sample_count:.0f}, '
+            f'Gaussian mismatch={gaussian_distance:.4f}, flat mismatch={flat_distance:.4f}'
+        ),
+    })
+    return summary
+
+
 def compute_transit_qc_ktmf(summary):
     if not isinstance(summary, dict):
         return np.nan, []
@@ -2089,6 +2267,12 @@ def compute_transit_qc_ktmf(summary):
     )
     residual_flatness_score = summary.get('residual_flatness_score', np.nan)
     residual_flatness_detail = summary.get('residual_flatness_detail') or "n/a"
+    tmid_gaussianity_score = summary.get('tmid_gaussianity_score', np.nan)
+    tmid_gaussianity_score_uncertainty = summary.get('tmid_gaussianity_score_uncertainty', np.nan)
+    tmid_gaussianity_detail = (
+        summary.get('tmid_gaussianity_detail')
+        or "Tmid posterior Gaussianity is unavailable."
+    )
     residual_scatter_score_uncertainty = np.nan
     point_count = summary.get('point_count', np.nan)
     if (
@@ -2180,6 +2364,13 @@ def compute_transit_qc_ktmf(summary):
             'score': residual_flatness_score,
             'score_uncertainty': np.nan,
             'detail': residual_flatness_detail,
+        },
+        {
+            'key': 'tmid_gaussianity',
+            'label': 'Tmid Posterior Gaussianity',
+            'score': tmid_gaussianity_score,
+            'score_uncertainty': tmid_gaussianity_score_uncertainty,
+            'detail': tmid_gaussianity_detail,
         },
         {
             'key': 'duration_consistency',
@@ -2450,6 +2641,14 @@ def evaluate_transit_detection_qc(fit):
         'residual_flatness_scatter_stability_score': np.nan,
         'residual_flatness_dominant_metric': None,
         'residual_flatness_detail': None,
+        'tmid_gaussianity_score': np.nan,
+        'tmid_gaussianity_score_uncertainty': np.nan,
+        'tmid_gaussianity_gaussian_distance': np.nan,
+        'tmid_gaussianity_flat_distance': np.nan,
+        'tmid_gaussianity_effective_sample_count': 0.0,
+        'tmid_gaussianity_sample_count': 0,
+        'tmid_gaussianity_robust_sigma': np.nan,
+        'tmid_gaussianity_detail': None,
         'sampling_score': np.nan,
         'sampling_detail': None,
         'sampling_ingress_count': 0,
@@ -2667,6 +2866,17 @@ def evaluate_transit_detection_qc(fit):
         'sampling_total_duration': sampling_summary.get('total_duration', np.nan),
         'sampling_ingress_duration': sampling_summary.get('ingress_duration', np.nan),
     })
+    tmid_gaussianity = transit_qc_tmid_gaussianity_summary(fit)
+    summary.update({
+        'tmid_gaussianity_score': tmid_gaussianity.get('score', np.nan),
+        'tmid_gaussianity_score_uncertainty': tmid_gaussianity.get('score_uncertainty', np.nan),
+        'tmid_gaussianity_gaussian_distance': tmid_gaussianity.get('gaussian_distance', np.nan),
+        'tmid_gaussianity_flat_distance': tmid_gaussianity.get('flat_distance', np.nan),
+        'tmid_gaussianity_effective_sample_count': tmid_gaussianity.get('effective_sample_count', 0.0),
+        'tmid_gaussianity_sample_count': tmid_gaussianity.get('sample_count', 0),
+        'tmid_gaussianity_robust_sigma': tmid_gaussianity.get('robust_sigma', np.nan),
+        'tmid_gaussianity_detail': tmid_gaussianity.get('detail'),
+    })
     deviation_summary = evaluate_transit_qc_expected_value_deviation(
         fit,
         deviation_sigma_threshold,
@@ -2848,6 +3058,11 @@ def annotate_transit_detection_qc(fit, summary=None):
     fit.transit_qc_duration_ratio = summary.get('duration_ratio')
     fit.transit_qc_eebls_depth_snr = summary.get('eebls_depth_snr')
     fit.transit_qc_residual_scatter = summary.get('residual_scatter')
+    fit.transit_qc_tmid_gaussianity_score = summary.get('tmid_gaussianity_score')
+    fit.transit_qc_tmid_gaussianity_score_uncertainty = summary.get(
+        'tmid_gaussianity_score_uncertainty'
+    )
+    fit.transit_qc_tmid_gaussianity_detail = summary.get('tmid_gaussianity_detail')
     fit.transit_qc_deviation_from_expected_value = summary.get('deviation_from_expected_value')
     fit.transit_qc_deviation_sigma_threshold = summary.get('deviation_sigma_threshold')
     fit.transit_qc_expected_tmid_value = summary.get('expected_tmid')

@@ -1482,6 +1482,7 @@ def _short_ktmf_label(label):
         "Deviation From Expected Value": "Expected Rp/R*",
         "Residual Scatter Around Full Model Fit": "Residual scatter",
         "Residual Flatness": "Residual flatness",
+        "Tmid Posterior Gaussianity": "Tmid Gaussianity",
         "Duration Consistency": "Duration",
         "EEBLS Depth SNR": "EEBLS SNR",
         "Sampling / Cadence": "Sampling",

@@ -235,6 +235,7 @@ def test_invalid_fwhm_range_2() -> None:
 def test_photographic_filter_aliases_in_filter_column() -> None:
     alias_cases = [
         ("pb", "Photographic B", "PB", "391.6", "480.6"),
+        ("G", "Photographic G", "PG", "502.8", "586.8"),
         ("pg", "Photographic G", "PG", "502.8", "586.8"),
         ("pr", "Photographic R", "PR", "590.0", "810.0"),
     ]

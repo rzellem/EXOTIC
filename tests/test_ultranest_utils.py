@@ -137,6 +137,49 @@ def test_run_reactive_sampler_translates_ultranest_degenerate_region_value_error
     assert isinstance(excinfo.value.__cause__, ValueError)
 
 
+def test_run_reactive_sampler_translates_ultranest_bounding_ellipsoid_assertion(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        def run(self, **kwargs):
+            exec(
+                compile(
+                    "def bounding_ellipsoid():\n"
+                    "    raise AssertionError('(array(nan), array([[0.58720908]]))')\n"
+                    "bounding_ellipsoid()",
+                    "ultranest/mlfriends.pyx",
+                    "exec",
+                ),
+                {},
+            )
+
+    with pytest.raises(np.linalg.LinAlgError) as excinfo:
+        run_reactive_sampler(FakeSampler(), verbose=False)
+
+    assert "degenerate sampling region" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, AssertionError)
+
+
+def test_run_reactive_sampler_preserves_other_ultranest_mlfriends_assertion(monkeypatch):
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        def run(self, **kwargs):
+            exec(
+                compile(
+                    "def compute_enlargement():\n"
+                    "    raise AssertionError('not a bounding ellipsoid failure')\n"
+                    "compute_enlargement()",
+                    "ultranest/mlfriends.pyx",
+                    "exec",
+                ),
+                {},
+            )
+
+    with pytest.raises(AssertionError, match="not a bounding ellipsoid failure"):
+        run_reactive_sampler(FakeSampler(), verbose=False)
+
+
 def test_run_reactive_sampler_preserves_unrelated_value_error(monkeypatch):
     _reset_ultranest_env(monkeypatch)
 

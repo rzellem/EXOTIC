@@ -4650,6 +4650,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         final_time_indices = match_time_subset_indices(good_times, final_fit_times)
         if final_time_indices is not None:
             good_times = good_times[final_time_indices]
+            good_flux = good_flux[final_time_indices]
+            good_unc = good_unc[final_time_indices]
             good_airmass = good_airmass[final_time_indices]
             good_jd_times = good_jd_times[final_time_indices]
             if good_exposure_times is not None:
@@ -12911,7 +12913,7 @@ def user_entered_ld(ld, observed_filter):
     ld.set_ld(ld_[0], ld_[1], ld_[2], ld_[3])
 
 
-def nonlinear_ld(ld, info_dict):
+def nonlinear_ld(ld, info_dict, non_interactive_run=False):
     user_entered = False
     observed_filter = {
         'filter': info_dict['filter'],
@@ -12926,6 +12928,12 @@ def nonlinear_ld(ld, info_dict):
             custom_range(ld, observed_filter)
             ld.set_filter('N/A', "Custom", float(observed_filter['wl_min']), float(observed_filter['wl_max']))
         else:
+            if non_interactive_run:
+                raise ValueError(
+                    f"EXOTIC did not recognize the filter {info_dict.get('filter')!r}. "
+                    "Non-interactive runs require a recognized standard filter or both wl_min and wl_max."
+                )
+
             opt = info_dict.get('ld_uncertainties')
 
             if isinstance(opt, str):
@@ -12957,9 +12965,9 @@ def nonlinear_ld(ld, info_dict):
     info_dict['wl_max'] = ld.wl_max
 
 
-def get_ld_values(planet_dict, info_dict):
+def get_ld_values(planet_dict, info_dict, non_interactive_run=False):
     ld_obj = LimbDarkening(planet_dict)
-    nonlinear_ld(ld_obj, info_dict)
+    nonlinear_ld(ld_obj, info_dict, non_interactive_run=non_interactive_run)
 
     ld0 = ld_obj.ld0
     ld1 = ld_obj.ld1
@@ -27930,9 +27938,9 @@ def parse_args():
                              "If the service returns an error, EXOTIC falls back to individual VSX checks.")
     parser.add_argument('--non-interactive-run',
                         action='store_true',
-                        help="Run without interactive prompts for target pixel-coordinate mismatch checks. "
-                             "If a mismatch is detected, EXOTIC logs a warning and proceeds with the "
-                             "user-provided coordinates.")
+                        help="Run without interactive prompts for target pixel-coordinate mismatch checks "
+                             "or unrecognized limb-darkening filters. Coordinate mismatches use an automatic "
+                             "fallback; unrecognized filters abort unless wl_min and wl_max are provided.")
     parser.add_argument('--multiprocess-transformations',
                         type=int,
                         default=None,
@@ -28438,7 +28446,11 @@ def _main_impl():
 
             exotic_infoDict.setdefault('observed_filter', exotic_infoDict.get('filter'))
             log_info("Calculating limb-darkening coefficients.")
-            ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
+            ld, ld0, ld1, ld2, ld3 = get_ld_values(
+                pDict,
+                exotic_infoDict,
+                non_interactive_run=args.non_interactive_run,
+            )
             log_info("Limb-darkening coefficients ready.")
 
             # check for EPW_MD5 checksum
@@ -30942,7 +30954,11 @@ def _main_impl():
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
             bestCompStar, comp_coords = None, None
             exotic_infoDict.setdefault('observed_filter', exotic_infoDict.get('filter'))
-            ld, ld0, ld1, ld2, ld3 = get_ld_values(pDict, exotic_infoDict)
+            ld, ld0, ld1, ld2, ld3 = get_ld_values(
+                pDict,
+                exotic_infoDict,
+                non_interactive_run=args.non_interactive_run,
+            )
 
             with exotic_infoDict['prered_file'].open('r') as f:
                 for processed_data in f:

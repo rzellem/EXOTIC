@@ -488,17 +488,26 @@ def _mute_ultranest_logging(sampler):
             logger.disabled = disabled
 
 
-def _traceback_mentions_ultranest_mlfriends(exc):
+def _traceback_mentions_ultranest_mlfriends(exc, function_name=None):
     traceback = exc.__traceback__
     while traceback is not None:
         filename = str(traceback.tb_frame.f_code.co_filename).replace("\\", "/")
-        if "ultranest/mlfriends" in filename:
+        frame_function = str(traceback.tb_frame.f_code.co_name).rsplit(".", 1)[-1]
+        if (
+            "ultranest/mlfriends" in filename
+            and (function_name is None or frame_function == function_name)
+        ):
             return True
         traceback = traceback.tb_next
     return False
 
 
 def _is_ultranest_degenerate_region_error(exc):
+    if isinstance(exc, AssertionError):
+        # UltraNest 4.5.0 asserts here when a bootstrap region contains one
+        # unique point and its covariance is therefore non-finite.
+        return _traceback_mentions_ultranest_mlfriends(exc, "bounding_ellipsoid")
+
     if not isinstance(exc, ValueError):
         return False
 
@@ -513,7 +522,7 @@ def _is_ultranest_degenerate_region_error(exc):
 def _run_sampler_with_degenerate_region_guard(sampler, kwargs):
     try:
         return sampler.run(**kwargs)
-    except ValueError as exc:
+    except (AssertionError, ValueError) as exc:
         if not _is_ultranest_degenerate_region_error(exc):
             raise
         raise np.linalg.LinAlgError(

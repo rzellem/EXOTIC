@@ -90,6 +90,7 @@ fwhm_alias = {
         "bb": "Johnson B",
         "pb": "Photographic B",
         "bv": "Johnson V",
+        "G": "Photographic G",
         "pg": "Photographic G",
         "br": "Johnson R",
         "pr": "Photographic R",

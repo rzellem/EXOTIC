@@ -646,6 +646,130 @@ def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypat
     ].tolist() == [True] * 10
 
 
+def test_finalize_comparison_candidate_keeps_flux_aligned_after_final_fit_subsets_times(monkeypatch):
+    fit_calls = []
+    initial_subset_mask = np.ones(38, dtype=bool)
+    initial_subset_mask[[1, 3, 5, 7, 9, 11]] = False
+
+    def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, jd_times=None, mode=None, **kwargs):
+        return types.SimpleNamespace(
+            residuals=np.zeros(len(times), dtype=float),
+            phase=np.linspace(-0.5, 0.5, len(times)),
+        )
+
+    def fake_final_fit(times, flux, unc, airmass, prior, bounds, jd_times=None, **kwargs):
+        times = np.asarray(times, dtype=float)
+        flux = np.asarray(flux, dtype=float)
+        unc = np.asarray(unc, dtype=float)
+        airmass = np.asarray(airmass, dtype=float)
+        fit_calls.append({
+            "times": times.copy(),
+            "flux": flux.copy(),
+            "unc": unc.copy(),
+            "airmass": airmass.copy(),
+        })
+
+        if len(fit_calls) == 1:
+            keep_mask = initial_subset_mask
+            residuals = np.zeros(np.count_nonzero(keep_mask), dtype=float)
+            residuals[10] = 1.0
+        else:
+            keep_mask = np.ones(len(times), dtype=bool)
+            residuals = np.zeros(len(times), dtype=float)
+
+        retained_times = times[keep_mask]
+        retained_flux = flux[keep_mask]
+        retained_unc = unc[keep_mask]
+        retained_airmass = airmass[keep_mask]
+        fit = types.SimpleNamespace(
+            time=retained_times,
+            airmass=retained_airmass,
+            data=retained_flux,
+            dataerr=retained_unc,
+            detrended=retained_flux,
+            detrendederr=retained_unc,
+            airmass_model=np.ones(len(retained_times), dtype=float),
+            transit=np.ones(len(retained_times), dtype=float),
+            phase=np.linspace(-0.5, 0.5, len(retained_times)),
+            residuals=residuals,
+            parameters={
+                "tmid": 0.5,
+                "rprs": 0.1,
+                "ars": 10.0,
+                "inc": 89.0,
+                "a0": 1.0,
+                "a1": 1.0,
+                "a2": 0.0,
+            },
+            errors={
+                "tmid": 0.001,
+                "rprs": 0.001,
+                "ars": 0.1,
+                "inc": 0.1,
+                "a0": 0.01,
+                "a1": 0.01,
+                "a2": 0.01,
+            },
+        )
+        return fit, retained_flux, retained_unc
+
+    monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr("exotic.exotic.fit_final_lightcurve_with_oot_baseline_detrending", fake_final_fit)
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
+    )
+
+    times = np.linspace(0.0, 1.0, 38)
+    result = finalize_comparison_candidate_full_reduction(
+        times,
+        np.full(38, 100.0, dtype=float),
+        np.full(38, 100.0, dtype=float),
+        np.linspace(1.0, 1.2, 38),
+        [0.1, 0.1, 0.1, 0.1],
+        {
+            "midT": 0.5,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "pPerUnc": 0.001,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "aRsUnc": 0.1,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        jd_times=2460000.0 + times,
+        run_fast_ultranest_before_final_run=False,
+        run_final_fit_phase_residual_clip=False,
+        run_final_residual_rejection=True,
+        use_eebls_to_initialize_tmid_and_bounds=False,
+    )
+
+    initially_retained_indices = np.flatnonzero(initial_subset_mask)
+    expected_source_indices = np.delete(initially_retained_indices, 10)
+    assert result["applied"] is True
+    assert [len(call["times"]) for call in fit_calls] == [38, 31]
+    assert all(call["times"].shape == call["flux"].shape == call["unc"].shape for call in fit_calls)
+    assert result["source_indices"].tolist() == expected_source_indices.tolist()
+    assert result["good_times"].tolist() == pytest.approx(times[expected_source_indices].tolist())
+    assert all(
+        len(result[key]) == 31
+        for key in (
+            "good_times",
+            "good_flux",
+            "good_unc",
+            "good_airmass",
+            "good_jd_times",
+            "good_target_flux",
+            "good_comp_flux",
+            "good_target_flux_error",
+            "good_comp_flux_error",
+            "source_indices",
+        )
+    )
+
+
 def test_detrend_flux_on_out_of_transit_baseline_falls_back_to_prior_ephemeris():
     times = np.linspace(-0.08, 0.08, 17)
     baseline = 1.0 + 0.25 * times

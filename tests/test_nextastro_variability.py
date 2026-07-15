@@ -201,6 +201,153 @@ def test_nextastro_variability_caps_retry_attempts_at_five(monkeypatch):
     assert excinfo.value.last_attempt.attempt_number == 5
 
 
+def test_nextastro_vsx_query_boxes_split_ra_wrap():
+    boxes = exotic_module.nextastro_vsx_query_boxes(359.9, 0.0, 0.2)
+
+    np.testing.assert_allclose(boxes, [
+        (359.7, 360.0, -0.2, 0.2),
+        (0.0, 0.1, -0.2, 0.2),
+    ])
+
+
+def test_nextastro_vsx_field_query_normalizes_rows(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured['url'] = url
+        captured['json'] = json
+        captured['timeout'] = timeout
+        return DummyResponse({
+            'columns': ['oid', 'name', 'ra_deg', 'dec_deg', 'var_type', 'mag1', 'mag1_band'],
+            'count': 1,
+            'row_format': 'objects',
+            'rows': [{
+                'oid': 123,
+                'name': 'Cached Variable',
+                'ra_deg': 10.1,
+                'dec_deg': -20.2,
+                'var_type': 'EA',
+                'mag1': 12.3,
+                'mag1_band': 'V',
+            }],
+        })
+
+    monkeypatch.setattr(exotic_module.requests, 'post', fake_post)
+
+    rows = exotic_module.nextastro_vsx_field_query(10.0, -20.0, 0.25)
+
+    assert captured['url'].endswith('/vsx_query')
+    assert captured['timeout'] == 30
+    assert captured['json']['compact'] is False
+    assert rows[0]['Name'] == 'Cached Variable'
+    assert rows[0]['OID'] == 123
+    assert rows[0]['RA2000'] == pytest.approx(10.1)
+    assert rows[0]['Declination2000'] == pytest.approx(-20.2)
+    assert rows[0]['VariabilityType'] == 'EA'
+    assert rows[0]['MaxMag'] == '12.3 V'
+    assert rows[0]['_vsx_source'] == 'nextastro_cache'
+    assert rows[0]['_vsx_has_full_metadata'] is False
+
+
+def test_vsx_field_query_cache_first_falls_back_when_cache_empty(monkeypatch):
+    calls = []
+    monkeypatch.setattr(exotic_module, 'nextastro_vsx_field_query', lambda *args: [])
+    monkeypatch.setattr(
+        exotic_module,
+        'vsx_field_query',
+        lambda *args, **kwargs: calls.append((args, kwargs)) or [{'Name': 'AAVSO Variable'}],
+    )
+
+    rows = exotic_module.vsx_field_query_with_preference(
+        10.0,
+        -20.0,
+        0.25,
+        use_nextastro_vsx_cache_first=True,
+    )
+
+    assert rows == [{'Name': 'AAVSO Variable'}]
+    assert len(calls) == 1
+
+
+def test_vsx_field_query_cache_first_enriches_period_and_amplitude(monkeypatch):
+    monkeypatch.setattr(
+        exotic_module,
+        'nextastro_vsx_field_query',
+        lambda *args: [{
+            'OID': 123,
+            'Name': 'Cached Name',
+            'RA2000': 10.1,
+            'Declination2000': -20.2,
+            'VariabilityType': 'EA',
+            '_vsx_source': 'nextastro_cache',
+        }],
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        'vsx_field_query',
+        lambda *args, **kwargs: [{
+            'OID': '123',
+            'Name': 'AAVSO Name',
+            'RA2000': '10.1000',
+            'Declination2000': '-20.2000',
+            'Period': '2.5',
+            'MaxMag': '12.0 V',
+            'MinMag': '12.4 V',
+        }],
+    )
+
+    rows = exotic_module.vsx_field_query_with_preference(
+        10.0,
+        -20.0,
+        0.25,
+        use_nextastro_vsx_cache_first=True,
+    )
+
+    assert rows[0]['Name'] == 'AAVSO Name'
+    assert rows[0]['Period'] == '2.5'
+    assert exotic_module.vsx_object_amplitude_mag(rows[0]) == pytest.approx(0.4)
+    assert rows[0]['_vsx_source'] == 'nextastro_cache+aavso_metadata'
+
+
+def test_vsx_field_query_cache_first_uses_full_nextastro_metadata_without_aavso(monkeypatch):
+    cached_row = exotic_module.normalize_nextastro_vsx_row({
+        'oid': 123,
+        'name': 'Cached Full Variable',
+        'ra_deg': 10.1,
+        'dec_deg': -20.2,
+        'var_type': 'EA',
+        'period_days': 2.5,
+        'amplitude_mag': 0.4,
+        'max_mag': 12.0,
+        'max_passband': 'V',
+        'min_mag': 12.4,
+        'min_passband': 'V',
+    })
+    monkeypatch.setattr(
+        exotic_module,
+        'nextastro_vsx_field_query',
+        lambda *args: [cached_row],
+    )
+
+    def unexpected_aavso_call(*args, **kwargs):
+        raise AssertionError('AAVSO should not be called for the full NextAstro schema')
+
+    monkeypatch.setattr(exotic_module, 'vsx_field_query', unexpected_aavso_call)
+
+    rows = exotic_module.vsx_field_query_with_preference(
+        10.0,
+        -20.0,
+        0.25,
+        use_nextastro_vsx_cache_first=True,
+    )
+
+    assert rows[0]['_vsx_has_full_metadata'] is True
+    assert rows[0]['Period'] == 2.5
+    assert rows[0]['Amplitude'] == 0.4
+    assert rows[0]['MaxMag'] == '12.0 V'
+    assert rows[0]['MinMag'] == '12.4 V'
+
+
 def test_nextastro_photometry_catalog_match_prefers_requested_filter():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag', 'g', 'dg'],
@@ -376,6 +523,32 @@ def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
     assert calibration['observed_filter'] == 'V'
 
 
+def test_merge_nextastro_calibration_stars_deduplicates_catalog_source_ids():
+    catalog = {
+        'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
+        'count': 1,
+        'row_format': 'objects',
+        'rows': [{
+            'id': 9,
+            'source_id': 12345,
+            'ra': 10.0,
+            'dec': -20.0,
+            'Vmag': 11.2,
+            'err_Vmag': 0.03,
+        }],
+    }
+
+    calibration_stars = exotic_module.merge_nextastro_calibration_stars(
+        comp_stars=[[100, 200], [130, 230]],
+        comp_ra_dec=[(10.0, -20.0), (10.0001, -20.0001)],
+        obs_filter='V',
+        existing_comp_stars={},
+        field_catalog=catalog,
+    )
+
+    assert list(calibration_stars) == ['NextAstro-12345']
+
+
 def test_vsp_query_rejects_band_errors_over_limit(monkeypatch):
     class DummyWCS:
         def pixel_to_world_values(self, x_pixel, y_pixel):
@@ -428,10 +601,15 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
 
     class DummyFit:
         data = np.array([1.0, 1.02, 0.98], dtype=float)
+        dataerr = np.full(3, 0.01, dtype=float)
         airmass_model = np.ones(3, dtype=float)
         airmass = np.array([1.1, 1.2, 1.3], dtype=float)
         jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
         transit = np.ones(3, dtype=float)
+        stellar_variability_target_flux = np.array([1000.0, 1020.0, 980.0], dtype=float)
+        stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+        stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+        stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
 
     def fake_plot(params, save, s_name, label):
         captured['params'] = params
@@ -475,7 +653,7 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
     assert params[0]['observed_filter'] == 'CV'
 
 
-def test_build_stellar_variability_params_keeps_magnitude_errors_in_flux_ratio_units(monkeypatch, tmp_path):
+def test_build_stellar_variability_params_uses_raw_ratio_and_per_exposure_errors(monkeypatch, tmp_path):
     comp_mag = 9.751
     comp_mag_error = 0.018
     target_mag = 13.1
@@ -483,11 +661,18 @@ def test_build_stellar_variability_params_keeps_magnitude_errors_in_flux_ratio_u
     detrended = flux_ratio * np.array([0.94, 1.0, 1.06], dtype=float)
 
     class DummyFit:
-        data = detrended
-        airmass_model = np.ones(3, dtype=float)
+        # The fitted series is intentionally normalized: the absolute target
+        # magnitude must come from the retained raw target/comparison fluxes.
+        data = detrended / np.nanmedian(detrended)
+        dataerr = np.full(3, 0.01, dtype=float)
+        airmass_model = np.array([0.94, 1.0, 1.06], dtype=float)
         airmass = np.array([1.1, 1.2, 1.3], dtype=float)
         jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
         transit = np.ones(3, dtype=float)
+        stellar_variability_comp_flux = np.full(3, 100000.0, dtype=float)
+        stellar_variability_target_flux = stellar_variability_comp_flux * detrended
+        stellar_variability_target_flux_error = np.array([20.0, 21.0, 22.0], dtype=float)
+        stellar_variability_comp_flux_error = np.array([30.0, 31.0, 32.0], dtype=float)
 
     monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
 
@@ -510,15 +695,42 @@ def test_build_stellar_variability_params_keeps_magnitude_errors_in_flux_ratio_u
         observed_filter='CV',
     )
 
-    expected_scatter = np.nanstd(detrended)
     expected_mag_error = np.hypot(
         comp_mag_error,
-        2.5 * expected_scatter / (flux_ratio * np.log(10)),
+        (2.5 / np.log(10.0)) * np.hypot(
+            DummyFit.stellar_variability_target_flux_error[1]
+            / DummyFit.stellar_variability_target_flux[1],
+            DummyFit.stellar_variability_comp_flux_error[1]
+            / DummyFit.stellar_variability_comp_flux[1],
+        ),
     )
 
-    assert params[1]['mag'] == pytest.approx(target_mag)
+    np.testing.assert_allclose([row['mag'] for row in params], target_mag, atol=1.0e-10)
     assert params[1]['mag_err'] == pytest.approx(expected_mag_error)
     assert params[1]['mag_err'] < 0.08
+
+
+def test_build_stellar_variability_params_rejects_normalized_only_absolute_calibration(
+        monkeypatch, tmp_path):
+    class DummyFit:
+        data = np.array([0.99, 1.0, 1.01], dtype=float)
+        dataerr = np.full(3, 0.01, dtype=float)
+        airmass = np.ones(3, dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match='cannot be recovered from a normalized light curve'):
+        exotic_module.build_stellar_variability_params_from_fit(
+            DummyFit(),
+            {'mag': 12.0, 'error': 0.02, 'mag_band': 'V'},
+            [100, 200],
+            'COMP',
+            tmp_path,
+            'Host Star',
+            observed_filter='V',
+        )
 
 
 def test_stellar_variability_requires_selected_transit_comparison(monkeypatch, tmp_path):
@@ -555,10 +767,15 @@ def test_stellar_variability_derives_selected_comparison_catalog_magnitude(monke
     class DummyFit:
         def __init__(self, data):
             self.data = np.array(data, dtype=float)
+            self.dataerr = np.full(3, 0.01, dtype=float)
             self.airmass_model = np.ones(3, dtype=float)
             self.airmass = np.ones(3, dtype=float)
             self.jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
             self.transit = np.ones(3, dtype=float)
+            self.stellar_variability_target_flux = self.data * 1000.0
+            self.stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+            self.stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+            self.stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
 
     monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
     monkeypatch.setattr(
@@ -606,10 +823,15 @@ def test_stellar_variability_uses_direct_catalog_when_derived_error_is_worse(mon
     class DummyFit:
         def __init__(self, data):
             self.data = np.array(data, dtype=float)
+            self.dataerr = np.full(4, 0.01, dtype=float)
             self.airmass_model = np.ones(4, dtype=float)
             self.airmass = np.ones(4, dtype=float)
             self.jd_times = np.array([2450000.1, 2450000.2, 2450000.3, 2450000.4], dtype=float)
             self.transit = np.ones(4, dtype=float)
+            self.stellar_variability_target_flux = self.data * 1000.0
+            self.stellar_variability_comp_flux = np.full(4, 1000.0, dtype=float)
+            self.stellar_variability_target_flux_error = np.full(4, 2.0, dtype=float)
+            self.stellar_variability_comp_flux_error = np.full(4, 2.0, dtype=float)
 
     monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
     monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
@@ -652,10 +874,15 @@ def test_stellar_variability_uses_direct_catalog_when_derived_error_is_worse(mon
 def test_stellar_variability_derives_catalog_magnitude_from_full_field(monkeypatch, tmp_path):
     class DummyFit:
         data = np.array([1.0, 1.01, 0.99], dtype=float)
+        dataerr = np.full(3, 0.01, dtype=float)
         airmass_model = np.ones(3, dtype=float)
         airmass = np.ones(3, dtype=float)
         jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
         transit = np.ones(3, dtype=float)
+        stellar_variability_target_flux = data * 1000.0
+        stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+        stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+        stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
 
     class DummyWcs:
         def world_to_pixel_values(self, ra, dec):
@@ -737,10 +964,15 @@ def test_stellar_variability_rejects_g_catalog_anchor_for_clearv(monkeypatch, tm
 
     class DummyFit:
         data = np.array([1.0, 1.01, 0.99], dtype=float)
+        dataerr = np.full(3, 0.01, dtype=float)
         airmass_model = np.ones(3, dtype=float)
         airmass = np.ones(3, dtype=float)
         jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
         transit = np.ones(3, dtype=float)
+        stellar_variability_target_flux = data * 1000.0
+        stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+        stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+        stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
 
     class DummyWcs:
         def world_to_pixel_values(self, ra, dec):
@@ -787,10 +1019,15 @@ def test_stellar_variability_rejects_g_catalog_anchor_for_clearv(monkeypatch, tm
 def test_stellar_variability_uses_v_catalog_anchor_for_clearv(monkeypatch, tmp_path):
     class DummyFit:
         data = np.array([1.0, 1.01, 0.99], dtype=float)
+        dataerr = np.full(3, 0.01, dtype=float)
         airmass_model = np.ones(3, dtype=float)
         airmass = np.ones(3, dtype=float)
         jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
         transit = np.ones(3, dtype=float)
+        stellar_variability_target_flux = data * 1000.0
+        stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+        stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+        stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
 
     class DummyWcs:
         def world_to_pixel_values(self, ra, dec):
@@ -1115,3 +1352,717 @@ def test_build_stellar_variability_only_lightcurve_discards_transit_points(monke
     assert fit.stellar_variability_transit_exclusion['rejected_point_count'] == 3
     assert not np.any(np.isclose(fit.time, p_dict['midT']))
     assert len(fit.time) == times.size - 3
+
+
+def test_stellar_variability_ensemble_masks_saturated_frames_and_error_clips_members():
+    frame_count = 8
+    ranked_summaries = [
+        {
+            'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+            'overexposure_rejected_count': 0,
+        },
+        {
+            'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+            'overexposure_rejected_count': 0,
+        },
+        {
+            'key': 'comp3', 'comp_index': 2, 'label': 'Comp 3', 'position': [50, 60],
+            'overexposure_rejected_count': 1,
+        },
+        {
+            'key': 'comp4', 'comp_index': 3, 'label': 'Comp 4', 'position': [70, 80],
+            'overexposure_rejected_count': 0,
+        },
+    ]
+    comp_flux_map = {
+        'comp1': np.full(frame_count, 1000.0),
+        'comp2': np.full(frame_count, 2000.0),
+        'comp3': np.full(frame_count, 3000.0),
+        'comp4': np.full(frame_count, 1500.0),
+    }
+    comp_flux_map['comp3'][0] = np.nan
+    calibration_stars = {
+        'C1': {'pos': [10, 20], 'mag': 12.0, 'error': 0.010, 'mag_band': 'V'},
+        'C2': {'pos': [30, 40], 'mag': 12.5, 'error': 0.011, 'mag_band': 'V'},
+        'C3': {'pos': [50, 60], 'mag': 12.2, 'error': 0.010, 'mag_band': 'V'},
+        'C4': {'pos': [70, 80], 'mag': 12.3, 'error': 0.200, 'mag_band': 'V'},
+    }
+
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        comp_flux_map,
+        observed_filter='V',
+    )
+
+    assert [member['key'] for member in selection['members']] == ['comp3', 'comp2', 'comp1']
+    assert selection['members'][0]['summary']['overexposure_rejected_count'] == 1
+    rejected_reasons = {item['key']: item['reason'] for item in selection['rejected']}
+    assert 'sigma-clip' in rejected_reasons['comp4']
+    assert selection['calibration_error_clip']['high_threshold'] < 0.2
+    assert selection['calibration_error_clip']['high_threshold'] >= 0.01
+    assert selection['calibration_error_clip']['minimum_high_threshold'] == pytest.approx(0.01)
+
+
+def test_stellar_variability_ensemble_error_clip_does_not_reject_below_point_zero_one_mag():
+    candidates = [
+        {'magnitude_error': error}
+        for error in (0.0010, 0.0011, 0.0012, 0.0090, 0.0110)
+    ]
+
+    keep, summary = exotic_module.stellar_variability_ensemble_calibration_error_clip(candidates)
+
+    assert keep.tolist() == [True, True, True, True, False]
+    assert summary['high_threshold'] == pytest.approx(0.01)
+    assert summary['minimum_high_threshold'] == pytest.approx(0.01)
+
+
+def test_automatic_comparison_merge_deduplicates_only_added_sources():
+    merged, messages = exotic_module.merge_automatic_comparison_star_coords(
+        [[10.0, 20.0], [11.0, 20.0]],
+        [[10.4, 20.3], [50.0, 60.0], [50.5, 60.2]],
+        duplicate_radius_pixels=2.0,
+    )
+
+    # Nearby primary/user selections remain intentional; automatic additions
+    # cannot repeat either a primary source or an earlier automatic source.
+    assert merged == [[10.0, 20.0], [11.0, 20.0], [50.0, 60.0]]
+    assert len(messages) == 2
+
+
+def test_stellar_variability_ensemble_caps_at_five_by_target_color_and_magnitude():
+    frame_count = 8
+    target_match = {
+        'mag': 12.0,
+        'error': 0.01,
+        'mag_band': 'V',
+        'catalog_row': {'Bmag': 12.5, 'Vmag': 12.0},
+    }
+    candidate_values = [
+        (10.0, -0.5),
+        (11.0, 0.0),
+        (12.1, 0.55),
+        (12.2, 0.60),
+        (11.9, 0.45),
+        (12.3, 0.40),
+        (12.0, 0.52),
+    ]
+    ranked_summaries = []
+    calibration_stars = {}
+    comp_flux_map = {}
+    for index, (magnitude, color) in enumerate(candidate_values, start=1):
+        key = f'comp{index}'
+        position = [index * 10, index * 10 + 1]
+        ranked_summaries.append({
+            'key': key,
+            'comp_index': index - 1,
+            'label': f'Comp {index}',
+            'position': position,
+            'overexposure_rejected_count': 0,
+        })
+        calibration_stars[f'C{index}'] = {
+            'pos': position,
+            'mag': magnitude,
+            'error': 0.01,
+            'mag_band': 'V',
+            'catalog_row': {'Bmag': magnitude + color, 'Vmag': magnitude},
+        }
+        comp_flux_map[key] = np.full(frame_count, 10000.0 - index * 100.0)
+
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        comp_flux_map,
+        observed_filter='V',
+        target_catalog_match=target_match,
+    )
+
+    assert selection['prelimit_member_count'] == 7
+    assert selection['member_limit'] == 5
+    assert [member['key'] for member in selection['members']] == [
+        'comp7', 'comp3', 'comp5', 'comp4', 'comp6',
+    ]
+    assert all(member['color_delta'] is not None for member in selection['members'])
+    assert all(member['magnitude_delta'] is not None for member in selection['members'])
+    limited_keys = {
+        rejected['key']
+        for rejected in selection['rejected']
+        if 'closest to the target' in rejected['reason']
+    }
+    assert limited_keys == {'comp1', 'comp2'}
+
+
+def test_stellar_variability_ensemble_rejects_duplicate_catalog_sources():
+    frame_count = 8
+    ranked_summaries = [
+        {
+            'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+            'overexposure_rejected_count': 0,
+        },
+        {
+            'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+            'overexposure_rejected_count': 0,
+        },
+        {
+            'key': 'comp3', 'comp_index': 2, 'label': 'Comp 3', 'position': [50, 60],
+            'overexposure_rejected_count': 0,
+        },
+    ]
+    calibration_stars = {
+        'NextAstro-111': {
+            'pos': [10, 20], 'mag': 12.0, 'error': 0.01, 'mag_band': 'V', 'source_id': 111,
+        },
+        'NextAstro-111-2': {
+            'pos': [30, 40], 'mag': 12.0, 'error': 0.01, 'mag_band': 'V', 'source_id': 111,
+        },
+        'NextAstro-222': {
+            'pos': [50, 60], 'mag': 12.5, 'error': 0.01, 'mag_band': 'V', 'source_id': 222,
+        },
+    }
+    comp_flux_map = {
+        'comp1': np.full(frame_count, 3000.0),
+        'comp2': np.full(frame_count, 2000.0),
+        'comp3': np.full(frame_count, 1000.0),
+    }
+
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        comp_flux_map,
+        observed_filter='V',
+    )
+
+    assert [member['key'] for member in selection['members']] == ['comp1', 'comp3']
+    duplicate = next(item for item in selection['rejected'] if item['key'] == 'comp2')
+    assert 'duplicate catalog source' in duplicate['reason']
+
+
+def test_discover_fortuitous_vsx_variables_filters_on_count_rate_error_and_classifies(monkeypatch):
+    class FakeWcs:
+        def pixel_to_world_values(self, x_value, y_value):
+            return x_value, y_value
+
+        def world_to_pixel_values(self, ra_value, dec_value):
+            return ra_value, dec_value
+
+    reference_image = np.zeros((80, 80), dtype=float)
+    reference_image[20, 20] = 10000.0
+    reference_image[40, 40] = 100.0
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda _path: FakeWcs())
+    monkeypatch.setattr(
+        exotic_module,
+        'vsx_field_query',
+        lambda *args, **kwargs: [
+            {
+                'Name': 'Bright VSX', 'AUID': '000-AAA-001',
+                'RA2000': 20.0, 'Declination2000': 20.0,
+                'Period': '5.0', 'MaxMag': '12.0 V', 'MinMag': '12.5 V',
+            },
+            {
+                'Name': 'Faint VSX', 'AUID': '000-AAA-002',
+                'RA2000': 40.0, 'Declination2000': 40.0,
+                'Period': '20.0', 'MaxMag': '15.0 V', 'MinMag': '15.2 V',
+            },
+        ],
+    )
+
+    variables = exotic_module.discover_fortuitous_vsx_variables(
+        'synthetic.wcs',
+        reference_image.shape,
+        1.0,
+        reference_image,
+        'V',
+        target_pixel=[60, 60],
+        exposure_seconds=60.0,
+    )
+
+    assert len(variables) == 1
+    assert variables[0]['name'] == 'Bright VSX'
+    assert variables[0]['estimated_magnitude_error'] < 0.05
+    assert variables[0]['category'] == 'optimal_variables'
+    assert variables[0]['period_days'] == pytest.approx(5.0)
+    assert variables[0]['amplitude_mag'] == pytest.approx(0.5)
+
+
+def test_fortuitous_reference_error_estimate_includes_sky_noise(monkeypatch):
+    reference_image = np.full((80, 80), 1000.0, dtype=float)
+    reference_image[40, 40] += 5000.0
+    monkeypatch.setattr(
+        exotic_module,
+        'skybg_phot',
+        lambda *args, **kwargs: (1000.0, 100.0, 500.0),
+    )
+
+    estimate = exotic_module.estimated_magnitude_error_from_reference_count_rate(
+        reference_image,
+        40.0,
+        40.0,
+        exposure_seconds=60.0,
+        gain_e_per_adu=1.0,
+    )
+
+    source_only_error = (
+        (2.5 / np.log(10.0))
+        * exotic_module.source_flux_uncertainty_from_counts(5000.0, gain_e_per_adu=1.0)
+        / 5000.0
+    )
+    assert source_only_error < 0.05
+    assert estimate['estimated_magnitude_error'] > 0.05
+    assert estimate['reference_noise_components_adu']['sky_aperture'] > 0
+    assert estimate['reference_noise_components_adu']['sky_estimate'] > 0
+
+
+def test_calibrated_stellar_variability_ensemble_combines_catalog_zero_points():
+    frame_count = 7
+    target_flux = np.full(frame_count, 1000.0)
+    target_error = np.full(frame_count, 1.0)
+    comp_flux_map = {
+        'comp1': np.full(frame_count, 500.0),
+        'comp2': np.full(frame_count, 250.0),
+    }
+    comp_error_map = {
+        'comp1': np.full(frame_count, 1.0),
+        'comp2': np.full(frame_count, 1.0),
+    }
+    members = [
+        {
+            'key': 'comp1',
+            'magnitude': 12.0,
+            'magnitude_error': 0.01,
+            'summary': {'ensemble_frame_keep_mask': np.ones(frame_count, dtype=bool)},
+        },
+        {
+            'key': 'comp2',
+            'magnitude': 12.0 + 2.5 * np.log10(2.0),
+            'magnitude_error': 0.01,
+            'summary': {'ensemble_frame_keep_mask': np.ones(frame_count, dtype=bool)},
+        },
+    ]
+
+    result = exotic_module.build_stellar_variability_calibrated_ensemble_series(
+        target_flux,
+        target_error,
+        comp_flux_map,
+        comp_error_map,
+        members,
+    )
+
+    expected_target_magnitude = 12.0 - 2.5 * np.log10(2.0)
+    assert result['applied'] is True
+    np.testing.assert_allclose(result['magnitude'], expected_target_magnitude, atol=1.0e-10)
+    np.testing.assert_allclose(result['relative_flux'], 1.0, atol=1.0e-10)
+    np.testing.assert_array_equal(result['valid_member_count'], np.full(frame_count, 2))
+    assert np.all(result['magnitude_error'] > 0)
+
+
+def test_build_stellar_variability_ensemble_params_preserves_member_metadata(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(
+        exotic_module,
+        'plot_stellar_variability',
+        lambda params, save, target, label: captured.update(
+            params=params,
+            save=save,
+            target=target,
+            label=label,
+        ),
+    )
+    fit = types.SimpleNamespace(
+        jd_times=np.array([2460000.1, 2460000.2]),
+        airmass=np.array([1.1, 1.2]),
+        stellar_variability_ensemble_magnitudes=np.array([12.30, 12.31]),
+        stellar_variability_ensemble_magnitude_errors=np.array([0.01, 0.011]),
+        stellar_variability_ensemble_members=[
+            {
+                'label': 'C1', 'position': [10, 20], 'magnitude': 12.0,
+                'magnitude_error': 0.01,
+                'star': {'catalog_source': 'Catalog A', 'ra': 10.1, 'dec': -20.1},
+            },
+            {
+                'label': 'C2', 'position': [30, 40], 'magnitude': 12.5,
+                'magnitude_error': 0.011,
+                'star': {'catalog_source': 'Catalog B', 'ra': 10.2, 'dec': -20.2},
+            },
+        ],
+    )
+
+    params = exotic_module.build_stellar_variability_ensemble_params_from_fit(
+        fit,
+        tmp_path,
+        'Target Star',
+        observed_filter='V',
+    )
+
+    assert len(params) == 2
+    assert params[0]['cname'] == 'ENSEMBLE (2 stars)'
+    assert params[0]['cmag'] is None
+    assert params[0]['ensemble_member_labels'] == ['C1', 'C2']
+    assert params[0]['ensemble_member_catalog_errors'] == [0.01, 0.011]
+    assert params[0]['ensemble_member_ra_degs'] == [10.1, 10.2]
+    assert params[0]['ensemble_member_dec_degs'] == [-20.1, -20.2]
+    assert params[0]['ensemble_members'][0]['ra_deg'] == pytest.approx(10.1)
+    assert params[0]['ensemble_members'][1]['dec_deg'] == pytest.approx(-20.2)
+    assert fit.stellar_variability_params == params
+    assert captured['label'] == 'ENSEMBLE (2 stars)'
+
+
+def test_stellar_variability_ensemble_selection_json_lists_color_and_magnitude(monkeypatch, tmp_path):
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+    member = {
+        'selection_rank': 1,
+        'key': 'comp1',
+        'label': 'C1',
+        'position': [10, 20],
+        'magnitude': 12.1,
+        'magnitude_error': 0.01,
+        'color': 0.55,
+        'color_label': 'B-V',
+        'target_color': 0.50,
+        'target_color_label': 'B-V',
+        'color_delta': 0.05,
+        'target_magnitude': 12.0,
+        'magnitude_delta': 0.1,
+        'color_magnitude_similarity_score': np.hypot(0.05, 0.1),
+        'median_flux': 5000.0,
+        'star': {
+            'ra': 10.1,
+            'dec': -20.2,
+            'mag_band': 'V',
+            'catalog_source': 'Synthetic catalog',
+        },
+    }
+    fit = types.SimpleNamespace(
+        jd_times=np.array([2460000.1]),
+        airmass=np.array([1.1]),
+        stellar_variability_ensemble_magnitudes=np.array([12.3]),
+        stellar_variability_ensemble_magnitude_errors=np.array([0.02]),
+        stellar_variability_ensemble_members=[member],
+        stellar_variability_ensemble_selection={
+            'members': [member],
+            'rejected': [{'key': 'comp2', 'reason': 'not among the 5 closest'}],
+            'member_limit': 5,
+            'prelimit_member_count': 6,
+            'calibration_error_clip': {'high_threshold': 0.03},
+            'target_catalog_profile': {
+                'magnitude': 12.0,
+                'magnitude_band': 'V',
+                'color': 0.5,
+                'color_label': 'B-V',
+            },
+        },
+    )
+
+    exotic_module.build_stellar_variability_ensemble_params_from_fit(
+        fit,
+        tmp_path,
+        'Target Star',
+        observed_filter='V',
+        observation_date='2024-01-02',
+    )
+
+    output_path = next(tmp_path.glob('EnsembleSelection_TargetStar_2024-01-02.json'))
+    payload = json.loads(output_path.read_text(encoding='utf-8'))
+    assert payload['ensemble']['maximum_members'] == 5
+    assert payload['ensemble']['member_count_before_five_star_limit'] == 6
+    assert payload['target']['catalog_profile']['color'] == pytest.approx(0.5)
+    assert payload['ensemble']['members'][0]['color_delta'] == pytest.approx(0.05)
+    assert payload['ensemble']['members'][0]['magnitude_delta'] == pytest.approx(0.1)
+
+
+def test_process_fortuitous_variable_writes_independent_ensemble_products(monkeypatch, tmp_path):
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        exotic_module,
+        'psf_quality_mask_for_key',
+        lambda psf_data, key, frame_count, psf_flux_data=None: np.ones(frame_count, dtype=bool),
+    )
+    frame_count = 12
+    times = np.linspace(2460000.0, 2460000.1, frame_count)
+    quality_mask = np.ones(frame_count, dtype=bool)
+    comparison_calibration = {
+        'method': 'aperture',
+        'method_label': 'Aperture photometry',
+        'a': 0,
+        'an': 0,
+        'field_image_keep_mask': quality_mask,
+        'comp_summaries': [
+            {
+                'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+                'aggregate_score': 0.001, 'coverage_rejected': False,
+                'suitability_outlier_rejected': False, 'overexposure_rejected_count': 0,
+                'psf_quality_keep_mask': quality_mask,
+                'ensemble_frame_keep_mask': quality_mask,
+            },
+            {
+                'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+                'aggregate_score': 0.002, 'coverage_rejected': False,
+                'suitability_outlier_rejected': False, 'overexposure_rejected_count': 0,
+                'psf_quality_keep_mask': quality_mask,
+                'ensemble_frame_keep_mask': quality_mask,
+            },
+        ],
+    }
+    psf_data = {
+        # The exoplanet target is unusable in every frame. Fortuitous-variable
+        # processing must remain independent of that target-specific mask.
+        'target': np.full((frame_count, 7), np.nan),
+        'comp1': np.ones((frame_count, 7)),
+        'comp2': np.ones((frame_count, 7)),
+        'comp3': np.ones((frame_count, 7)),
+    }
+    aper_data = {
+        'target': np.full((frame_count, 1, 1), 1000.0),
+        'comp1': np.full((frame_count, 1, 1), 500.0),
+        'comp1_unc': np.full((frame_count, 1, 1), 1.0),
+        'comp2': np.full((frame_count, 1, 1), 250.0),
+        'comp2_unc': np.full((frame_count, 1, 1), 1.0),
+        'comp3': (
+            800.0 * (1.0 + 0.02 * np.sin(np.linspace(0, 2 * np.pi, frame_count)))
+        )[:, None, None],
+        'comp3_unc': np.full((frame_count, 1, 1), 1.0),
+    }
+    # One otherwise valid frame has an internal target error above 0.05 mag.
+    aper_data['comp3_unc'][2, 0, 0] = 80.0
+    calibrations = {
+        'C1': {
+            'pos': [10, 20], 'mag': 12.0, 'error': 0.01, 'mag_band': 'V',
+            'ra': 10.1, 'dec': -20.1,
+            'catalog_source': 'Synthetic catalog',
+            'catalog_row': {'Bmag': 12.5, 'Vmag': 12.0},
+        },
+        'C2': {
+            'pos': [30, 40], 'mag': 12.75, 'error': 0.011, 'mag_band': 'V',
+            'ra': 10.2, 'dec': -20.2,
+            'catalog_source': 'Synthetic catalog',
+            'catalog_row': {'Bmag': 13.35, 'Vmag': 12.75},
+        },
+    }
+    variable = {
+        'name': 'Synthetic VSX',
+        'auid': '000-AAA-001',
+        'variable_type': 'EA',
+        'period_days': 5.0,
+        'amplitude_mag': 0.5,
+        'category': 'optimal_variables',
+        'ra': 10.0,
+        'dec': -20.0,
+        'pos': [50, 60],
+        'tracking_key': 'comp3',
+        'aperture_flux_adu': 800.0,
+        'count_rate_adu_per_second': 13.3,
+        'estimated_magnitude_error': 0.04,
+        'catalog_match': {
+            'mag': 12.4,
+            'error': 0.02,
+            'mag_band': 'V',
+            'catalog_row': {'Bmag': 12.95, 'Vmag': 12.4},
+        },
+    }
+    info_dict = {
+        'save': str(tmp_path),
+        'date': '2024-01-02',
+        'aavso_num': 'RTZ',
+        'camera': 'CCD',
+        'filter': 'V',
+        'lat': '+32.4',
+        'long': '-110.7',
+        'elev': 2600,
+    }
+
+    variable_overexposed = np.zeros(frame_count, dtype=bool)
+    variable_overexposed[:2] = True
+    results = exotic_module.process_fortuitous_variables(
+        [variable],
+        comparison_calibration,
+        calibrations,
+        times,
+        times,
+        np.linspace(1.1, 1.3, frame_count),
+        psf_data,
+        aper_data,
+        info_dict,
+        comp_overexposed_masks={'comp3': variable_overexposed},
+        exposure_times_seconds=np.full(frame_count, 60.0),
+        observed_filter='V',
+    )
+
+    assert results[0]['status'] == 'completed'
+    assert results[0]['input_frame_count'] == frame_count
+    assert results[0]['target_overexposure_rejected_frame_count'] == 2
+    assert results[0]['output_magnitude_error_rejected_frame_count'] == 1
+    assert results[0]['point_count'] == frame_count - 3
+    variable_dir = tmp_path / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX'
+    assert next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).is_file()
+    assert next(variable_dir.glob('EnsembleSelection_SyntheticVSX_2024-01-02.json')).is_file()
+    assert next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv')).is_file()
+    manifest = json.loads(
+        next((tmp_path / 'fortuitous_variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert manifest['variables'][0]['ensemble_member_count'] == 2
+    assert manifest['variables'][0]['output_magnitude_error_rejected_frame_count'] == 1
+    assert manifest['variables'][0]['output_magnitude_error_max'] > 0.05
+    selection = json.loads(
+        next(variable_dir.glob('EnsembleSelection_SyntheticVSX_2024-01-02.json')).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert selection['target']['input_frame_count'] == frame_count
+    assert selection['target']['target_overexposure_rejected_frame_count'] == 2
+    assert selection['target']['output_magnitude_error_rejected_frame_count'] == 1
+    assert selection['target']['valid_output_frame_count'] == frame_count - 3
+    assert 'exoplanet target overexposure mask is not applied' in (
+        selection['target']['saturation_rejection_scope']
+    )
+    aid_text = next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).read_text(
+        encoding='utf-8'
+    )
+    ensemble_header = next(
+        line for line in aid_text.splitlines()
+        if line.startswith('#ENSEMBLE-COMPARISONS-XC=')
+    )
+    ensemble_metadata = json.loads(ensemble_header.split('=', 1)[1])
+    assert ensemble_metadata['member_count'] == 2
+    assert ensemble_metadata['members'][0]['ra_deg'] == pytest.approx(10.1)
+    assert ensemble_metadata['members'][0]['dec_deg'] == pytest.approx(-20.1)
+    assert ensemble_metadata['members'][1]['ra_deg'] == pytest.approx(10.2)
+    assert ensemble_metadata['members'][1]['dec_deg'] == pytest.approx(-20.2)
+    csv_path = next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv'))
+    exported_errors = [
+        float(row.split(',')[3])
+        for row in csv_path.read_text(encoding='utf-8').splitlines()[1:]
+        if row.strip()
+    ]
+    assert exported_errors
+    assert max(exported_errors) < 0.05
+
+
+def test_stellar_variability_selector_uses_calibrated_ensemble_by_default():
+    frame_count = 12
+    times = np.linspace(10.2, 10.3, frame_count)
+    target_flux = 1000.0 * (1.0 + np.linspace(-0.002, 0.002, frame_count))
+    comp1_flux = np.full(frame_count, 500.0)
+    comp2_flux = np.full(frame_count, 250.0)
+    quality_mask = np.ones(frame_count, dtype=bool)
+    comp_summaries = [
+        {
+            'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+            'aggregate_score': 0.001, 'coverage_rejected': False,
+            'suitability_outlier_rejected': False, 'overexposure_rejected_count': 0,
+            'psf_quality_keep_mask': quality_mask,
+            'ensemble_frame_keep_mask': quality_mask,
+        },
+        {
+            'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+            'aggregate_score': 0.002, 'coverage_rejected': False,
+            'suitability_outlier_rejected': False, 'overexposure_rejected_count': 0,
+            'psf_quality_keep_mask': quality_mask,
+            'ensemble_frame_keep_mask': quality_mask,
+        },
+    ]
+    comparison_calibration = {
+        'method': 'aperture',
+        'method_label': 'Aperture photometry (aper=5px, annulus=10px)',
+        'a': 0,
+        'an': 0,
+        'aper': 5.0,
+        'annulus': 10.0,
+        'field_score': 0.0015,
+        'field_image_keep_mask': quality_mask,
+        'comp_summaries': comp_summaries,
+    }
+    psf_data = {
+        'target': np.ones((frame_count, 7), dtype=float),
+        'comp1': np.ones((frame_count, 7), dtype=float),
+        'comp2': np.ones((frame_count, 7), dtype=float),
+    }
+    aper_data = {
+        'target': target_flux[:, None, None],
+        'target_unc': np.full((frame_count, 1, 1), 1.0),
+        'comp1': comp1_flux[:, None, None],
+        'comp1_unc': np.full((frame_count, 1, 1), 1.0),
+        'comp2': comp2_flux[:, None, None],
+        'comp2_unc': np.full((frame_count, 1, 1), 1.0),
+    }
+    calibration_stars = {
+        'C1': {
+            'pos': [10, 20], 'mag': 12.0, 'error': 0.01, 'mag_band': 'V',
+            'catalog_source': 'Synthetic catalog',
+        },
+        'C2': {
+            'pos': [30, 40], 'mag': 12.0 + 2.5 * np.log10(2.0),
+            'error': 0.011, 'mag_band': 'V', 'catalog_source': 'Synthetic catalog',
+        },
+    }
+
+    result = exotic_module.select_stellar_variability_only_photometry(
+        times,
+        times,
+        np.ones(frame_count),
+        _stellar_variability_only_planet_dict(),
+        comparison_calibration,
+        psf_data,
+        aper_data,
+        target_flux,
+        use_ensemble_photometry=True,
+        calibration_stars=calibration_stars,
+        observed_filter='V',
+    )
+
+    selected = result['selected_result']
+    assert result['selection_metric'] == 'stellar_variability_ensemble'
+    assert selected['comp_index'] is None
+    assert selected['ensemble_member_keys'] == ['comp1', 'comp2']
+    assert selected['fit'].stellar_variability_ensemble_members
+    assert len(selected['fit'].stellar_variability_ensemble_magnitudes) == len(selected['fit'].time)
+
+
+def test_stellar_variability_selector_opt_out_restores_single_comp_selection():
+    frame_count = 24
+    times = np.linspace(10.2, 10.3, frame_count)
+    quality_mask = np.ones(frame_count, dtype=bool)
+    comparison_calibration = {
+        'method': 'aperture',
+        'method_label': 'Aperture photometry',
+        'a': 0,
+        'an': 0,
+        'aper': 5.0,
+        'annulus': 10.0,
+        'field_score': 0.001,
+        'field_image_keep_mask': quality_mask,
+        'comp_summaries': [{
+            'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+            'aggregate_score': 0.001, 'coverage_rejected': False,
+            'suitability_outlier_rejected': False, 'overexposure_rejected_count': 0,
+            'psf_quality_keep_mask': quality_mask,
+            'ensemble_frame_keep_mask': quality_mask,
+        }],
+    }
+    target_flux = 1000.0 * (1.0 + np.linspace(-0.001, 0.001, frame_count))
+    comp_flux = np.full(frame_count, 500.0)
+    psf_data = {
+        'target': np.ones((frame_count, 7), dtype=float),
+        'comp1': np.ones((frame_count, 7), dtype=float),
+    }
+    aper_data = {
+        'target': target_flux[:, None, None],
+        'target_unc': np.full((frame_count, 1, 1), 1.0),
+        'comp1': comp_flux[:, None, None],
+        'comp1_unc': np.full((frame_count, 1, 1), 1.0),
+    }
+
+    result = exotic_module.select_stellar_variability_only_photometry(
+        times,
+        times,
+        np.ones(frame_count),
+        _stellar_variability_only_planet_dict(),
+        comparison_calibration,
+        psf_data,
+        aper_data,
+        target_flux,
+        use_ensemble_photometry=False,
+    )
+
+    assert result['selection_metric'] == 'stellar_variability_scatter'
+    assert result['selected_result']['comp_index'] == 0

@@ -57,12 +57,14 @@ warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 
 # standard imports
 import argparse
+import csv
 import copy
 import faulthandler
 from functools import lru_cache
 import inspect
 import json
 import hashlib
+from math import atan2, cos, radians, sin, sqrt
 import multiprocessing
 import os
 import shutil
@@ -104,7 +106,7 @@ import requests
 # scipy imports
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
-from scipy.ndimage import binary_erosion, gaussian_filter, maximum_filter, median_filter
+from scipy.ndimage import binary_erosion, gaussian_filter, label as ndimage_label, maximum_filter, median_filter
 from skimage.registration import phase_cross_correlation
 from skimage.transform import SimilarityTransform
 # error handling for scraper
@@ -246,6 +248,19 @@ RELATIVE_FLUX_MAX = 2.0  # Legacy threshold retained for compatibility; no longe
 AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
 LIGHTCURVE_MIN_VALID_POINTS = 5
 STELLAR_VARIABILITY_ONLY_DEFAULT = False
+STELLAR_VARIABILITY_ENSEMBLE_DEFAULT = True
+STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS = 2
+STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS = 5
+STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_SIGMA = 3.0
+STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_FLOOR = 1.0e-4
+STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_FLOOR_FRACTION = 0.05
+STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_HIGH_THRESHOLD_FLOOR_MAG = 0.01
+PHOTOMETER_FORTUITOUS_VARIABLES_DEFAULT = True
+USE_NEXTASTRO_VSX_CACHE_FIRST_DEFAULT = False
+FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR = 0.05
+FORTUITOUS_VARIABLE_OPTIMAL_MAX_PERIOD_DAYS = 10.0
+FORTUITOUS_VARIABLE_OPTIMAL_MIN_AMPLITUDE_MAG = 0.3
+FORTUITOUS_VARIABLE_VSX_MAGNITUDE_LIMIT = 20.0
 REJECT_OVEREXPOSED_STARS_DEFAULT = True
 SATURATION_VALUE_DEFAULT = 65535.0
 OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT = 0.9
@@ -378,6 +393,8 @@ NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS = 5
 NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS = 10
 NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 NEXTASTRO_PHOTOMETRY_API_URL = 'https://photometry.nextastro.org'
+NEXTASTRO_VSX_QUERY_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/vsx_query'
+NEXTASTRO_VSX_QUERY_LIMIT = 200000
 NEXTASTRO_PHOTOMETRY_COLUMNS = (
     'id', 'source_id', 'ra', 'dec',
     'Bmag', 'err_Bmag', 'Vmag', 'err_Vmag',
@@ -5434,6 +5451,13 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     if comp_flux_error_values is not None:
         selected_result['good_comp_flux_error'] = np.asarray(comp_flux_error_values, dtype=float)
         selected_result['cflux_fit_error'] = np.asarray(comp_flux_error_values, dtype=float)
+    annotate_stellar_variability_raw_photometry(
+        fit,
+        selected_result.get('tflux_fit'),
+        selected_result.get('cflux_fit'),
+        target_flux_error=selected_result.get('tflux_fit_error'),
+        comp_flux_error=selected_result.get('cflux_fit_error'),
+    )
     if source_indices is not None:
         selected_result['source_indices'] = np.asarray(source_indices, dtype=int)
     annotate_transit_detection_qc(fit)
@@ -7971,6 +7995,30 @@ def should_use_ensemble_photometry_rather_than_single_comp(config_value):
         config_value,
         False,
         'use_ensemble_photometry_rather_than_single_comp',
+    )
+
+
+def should_use_ensemble_photometry_for_stellar_variability(config_value):
+    return parse_bool_config_value(
+        config_value,
+        STELLAR_VARIABILITY_ENSEMBLE_DEFAULT,
+        'use_ensemble_photometry_for_stellar_variability',
+    )
+
+
+def should_photometer_fortuitous_variables(config_value):
+    return parse_bool_config_value(
+        config_value,
+        PHOTOMETER_FORTUITOUS_VARIABLES_DEFAULT,
+        'photometer_fortuitous_variables',
+    )
+
+
+def should_use_nextastro_vsx_cache_first(config_value):
+    return parse_bool_config_value(
+        config_value,
+        USE_NEXTASTRO_VSX_CACHE_FIRST_DEFAULT,
+        'use_nextastro_vsx_cache_first',
     )
 
 
@@ -14006,6 +14054,581 @@ def extract_vsx_objects(payload):
     return []
 
 
+def vsx_object_value(vsx_object, *keys):
+    if not isinstance(vsx_object, dict):
+        return None
+    normalized = {str(key).strip().lower(): value for key, value in vsx_object.items()}
+    for key in keys:
+        value = normalized.get(str(key).strip().lower())
+        if value not in (None, ''):
+            return value
+    return None
+
+
+def vsx_numeric_value(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float, np.number)):
+        parsed = float(value)
+        return parsed if np.isfinite(parsed) else None
+    match = re.search(
+        r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?",
+        str(value).replace(',', ''),
+    )
+    if match is None:
+        return None
+    parsed = _finite_float(match.group(0))
+    return float(parsed) if parsed is not None else None
+
+
+def vsx_object_ra_dec(vsx_object):
+    ra_value = vsx_object_value(vsx_object, 'RA2000', 'RA', 'ra_deg')
+    dec_value = vsx_object_value(vsx_object, 'Declination2000', 'Dec2000', 'DEC', 'dec_deg')
+    if ra_value is None or dec_value is None:
+        return None
+
+    ra_text = str(ra_value).strip()
+    dec_text = str(dec_value).strip()
+    sexagesimal_ra = ':' in ra_text or len(ra_text.split()) > 1
+    try:
+        if sexagesimal_ra:
+            coordinate = SkyCoord(ra_text, dec_text, unit=(u.hourangle, u.deg), frame='fk5')
+            return float(coordinate.ra.deg), float(coordinate.dec.deg)
+        ra_deg = float(ra_text)
+        dec_deg = float(dec_text)
+        if np.isfinite(ra_deg) and np.isfinite(dec_deg):
+            return ra_deg, dec_deg
+    except (TypeError, ValueError):
+        pass
+    try:
+        coordinate = SkyCoord(ra_text, dec_text, unit=(u.hourangle, u.deg), frame='fk5')
+        return float(coordinate.ra.deg), float(coordinate.dec.deg)
+    except Exception:
+        return None
+
+
+def vsx_object_period_days(vsx_object):
+    return vsx_numeric_value(vsx_object_value(vsx_object, 'Period', 'period_days'))
+
+
+def vsx_object_amplitude_mag(vsx_object):
+    direct_amplitude = vsx_numeric_value(
+        vsx_object_value(vsx_object, 'Amplitude', 'amplitude_mag')
+    )
+    if direct_amplitude is not None and direct_amplitude >= 0:
+        return float(direct_amplitude)
+
+    maximum_magnitude = vsx_numeric_value(
+        vsx_object_value(vsx_object, 'MaxMag', 'MaximumMagnitude', 'max_mag')
+    )
+    minimum_magnitude = vsx_numeric_value(
+        vsx_object_value(vsx_object, 'MinMag', 'MinimumMagnitude', 'min_mag')
+    )
+    if maximum_magnitude is None or minimum_magnitude is None:
+        return None
+    return float(abs(minimum_magnitude - maximum_magnitude))
+
+
+def fortuitous_variable_category(period_days, amplitude_mag):
+    period = _finite_float(period_days)
+    amplitude = _finite_float(amplitude_mag)
+    if (
+        period is not None
+        and period > 0
+        and period <= FORTUITOUS_VARIABLE_OPTIMAL_MAX_PERIOD_DAYS
+        and amplitude is not None
+        and amplitude >= FORTUITOUS_VARIABLE_OPTIMAL_MIN_AMPLITUDE_MAG
+    ):
+        return 'optimal_variables'
+    return 'rest_of_the_variables'
+
+
+def nextastro_vsx_query_boxes(ra, dec, radius_degrees):
+    center_ra = float(ra) % 360.0
+    center_dec = float(dec)
+    radius = max(0.0, float(radius_degrees))
+    dec_min = max(-90.0, center_dec - radius)
+    dec_max = min(90.0, center_dec + radius)
+    cos_dec = abs(np.cos(np.deg2rad(center_dec)))
+    if cos_dec < 1.0e-12:
+        return [(0.0, 360.0, dec_min, dec_max)]
+
+    ra_radius = min(180.0, radius / cos_dec)
+    if ra_radius >= 180.0:
+        return [(0.0, 360.0, dec_min, dec_max)]
+    ra_min = (center_ra - ra_radius) % 360.0
+    ra_max = (center_ra + ra_radius) % 360.0
+    if ra_min <= ra_max:
+        return [(ra_min, ra_max, dec_min, dec_max)]
+    return [
+        (ra_min, 360.0, dec_min, dec_max),
+        (0.0, ra_max, dec_min, dec_max),
+    ]
+
+
+def normalize_nextastro_vsx_row(row):
+    if not isinstance(row, dict):
+        return None
+    ra = _finite_float(vsx_object_value(row, 'ra_deg', 'RA2000', 'ra'))
+    dec = _finite_float(vsx_object_value(row, 'dec_deg', 'Declination2000', 'dec'))
+    if ra is None or dec is None:
+        return None
+    normalized_keys = {str(key).strip().lower() for key in row}
+    magnitude = vsx_object_value(row, 'max_mag', 'mag1', 'MaxMag')
+    magnitude_band = vsx_object_value(row, 'max_passband', 'mag1_band')
+    if magnitude not in (None, '') and magnitude_band not in (None, ''):
+        magnitude = f"{magnitude} {magnitude_band}"
+    minimum_magnitude = vsx_object_value(row, 'min_mag', 'MinMag')
+    minimum_band = vsx_object_value(row, 'min_passband')
+    if minimum_magnitude not in (None, '') and minimum_band not in (None, ''):
+        minimum_magnitude = f"{minimum_magnitude} {minimum_band}"
+    return {
+        **row,
+        'Name': vsx_object_value(row, 'name', 'Name'),
+        'OID': vsx_object_value(row, 'oid', 'OID'),
+        'RA2000': float(ra),
+        'Declination2000': float(dec),
+        'VariabilityType': vsx_object_value(row, 'var_type', 'VariabilityType', 'Type'),
+        'Period': vsx_object_value(row, 'period_days', 'Period'),
+        'Amplitude': vsx_object_value(row, 'amplitude_mag', 'Amplitude'),
+        'MaxMag': magnitude,
+        'MinMag': minimum_magnitude,
+        'Category': 'Variable',
+        '_vsx_source': 'nextastro_cache',
+        '_vsx_has_full_metadata': {
+            'period_days',
+            'amplitude_mag',
+            'max_mag',
+            'min_mag',
+        }.issubset(normalized_keys),
+    }
+
+
+@retry(stop=stop_after_delay(30))
+def nextastro_vsx_field_query(ra, dec, radius_degrees):
+    rows = []
+    for ra_min, ra_max, dec_min, dec_max in nextastro_vsx_query_boxes(
+        ra,
+        dec,
+        radius_degrees,
+    ):
+        payload = {
+            'ra_min': float(ra_min),
+            'ra_max': float(ra_max),
+            'dec_min': float(dec_min),
+            'dec_max': float(dec_max),
+            'limit': NEXTASTRO_VSX_QUERY_LIMIT,
+            'offset': 0,
+            'include_table': True,
+            'compact': False,
+        }
+        response = requests.post(NEXTASTRO_VSX_QUERY_URL, json=payload, timeout=30)
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict) or not isinstance(body.get('rows'), list):
+            raise RuntimeError("NextAstro VSX cache returned an unexpected response format.")
+        columns = body.get('columns') if isinstance(body.get('columns'), list) else []
+        for raw_row in body['rows']:
+            if isinstance(raw_row, dict):
+                row = raw_row
+            elif isinstance(raw_row, (list, tuple)) and len(raw_row) == len(columns):
+                row = dict(zip(columns, raw_row))
+            else:
+                continue
+            normalized = normalize_nextastro_vsx_row(row)
+            if normalized is not None:
+                rows.append(normalized)
+
+    deduplicated = []
+    seen = set()
+    for row in rows:
+        oid = vsx_object_value(row, 'OID', 'oid')
+        coordinates = vsx_object_ra_dec(row)
+        key = (
+            str(oid).strip() if oid not in (None, '') else '',
+            round(coordinates[0], 7) if coordinates else None,
+            round(coordinates[1], 7) if coordinates else None,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(row)
+    return deduplicated
+
+
+@retry(stop=stop_after_delay(30))
+def vsx_field_query(ra, dec, radius_degrees, maglimit=FORTUITOUS_VARIABLE_VSX_MAGNITUDE_LIMIT):
+    url = "https://www.aavso.org/vsx/index.php"
+    response = requests.get(
+        url,
+        params={
+            'view': 'api.list',
+            'ra': float(ra),
+            'dec': float(dec),
+            'radius': float(radius_degrees),
+            'tomag': float(maglimit),
+            'format': 'json',
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    return extract_vsx_objects(response.json())
+
+
+def angular_separation_arcsec(first_ra, first_dec, second_ra, second_dec):
+    first_ra_rad, first_dec_rad, second_ra_rad, second_dec_rad = np.deg2rad([
+        first_ra,
+        first_dec,
+        second_ra,
+        second_dec,
+    ])
+    delta_ra = second_ra_rad - first_ra_rad
+    delta_dec = second_dec_rad - first_dec_rad
+    haversine = (
+        np.sin(delta_dec / 2.0) ** 2
+        + np.cos(first_dec_rad) * np.cos(second_dec_rad) * np.sin(delta_ra / 2.0) ** 2
+    )
+    haversine = float(np.clip(haversine, 0.0, 1.0))
+    return float(np.rad2deg(2.0 * np.arcsin(np.sqrt(haversine))) * 3600.0)
+
+
+def enrich_nextastro_vsx_objects(nextastro_objects, aavso_objects, match_radius_arcsec=2.0):
+    aavso_by_oid = {
+        str(vsx_object_value(obj, 'OID', 'oid')).strip(): obj
+        for obj in aavso_objects
+        if vsx_object_value(obj, 'OID', 'oid') not in (None, '')
+    }
+    enriched = []
+    for cached_object in nextastro_objects:
+        match = None
+        oid = vsx_object_value(cached_object, 'OID', 'oid')
+        if oid not in (None, ''):
+            match = aavso_by_oid.get(str(oid).strip())
+        cached_coordinates = vsx_object_ra_dec(cached_object)
+        if match is None and cached_coordinates is not None:
+            nearest_distance = None
+            for aavso_object in aavso_objects:
+                aavso_coordinates = vsx_object_ra_dec(aavso_object)
+                if aavso_coordinates is None:
+                    continue
+                distance = angular_separation_arcsec(
+                    *cached_coordinates,
+                    *aavso_coordinates,
+                )
+                if distance <= float(match_radius_arcsec) and (
+                    nearest_distance is None or distance < nearest_distance
+                ):
+                    match = aavso_object
+                    nearest_distance = distance
+        if match is None:
+            enriched.append(cached_object)
+        else:
+            enriched.append({
+                **cached_object,
+                **match,
+                '_vsx_source': 'nextastro_cache+aavso_metadata',
+            })
+    return enriched
+
+
+def vsx_field_query_with_preference(
+        ra,
+        dec,
+        radius_degrees,
+        maglimit=FORTUITOUS_VARIABLE_VSX_MAGNITUDE_LIMIT,
+        use_nextastro_vsx_cache_first=False):
+    if not use_nextastro_vsx_cache_first:
+        return vsx_field_query(ra, dec, radius_degrees, maglimit=maglimit)
+
+    try:
+        cached_objects = nextastro_vsx_field_query(ra, dec, radius_degrees)
+    except Exception as exc:
+        log_info(
+            "Warning: NextAstro VSX cache-first lookup failed; falling back to AAVSO VSX "
+            f"({describe_retry_exception(exc)}).",
+            warn=True,
+        )
+        return vsx_field_query(ra, dec, radius_degrees, maglimit=maglimit)
+
+    if not cached_objects:
+        log_info(
+            "NextAstro VSX cache-first lookup returned no field objects; "
+            "checking AAVSO VSX as a completeness fallback."
+        )
+        return vsx_field_query(ra, dec, radius_degrees, maglimit=maglimit)
+
+    log_info(
+        f"NextAstro VSX cache-first lookup returned {len(cached_objects)} field object(s)."
+    )
+    if all(bool(obj.get('_vsx_has_full_metadata')) for obj in cached_objects):
+        log_info(
+            "NextAstro VSX cache supplied the full period/amplitude metadata schema; "
+            "skipping AAVSO metadata enrichment."
+        )
+        return cached_objects
+    try:
+        aavso_objects = vsx_field_query(ra, dec, radius_degrees, maglimit=maglimit)
+    except Exception as exc:
+        log_info(
+            "Warning: AAVSO metadata enrichment failed; continuing with NextAstro VSX "
+            f"cache coordinates and types ({describe_retry_exception(exc)}).",
+            warn=True,
+        )
+        return cached_objects
+    return enrich_nextastro_vsx_objects(cached_objects, aavso_objects)
+
+
+def estimated_magnitude_error_from_reference_count_rate(
+        reference_image,
+        x_pos,
+        y_pos,
+        exposure_seconds=1.0,
+        gain_e_per_adu=None):
+    if reference_image is None:
+        return None
+    data = np.asarray(reference_image, dtype=float)
+    if data.ndim != 2:
+        return None
+    x_pos = _finite_float(x_pos)
+    y_pos = _finite_float(y_pos)
+    if x_pos is None or y_pos is None:
+        return None
+
+    aperture_radius = float(REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS)
+    aperture = CircularAperture(positions=[(x_pos, y_pos)], r=aperture_radius)
+    aperture_mask = aperture.to_mask(method='exact')[0]
+    aperture_cutout = aperture_mask.cutout(data, fill_value=np.nan)
+    if aperture_cutout is None:
+        return None
+    aperture_cutout = np.asarray(aperture_cutout, dtype=float)
+    aperture_weights = np.asarray(aperture_mask.data, dtype=float)
+    aperture_valid = (
+        np.isfinite(aperture_cutout)
+        & np.isfinite(aperture_weights)
+        & (aperture_weights > 0)
+    )
+    if not np.any(aperture_valid):
+        return None
+
+    annulus_geometry = resolve_sky_annulus_geometry(
+        aperture_radius,
+        3.0 * aperture_radius,
+    )
+    sky_background, sky_sigma, sky_pixels = skybg_phot(
+        data,
+        -1,
+        x_pos,
+        y_pos,
+        r=annulus_geometry['inner_radius'],
+        dr=annulus_geometry['annulus_width'],
+    )
+    if (
+        not np.isfinite(sky_background)
+        or not np.isfinite(sky_sigma)
+        or not np.isfinite(sky_pixels)
+        or sky_pixels <= 0
+    ):
+        return None
+
+    aperture_pixels = float(np.sum(aperture_weights[aperture_valid]))
+    aperture_sum = float(np.sum(
+        aperture_weights[aperture_valid] * aperture_cutout[aperture_valid]
+    ))
+    flux = aperture_sum - (float(sky_background) * aperture_pixels)
+    if not np.isfinite(flux) or flux <= 0:
+        return None
+    exposure = _finite_float(exposure_seconds, 1.0)
+    if exposure is None or exposure <= 0:
+        exposure = 1.0
+    noise_budget = compute_photometry_noise_budget(
+        flux,
+        sky_sigma,
+        aperture_pixels,
+        sky_pixels,
+        exposure_s=exposure,
+        airmass=1.0,
+        noise_config={'gain_e_per_adu': gain_e_per_adu},
+    )
+    flux_error = _finite_float(noise_budget.get('total'))
+    if flux_error is None or not np.isfinite(flux_error) or flux_error < 0:
+        return None
+    magnitude_error = (2.5 / np.log(10.0)) * flux_error / flux
+    if not np.isfinite(magnitude_error):
+        return None
+    return {
+        'aperture_flux_adu': float(flux),
+        'count_rate_adu_per_second': float(flux / exposure),
+        'estimated_magnitude_error': float(magnitude_error),
+        'reference_sky_background_adu_per_pixel': float(sky_background),
+        'reference_sky_sigma_adu': float(sky_sigma),
+        'reference_aperture_pixels': float(aperture_pixels),
+        'reference_sky_pixels': float(sky_pixels),
+        'reference_flux_error_adu': float(flux_error),
+        'reference_noise_components_adu': {
+            key: float(value)
+            for key, value in noise_budget.items()
+            if np.isfinite(value)
+        },
+    }
+
+
+def discover_fortuitous_vsx_variables(
+        wcs_file,
+        image_shape,
+        img_scale,
+        reference_image,
+        obs_filter,
+        target_pixel=None,
+        field_catalog=None,
+        exposure_seconds=1.0,
+        gain_e_per_adu=None,
+        saturation_threshold=None,
+        maximum_magnitude_error=FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+        use_nextastro_vsx_cache_first=USE_NEXTASTRO_VSX_CACHE_FIRST_DEFAULT):
+    if not wcs_file or reference_image is None or img_scale is None:
+        return []
+    try:
+        image_height, image_width = image_shape[:2]
+        image_scale = float(img_scale)
+        wcs_header = search_wcs(wcs_file)
+        center_ra, center_dec = wcs_header.pixel_to_world_values(
+            float(image_width) / 2.0,
+            float(image_height) / 2.0,
+        )
+        radius_degrees = (
+            0.5 * image_scale * float(np.hypot(image_width, image_height))
+            + NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC
+        ) / 3600.0
+    except Exception as exc:
+        log_info(
+            f"Warning: could not define the VSX field footprint for fortuitous photometry ({exc}).",
+            warn=True,
+        )
+        return []
+
+    try:
+        vsx_objects = vsx_field_query_with_preference(
+            center_ra,
+            center_dec,
+            radius_degrees,
+            use_nextastro_vsx_cache_first=use_nextastro_vsx_cache_first,
+        )
+    except Exception as exc:
+        log_info(
+            "Warning: full-field VSX lookup for fortuitous variables failed "
+            f"({describe_retry_exception(exc)}).",
+            warn=True,
+        )
+        return []
+
+    target_values = None
+    try:
+        candidate_target = np.asarray(target_pixel, dtype=float).reshape(-1)
+        if candidate_target.size >= 2 and np.all(np.isfinite(candidate_target[:2])):
+            target_values = candidate_target[:2]
+    except (TypeError, ValueError):
+        target_values = None
+
+    variables = []
+    for vsx_object in vsx_objects:
+        vsx_category = str(vsx_object_value(vsx_object, 'Category') or '').strip().lower()
+        if vsx_category and vsx_category != 'variable':
+            continue
+        coordinates = vsx_object_ra_dec(vsx_object)
+        if coordinates is None:
+            continue
+        ra_deg, dec_deg = coordinates
+        try:
+            x_pos, y_pos = wcs_header.world_to_pixel_values(ra_deg, dec_deg)
+            x_pos = float(np.asarray(x_pos).reshape(-1)[0])
+            y_pos = float(np.asarray(y_pos).reshape(-1)[0])
+        except Exception:
+            continue
+        if not pixel_within_image(
+            x_pos,
+            y_pos,
+            image_shape,
+            margin=REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS + 2,
+        ):
+            continue
+        if target_values is not None:
+            target_distance = float(np.hypot(x_pos - target_values[0], y_pos - target_values[1]))
+            if target_distance <= REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS:
+                continue
+        if (
+            _finite_float(saturation_threshold) is not None
+            and aperture_contains_overexposed_pixel(
+                reference_image,
+                x_pos,
+                y_pos,
+                REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
+                float(saturation_threshold),
+            )
+        ):
+            continue
+
+        count_rate_estimate = estimated_magnitude_error_from_reference_count_rate(
+            reference_image,
+            x_pos,
+            y_pos,
+            exposure_seconds=exposure_seconds,
+            gain_e_per_adu=gain_e_per_adu,
+        )
+        if count_rate_estimate is None:
+            continue
+        if count_rate_estimate['estimated_magnitude_error'] >= float(maximum_magnitude_error):
+            continue
+
+        if any(
+            np.hypot(existing['x'] - x_pos, existing['y'] - y_pos)
+            <= REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS
+            for existing in variables
+        ):
+            continue
+
+        catalog_match = None
+        if field_catalog is not None:
+            catalog_match = nextastro_photometry_catalog_match(
+                field_catalog,
+                ra_deg,
+                dec_deg,
+                obs_filter,
+            )
+        period_days = vsx_object_period_days(vsx_object)
+        amplitude_mag = vsx_object_amplitude_mag(vsx_object)
+        name = str(
+            vsx_object_value(vsx_object, 'Name', 'name', 'Identifier')
+            or f"VSX J{ra_deg:.6f}{dec_deg:+.6f}"
+        ).strip()
+        variables.append({
+            'name': name,
+            'auid': vsx_object_value(vsx_object, 'AUID', 'auid'),
+            'variable_type': vsx_object_value(vsx_object, 'Type', 'VariabilityType', 'VarType'),
+            'period_days': period_days,
+            'amplitude_mag': amplitude_mag,
+            'category': fortuitous_variable_category(period_days, amplitude_mag),
+            'ra': float(ra_deg),
+            'dec': float(dec_deg),
+            'x': float(x_pos),
+            'y': float(y_pos),
+            'pos': [float(x_pos), float(y_pos)],
+            'catalog_match': catalog_match,
+            **count_rate_estimate,
+        })
+
+    variables.sort(key=lambda variable: (
+        0 if variable['category'] == 'optimal_variables' else 1,
+        variable['estimated_magnitude_error'],
+        variable['name'],
+    ))
+    log_info(
+        "Fortuitous-variable VSX field search retained "
+        f"{len(variables)} star(s) with reference-frame estimated errors below "
+        f"{float(maximum_magnitude_error):.3f} mag."
+    )
+    return variables
+
+
 def describe_retry_exception(err):
     if isinstance(err, RetryError):
         last_attempt = getattr(err, 'last_attempt', None)
@@ -14348,9 +14971,19 @@ def row_nextastro_magnitude(row, band_candidates, max_error=CATALOG_REFERENCE_MA
 
 
 def sky_separation_arcsec(ra_a, dec_a, ra_b, dec_b):
-    first = SkyCoord(float(ra_a) * u.deg, float(dec_a) * u.deg, frame='fk5')
-    second = SkyCoord(float(ra_b) * u.deg, float(dec_b) * u.deg, frame='fk5')
-    return float(first.separation(second).arcsec)
+    ra_a_rad = radians(float(ra_a))
+    dec_a_rad = radians(float(dec_a))
+    ra_b_rad = radians(float(ra_b))
+    dec_b_rad = radians(float(dec_b))
+    delta_ra = ra_b_rad - ra_a_rad
+    delta_dec = dec_b_rad - dec_a_rad
+    haversine = (
+        sin(delta_dec / 2.0) ** 2
+        + cos(dec_a_rad) * cos(dec_b_rad) * sin(delta_ra / 2.0) ** 2
+    )
+    haversine = min(max(haversine, 0.0), 1.0)
+    separation_rad = 2.0 * atan2(sqrt(haversine), sqrt(1.0 - haversine))
+    return float(separation_rad * 206264.80624709636)
 
 
 def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
@@ -14517,33 +15150,19 @@ def connected_component_sizes(mask):
     if mask.ndim != 2 or not np.any(mask):
         return None, []
 
-    labels = np.full(mask.shape, -1, dtype=int)
-    component_sizes = []
-    component_id = 0
-    height, width = mask.shape
-
-    for start_y, start_x in np.argwhere(mask):
-        if labels[start_y, start_x] != -1:
-            continue
-
-        stack = [(int(start_y), int(start_x))]
-        labels[start_y, start_x] = component_id
-        size = 0
-        while stack:
-            y_pos, x_pos = stack.pop()
-            size += 1
-            for neighbor_y in range(max(0, y_pos - 1), min(height, y_pos + 2)):
-                for neighbor_x in range(max(0, x_pos - 1), min(width, x_pos + 2)):
-                    if not mask[neighbor_y, neighbor_x]:
-                        continue
-                    if labels[neighbor_y, neighbor_x] != -1:
-                        continue
-                    labels[neighbor_y, neighbor_x] = component_id
-                    stack.append((neighbor_y, neighbor_x))
-        component_sizes.append(size)
-        component_id += 1
-
-    return labels, component_sizes
+    # Eight-connected labeling is equivalent to the former Python flood fill,
+    # but runs in compiled scipy code and avoids visiting every threshold pixel
+    # through nested Python loops on multi-megapixel reference frames.
+    labels, component_count = ndimage_label(
+        mask,
+        structure=np.ones((3, 3), dtype=np.uint8),
+    )
+    if component_count <= 0:
+        return None, []
+    component_sizes = np.bincount(labels.reshape(-1), minlength=component_count + 1)[1:]
+    labels = labels.astype(np.int32, copy=False)
+    labels -= 1  # Preserve the existing API: background=-1, components start at zero.
+    return labels, component_sizes.tolist()
 
 
 def detect_reference_fallback_bright_stars(
@@ -14587,10 +15206,16 @@ def detect_reference_fallback_bright_stars(
 
     height, width = signal.shape
     margin = max(int(min_sep), int(aperture_radius) + 2)
-    flat_order = np.argsort(signal, axis=None)[::-1]
-    yy, xx = np.indices(signal.shape)
-    source_labels, source_sizes = connected_component_sizes(signal >= threshold)
+    threshold_mask = signal >= threshold
+    threshold_flat_indices = np.flatnonzero(threshold_mask)
+    if threshold_flat_indices.size == 0:
+        return []
+    threshold_values = signal.reshape(-1)[threshold_flat_indices]
+    flat_order = threshold_flat_indices[np.argsort(threshold_values)[::-1]]
+    source_labels, source_sizes = connected_component_sizes(threshold_mask)
     stars = []
+    separation_excluded = np.zeros(signal.shape, dtype=bool)
+    separation_radius = float(min_sep)
 
     for flat_index in flat_order:
         y_pos, x_pos = np.unravel_index(int(flat_index), signal.shape)
@@ -14605,15 +15230,40 @@ def detect_reference_fallback_bright_stars(
                 continue
         if x_pos < margin or y_pos < margin or x_pos >= (width - margin) or y_pos >= (height - margin):
             continue
-        if any((star['x'] - x_pos) ** 2 + (star['y'] - y_pos) ** 2 < (float(min_sep) ** 2)
-               for star in stars):
+        if separation_excluded[y_pos, x_pos]:
             continue
 
-        r2 = (xx - x_pos) ** 2 + (yy - y_pos) ** 2
-        flux = float(signal[r2 <= (float(aperture_radius) ** 2)].sum())
+        radius = float(aperture_radius)
+        x_min = max(0, int(np.floor(x_pos - radius)))
+        x_max = min(width, int(np.ceil(x_pos + radius)) + 1)
+        y_min = max(0, int(np.floor(y_pos - radius)))
+        y_max = min(height, int(np.ceil(y_pos + radius)) + 1)
+        local_signal = signal[y_min:y_max, x_min:x_max]
+        local_y, local_x = np.ogrid[y_min:y_max, x_min:x_max]
+        local_aperture = (
+            (local_x - x_pos) ** 2 + (local_y - y_pos) ** 2
+            <= radius ** 2
+        )
+        flux = float(local_signal[local_aperture].sum())
         if flux <= 0:
             continue
         stars.append({'x': float(x_pos), 'y': float(y_pos), 'flux': flux})
+        exclusion_x_min = max(0, int(np.floor(x_pos - separation_radius)))
+        exclusion_x_max = min(width, int(np.ceil(x_pos + separation_radius)) + 1)
+        exclusion_y_min = max(0, int(np.floor(y_pos - separation_radius)))
+        exclusion_y_max = min(height, int(np.ceil(y_pos + separation_radius)) + 1)
+        exclusion_y, exclusion_x = np.ogrid[
+            exclusion_y_min:exclusion_y_max,
+            exclusion_x_min:exclusion_x_max,
+        ]
+        exclusion_circle = (
+            (exclusion_x - x_pos) ** 2 + (exclusion_y - y_pos) ** 2
+            < separation_radius ** 2
+        )
+        separation_excluded[
+            exclusion_y_min:exclusion_y_max,
+            exclusion_x_min:exclusion_x_max,
+        ][exclusion_circle] = True
         if len(stars) >= max_stars:
             break
 
@@ -14797,9 +15447,10 @@ def image_aperture_signal_flux(image_data, x_pos, y_pos,
     if not np.any(finite):
         return np.nan
     background = float(np.nanmedian(data[finite]))
-    yy, xx = np.indices(data.shape)
-    mask = (xx - x_pos) ** 2 + (yy - y_pos) ** 2 <= radius ** 2
-    aperture_values = data[mask]
+    cutout = data[y_min:y_max, x_min:x_max]
+    local_y, local_x = np.ogrid[y_min:y_max, x_min:x_max]
+    mask = (local_x - x_pos) ** 2 + (local_y - y_pos) ** 2 <= radius ** 2
+    aperture_values = cutout[mask]
     aperture_values = aperture_values[np.isfinite(aperture_values)]
     if aperture_values.size == 0:
         return np.nan
@@ -14994,7 +15645,9 @@ def select_automatic_optimal_calibration_stars(
         field_catalog,
         count=AUTOMATIC_CALIBRATION_SELECTOR_DEFAULT_COUNT,
         min_comp_target_sep=REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS,
-        colour_term_metadata=None):
+        colour_term_metadata=None,
+        brightest_first=False,
+        saturation_threshold=None):
     max_count = parse_automatic_calibration_selector_count(count)
     if image_data is None or field_catalog is None:
         return [], []
@@ -15016,14 +15669,22 @@ def select_automatic_optimal_calibration_stars(
     height, width = image_shape[:2]
     target_xi = int(np.clip(round(target_x), 0, width - 1))
     target_yi = int(np.clip(round(target_y), 0, height - 1))
-    target_match = nextastro_catalog_nearest_color_row(
-        field_catalog,
-        ra_wcs[target_yi][target_xi],
-        dec_wcs[target_yi][target_xi],
-        obs_filter,
-    )
+    if brightest_first:
+        target_match = nextastro_photometry_catalog_match(
+            field_catalog,
+            ra_wcs[target_yi][target_xi],
+            dec_wcs[target_yi][target_xi],
+            obs_filter,
+        )
+    else:
+        target_match = nextastro_catalog_nearest_color_row(
+            field_catalog,
+            ra_wcs[target_yi][target_xi],
+            dec_wcs[target_yi][target_xi],
+            obs_filter,
+        )
     target_color = nextastro_catalog_color((target_match or {}).get('catalog_row'), obs_filter)
-    if target_color is None:
+    if not brightest_first and target_color is None:
         log_info(
             "Warning: automatic calibration selector could not derive a target color from the "
             "NextAstro photometry catalog.",
@@ -15031,6 +15692,10 @@ def select_automatic_optimal_calibration_stars(
         )
         return [], []
 
+    log_info(
+        "Scanning the reference frame for bright, non-saturated ensemble candidates."
+    )
+    detection_started = perf_counter()
     detected_stars = detect_reference_fallback_bright_stars(
         image_data,
         max_stars=max(
@@ -15039,9 +15704,15 @@ def select_automatic_optimal_calibration_stars(
         ),
         threshold_percentile=AUTOMATIC_CALIBRATION_SELECTOR_DETECTION_PERCENTILE,
     )
-    comp_pool = filter_reference_fallback_stars_to_middle_fifty_percent(
-        dedupe_reference_fallback_stars(detected_stars),
-        image_shape,
+    log_info(
+        "Reference-frame ensemble candidate scan found "
+        f"{len(detected_stars)} source(s) in {perf_counter() - detection_started:.2f} seconds."
+    )
+    detected_pool = dedupe_reference_fallback_stars(detected_stars)
+    comp_pool = (
+        detected_pool
+        if brightest_first
+        else filter_reference_fallback_stars_to_middle_fifty_percent(detected_pool, image_shape)
     )
     target_detection = nearest_reference_fallback_star_by_pixels(
         comp_pool,
@@ -15066,10 +15737,25 @@ def select_automatic_optimal_calibration_stars(
         if (x_pos - target_x) ** 2 + (y_pos - target_y) ** 2 < min_sep2:
             continue
         brightness_ratio = float(star_flux / target_flux)
-        if not (
-            AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO
-            <= brightness_ratio
-            <= AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO
+        if (
+            not brightest_first
+            and not (
+                AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO
+                <= brightness_ratio
+                <= AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO
+            )
+        ):
+            continue
+        if (
+            brightest_first
+            and _finite_float(saturation_threshold) is not None
+            and aperture_contains_overexposed_pixel(
+                image_data,
+                x_pos,
+                y_pos,
+                REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
+                float(saturation_threshold),
+            )
         ):
             continue
         xi = int(np.clip(round(x_pos), 0, width - 1))
@@ -15078,20 +15764,36 @@ def select_automatic_optimal_calibration_stars(
         comp_dec = _finite_float(dec_wcs[yi][xi])
         if comp_ra is None or comp_dec is None:
             continue
-        match = nextastro_catalog_nearest_color_row(field_catalog, comp_ra, comp_dec, obs_filter)
-        color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
-        if match is None or color is None:
-            continue
-        color_delta = abs(color['color'] - target_color['color'])
+        if brightest_first:
+            match = nextastro_photometry_catalog_match(
+                field_catalog,
+                comp_ra,
+                comp_dec,
+                obs_filter,
+            )
+            color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
+            if match is None:
+                continue
+            color_delta = (
+                abs(color['color'] - target_color['color'])
+                if color is not None and target_color is not None
+                else np.nan
+            )
+        else:
+            match = nextastro_catalog_nearest_color_row(field_catalog, comp_ra, comp_dec, obs_filter)
+            color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
+            if match is None or color is None:
+                continue
+            color_delta = abs(color['color'] - target_color['color'])
         colour_term, colour_term_error = colour_term_for_catalog_label(
             colour_term_metadata,
-            color['label'],
+            (color or {}).get('label'),
         )
         expected_colour_mismatch_mag = None
         colour_term_uncertainty_mag = None
-        if colour_term is not None and np.isfinite(colour_term):
+        if colour_term is not None and np.isfinite(colour_term) and np.isfinite(color_delta):
             expected_colour_mismatch_mag = abs(float(colour_term)) * float(color_delta)
-        if colour_term_error is not None and np.isfinite(colour_term_error):
+        if colour_term_error is not None and np.isfinite(colour_term_error) and np.isfinite(color_delta):
             colour_term_uncertainty_mag = abs(float(color_delta)) * float(colour_term_error)
         candidates.append({
             'x': float(x_pos),
@@ -15101,10 +15803,16 @@ def select_automatic_optimal_calibration_stars(
             'ra': comp_ra,
             'dec': comp_dec,
             'catalog_match': match,
-            'color': color['color'],
-            'color_label': color['label'],
-            'target_color': target_color['color'],
+            'color': (color or {}).get('color', np.nan),
+            'color_label': (color or {}).get('label', ''),
+            'target_color': (target_color or {}).get('color', np.nan),
             'color_delta': float(color_delta),
+            'catalog_magnitude': match.get('mag'),
+            'catalog_magnitude_error': match.get('error'),
+            'catalog_magnitude_band': match.get('mag_band'),
+            'target_catalog_magnitude': (target_match or {}).get('mag'),
+            'target_catalog_magnitude_error': (target_match or {}).get('error'),
+            'target_catalog_magnitude_band': (target_match or {}).get('mag_band'),
             'colour_term': float(colour_term) if colour_term is not None else None,
             'colour_term_error': (
                 float(colour_term_error) if colour_term_error is not None else None
@@ -15122,23 +15830,35 @@ def select_automatic_optimal_calibration_stars(
             'target_flux': float(target_flux),
         })
 
-    candidates.sort(
-        key=lambda candidate: (
-            (
-                candidate['expected_colour_mismatch_mag']
-                if candidate.get('expected_colour_mismatch_mag') is not None
-                else candidate['color_delta']
-            ),
-            abs(np.log(candidate['brightness_ratio'])),
-            -candidate['flux'],
+    if brightest_first:
+        candidates.sort(
+            key=lambda candidate: (
+                -candidate['flux'],
+                _finite_float(
+                    candidate.get('expected_colour_mismatch_mag'),
+                    _finite_float(candidate.get('color_delta'), np.inf),
+                ),
+            )
         )
-    )
+    else:
+        candidates.sort(
+            key=lambda candidate: (
+                (
+                    candidate['expected_colour_mismatch_mag']
+                    if candidate.get('expected_colour_mismatch_mag') is not None
+                    else candidate['color_delta']
+                ),
+                abs(np.log(candidate['brightness_ratio'])),
+                -candidate['flux'],
+            )
+        )
     selected_candidates = candidates[:max_count]
     comp_stars = [[candidate['x'], candidate['y']] for candidate in selected_candidates]
     return comp_stars, selected_candidates
 
 
-def log_automatic_optimal_calibration_selection(comp_stars, candidates, requested_count):
+def log_automatic_optimal_calibration_selection(comp_stars, candidates, requested_count,
+                                                brightest_first=False):
     if not comp_stars:
         log_info(
             "Warning: automatic optimal calibration selector did not find any usable comparison stars; "
@@ -15146,13 +15866,29 @@ def log_automatic_optimal_calibration_selection(comp_stars, candidates, requeste
             warn=True,
         )
         return
+    if brightest_first:
+        candidate_text = "image-detected, non-saturated on the reference frame, and NextAstro matched"
+        ranking_text = "ranked brightest-first for the stellar-variability ensemble"
+    else:
+        candidate_text = "image-detected, flux-matched to 0.5-2.0x the target, and NextAstro matched"
+        ranking_text = "ranked by catalog color similarity to the target"
     log_info(
         "Automatic optimal calibration selector chose "
         f"{len(comp_stars)} comparison star(s) out of the requested {requested_count}. "
-        "Candidates were image-detected, flux-matched to 0.5-2.0x the target, NextAstro matched, "
-        "and ranked by catalog color similarity to the target."
+        f"Candidates were {candidate_text} and {ranking_text}."
     )
     for index, candidate in enumerate(candidates, start=1):
+        if brightest_first:
+            catalog_band = candidate.get('catalog_magnitude_band') or 'magnitude'
+            log_info(
+                f"  Stellar-variability ensemble candidate #{index}: "
+                f"pixels=[{candidate['x']:.2f}, {candidate['y']:.2f}], "
+                f"aperture flux={candidate['flux']:.3g}, "
+                f"catalog {catalog_band}="
+                f"{candidate.get('catalog_magnitude', np.nan):.3f} +/- "
+                f"{candidate.get('catalog_magnitude_error', np.nan):.3f} mag."
+            )
+            continue
         mismatch_text = ""
         if candidate.get('expected_colour_mismatch_mag') is not None:
             mismatch_text = (
@@ -15171,6 +15907,25 @@ def log_automatic_optimal_calibration_selection(comp_stars, candidates, requeste
         )
 
 
+def calibration_catalog_identity(star, label=None):
+    if not isinstance(star, dict):
+        return None
+    catalog_row = star.get('catalog_row') if isinstance(star.get('catalog_row'), dict) else {}
+    source_id = star.get('source_id', catalog_row.get('source_id'))
+    if source_id not in (None, ''):
+        return 'source_id', str(source_id).strip()
+    catalog_id = star.get('id', catalog_row.get('id'))
+    if catalog_id not in (None, ''):
+        return 'catalog_id', str(catalog_id).strip()
+    catalog_ra = _finite_float(star.get('catalog_ra', catalog_row.get('ra')))
+    catalog_dec = _finite_float(star.get('catalog_dec', catalog_row.get('dec')))
+    if catalog_ra is not None and catalog_dec is not None:
+        return 'catalog_position', round(catalog_ra, 7), round(catalog_dec, 7)
+    if str(label or '').startswith('NextAstro-'):
+        return 'catalog_label', str(label)
+    return None
+
+
 def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, existing_comp_stars=None,
                                       field_catalog=None):
     calibration_stars = dict(existing_comp_stars or {})
@@ -15178,6 +15933,11 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
         tuple(value.get('pos', []))
         for value in calibration_stars.values()
         if isinstance(value, dict)
+    }
+    existing_catalog_identities = {
+        identity
+        for label, value in calibration_stars.items()
+        if (identity := calibration_catalog_identity(value, label)) is not None
     }
 
     added_count = 0
@@ -15210,6 +15970,14 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
             )
             continue
 
+        catalog_identity = calibration_catalog_identity(match)
+        if catalog_identity is not None and catalog_identity in existing_catalog_identities:
+            log_info(
+                f"Skipping duplicate NextAstro calibration for comparison star #{index + 1}: "
+                "the same catalog source is already represented in the comparison pool."
+            )
+            continue
+
         match.update({
             'ra': comp_ra,
             'dec': comp_dec,
@@ -15221,6 +15989,8 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
         unique_label = unique_nextastro_calibration_label(calibration_stars, match)
         calibration_stars[unique_label] = match
         existing_positions.add(tuple(comp_pos))
+        if catalog_identity is not None:
+            existing_catalog_identities.add(catalog_identity)
         added_count += 1
         mag_text = magnitude_text(match['mag_band'], match['mag'], match['error'])
         log_info(
@@ -19030,6 +19800,63 @@ def stellar_variability_label(comp_label, comp_star):
     return comp_label
 
 
+def annotate_stellar_variability_raw_photometry(lc_fit, target_flux, comp_flux,
+                                                 target_flux_error=None, comp_flux_error=None):
+    if lc_fit is None:
+        return lc_fit
+
+    fit_shape = np.asarray(getattr(lc_fit, 'data', []), dtype=float).shape
+    target_flux = np.asarray(target_flux if target_flux is not None else [], dtype=float)
+    comp_flux = np.asarray(comp_flux if comp_flux is not None else [], dtype=float)
+    if target_flux.shape != fit_shape or comp_flux.shape != fit_shape:
+        return lc_fit
+
+    def aligned_error(values):
+        if values is None:
+            return np.full(fit_shape, np.nan, dtype=float)
+        array = np.asarray(values, dtype=float)
+        if array.shape != fit_shape:
+            return np.full(fit_shape, np.nan, dtype=float)
+        return array
+
+    lc_fit.stellar_variability_target_flux = target_flux.copy()
+    lc_fit.stellar_variability_comp_flux = comp_flux.copy()
+    lc_fit.stellar_variability_target_flux_error = aligned_error(target_flux_error).copy()
+    lc_fit.stellar_variability_comp_flux_error = aligned_error(comp_flux_error).copy()
+    return lc_fit
+
+
+def stellar_variability_raw_photometry(lc_fit):
+    fit_shape = np.asarray(getattr(lc_fit, 'data', []), dtype=float).shape
+    target_flux = np.asarray(
+        getattr(lc_fit, 'stellar_variability_target_flux', []),
+        dtype=float,
+    )
+    comp_flux = np.asarray(
+        getattr(lc_fit, 'stellar_variability_comp_flux', []),
+        dtype=float,
+    )
+    if target_flux.shape != fit_shape or comp_flux.shape != fit_shape:
+        raise RuntimeError(
+            "Raw target and comparison fluxes are unavailable; an absolute differential magnitude "
+            "cannot be recovered from a normalized light curve."
+        )
+
+    target_flux_error = np.asarray(
+        getattr(lc_fit, 'stellar_variability_target_flux_error', []),
+        dtype=float,
+    )
+    comp_flux_error = np.asarray(
+        getattr(lc_fit, 'stellar_variability_comp_flux_error', []),
+        dtype=float,
+    )
+    if target_flux_error.shape != fit_shape:
+        target_flux_error = np.full(fit_shape, np.nan, dtype=float)
+    if comp_flux_error.shape != fit_shape:
+        comp_flux_error = np.full(fit_shape, np.nan, dtype=float)
+    return target_flux, comp_flux, target_flux_error, comp_flux_error
+
+
 def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name,
                                               observed_filter=None):
     comp_mag = _finite_float(comp_star.get('mag'))
@@ -19061,33 +19888,77 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     if not (fit_data.shape == fit_airmass_model.shape == fit_airmass.shape == fit_times.shape):
         raise RuntimeError("Lightcurve arrays have inconsistent shapes for stellar variability output.")
 
+    target_flux, comp_flux, target_flux_error, comp_flux_error = stellar_variability_raw_photometry(lc_fit)
+
     if transit_model.shape == fit_data.shape:
         mask_ref = transit_model == 1
     else:
         mask_ref = np.ones_like(fit_data, dtype=bool)
 
-    with np.errstate(divide='ignore', invalid='ignore'):
-        detrended_all = np.divide(fit_data, fit_airmass_model)
     if np.count_nonzero(mask_ref) == 0:
-        mask_ref = np.isfinite(detrended_all)
+        mask_ref = np.isfinite(fit_data)
 
-    detrended = detrended_all[mask_ref]
+    target_flux = target_flux[mask_ref]
+    comp_flux = comp_flux[mask_ref]
+    target_flux_error = target_flux_error[mask_ref]
+    comp_flux_error = comp_flux_error[mask_ref]
+    selected_airmass_model = fit_airmass_model[mask_ref]
     selected_times = fit_times[mask_ref]
     selected_airmass = fit_airmass[mask_ref]
 
-    oot_scatter = np.nanstd(detrended)
     with np.errstate(divide='ignore', invalid='ignore'):
-        target_mag = comp_mag - (2.5 * np.log10(detrended))
-        target_mag_error = (
-            comp_mag_error ** 2
-            + (-2.5 * oot_scatter / (detrended * np.log(10))) ** 2
-        ) ** 0.5
+        raw_ratio = np.divide(target_flux, comp_flux)
+    valid_airmass_model = (
+        np.isfinite(selected_airmass_model)
+        & (selected_airmass_model > 0)
+    )
+    airmass_reference = (
+        float(np.nanmedian(selected_airmass_model[valid_airmass_model]))
+        if np.any(valid_airmass_model)
+        else 1.0
+    )
+    if not np.isfinite(airmass_reference) or airmass_reference <= 0:
+        airmass_reference = 1.0
+    relative_airmass_model = np.divide(
+        selected_airmass_model,
+        airmass_reference,
+        out=np.full(selected_airmass_model.shape, np.nan, dtype=float),
+        where=valid_airmass_model,
+    )
+    with np.errstate(divide='ignore', invalid='ignore'):
+        calibrated_ratio = np.divide(raw_ratio, relative_airmass_model)
+        target_mag = comp_mag - (2.5 * np.log10(calibrated_ratio))
+        magnitude_factor = 2.5 / np.log(10.0)
+        explicit_flux_error = magnitude_factor * np.sqrt(
+            (target_flux_error / target_flux) ** 2
+            + (comp_flux_error / comp_flux) ** 2
+        )
+
+    # The fitted relative-flux uncertainty is still a valid fractional-ratio
+    # uncertainty after normalization, so use it only when separate stellar
+    # flux errors were not retained by an older caller.
+    fit_data_error = np.asarray(getattr(lc_fit, 'dataerr', np.full(fit_data.shape, np.nan)), dtype=float)
+    if fit_data_error.shape == fit_data.shape:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            fallback_flux_error = magnitude_factor * np.abs(
+                fit_data_error[mask_ref] / fit_data[mask_ref]
+            )
+    else:
+        fallback_flux_error = np.full(target_mag.shape, np.nan, dtype=float)
+    flux_error = np.where(
+        np.isfinite(explicit_flux_error) & (explicit_flux_error >= 0),
+        explicit_flux_error,
+        fallback_flux_error,
+    )
+    target_mag_error = np.hypot(comp_mag_error, flux_error)
 
     valid = (
         np.isfinite(selected_times)
         & np.isfinite(selected_airmass)
         & np.isfinite(target_mag)
         & np.isfinite(target_mag_error)
+        & np.isfinite(calibrated_ratio)
+        & (calibrated_ratio > 0)
         & (target_mag <= MAX_APPARENT_MAGNITUDE)
         & (target_mag_error <= MAX_APPARENT_MAGNITUDE)
     )
@@ -19141,18 +20012,18 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
 
 def stellar_variability_reference_series(lc_fit):
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
-    fit_airmass_model = np.asarray(
-        getattr(lc_fit, 'airmass_model', np.ones_like(fit_data)),
-        dtype=float,
-    )
     fit_times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
     transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
 
-    if not (fit_data.shape == fit_airmass_model.shape == fit_times.shape):
+    if fit_data.shape != fit_times.shape:
         return np.array([], dtype=float), np.array([], dtype=float)
 
+    try:
+        target_flux, comp_flux, _, _ = stellar_variability_raw_photometry(lc_fit)
+    except RuntimeError:
+        return np.array([], dtype=float), np.array([], dtype=float)
     with np.errstate(divide='ignore', invalid='ignore'):
-        reference_curve = np.divide(fit_data, fit_airmass_model)
+        reference_curve = np.divide(target_flux, comp_flux)
 
     valid = (
         np.isfinite(fit_times)
@@ -19287,6 +20158,8 @@ def preferred_catalog_magnitude_band_for_filter(observed_filter):
 
 
 def catalog_band_priority(mag_band, observed_filter):
+    if observed_filter is None or str(observed_filter).strip() == '':
+        return 0
     preferred_band = preferred_catalog_magnitude_band_for_filter(observed_filter)
     if preferred_band is None:
         return 0
@@ -20180,6 +21053,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     arrayFinalFlux = prepared['flux']
     f1 = prepared['target_flux']
     f2 = prepared['comp_flux']
+    f1_error = np.asarray(prepared.get('target_flux_error'), dtype=float)
+    f2_error = np.asarray(prepared.get('comp_flux_error'), dtype=float)
     arrayNormUnc = prepared['unc']
     arrayTimes = prepared['time']
     arrayJDTimes = prepared['jd_time']
@@ -20315,6 +21190,8 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             arrayAirmass = arrayAirmass[~phase_clip_mask]
             f1 = f1[~phase_clip_mask]
             f2 = f2[~phase_clip_mask]
+            f1_error = f1_error[~phase_clip_mask]
+            f2_error = f2_error[~phase_clip_mask]
 
             fit_kwargs = {
                 'jd_times': arrayJDTimes,
@@ -20405,6 +21282,13 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         )
         annotate_transit_qc_expected_values(myfit, pDict)
         annotate_transit_detection_qc(myfit)
+        annotate_stellar_variability_raw_photometry(
+            myfit,
+            f1,
+            f2,
+            target_flux_error=f1_error,
+            comp_flux_error=f2_error,
+        )
 
     return myfit, f1, f2
 
@@ -21581,6 +22465,40 @@ def deduplicate_comparison_star_coords(comp_stars, min_separation_pixels=COMPARI
     return normalized_coords, []
 
 
+def merge_automatic_comparison_star_coords(primary_stars, additional_stars,
+                                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS):
+    """Append automatic candidates without duplicating an already tracked sky source.
+
+    Primary coordinates are preserved exactly because they can be intentional user
+    selections. The proximity rule only governs automatic additions to that list.
+    """
+    merged, _ = deduplicate_comparison_star_coords(primary_stars)
+    messages = []
+    try:
+        duplicate_radius = max(float(duplicate_radius_pixels), 0.0)
+    except (TypeError, ValueError):
+        duplicate_radius = REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS
+
+    for coord in additional_stars or []:
+        try:
+            candidate = [float(coord[0]), float(coord[1])]
+        except (TypeError, ValueError, IndexError):
+            continue
+        duplicate_index = next((
+            index for index, existing in enumerate(merged)
+            if np.hypot(candidate[0] - existing[0], candidate[1] - existing[1]) <= duplicate_radius
+        ), None)
+        if duplicate_index is not None:
+            messages.append(
+                "Skipped automatic comparison candidate "
+                f"[{candidate[0]:.2f}, {candidate[1]:.2f}] because it duplicates tracked "
+                f"comparison star #{duplicate_index + 1} within {duplicate_radius:.1f} pixels."
+            )
+            continue
+        merged.append(candidate)
+    return merged, messages
+
+
 def format_comp_star_coverage_text(summary):
     coverage_text = (
         f"{summary['coverage_count']} valid frame(s)"
@@ -22149,6 +23067,8 @@ def comparison_selection_metric_label(selection_metric):
         return "Promising Partial"
     if selection_metric == 'stellar_variability_scatter':
         return "Out-of-transit scatter"
+    if selection_metric == 'stellar_variability_ensemble':
+        return "Calibrated stellar-variability ensemble"
     if selection_metric == 'comparison_field_rank':
         return "Comparison-Field Rank"
     if selection_metric == 'ktmf':
@@ -24198,6 +25118,672 @@ def ranked_comparison_calibration_summaries(comparison_calibration):
     return ranked_summaries
 
 
+def comparison_positions_match(first, second, tolerance_pixels=1.0e-6):
+    try:
+        first_values = np.asarray(first, dtype=float).reshape(-1)
+        second_values = np.asarray(second, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return False
+    return (
+        first_values.size >= 2
+        and second_values.size >= 2
+        and np.all(np.isfinite(first_values[:2]))
+        and np.all(np.isfinite(second_values[:2]))
+        and np.allclose(first_values[:2], second_values[:2], rtol=0.0, atol=float(tolerance_pixels))
+    )
+
+
+def stellar_variability_calibration_for_position(calibration_stars, position, observed_filter=None):
+    candidates = []
+    for label, star in (calibration_stars or {}).items():
+        if not isinstance(star, dict) or not comparison_positions_match(star.get('pos'), position):
+            continue
+        magnitude = _finite_float(star.get('mag'))
+        magnitude_error = normalized_magnitude_error(star.get('error'))
+        if not is_usable_apparent_magnitude(magnitude) or magnitude_error is None:
+            continue
+        candidates.append({
+            'label': label,
+            'star': star,
+            'magnitude': float(magnitude),
+            'magnitude_error': float(magnitude_error),
+            'band_priority': catalog_band_priority(star.get('mag_band'), observed_filter),
+        })
+    if not candidates:
+        return None
+    candidates.sort(key=lambda candidate: (
+        candidate['band_priority'],
+        candidate['magnitude_error'],
+    ))
+    return candidates[0]
+
+
+def stellar_variability_catalog_profile(catalog_match, observed_filter=None):
+    if not isinstance(catalog_match, dict):
+        return {}
+    magnitude = _finite_float(catalog_match.get('mag'))
+    magnitude_error = normalized_magnitude_error(catalog_match.get('error'))
+    color = nextastro_catalog_color(catalog_match.get('catalog_row'), observed_filter)
+    return {
+        'magnitude': float(magnitude) if magnitude is not None else None,
+        'magnitude_error': float(magnitude_error) if magnitude_error is not None else None,
+        'magnitude_band': catalog_match.get('mag_band'),
+        'color': _finite_float((color or {}).get('color')),
+        'color_label': (color or {}).get('label'),
+        'catalog_ra': _finite_float(catalog_match.get('catalog_ra')),
+        'catalog_dec': _finite_float(catalog_match.get('catalog_dec')),
+        'source_id': catalog_match.get('source_id'),
+        'catalog_id': catalog_match.get('id'),
+    }
+
+
+def add_stellar_variability_member_similarity(candidate, target_profile, observed_filter=None):
+    enriched = dict(candidate)
+    member_color = nextastro_catalog_color(
+        enriched.get('star', {}).get('catalog_row'),
+        observed_filter,
+    )
+    member_color_value = _finite_float((member_color or {}).get('color'))
+    target_color_value = _finite_float((target_profile or {}).get('color'))
+    member_color_label = (member_color or {}).get('label')
+    target_color_label = (target_profile or {}).get('color_label')
+    if (
+        member_color_value is not None
+        and target_color_value is not None
+        and normalize_colour_index_label(member_color_label)
+        == normalize_colour_index_label(target_color_label)
+    ):
+        color_delta = abs(member_color_value - target_color_value)
+    else:
+        color_delta = None
+
+    target_magnitude = _finite_float((target_profile or {}).get('magnitude'))
+    member_magnitude = _finite_float(enriched.get('magnitude'))
+    magnitude_delta = (
+        abs(member_magnitude - target_magnitude)
+        if member_magnitude is not None and target_magnitude is not None
+        else None
+    )
+    similarity_score = (
+        float(np.hypot(color_delta, magnitude_delta))
+        if color_delta is not None and magnitude_delta is not None
+        else None
+    )
+    enriched.update({
+        'color': member_color_value,
+        'color_label': member_color_label,
+        'target_color': target_color_value,
+        'target_color_label': target_color_label,
+        'color_delta': color_delta,
+        'target_magnitude': target_magnitude,
+        'magnitude_delta': magnitude_delta,
+        'color_magnitude_similarity_score': similarity_score,
+    })
+    return enriched
+
+
+def stellar_variability_ensemble_calibration_error_clip(
+        member_candidates,
+        sigma=STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_SIGMA,
+        min_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS):
+    candidates = list(member_candidates or [])
+    errors = np.asarray(
+        [candidate.get('magnitude_error', np.nan) for candidate in candidates],
+        dtype=float,
+    )
+    keep = np.isfinite(errors) & (errors > 0)
+    threshold = np.nan
+    center = np.nan
+    scatter = np.nan
+    if np.count_nonzero(keep) < 3:
+        return keep, {
+            'center': center,
+            'scatter': scatter,
+            'high_threshold': threshold,
+            'minimum_high_threshold': (
+                STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_HIGH_THRESHOLD_FLOOR_MAG
+            ),
+        }
+
+    for _ in range(10):
+        kept_errors = errors[keep]
+        if kept_errors.size < 3:
+            break
+        center = float(bn.nanmedian(kept_errors))
+        mad = float(bn.nanmedian(np.abs(kept_errors - center)))
+        robust_error_scatter = 1.4826 * mad if np.isfinite(mad) else np.nan
+        scatter_floor = max(
+            STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_FLOOR,
+            abs(center) * STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_FLOOR_FRACTION,
+        )
+        scatter = max(
+            robust_error_scatter if np.isfinite(robust_error_scatter) else 0.0,
+            scatter_floor,
+        )
+        threshold = max(
+            center + (float(sigma) * scatter),
+            STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_HIGH_THRESHOLD_FLOOR_MAG,
+        )
+        updated_keep = keep & (errors <= threshold)
+        if np.count_nonzero(updated_keep) < int(min_members) or np.array_equal(updated_keep, keep):
+            break
+        keep = updated_keep
+
+    return keep, {
+        'center': center,
+        'scatter': scatter,
+        'high_threshold': threshold,
+        'minimum_high_threshold': (
+            STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_HIGH_THRESHOLD_FLOOR_MAG
+        ),
+    }
+
+
+def select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        comp_flux_map,
+        observed_filter=None,
+        target_catalog_match=None,
+        max_members=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
+    target_profile = stellar_variability_catalog_profile(target_catalog_match, observed_filter)
+    candidates = []
+    rejected = []
+    represented_catalog_identities = set()
+    for summary in ranked_summaries or []:
+        ckey = summary.get('key')
+        position = summary.get('position')
+        if not ckey or ckey not in comp_flux_map:
+            rejected.append({'key': ckey, 'reason': 'no usable photometry series'})
+            continue
+        calibration = stellar_variability_calibration_for_position(
+            calibration_stars,
+            position,
+            observed_filter=observed_filter,
+        )
+        if calibration is None:
+            rejected.append({'key': ckey, 'reason': 'no usable catalog calibration'})
+            continue
+        catalog_identity = calibration_catalog_identity(
+            calibration.get('star'),
+            calibration.get('label'),
+        )
+        if catalog_identity is not None and catalog_identity in represented_catalog_identities:
+            rejected.append({
+                'key': ckey,
+                'reason': 'duplicate catalog source already represented by another ensemble candidate',
+            })
+            continue
+
+        flux_values = np.asarray(comp_flux_map[ckey], dtype=float)
+        valid_flux = np.isfinite(flux_values) & (flux_values > 0)
+        if np.count_nonzero(valid_flux) < LIGHTCURVE_MIN_VALID_POINTS:
+            rejected.append({'key': ckey, 'reason': 'too few finite positive flux measurements'})
+            continue
+        median_flux = float(bn.nanmedian(flux_values[valid_flux]))
+        if not np.isfinite(median_flux) or median_flux <= 0:
+            rejected.append({'key': ckey, 'reason': 'invalid median brightness'})
+            continue
+
+        candidates.append(add_stellar_variability_member_similarity({
+            'key': ckey,
+            'comp_index': summary.get('comp_index'),
+            'label': summary.get('label', ckey),
+            'position': position,
+            'summary': summary,
+            'median_flux': median_flux,
+            **calibration,
+        }, target_profile, observed_filter=observed_filter))
+        if catalog_identity is not None:
+            represented_catalog_identities.add(catalog_identity)
+
+    candidates.sort(key=lambda candidate: (-candidate['median_flux'], candidate.get('comp_index', np.inf)))
+    keep_mask, clip_summary = stellar_variability_ensemble_calibration_error_clip(candidates)
+    clipped_members = []
+    for candidate, keep in zip(candidates, keep_mask):
+        if keep:
+            clipped_members.append(candidate)
+        else:
+            rejected.append({
+                'key': candidate.get('key'),
+                'reason': (
+                    'catalog magnitude uncertainty exceeded the stellar-variability ensemble '
+                    'high-side sigma-clip threshold'
+                ),
+                'magnitude_error': candidate.get('magnitude_error'),
+            })
+
+    try:
+        member_limit = max(int(max_members), STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS)
+    except (TypeError, ValueError):
+        member_limit = STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
+    prelimit_member_count = len(clipped_members)
+    members = list(clipped_members)
+    if len(members) > member_limit:
+        members.sort(key=lambda candidate: (
+            0 if _finite_float(candidate.get('color_magnitude_similarity_score')) is not None else 1,
+            _finite_float(candidate.get('color_magnitude_similarity_score'), np.inf),
+            _finite_float(candidate.get('color_delta'), np.inf),
+            _finite_float(candidate.get('magnitude_delta'), np.inf),
+            -candidate.get('median_flux', 0.0),
+            candidate.get('comp_index', np.inf),
+        ))
+        excluded_by_limit = members[member_limit:]
+        members = members[:member_limit]
+        for candidate in excluded_by_limit:
+            rejected.append({
+                'key': candidate.get('key'),
+                'reason': (
+                    f'not among the {member_limit} comparison stars closest to the target in '
+                    'catalog color and magnitude'
+                ),
+                'color_delta': candidate.get('color_delta'),
+                'magnitude_delta': candidate.get('magnitude_delta'),
+                'color_magnitude_similarity_score': candidate.get('color_magnitude_similarity_score'),
+            })
+    for selection_rank, member in enumerate(members, start=1):
+        member['selection_rank'] = selection_rank
+
+    return {
+        'members': members,
+        'rejected': rejected,
+        'calibration_error_clip': clip_summary,
+        'target_catalog_profile': target_profile,
+        'prelimit_member_count': prelimit_member_count,
+        'member_limit': member_limit,
+    }
+
+
+def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flux_error,
+                                                         comp_flux_map, comp_error_map, members):
+    target_flux = np.asarray(target_flux, dtype=float)
+    if target_flux.ndim != 1:
+        target_flux = target_flux.reshape(-1)
+    frame_count = target_flux.size
+    if target_flux_error is None:
+        target_flux_error = np.sqrt(np.clip(np.abs(target_flux), 1.0, None))
+    target_flux_error = np.asarray(target_flux_error, dtype=float).reshape(-1)
+    if target_flux_error.shape != target_flux.shape:
+        target_flux_error = np.sqrt(np.clip(np.abs(target_flux), 1.0, None))
+
+    zero_points = []
+    zero_point_errors = []
+    magnitude_factor = 2.5 / np.log(10.0)
+    for member in members or []:
+        ckey = member.get('key')
+        if ckey not in comp_flux_map:
+            continue
+        comp_flux = np.asarray(comp_flux_map[ckey], dtype=float).reshape(-1)
+        if comp_flux.shape != target_flux.shape:
+            continue
+        comp_flux_error = None
+        if isinstance(comp_error_map, dict) and ckey in comp_error_map:
+            comp_flux_error = np.asarray(comp_error_map[ckey], dtype=float).reshape(-1)
+        if comp_flux_error is None or comp_flux_error.shape != comp_flux.shape:
+            comp_flux_error = np.sqrt(np.clip(np.abs(comp_flux), 1.0, None))
+
+        member_keep_mask = np.asarray(
+            member.get('summary', {}).get('ensemble_frame_keep_mask', np.ones(frame_count, dtype=bool)),
+            dtype=bool,
+        )
+        if member_keep_mask.shape != target_flux.shape:
+            member_keep_mask = np.ones(frame_count, dtype=bool)
+        valid = (
+            member_keep_mask
+            & np.isfinite(comp_flux)
+            & (comp_flux > 0)
+            & np.isfinite(comp_flux_error)
+            & (comp_flux_error >= 0)
+        )
+        zero_point = np.full(target_flux.shape, np.nan, dtype=float)
+        zero_point_error = np.full(target_flux.shape, np.nan, dtype=float)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            zero_point[valid] = member['magnitude'] + (2.5 * np.log10(comp_flux[valid]))
+            instrumental_error = magnitude_factor * comp_flux_error[valid] / comp_flux[valid]
+            zero_point_error[valid] = np.hypot(member['magnitude_error'], instrumental_error)
+        zero_points.append(zero_point)
+        zero_point_errors.append(zero_point_error)
+
+    empty = {
+        'applied': False,
+        'failure_reason': 'fewer than two calibrated comparison stars were usable for the ensemble.',
+        'magnitude': np.full(target_flux.shape, np.nan, dtype=float),
+        'magnitude_error': np.full(target_flux.shape, np.nan, dtype=float),
+        'relative_flux': np.full(target_flux.shape, np.nan, dtype=float),
+        'relative_flux_error': np.full(target_flux.shape, np.nan, dtype=float),
+        'synthetic_reference_flux': np.full(target_flux.shape, np.nan, dtype=float),
+        'synthetic_reference_flux_error': np.full(target_flux.shape, np.nan, dtype=float),
+        'valid_member_count': np.zeros(target_flux.shape, dtype=int),
+    }
+    if len(zero_points) < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+        return empty
+
+    zero_point_stack = np.vstack(zero_points)
+    zero_point_error_stack = np.vstack(zero_point_errors)
+    valid_member = (
+        np.isfinite(zero_point_stack)
+        & np.isfinite(zero_point_error_stack)
+        & (zero_point_error_stack > 0)
+    )
+    valid_member_count = np.count_nonzero(valid_member, axis=0)
+    weights = np.zeros(zero_point_error_stack.shape, dtype=float)
+    weights[valid_member] = 1.0 / (zero_point_error_stack[valid_member] ** 2)
+    weight_sum = np.sum(weights, axis=0)
+    weighted_zero_point_sum = np.nansum(weights * zero_point_stack, axis=0)
+    valid_target = (
+        np.isfinite(target_flux)
+        & (target_flux > 0)
+        & np.isfinite(target_flux_error)
+        & (target_flux_error >= 0)
+    )
+    valid = (
+        valid_target
+        & (valid_member_count >= STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS)
+        & np.isfinite(weight_sum)
+        & (weight_sum > 0)
+    )
+    if np.count_nonzero(valid) < LIGHTCURVE_MIN_VALID_POINTS:
+        empty['valid_member_count'] = valid_member_count
+        empty['failure_reason'] = 'too few frames retained at least two calibrated ensemble members.'
+        return empty
+
+    magnitude = np.full(target_flux.shape, np.nan, dtype=float)
+    magnitude_error = np.full(target_flux.shape, np.nan, dtype=float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ensemble_zero_point = weighted_zero_point_sum[valid] / weight_sum[valid]
+        target_instrumental_error = magnitude_factor * target_flux_error[valid] / target_flux[valid]
+        magnitude[valid] = ensemble_zero_point - (2.5 * np.log10(target_flux[valid]))
+        magnitude_error[valid] = np.hypot(np.sqrt(1.0 / weight_sum[valid]), target_instrumental_error)
+
+    baseline_magnitude = float(bn.nanmedian(magnitude[valid]))
+    relative_flux = np.full(target_flux.shape, np.nan, dtype=float)
+    relative_flux_error = np.full(target_flux.shape, np.nan, dtype=float)
+    synthetic_reference_flux = np.full(target_flux.shape, np.nan, dtype=float)
+    synthetic_reference_flux_error = np.full(target_flux.shape, np.nan, dtype=float)
+    with np.errstate(over='ignore', divide='ignore', invalid='ignore'):
+        relative_flux[valid] = 10.0 ** (-0.4 * (magnitude[valid] - baseline_magnitude))
+        relative_flux_error[valid] = (
+            relative_flux[valid] * (np.log(10.0) / 2.5) * magnitude_error[valid]
+        )
+        synthetic_reference_flux[valid] = target_flux[valid] / relative_flux[valid]
+        target_fractional_error = target_flux_error[valid] / target_flux[valid]
+        ratio_fractional_error = relative_flux_error[valid] / relative_flux[valid]
+        reference_fractional_error = np.sqrt(
+            np.maximum((ratio_fractional_error ** 2) - (target_fractional_error ** 2), 0.0)
+        )
+        synthetic_reference_flux_error[valid] = (
+            synthetic_reference_flux[valid] * reference_fractional_error
+        )
+
+    return {
+        'applied': True,
+        'failure_reason': None,
+        'magnitude': magnitude,
+        'magnitude_error': magnitude_error,
+        'relative_flux': relative_flux,
+        'relative_flux_error': relative_flux_error,
+        'synthetic_reference_flux': synthetic_reference_flux,
+        'synthetic_reference_flux_error': synthetic_reference_flux_error,
+        'valid_member_count': valid_member_count,
+        'baseline_magnitude': baseline_magnitude,
+    }
+
+
+def stellar_variability_json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): stellar_variability_json_safe(subvalue) for key, subvalue in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [stellar_variability_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return stellar_variability_json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return stellar_variability_json_safe(value.item())
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, float):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, (bool, int, str)) or value is None:
+        return value
+    return str(value)
+
+
+def stellar_variability_ensemble_member_json(member):
+    star = member.get('star', {}) if isinstance(member, dict) else {}
+    return {
+        'selection_rank': member.get('selection_rank'),
+        'key': member.get('key'),
+        'label': member.get('label'),
+        'pixel_position': member.get('position'),
+        'ra_deg': star.get('ra', star.get('catalog_ra')),
+        'dec_deg': star.get('dec', star.get('catalog_dec')),
+        'catalog_source': star.get('catalog_source'),
+        'catalog_source_id': star.get('source_id'),
+        'catalog_id': star.get('id'),
+        'catalog_magnitude': member.get('magnitude'),
+        'catalog_magnitude_error': member.get('magnitude_error'),
+        'catalog_magnitude_band': star.get('mag_band'),
+        'catalog_color': member.get('color'),
+        'catalog_color_label': member.get('color_label'),
+        'target_catalog_color': member.get('target_color'),
+        'target_catalog_color_label': member.get('target_color_label'),
+        'color_delta': member.get('color_delta'),
+        'target_catalog_magnitude': member.get('target_magnitude'),
+        'magnitude_delta': member.get('magnitude_delta'),
+        'color_magnitude_similarity_score': member.get('color_magnitude_similarity_score'),
+        'median_flux_adu': member.get('median_flux'),
+        'overexposure_rejected_frame_count': member.get('summary', {}).get(
+            'overexposure_rejected_count', 0
+        ),
+    }
+
+
+def save_stellar_variability_ensemble_selection_json(
+        lc_fit,
+        save,
+        target_name,
+        observation_date=None,
+        target_metadata=None):
+    members = list(getattr(lc_fit, 'stellar_variability_ensemble_members', []) or [])
+    selection = getattr(lc_fit, 'stellar_variability_ensemble_selection', {}) or {}
+    if not members:
+        return None
+    target_profile = (
+        selection.get('target_catalog_profile')
+        or getattr(lc_fit, 'stellar_variability_target_catalog_profile', {})
+        or {}
+    )
+    metadata = dict(target_metadata or {})
+    metadata.setdefault('name', target_name)
+    metadata['catalog_profile'] = target_profile
+    payload = {
+        'target': metadata,
+        'ensemble': {
+            'selection_rule': (
+                'After saturation, VSX, coverage, stability, and high catalog-error rejection, '
+                'use at most five stars ranked by joint catalog color and magnitude distance to the target.'
+            ),
+            'minimum_members': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+            'maximum_members': selection.get(
+                'member_limit', STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
+            ),
+            'member_count_before_five_star_limit': selection.get(
+                'prelimit_member_count', len(members)
+            ),
+            'selected_member_count': len(members),
+            'calibration_error_clip': selection.get(
+                'calibration_error_clip',
+                getattr(lc_fit, 'stellar_variability_ensemble_calibration_error_clip', {}),
+            ),
+            'members': [stellar_variability_ensemble_member_json(member) for member in members],
+            'rejected_candidates': selection.get('rejected', []),
+        },
+    }
+    output_dir = Path(save)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / safe_output_filename(
+        'EnsembleSelection',
+        target_name,
+        filename_date_token(observation_date) if observation_date else 'undated',
+        extension='json',
+    )
+    with output_path.open('w', encoding='utf-8') as handle:
+        json.dump(stellar_variability_json_safe(payload), handle, indent=2, sort_keys=True)
+        handle.write('\n')
+    return output_path
+
+
+def save_stellar_variability_magnitude_csv(vsp_params, save, target_name, observation_date=None):
+    if not vsp_params:
+        return None
+    output_dir = Path(save)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / safe_output_filename(
+        'StellarVariability',
+        target_name,
+        filename_date_token(observation_date) if observation_date else 'undated',
+        extension='csv',
+    )
+    with output_path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(['BJD_TDB', 'Airmass', 'Magnitude', 'Magnitude Error', 'Filter', 'Comparison'])
+        for row in vsp_params:
+            writer.writerow([
+                row.get('time'),
+                row.get('airmass'),
+                row.get('mag'),
+                row.get('mag_err'),
+                row.get('observed_filter') or row.get('mag_band'),
+                row.get('cname'),
+            ])
+    return output_path
+
+
+def build_stellar_variability_ensemble_params_from_fit(
+        lc_fit,
+        save,
+        s_name,
+        observed_filter=None,
+        observation_date=None,
+        target_metadata=None):
+    magnitudes = np.asarray(
+        getattr(lc_fit, 'stellar_variability_ensemble_magnitudes', []),
+        dtype=float,
+    )
+    magnitude_errors = np.asarray(
+        getattr(lc_fit, 'stellar_variability_ensemble_magnitude_errors', []),
+        dtype=float,
+    )
+    times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
+    airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones(times.shape)), dtype=float)
+    members = list(getattr(lc_fit, 'stellar_variability_ensemble_members', []) or [])
+    if not (magnitudes.shape == magnitude_errors.shape == times.shape == airmass.shape):
+        log_info("Warning: calibrated stellar-variability ensemble arrays had inconsistent shapes.", warn=True)
+        return []
+
+    valid = (
+        np.isfinite(times)
+        & np.isfinite(airmass)
+        & np.isfinite(magnitudes)
+        & np.isfinite(magnitude_errors)
+        & (magnitude_errors > 0)
+        & (magnitudes <= MAX_APPARENT_MAGNITUDE)
+    )
+    if not np.any(valid):
+        log_info("Warning: calibrated stellar-variability ensemble produced no finite magnitude rows.", warn=True)
+        return []
+
+    member_labels = [member.get('label') for member in members]
+    member_positions = [member.get('position') for member in members]
+    member_catalog_magnitudes = [member.get('magnitude') for member in members]
+    member_catalog_errors = [member.get('magnitude_error') for member in members]
+    member_catalog_sources = [member.get('star', {}).get('catalog_source') for member in members]
+    member_ra_degs = []
+    member_dec_degs = []
+    member_details = []
+    for member in members:
+        star = member.get('star', {}) if isinstance(member, dict) else {}
+        ra_deg = _finite_float(star.get('ra', star.get('catalog_ra')))
+        dec_deg = _finite_float(star.get('dec', star.get('catalog_dec')))
+        member_ra_degs.append(ra_deg)
+        member_dec_degs.append(dec_deg)
+        member_details.append({
+            'selection_rank': member.get('selection_rank'),
+            'key': member.get('key'),
+            'label': member.get('label'),
+            'ra_deg': ra_deg,
+            'dec_deg': dec_deg,
+            'pixel_position': member.get('position'),
+            'catalog_magnitude': member.get('magnitude'),
+            'catalog_magnitude_error': member.get('magnitude_error'),
+            'catalog_magnitude_band': star.get('mag_band'),
+            'catalog_source': star.get('catalog_source'),
+            'catalog_source_id': star.get('source_id'),
+            'catalog_id': star.get('id'),
+        })
+    member_catalog_colors = [member.get('color') for member in members]
+    member_catalog_color_labels = [member.get('color_label') for member in members]
+    member_color_deltas = [member.get('color_delta') for member in members]
+    member_magnitude_deltas = [member.get('magnitude_delta') for member in members]
+    member_similarity_scores = [member.get('color_magnitude_similarity_score') for member in members]
+    display_label = f"ENSEMBLE ({len(members)} stars)"
+    vsp_params = []
+    for time_value, airmass_value, magnitude, magnitude_error in zip(
+        times[valid],
+        airmass[valid],
+        magnitudes[valid],
+        magnitude_errors[valid],
+    ):
+        vsp_params.append({
+            'time': time_value,
+            'airmass': airmass_value,
+            'mag': magnitude,
+            'mag_err': magnitude_error,
+            'cname': display_label,
+            'cmag': None,
+            'cmag_err': None,
+            'pos': member_positions,
+            'comp_ra': None,
+            'comp_dec': None,
+            'catalog_ra': None,
+            'catalog_dec': None,
+            'catalog_source': 'Calibrated comparison-star ensemble',
+            'is_aavso_vsp': False,
+            'mag_band': observed_filter or 'V',
+            'observed_filter': observed_filter,
+            'ensemble_reference': True,
+            'ensemble_member_count': len(members),
+            'ensemble_member_labels': member_labels,
+            'ensemble_member_positions': member_positions,
+            'ensemble_member_catalog_magnitudes': member_catalog_magnitudes,
+            'ensemble_member_catalog_errors': member_catalog_errors,
+            'ensemble_member_catalog_sources': member_catalog_sources,
+            'ensemble_member_ra_degs': member_ra_degs,
+            'ensemble_member_dec_degs': member_dec_degs,
+            'ensemble_members': member_details,
+            'ensemble_member_catalog_colors': member_catalog_colors,
+            'ensemble_member_catalog_color_labels': member_catalog_color_labels,
+            'ensemble_member_color_deltas': member_color_deltas,
+            'ensemble_member_magnitude_deltas': member_magnitude_deltas,
+            'ensemble_member_similarity_scores': member_similarity_scores,
+        })
+
+    try:
+        lc_fit.stellar_variability_params = vsp_params
+        lc_fit.stellar_variability_target_name = s_name
+        lc_fit.stellar_variability_reference_label = display_label
+    except Exception:
+        pass
+    plot_stellar_variability(vsp_params, save, s_name, display_label)
+    save_stellar_variability_ensemble_selection_json(
+        lc_fit,
+        save,
+        s_name,
+        observation_date=observation_date,
+        target_metadata=target_metadata,
+    )
+    return vsp_params
+
+
 def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict, comparison_calibration,
                                                psf_data, aper_data, target_psf_flux,
                                                psf_flux_data=None,
@@ -24208,7 +25794,11 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                                                adaptive_annulus_values=None,
                                                fallback_sigma=np.nan,
                                                exposure_times_seconds=None,
-                                               gain_e_per_adu=None):
+                                               gain_e_per_adu=None,
+                                               use_ensemble_photometry=True,
+                                               calibration_stars=None,
+                                               observed_filter=None,
+                                               target_catalog_match=None):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
     if not ranked_summaries:
         return {
@@ -24274,6 +25864,316 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
         )
 
     attempts = []
+    if use_ensemble_photometry:
+        if method == 'psf':
+            comp_flux_map = {}
+            comp_error_map = {}
+            for summary in ranked_summaries:
+                ckey = summary.get('key')
+                if not ckey or ckey not in psf_flux_data:
+                    continue
+                quality_mask = np.asarray(
+                    summary.get(
+                        'psf_quality_keep_mask',
+                        psf_quality_mask_for_key(
+                            psf_data,
+                            ckey,
+                            frame_count,
+                            psf_flux_data=psf_flux_data,
+                        ),
+                    ),
+                    dtype=bool,
+                )
+                comp_flux_map[ckey] = psf_flux_series_from_rows(psf_flux_data[ckey], quality_mask)
+                if isinstance(psf_noise_data, dict) and ckey in psf_noise_data:
+                    comp_error_map[ckey] = mask_series_with_quality(psf_noise_data[ckey], quality_mask)
+            target_shape_mask = target_psf_shape_quality_mask(
+                target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data)
+            )
+            if target_shape_mask.shape != times.shape:
+                target_shape_mask = np.ones(times.shape[0], dtype=bool)
+            candidate_target_flux = mask_series_with_quality(target_flux, target_shape_mask)
+            candidate_target_flux_error = (
+                None
+                if target_flux_error is None
+                else mask_series_with_quality(target_flux_error, target_shape_mask)
+            )
+        else:
+            comp_flux_map = {}
+            comp_error_map = {}
+            for summary in ranked_summaries:
+                ckey = summary.get('key')
+                if not ckey or ckey not in aper_data:
+                    continue
+                quality_mask = np.asarray(
+                    summary.get(
+                        'psf_quality_keep_mask',
+                        psf_quality_mask_for_key(psf_data, ckey, frame_count),
+                    ),
+                    dtype=bool,
+                )
+                comp_flux_map[ckey] = mask_series_with_quality(
+                    aper_data[ckey][:, aperture_index, annulus_index],
+                    quality_mask,
+                )
+                error_key = f"{ckey}_unc"
+                if error_key in aper_data:
+                    comp_error_map[ckey] = mask_series_with_quality(
+                        aper_data[error_key][:, aperture_index, annulus_index],
+                        quality_mask,
+                    )
+            target_shape_mask = np.ones(times.shape[0], dtype=bool)
+            candidate_target_flux = target_flux
+            candidate_target_flux_error = target_flux_error
+
+        member_selection = select_stellar_variability_ensemble_members(
+            ranked_summaries,
+            calibration_stars,
+            comp_flux_map,
+            observed_filter=observed_filter,
+            target_catalog_match=target_catalog_match,
+        )
+        ensemble_members = member_selection['members']
+        clip_summary = member_selection['calibration_error_clip']
+        for rejected_member in member_selection['rejected']:
+            log_info(
+                "Stellar-variability ensemble excluded "
+                f"{rejected_member.get('key') or 'comparison candidate'}: "
+                f"{rejected_member.get('reason')}."
+            )
+
+        if len(ensemble_members) >= STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+            member_text = ", ".join(
+                f"{member['label']} (catalog sigma={member['magnitude_error']:.4f} mag)"
+                for member in ensemble_members
+            )
+            threshold = clip_summary.get('high_threshold', np.nan)
+            threshold_text = (
+                f"; high-side calibration-error clip threshold={threshold:.4f} mag"
+                if np.isfinite(threshold)
+                else ""
+            )
+            log_info(
+                "Stellar-variability-only calibrated ensemble members: "
+                f"{member_text}{threshold_text}."
+            )
+            if member_selection.get('prelimit_member_count', 0) > len(ensemble_members):
+                log_info(
+                    "Stellar-variability ensemble had more than "
+                    f"{member_selection.get('member_limit')} usable stars; retained the five closest "
+                    "to the target in catalog color and magnitude."
+                )
+            ensemble_series = build_stellar_variability_calibrated_ensemble_series(
+                candidate_target_flux,
+                candidate_target_flux_error,
+                comp_flux_map,
+                comp_error_map,
+                ensemble_members,
+            )
+            if ensemble_series.get('applied'):
+                fit_mask = (
+                    field_image_keep_mask
+                    & target_shape_mask
+                    & np.isfinite(ensemble_series['relative_flux'])
+                    & np.isfinite(ensemble_series['relative_flux_error'])
+                    & (ensemble_series['relative_flux'] > 0)
+                    & (ensemble_series['relative_flux_error'] > 0)
+                )
+                availability_diagnostic = build_time_rejection_diagnostic(
+                    "Stellar-variability calibrated ensemble availability filter",
+                    times,
+                    fit_mask,
+                    note=(
+                        "Kept frames with a finite target measurement and at least two unsaturated, "
+                        "VSX-vetted, catalog-calibrated ensemble members."
+                    ),
+                )
+                filter_diagnostics = []
+                if field_image_clip_diagnostic is not None:
+                    filter_diagnostics.append(field_image_clip_diagnostic)
+                if availability_diagnostic is not None:
+                    filter_diagnostics.append(availability_diagnostic)
+
+                fit_diagnostics = diagnose_lightcurve_fit_inputs(
+                    times[fit_mask],
+                    candidate_target_flux[fit_mask],
+                    ensemble_series['synthetic_reference_flux'][fit_mask],
+                    airmass[fit_mask],
+                    target_flux_error=(
+                        None
+                        if candidate_target_flux_error is None
+                        else candidate_target_flux_error[fit_mask]
+                    ),
+                    comp_flux_error=ensemble_series['synthetic_reference_flux_error'][fit_mask],
+                    enforce_relative_flux_max=False,
+                    expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
+                )
+                exposure_times_for_fit = (
+                    None
+                    if exposure_times_array is None
+                    else exposure_times_array[fit_mask]
+                )
+                prepared = {
+                    'applied': True,
+                    'failure_reason': None,
+                    'time': times[fit_mask],
+                    'flux': ensemble_series['relative_flux'][fit_mask],
+                    'unc': ensemble_series['relative_flux_error'][fit_mask],
+                    'airmass': airmass[fit_mask],
+                    'jd_time': jd_times[fit_mask],
+                    'exposure_time_seconds': exposure_times_for_fit,
+                    'target_flux': candidate_target_flux[fit_mask],
+                    'comp_flux': ensemble_series['synthetic_reference_flux'][fit_mask],
+                    'target_flux_error': (
+                        np.sqrt(np.clip(np.abs(candidate_target_flux[fit_mask]), 1.0, None))
+                        if candidate_target_flux_error is None
+                        else candidate_target_flux_error[fit_mask]
+                    ),
+                    'comp_flux_error': ensemble_series['synthetic_reference_flux_error'][fit_mask],
+                    'source_indices': np.flatnonzero(fit_mask),
+                }
+                fit_result = build_stellar_variability_only_lightcurve(
+                    prepared,
+                    p_dict,
+                    filter_diagnostics=filter_diagnostics,
+                    comp_index=None,
+                    comp_label=f"ENSEMBLE ({len(ensemble_members)} stars)",
+                    comp_position=[member.get('position') for member in ensemble_members],
+                    method_label=method_label,
+                    plot_time_range=plot_time_range,
+                )
+                if fit_result is not None:
+                    selected_source_indices = np.asarray(
+                        fit_result.stellar_variability_source_indices,
+                        dtype=int,
+                    )
+                    fit_result.stellar_variability_ensemble_members = ensemble_members
+                    fit_result.stellar_variability_ensemble_magnitudes = (
+                        ensemble_series['magnitude'][selected_source_indices]
+                    )
+                    fit_result.stellar_variability_ensemble_magnitude_errors = (
+                        ensemble_series['magnitude_error'][selected_source_indices]
+                    )
+                    fit_result.stellar_variability_ensemble_valid_member_counts = (
+                        ensemble_series['valid_member_count'][selected_source_indices]
+                    )
+                    fit_result.stellar_variability_ensemble_calibration_error_clip = clip_summary
+                    fit_result.stellar_variability_ensemble_selection = member_selection
+                    fit_result.stellar_variability_target_catalog_profile = member_selection.get(
+                        'target_catalog_profile', {}
+                    )
+                    scatter = getattr(fit_result, 'stellar_variability_scatter', np.nan)
+                    exclusion_summary = getattr(fit_result, 'stellar_variability_transit_exclusion', {})
+                    ensemble_summary = {
+                        'comp_index': None,
+                        'key': 'ensemble',
+                        'label': f"Calibrated comparison ensemble ({len(ensemble_members)} comps)",
+                        'position': None,
+                        'aggregate_score': comparison_calibration.get('field_score', np.inf),
+                        'coverage_count': int(np.count_nonzero(fit_mask)),
+                        'coverage_total_frame_count': int(frame_count),
+                        'coverage_reference_count': np.nan,
+                        'coverage_min_required_count': LIGHTCURVE_MIN_VALID_POINTS,
+                        'coverage_rejected': False,
+                        'ensemble_frame_rejected_count': int(np.count_nonzero(~fit_mask)),
+                        'ensemble_frame_required_valid_pairs': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+                        'ensemble_member_keys': [member['key'] for member in ensemble_members],
+                    }
+                    selected_result = {
+                        'rank': 0,
+                        'field_rank': 0,
+                        'comp_index': None,
+                        'ckey': 'ensemble',
+                        'label': ensemble_summary['label'],
+                        'position': None,
+                        'aggregate_score': ensemble_summary['aggregate_score'],
+                        'coverage_count': ensemble_summary['coverage_count'],
+                        'coverage_total_frame_count': frame_count,
+                        'coverage_reference_count': np.nan,
+                        'coverage_min_required_count': LIGHTCURVE_MIN_VALID_POINTS,
+                        'coverage_rejected': False,
+                        'ensemble_frame_rejected_count': ensemble_summary['ensemble_frame_rejected_count'],
+                        'ensemble_frame_required_valid_pairs': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+                        'ensemble_member_keys': ensemble_summary['ensemble_member_keys'],
+                        'fit': fit_result,
+                        'full_reduction_fit': fit_result,
+                        'good_times': np.asarray(fit_result.time, dtype=float),
+                        'good_flux': np.asarray(fit_result.detrended, dtype=float),
+                        'good_unc': np.asarray(fit_result.detrendederr, dtype=float),
+                        'good_airmass': np.asarray(fit_result.airmass, dtype=float),
+                        'good_jd_times': np.asarray(fit_result.jd_times, dtype=float),
+                        'good_exposure_times_seconds': getattr(
+                            fit_result,
+                            'stellar_variability_exposure_times_seconds',
+                            None,
+                        ),
+                        'good_target_flux_error': fit_result.stellar_variability_target_flux_error,
+                        'good_comp_flux_error': fit_result.stellar_variability_comp_flux_error,
+                        'tflux_fit': fit_result.stellar_variability_target_flux,
+                        'cflux_fit': fit_result.stellar_variability_comp_flux,
+                        'tflux_fit_error': fit_result.stellar_variability_target_flux_error,
+                        'cflux_fit_error': fit_result.stellar_variability_comp_flux_error,
+                        'source_indices': selected_source_indices,
+                        'duration_samples': np.asarray(
+                            [exclusion_summary.get('duration_days', np.nan)],
+                            dtype=float,
+                        ),
+                        'data_highres': np.ones(1000, dtype=float),
+                        'fit_diagnostics': fit_diagnostics,
+                        'eebls_snr': np.nan,
+                        'transit_delta_bic': np.nan,
+                        'residual_scatter': scatter,
+                        'target_model_scatter_basis': 'out-of-transit calibrated ensemble scatter',
+                        'projected_full_residual_scatter': scatter,
+                        'selection_scatter': scatter,
+                        'selection_scatter_basis': 'out-of-transit calibrated ensemble scatter',
+                        'target_comp_scatter': target_comp_flux_scatter(
+                            fit_result.stellar_variability_target_flux,
+                            fit_result.stellar_variability_comp_flux,
+                        ),
+                        'ktmf_metric': np.nan,
+                        'ktmf_contributions': [],
+                        'fit_point_count': int(np.asarray(fit_result.time).size),
+                        'failure_reason': fit_diagnostics.get('failure_reason'),
+                        'parameter_summary': None,
+                        'transit_qc_status': 'SKIPPED',
+                        'transit_qc_summary': 'Stellar variability only mode skipped transit fitting.',
+                        'rejected_by_transit_qc': False,
+                        'selected': True,
+                        'selection_reason': (
+                            'selected: default calibrated ensemble of bright, unsaturated, VSX-vetted '
+                            'comparison stars after high-side catalog-error clipping'
+                        ),
+                        'full_reduction_applied': True,
+                        'full_reduction_note': (
+                            'completed the stellar-variability-only calibrated ensemble reduction '
+                            'without fitting a transit model.'
+                        ),
+                        'stellar_variability_transit_exclusion': exclusion_summary,
+                        'reuse_selected_full_reduction_fit': True,
+                    }
+                    attempts.append(selected_result)
+                    return {
+                        'ranked_summaries': ranked_summaries,
+                        'attempts': attempts,
+                        'selected_result': selected_result,
+                        'selection_metric': 'stellar_variability_ensemble',
+                        'stopped_after_first_qc_pass': False,
+                        'stopped_after_promising_partial': False,
+                    }
+            log_info(
+                "Warning: the default stellar-variability calibrated ensemble did not yield a usable "
+                "out-of-transit light curve; falling back to single-comparison selection.",
+                warn=True,
+            )
+        else:
+            log_info(
+                "Warning: fewer than two bright, unsaturated, VSX-vetted comparison stars had usable "
+                "catalog calibrations after calibration-error clipping; falling back to single-comparison "
+                "selection.",
+                warn=True,
+            )
+
     for field_rank, comp_summary in enumerate(ranked_summaries):
         comp_index = comp_summary['comp_index']
         ckey = comp_summary.get('key', f"comp{comp_index + 1}")
@@ -24560,6 +26460,483 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
         'stopped_after_first_qc_pass': False,
         'stopped_after_promising_partial': False,
     }
+
+
+def fortuitous_ensemble_flux_maps(
+        comparison_calibration,
+        psf_data,
+        aper_data,
+        psf_flux_data=None,
+        psf_noise_data=None):
+    ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
+    method = comparison_calibration.get('method')
+    aperture_index = comparison_calibration.get('a')
+    annulus_index = comparison_calibration.get('an')
+    frame_count = np.asarray(comparison_calibration.get('field_image_keep_mask', [])).size
+    if frame_count == 0:
+        if method == 'psf':
+            frame_count = np.asarray(psf_data.get('target', [])).shape[0]
+        elif aper_data is not None:
+            frame_count = np.asarray(aper_data.get('target', [])).shape[0]
+    flux_map = {}
+    error_map = {}
+    psf_flux_source = psf_flux_data_source(psf_data, psf_flux_data)
+    for summary in ranked_summaries:
+        ckey = summary.get('key')
+        if not ckey:
+            continue
+        quality_mask = np.asarray(
+            summary.get(
+                'psf_quality_keep_mask',
+                psf_quality_mask_for_key(
+                    psf_data,
+                    ckey,
+                    frame_count,
+                    psf_flux_data=psf_flux_source if method == 'psf' else None,
+                ),
+            ),
+            dtype=bool,
+        )
+        if quality_mask.shape != (frame_count,):
+            quality_mask = np.ones(frame_count, dtype=bool)
+        if method == 'psf':
+            if ckey not in psf_flux_source:
+                continue
+            flux_map[ckey] = psf_flux_series_from_rows(psf_flux_source[ckey], quality_mask)
+            if isinstance(psf_noise_data, dict) and ckey in psf_noise_data:
+                error_map[ckey] = mask_series_with_quality(psf_noise_data[ckey], quality_mask)
+        else:
+            if aper_data is None or ckey not in aper_data:
+                continue
+            flux_map[ckey] = mask_series_with_quality(
+                aper_data[ckey][:, aperture_index, annulus_index],
+                quality_mask,
+            )
+            error_key = f"{ckey}_unc"
+            if error_key in aper_data:
+                error_map[ckey] = mask_series_with_quality(
+                    aper_data[error_key][:, aperture_index, annulus_index],
+                    quality_mask,
+                )
+    return ranked_summaries, flux_map, error_map
+
+
+def fortuitous_variable_target_series(
+        variable,
+        comparison_calibration,
+        psf_data,
+        aper_data,
+        psf_flux_data=None,
+        psf_noise_data=None,
+        comp_overexposed_masks=None):
+    ckey = variable.get('tracking_key')
+    method = comparison_calibration.get('method')
+    frame_count = np.asarray(comparison_calibration.get('field_image_keep_mask', [])).size
+    psf_flux_source = psf_flux_data_source(psf_data, psf_flux_data)
+    quality_mask = psf_quality_mask_for_key(
+        psf_data,
+        ckey,
+        frame_count,
+        psf_flux_data=psf_flux_source if method == 'psf' else None,
+    )
+    quality_mask = np.asarray(quality_mask, dtype=bool)
+    if quality_mask.shape != (frame_count,):
+        quality_mask = np.ones(frame_count, dtype=bool)
+    if isinstance(comp_overexposed_masks, dict) and ckey in comp_overexposed_masks:
+        overexposed = np.asarray(comp_overexposed_masks[ckey], dtype=bool)
+        if overexposed.shape == quality_mask.shape:
+            quality_mask &= ~overexposed
+
+    if method == 'psf':
+        if ckey not in psf_flux_source:
+            return None, None, quality_mask
+        flux = psf_flux_series_from_rows(psf_flux_source[ckey], quality_mask)
+        error = None
+        if isinstance(psf_noise_data, dict) and ckey in psf_noise_data:
+            error = mask_series_with_quality(psf_noise_data[ckey], quality_mask)
+        return flux, error, quality_mask
+
+    aperture_index = comparison_calibration.get('a')
+    annulus_index = comparison_calibration.get('an')
+    if aper_data is None or ckey not in aper_data:
+        return None, None, quality_mask
+    flux = mask_series_with_quality(
+        aper_data[ckey][:, aperture_index, annulus_index],
+        quality_mask,
+    )
+    error_key = f"{ckey}_unc"
+    error = None
+    if error_key in aper_data:
+        error = mask_series_with_quality(
+            aper_data[error_key][:, aperture_index, annulus_index],
+            quality_mask,
+        )
+    return flux, error, quality_mask
+
+
+def fortuitous_variable_target_metadata(variable):
+    return {
+        'name': variable.get('name'),
+        'auid': variable.get('auid'),
+        'variable_type': variable.get('variable_type'),
+        'ra_deg': variable.get('ra'),
+        'dec_deg': variable.get('dec'),
+        'pixel_position': variable.get('pos'),
+        'vsx_period_days': variable.get('period_days'),
+        'vsx_amplitude_mag': variable.get('amplitude_mag'),
+        'classification_folder': variable.get('category'),
+        'classification_rule': (
+            'optimal_variables requires VSX period <= 10 days and amplitude >= 0.3 mag; '
+            'all other retained VSX stars use rest_of_the_variables.'
+        ),
+        'reference_aperture_flux_adu': variable.get('aperture_flux_adu'),
+        'reference_count_rate_adu_per_second': variable.get('count_rate_adu_per_second'),
+        'reference_estimated_magnitude_error': variable.get('estimated_magnitude_error'),
+        'reference_sky_background_adu_per_pixel': variable.get(
+            'reference_sky_background_adu_per_pixel'
+        ),
+        'reference_sky_sigma_adu': variable.get('reference_sky_sigma_adu'),
+        'reference_aperture_pixels': variable.get('reference_aperture_pixels'),
+        'reference_sky_pixels': variable.get('reference_sky_pixels'),
+        'reference_flux_error_adu': variable.get('reference_flux_error_adu'),
+        'reference_noise_components_adu': variable.get('reference_noise_components_adu'),
+        'detection_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+        'output_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+        'output_magnitude_error_rule': (
+            'Only frames with a finite positive ensemble-calibrated magnitude error below '
+            '0.05 mag are written.'
+        ),
+        'saturation_rejection_scope': (
+            'Frames are rejected using this VSX target own overexposure mask; '
+            'the exoplanet target overexposure mask is not applied.'
+        ),
+        'input_frame_count': variable.get('input_frame_count'),
+        'target_overexposure_rejected_frame_count': variable.get(
+            'target_overexposure_rejected_frame_count'
+        ),
+        'target_quality_rejected_frame_count': variable.get(
+            'target_quality_rejected_frame_count'
+        ),
+        'output_magnitude_error_rejected_frame_count': variable.get(
+            'output_magnitude_error_rejected_frame_count'
+        ),
+        'output_magnitude_error_qualified_frame_count': variable.get(
+            'output_magnitude_error_qualified_frame_count'
+        ),
+        'output_magnitude_error_min': variable.get('output_magnitude_error_min'),
+        'output_magnitude_error_median': variable.get('output_magnitude_error_median'),
+        'output_magnitude_error_max': variable.get('output_magnitude_error_max'),
+        'valid_output_frame_count': variable.get('valid_output_frame_count'),
+    }
+
+
+def process_fortuitous_variables(
+        variables,
+        comparison_calibration,
+        calibration_stars,
+        times,
+        jd_times,
+        airmass,
+        psf_data,
+        aper_data,
+        info_dict,
+        psf_flux_data=None,
+        psf_noise_data=None,
+        comp_overexposed_masks=None,
+        exposure_times_seconds=None,
+        observed_filter=None):
+    if not variables or comparison_calibration is None:
+        return []
+    times = np.asarray(times, dtype=float)
+    jd_times = np.asarray(jd_times, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    if not (times.shape == jd_times.shape == airmass.shape):
+        return []
+
+    ranked_summaries, comp_flux_map, comp_error_map = fortuitous_ensemble_flux_maps(
+        comparison_calibration,
+        psf_data,
+        aper_data,
+        psf_flux_data=psf_flux_data,
+        psf_noise_data=psf_noise_data,
+    )
+    if len(ranked_summaries) < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+        log_info(
+            "Warning: fortuitous-variable photometry skipped because fewer than two independent "
+            "non-variable comparison candidates were usable.",
+            warn=True,
+        )
+        return []
+
+    field_keep_mask = np.asarray(
+        comparison_calibration.get('field_image_keep_mask', np.ones(times.shape, dtype=bool)),
+        dtype=bool,
+    )
+    if field_keep_mask.shape != times.shape:
+        field_keep_mask = np.ones(times.shape, dtype=bool)
+    exposure_array = None
+    if exposure_times_seconds is not None:
+        exposure_array = np.asarray(exposure_times_seconds, dtype=float)
+        if exposure_array.shape != times.shape:
+            exposure_array = None
+
+    base_dir = Path(info_dict['save']) / 'fortuitous_variables'
+    results = []
+    for variable in variables:
+        variable = dict(variable)
+        variable_name = variable.get('name') or 'VSX variable'
+        category = variable.get('category') or 'rest_of_the_variables'
+        variable['input_frame_count'] = int(times.size)
+        variable_overexposed_mask = np.zeros(times.shape, dtype=bool)
+        tracking_key = variable.get('tracking_key')
+        if isinstance(comp_overexposed_masks, dict) and tracking_key in comp_overexposed_masks:
+            candidate_mask = np.asarray(comp_overexposed_masks[tracking_key], dtype=bool)
+            if candidate_mask.shape == times.shape:
+                variable_overexposed_mask = candidate_mask
+        variable['target_overexposure_rejected_frame_count'] = int(
+            np.count_nonzero(variable_overexposed_mask)
+        )
+        variable_dir = base_dir / category / safe_output_filename(
+            'VSX', variable_name, extension=''
+        )
+        variable_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            target_flux, target_flux_error, target_quality_mask = fortuitous_variable_target_series(
+                variable,
+                comparison_calibration,
+                psf_data,
+                aper_data,
+                psf_flux_data=psf_flux_data,
+                psf_noise_data=psf_noise_data,
+                comp_overexposed_masks=comp_overexposed_masks,
+            )
+            if target_flux is None:
+                raise ValueError('no usable tracked flux series')
+            variable['target_quality_rejected_frame_count'] = int(
+                np.count_nonzero(~np.asarray(target_quality_mask, dtype=bool))
+            )
+
+            member_selection = select_stellar_variability_ensemble_members(
+                ranked_summaries,
+                calibration_stars,
+                comp_flux_map,
+                observed_filter=observed_filter,
+                target_catalog_match=variable.get('catalog_match'),
+            )
+            members = member_selection.get('members', [])
+            if len(members) < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+                raise ValueError('fewer than two independently calibrated ensemble members')
+            ensemble_series = build_stellar_variability_calibrated_ensemble_series(
+                target_flux,
+                target_flux_error,
+                comp_flux_map,
+                comp_error_map,
+                members,
+            )
+            if not ensemble_series.get('applied'):
+                raise ValueError(ensemble_series.get('failure_reason') or 'ensemble combination failed')
+
+            base_valid = (
+                field_keep_mask
+                & target_quality_mask
+                & np.isfinite(ensemble_series['relative_flux'])
+                & (ensemble_series['relative_flux'] > 0)
+                & np.isfinite(ensemble_series['relative_flux_error'])
+                & (ensemble_series['relative_flux_error'] > 0)
+            )
+            magnitude_errors = np.asarray(ensemble_series['magnitude_error'], dtype=float)
+            magnitude_error_valid = (
+                np.isfinite(magnitude_errors)
+                & (magnitude_errors > 0)
+                & (magnitude_errors < FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR)
+            )
+            valid = base_valid & magnitude_error_valid
+            eligible_magnitude_errors = magnitude_errors[base_valid & np.isfinite(magnitude_errors)]
+            variable['output_magnitude_error_rejected_frame_count'] = int(
+                np.count_nonzero(base_valid & ~magnitude_error_valid)
+            )
+            variable['output_magnitude_error_qualified_frame_count'] = int(np.count_nonzero(valid))
+            if eligible_magnitude_errors.size:
+                variable['output_magnitude_error_min'] = float(np.nanmin(eligible_magnitude_errors))
+                variable['output_magnitude_error_median'] = float(np.nanmedian(eligible_magnitude_errors))
+                variable['output_magnitude_error_max'] = float(np.nanmax(eligible_magnitude_errors))
+            if np.count_nonzero(valid) < LIGHTCURVE_MIN_VALID_POINTS:
+                raise ValueError(
+                    'fewer than five ensemble-calibrated frames have internal magnitude error '
+                    f'below {FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR:.3f} mag'
+                )
+            variable['valid_output_frame_count'] = int(np.count_nonzero(valid))
+            target_error_values = target_flux_error
+            if target_error_values is None:
+                target_error_values = source_flux_uncertainty_from_counts(target_flux)
+            target_error_values = np.asarray(target_error_values, dtype=float)
+            prepared = {
+                'applied': True,
+                'failure_reason': None,
+                'time': times[valid],
+                'flux': ensemble_series['relative_flux'][valid],
+                'unc': ensemble_series['relative_flux_error'][valid],
+                'airmass': airmass[valid],
+                'jd_time': jd_times[valid],
+                'exposure_time_seconds': None if exposure_array is None else exposure_array[valid],
+                'target_flux': np.asarray(target_flux, dtype=float)[valid],
+                'comp_flux': ensemble_series['synthetic_reference_flux'][valid],
+                'target_flux_error': target_error_values[valid],
+                'comp_flux_error': ensemble_series['synthetic_reference_flux_error'][valid],
+                'source_indices': np.flatnonzero(valid),
+            }
+            variable_period = _finite_float(variable.get('period_days'), 1.0)
+            if variable_period is None or variable_period <= 0:
+                variable_period = 1.0
+            variable_prior = {
+                'pPer': variable_period,
+                'pPerUnc': np.nan,
+                'midT': float(times[valid][0]),
+                'midTUnc': np.nan,
+                'rprs': np.nan,
+                'rprsUnc': np.nan,
+                'aRs': np.nan,
+                'aRsUnc': np.nan,
+                'inc': np.nan,
+                'incUnc': np.nan,
+                'ecc': 0.0,
+                'omega': 0.0,
+            }
+            fit = build_stellar_variability_only_lightcurve(
+                prepared,
+                variable_prior,
+                comp_index=None,
+                comp_label=f"ENSEMBLE ({len(members)} stars)",
+                comp_position=[member.get('position') for member in members],
+                method_label=comparison_calibration.get('method_label'),
+                plot_time_range=times,
+            )
+            if fit is None:
+                raise ValueError('stellar-variability light curve construction failed')
+            selected_indices = np.asarray(fit.stellar_variability_source_indices, dtype=int)
+            fit.stellar_variability_ensemble_members = members
+            fit.stellar_variability_ensemble_magnitudes = ensemble_series['magnitude'][selected_indices]
+            fit.stellar_variability_ensemble_magnitude_errors = (
+                ensemble_series['magnitude_error'][selected_indices]
+            )
+            fit.stellar_variability_ensemble_valid_member_counts = (
+                ensemble_series['valid_member_count'][selected_indices]
+            )
+            fit.stellar_variability_ensemble_calibration_error_clip = member_selection.get(
+                'calibration_error_clip', {}
+            )
+            fit.stellar_variability_ensemble_selection = member_selection
+            fit.stellar_variability_target_catalog_profile = member_selection.get(
+                'target_catalog_profile', {}
+            )
+
+            target_metadata = fortuitous_variable_target_metadata(variable)
+            vsp_params = build_stellar_variability_ensemble_params_from_fit(
+                fit,
+                variable_dir,
+                variable_name,
+                observed_filter=observed_filter,
+                observation_date=info_dict.get('date'),
+                target_metadata=target_metadata,
+            )
+            if not vsp_params:
+                raise ValueError('no calibrated magnitude rows were produced')
+            csv_path = save_stellar_variability_magnitude_csv(
+                vsp_params,
+                variable_dir,
+                variable_name,
+                observation_date=info_dict.get('date'),
+            )
+            variable_info = dict(info_dict)
+            variable_info['save'] = str(variable_dir)
+            variable_planet = {'sName': variable_name, 'pName': variable_name}
+            AIDOutputFiles(
+                fit,
+                variable_planet,
+                variable_info,
+                variable.get('auid'),
+                None,
+                vsp_params,
+            ).aavso()
+            results.append({
+                'name': variable_name,
+                'auid': variable.get('auid'),
+                'category': category,
+                'output_directory': str(variable_dir),
+                'point_count': len(vsp_params),
+                'ensemble_member_count': len(members),
+                'input_frame_count': variable.get('input_frame_count'),
+                'target_overexposure_rejected_frame_count': variable.get(
+                    'target_overexposure_rejected_frame_count'
+                ),
+                'output_magnitude_error_rejected_frame_count': variable.get(
+                    'output_magnitude_error_rejected_frame_count'
+                ),
+                'output_magnitude_error_qualified_frame_count': variable.get(
+                    'output_magnitude_error_qualified_frame_count'
+                ),
+                'output_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+                'output_magnitude_error_max': variable.get('output_magnitude_error_max'),
+                'magnitude_csv': str(csv_path) if csv_path else None,
+                'status': 'completed',
+            })
+            log_info(
+                f"Fortuitous-variable photometry completed for {variable_name}: "
+                f"{len(vsp_params)} point(s), {len(members)} ensemble member(s), outputs={variable_dir}."
+            )
+        except Exception as exc:
+            results.append({
+                'name': variable_name,
+                'auid': variable.get('auid'),
+                'category': category,
+                'output_directory': str(variable_dir),
+                'input_frame_count': variable.get('input_frame_count'),
+                'target_overexposure_rejected_frame_count': variable.get(
+                    'target_overexposure_rejected_frame_count'
+                ),
+                'output_magnitude_error_rejected_frame_count': variable.get(
+                    'output_magnitude_error_rejected_frame_count'
+                ),
+                'output_magnitude_error_qualified_frame_count': variable.get(
+                    'output_magnitude_error_qualified_frame_count'
+                ),
+                'output_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+                'status': 'skipped',
+                'reason': str(exc),
+            })
+            status_path = variable_dir / safe_output_filename(
+                'FortuitousVariableStatus',
+                variable_name,
+                filename_date_token(info_dict.get('date')),
+                extension='json',
+            )
+            with status_path.open('w', encoding='utf-8') as handle:
+                json.dump(
+                    stellar_variability_json_safe({
+                        'target': fortuitous_variable_target_metadata(variable),
+                        'status': 'skipped',
+                        'reason': str(exc),
+                    }),
+                    handle,
+                    indent=2,
+                    sort_keys=True,
+                )
+                handle.write('\n')
+            log_info(
+                f"Warning: fortuitous-variable photometry skipped {variable_name} ({exc}).",
+                warn=True,
+            )
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = base_dir / safe_output_filename(
+        'FortuitousVariables',
+        filename_date_token(info_dict.get('date')),
+        extension='json',
+    )
+    with manifest_path.open('w', encoding='utf-8') as handle:
+        json.dump(stellar_variability_json_safe({'variables': results}), handle, indent=2, sort_keys=True)
+        handle.write('\n')
+    return results
 
 
 def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
@@ -25767,6 +28144,26 @@ def _main_impl():
         stellar_variability_only = should_run_stellar_variability_only(
             exotic_infoDict.get('stellar_variability_only', STELLAR_VARIABILITY_ONLY_DEFAULT)
         )
+        use_ensemble_photometry_for_stellar_variability = (
+            should_use_ensemble_photometry_for_stellar_variability(
+                exotic_infoDict.get(
+                    'use_ensemble_photometry_for_stellar_variability',
+                    STELLAR_VARIABILITY_ENSEMBLE_DEFAULT,
+                )
+            )
+        )
+        photometer_fortuitous_variables = should_photometer_fortuitous_variables(
+            exotic_infoDict.get(
+                'photometer_fortuitous_variables',
+                PHOTOMETER_FORTUITOUS_VARIABLES_DEFAULT,
+            )
+        )
+        use_nextastro_vsx_cache_first = should_use_nextastro_vsx_cache_first(
+            exotic_infoDict.get(
+                'use_nextastro_vsx_cache_first',
+                USE_NEXTASTRO_VSX_CACHE_FIRST_DEFAULT,
+            )
+        )
         if stellar_variability_only:
             use_eebls_tmid_initializer = False
             pick_comparison_by_eebls_snr = False
@@ -26257,6 +28654,12 @@ def _main_impl():
             plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             ra_dec_tar, ra_dec_wcs = None, []
             chart_id, vsp_comp_stars, vsp_list = None, {}, []
+            nextastro_field_catalog = None
+            primary_target_catalog_match = None
+            science_comp_stars = []
+            fortuitous_ensemble_stars = []
+            fortuitous_variables = []
+            fortuitous_calibration_stars = {}
 
             if wcs_file:
                 if should_log_plate_solution_path(wcs_file):
@@ -26319,7 +28722,6 @@ def _main_impl():
                                                          user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ])
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
 
-                nextastro_field_catalog = None
                 try:
                     nextastro_field_catalog = nextastro_photometry_catalog_for_wcs(
                         wcs_file,
@@ -26332,6 +28734,13 @@ def _main_impl():
                         "\nWarning: NextAstro full-field photometry catalog lookup failed "
                         f"({describe_retry_exception(exc)}). Will try per-comparison catalog lookups.",
                         warn=True,
+                    )
+                if nextastro_field_catalog is not None and ra_dec_tar is not None:
+                    primary_target_catalog_match = nextastro_photometry_catalog_match(
+                        nextastro_field_catalog,
+                        ra_dec_tar[0],
+                        ra_dec_tar[1],
+                        exotic_infoDict['filter'],
                     )
 
                 if reference_fallback is not None:
@@ -26354,12 +28763,41 @@ def _main_impl():
                         )
                         return
 
-                if should_use_automatic_optimal_calibration_selector(
+                automatic_calibration_selector_enabled = should_use_automatic_optimal_calibration_selector(
                     exotic_infoDict.get('automatic_optimal_calibration_selector', 'n')
-                ):
+                )
+                stellar_variability_ensemble_candidate_search = (
+                    stellar_variability_only
+                    and use_ensemble_photometry_for_stellar_variability
+                )
+                if automatic_calibration_selector_enabled or stellar_variability_ensemble_candidate_search:
                     automatic_comp_count = parse_automatic_calibration_selector_count(
                         exotic_infoDict.get('automatic_optimal_calibration_selector_count')
                     )
+                    ensemble_candidate_saturation_threshold = None
+                    if stellar_variability_ensemble_candidate_search:
+                        configured_candidate_saturation = parse_saturation_value(
+                            exotic_infoDict.get(
+                                'saturation_value',
+                                exotic_infoDict.get('saturation_value_adu', SATURATION_VALUE_DEFAULT),
+                            )
+                        )
+                        header_candidate_saturation = saturation_value_from_header(header)
+                        candidate_saturation = configured_candidate_saturation
+                        if (
+                            header_candidate_saturation is not None
+                            and configured_candidate_saturation == SATURATION_VALUE_DEFAULT
+                        ):
+                            candidate_saturation = header_candidate_saturation
+                        ensemble_candidate_saturation_threshold = (
+                            candidate_saturation
+                            * parse_overexposure_threshold_fraction(
+                                exotic_infoDict.get(
+                                    'overexposure_threshold_fraction',
+                                    OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT,
+                                )
+                            )
+                        )
                     automatic_comp_stars, automatic_candidates = select_automatic_optimal_calibration_stars(
                         reference_image,
                         reference_image.shape,
@@ -26370,11 +28808,14 @@ def _main_impl():
                         field_catalog=nextastro_field_catalog,
                         count=automatic_comp_count,
                         colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
+                        brightest_first=stellar_variability_ensemble_candidate_search,
+                        saturation_threshold=ensemble_candidate_saturation_threshold,
                     )
                     log_automatic_optimal_calibration_selection(
                         automatic_comp_stars,
                         automatic_candidates,
                         automatic_comp_count,
+                        brightest_first=stellar_variability_ensemble_candidate_search,
                     )
                     if automatic_comp_stars:
                         exotic_infoDict['comp_stars'] = automatic_comp_stars
@@ -26396,15 +28837,134 @@ def _main_impl():
                 for duplicate_message in duplicate_comp_messages:
                     log_info(duplicate_message)
 
-                # Build RA/Dec for comp after list is finalized (avoid off by one issues, etc
-                ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
+                science_comp_stars = [list(position) for position in exotic_infoDict['comp_stars']]
+                fortuitous_ensemble_stars = list(science_comp_stars)
+                configured_fortuitous_saturation = parse_saturation_value(
+                    exotic_infoDict.get(
+                        'saturation_value',
+                        exotic_infoDict.get('saturation_value_adu', SATURATION_VALUE_DEFAULT),
+                    )
+                )
+                header_fortuitous_saturation = saturation_value_from_header(header)
+                fortuitous_saturation = configured_fortuitous_saturation
+                if (
+                    header_fortuitous_saturation is not None
+                    and configured_fortuitous_saturation == SATURATION_VALUE_DEFAULT
+                ):
+                    fortuitous_saturation = header_fortuitous_saturation
+                fortuitous_saturation_threshold = (
+                    fortuitous_saturation
+                    * parse_overexposure_threshold_fraction(
+                        exotic_infoDict.get(
+                            'overexposure_threshold_fraction',
+                            OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT,
+                        )
+                    )
+                )
+
+                if photometer_fortuitous_variables:
+                    fortuitous_variables = discover_fortuitous_vsx_variables(
+                        wcs_file,
+                        reference_image.shape,
+                        img_scale,
+                        reference_image,
+                        exotic_infoDict['filter'],
+                        target_pixel=[exotic_UIprevTPX, exotic_UIprevTPY],
+                        field_catalog=nextastro_field_catalog,
+                        exposure_seconds=(header_exptimes[0] if len(header_exptimes) else 1.0),
+                        gain_e_per_adu=exotic_infoDict.get('gain_electrons_per_adu'),
+                        saturation_threshold=fortuitous_saturation_threshold,
+                        use_nextastro_vsx_cache_first=use_nextastro_vsx_cache_first,
+                    )
+                else:
+                    log_info("Fortuitous-variable photometry disabled per optional_info setting.")
+
+                if fortuitous_variables:
+                    if stellar_variability_ensemble_candidate_search:
+                        # The stellar-variability target path just selected and VSX-vetted the
+                        # same brightest-first pool with the same count and saturation limit.
+                        # Reuse it rather than performing an identical full-field image scan.
+                        fortuitous_auto_stars = []
+                        log_info(
+                            "Reusing the stellar-variability target comparison pool for fortuitous "
+                            "VSX targets; skipping a duplicate automatic source scan."
+                        )
+                    else:
+                        fortuitous_comp_count = parse_automatic_calibration_selector_count(
+                            exotic_infoDict.get('automatic_optimal_calibration_selector_count')
+                        )
+                        fortuitous_auto_stars, _ = select_automatic_optimal_calibration_stars(
+                            reference_image,
+                            reference_image.shape,
+                            target_pixel=[exotic_UIprevTPX, exotic_UIprevTPY],
+                            ra_wcs=ra_wcs,
+                            dec_wcs=dec_wcs,
+                            obs_filter=exotic_infoDict['filter'],
+                            field_catalog=nextastro_field_catalog,
+                            count=fortuitous_comp_count,
+                            colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
+                            brightest_first=True,
+                            saturation_threshold=fortuitous_saturation_threshold,
+                        )
+                        check_for_variable_stars(
+                            ra_wcs,
+                            dec_wcs,
+                            fortuitous_auto_stars,
+                            use_nextastro_variability_server=args.use_nextastro_variability_server,
+                        )
+                    variable_positions = [variable['pos'] for variable in fortuitous_variables]
+                    fortuitous_auto_stars = [
+                        position for position in fortuitous_auto_stars
+                        if not any(
+                            np.hypot(
+                                float(position[0]) - float(variable_position[0]),
+                                float(position[1]) - float(variable_position[1]),
+                            ) <= REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS
+                            for variable_position in variable_positions
+                        )
+                    ]
+                    fortuitous_ensemble_stars, fortuitous_duplicate_messages = (
+                        merge_automatic_comparison_star_coords(
+                            science_comp_stars,
+                            fortuitous_auto_stars,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        )
+                    )
+                    for duplicate_message in fortuitous_duplicate_messages:
+                        log_info(duplicate_message)
+                    log_info(
+                        "Fortuitous-variable ensemble pool contains "
+                        f"{len(fortuitous_ensemble_stars)} non-variable, non-saturated, "
+                        "catalog-matched comparison candidate(s)."
+                    )
+
+                ensemble_ra_dec = build_comp_ra_dec(
+                    ra_wcs,
+                    dec_wcs,
+                    fortuitous_ensemble_stars,
+                )
                 vsp_comp_stars = merge_nextastro_calibration_stars(
-                    exotic_infoDict['comp_stars'],
-                    ra_dec_wcs,
+                    science_comp_stars,
+                    ensemble_ra_dec[:len(science_comp_stars)],
                     exotic_infoDict['filter'],
                     existing_comp_stars=vsp_comp_stars,
                     field_catalog=nextastro_field_catalog,
                 )
+                fortuitous_calibration_stars = merge_nextastro_calibration_stars(
+                    fortuitous_ensemble_stars,
+                    ensemble_ra_dec,
+                    exotic_infoDict['filter'],
+                    existing_comp_stars=vsp_comp_stars,
+                    field_catalog=nextastro_field_catalog,
+                )
+                tracked_positions = [*fortuitous_ensemble_stars]
+                for variable in fortuitous_variables:
+                    variable['tracking_key'] = f"comp{len(tracked_positions) + 1}"
+                    tracked_positions.append(list(variable['pos']))
+                exotic_infoDict['comp_stars'] = tracked_positions
+                # Build RA/Dec after the tracking list is finalized. Science comps remain first,
+                # followed by fortuitous-only ensemble candidates and then the VSX targets.
+                ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
                 vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             else:
@@ -26416,11 +28976,19 @@ def _main_impl():
                         error=True,
                     )
                     return
+                if photometer_fortuitous_variables:
+                    log_info(
+                        "Warning: fortuitous-variable photometry requires a usable celestial WCS; "
+                        "the full-field VSX search will be skipped for this reduction.",
+                        warn=True,
+                    )
                 exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
                     exotic_infoDict['comp_stars']
                 )
                 for duplicate_message in duplicate_comp_messages:
                     log_info(duplicate_message)
+                science_comp_stars = [list(position) for position in exotic_infoDict['comp_stars']]
+                fortuitous_ensemble_stars = list(science_comp_stars)
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
 
             # alloc psf fitting param
@@ -26483,6 +29051,19 @@ def _main_impl():
             reject_overexposed_stars = should_reject_overexposed_stars(
                 exotic_infoDict.get('reject_overexposed_stars', REJECT_OVEREXPOSED_STARS_DEFAULT)
             )
+            if (
+                (
+                    (stellar_variability_only and use_ensemble_photometry_for_stellar_variability)
+                    or (photometer_fortuitous_variables and bool(fortuitous_variables))
+                )
+                and not reject_overexposed_stars
+            ):
+                reject_overexposed_stars = True
+                log_info(
+                    "Stellar-variability ensemble membership requires non-saturated stars; "
+                    "overexposure rejection will remain enabled for this run.",
+                    warn=True,
+                )
             configured_saturation_value = parse_saturation_value(
                 exotic_infoDict.get(
                     'saturation_value',
@@ -26524,6 +29105,18 @@ def _main_impl():
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "
                     "light curve will use non-rejected comparison stars as a combined reference."
                 )
+            if stellar_variability_only:
+                if use_ensemble_photometry_for_stellar_variability:
+                    log_info(
+                        "Stellar-variability calibrated ensemble enabled (default): EXOTIC will combine "
+                        "bright, unsaturated, VSX-vetted comparison stars after clipping high catalog "
+                        "magnitude uncertainties."
+                    )
+                else:
+                    log_info(
+                        "Stellar-variability calibrated ensemble disabled per optional_info setting; "
+                        "EXOTIC will select one comparison star by out-of-transit scatter."
+                    )
             if reject_overexposed_stars:
                 log_info(
                     "Overexposed-star rejection enabled: target frames and comparison-star measurements "
@@ -26797,7 +29390,7 @@ def _main_impl():
                         target_radius,
                         overexposure_threshold,
                         fast_mode=fast_aperture_mask,
-                    ):
+                        ):
                         target_overexposed_frame_mask[i] = True
                         plateStatus.overexposedWarning(
                             0,
@@ -26805,12 +29398,7 @@ def _main_impl():
                             target_row[1] if target_row.size > 1 else np.nan,
                             overexposure_threshold,
                         )
-                        psf_data['target'][i, :] = np.nan
                         psf_flux_data['target'][i, :] = np.nan
-                        hdul.close()
-                        del hdul
-                        del imageData
-                        continue
 
                     for comp_idx, comp_key in enumerate(comp_alignment_keys):
                         comp_row = np.asarray(psf_data[comp_key][i], dtype=float)
@@ -26840,29 +29428,32 @@ def _main_impl():
                         if use_legacy_psf_flux_mode
                         else fit_psf_photometry_flux_row
                     )
-                    target_psf_flux_seed_row = psf_data['target'][i]
-                    if 'target' in psf_flux_seed_tracks:
-                        target_psf_flux_seed_row = psf_flux_seed_tracks['target'][i]
-                    psf_flux_data['target'][i] = psf_flux_row_fitter(
-                        imageData,
-                        target_psf_flux_seed_row,
-                        0,
-                    )
-                    store_psf_noise_budget(
-                        psf_noise_data,
-                        'target',
-                        i,
-                        compute_psf_noise_budget_for_row(
+                    if target_overexposed_frame_mask[i]:
+                        psf_flux_data['target'][i, :] = np.nan
+                    else:
+                        target_psf_flux_seed_row = psf_data['target'][i]
+                        if 'target' in psf_flux_seed_tracks:
+                            target_psf_flux_seed_row = psf_flux_seed_tracks['target'][i]
+                        psf_flux_data['target'][i] = psf_flux_row_fitter(
                             imageData,
-                            psf_flux_data['target'][i],
+                            target_psf_flux_seed_row,
                             0,
-                            noise_config=frame_noise_config,
-                            exposure_s=frame_exposure_s,
-                            airmass=frame_airmass,
-                            fallback_sigma=sigma,
-                            fast_mode=fast_aperture_mask,
-                        ),
-                    )
+                        )
+                        store_psf_noise_budget(
+                            psf_noise_data,
+                            'target',
+                            i,
+                            compute_psf_noise_budget_for_row(
+                                imageData,
+                                psf_flux_data['target'][i],
+                                0,
+                                noise_config=frame_noise_config,
+                                exposure_s=frame_exposure_s,
+                                airmass=frame_airmass,
+                                fallback_sigma=sigma,
+                                fast_mode=fast_aperture_mask,
+                            ),
+                        )
                     for comp_idx, comp_key in enumerate(comp_alignment_keys):
                         if comp_overexposed_masks.get(comp_key, np.zeros(len(inputfiles), dtype=bool))[i]:
                             psf_flux_data[comp_key][i, :] = np.nan
@@ -27080,6 +29671,80 @@ def _main_impl():
             log_transform_timing_stats('Transformation timing summary (full reduction)')
             log_photometry_timing_stats('Photometry timing summary (full reduction)')
             log_reduction_timing_overview('Reduction timing overview (full reduction)')
+
+            # Fortuitous VSX targets are independent science targets. Process them against
+            # the full image sequence before the exoplanet target validity/overexposure mask
+            # is applied below. Each VSX target series applies its own compN overexposure mask.
+            if photometer_fortuitous_variables and fortuitous_variables:
+                full_airmass = np.asarray(airMassList, dtype=float)
+                full_exposure_times_seconds = np.asarray(exptimes, dtype=float)
+                variable_sigma_rows = [
+                    np.asarray(psf_data.get(variable.get('tracking_key'), []), dtype=float)
+                    for variable in fortuitous_variables
+                    if variable.get('tracking_key') in psf_data
+                ]
+                variable_sigma_rows = [rows for rows in variable_sigma_rows if rows.ndim == 2 and rows.size]
+                if variable_sigma_rows:
+                    fortuitous_sigma_display = representative_psf_sigma(
+                        np.concatenate(variable_sigma_rows, axis=0),
+                        fallback_sigma=sigma,
+                    )
+                else:
+                    fortuitous_sigma_display = sigma
+                if not np.isfinite(fortuitous_sigma_display) or fortuitous_sigma_display <= 0:
+                    fortuitous_sigma_display = 1.0
+
+                fortuitous_apers = apers
+                fortuitous_annuli = annuli
+                if aperture_values is not None and annulus_values is not None:
+                    if use_adaptive_apertures:
+                        fortuitous_apers = (
+                            np.asarray(aperture_values, dtype=float) * fortuitous_sigma_display
+                        )
+                        fortuitous_annuli = (
+                            np.asarray(annulus_values, dtype=float) * fortuitous_sigma_display
+                        )
+                    else:
+                        fortuitous_apers = np.asarray(aperture_values, dtype=float)
+                        fortuitous_annuli = np.asarray(annulus_values, dtype=float)
+
+                fortuitous_psf_flux_source = (
+                    psf_flux_data if use_psf_photometry else psf_data
+                )
+                fortuitous_comparison_calibration = select_comparison_calibrated_photometry(
+                    psf_data,
+                    aper_data,
+                    fortuitous_apers,
+                    fortuitous_annuli,
+                    full_airmass,
+                    fortuitous_ensemble_stars,
+                    fortuitous_sigma_display,
+                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                    use_psf_photometry=use_psf_photometry,
+                    use_aperture_photometry=use_aperture_photometry,
+                    psf_flux_data=fortuitous_psf_flux_source,
+                    comp_overexposed_masks=comp_overexposed_masks,
+                )
+                exotic_infoDict['exposure'] = exp_time_med(exptimes)
+                process_fortuitous_variables(
+                    fortuitous_variables,
+                    fortuitous_comparison_calibration,
+                    fortuitous_calibration_stars,
+                    times,
+                    jd_times,
+                    full_airmass,
+                    psf_data,
+                    aper_data,
+                    exotic_infoDict,
+                    psf_flux_data=fortuitous_psf_flux_source,
+                    psf_noise_data=psf_noise_data if use_psf_photometry else None,
+                    comp_overexposed_masks=comp_overexposed_masks,
+                    exposure_times_seconds=full_exposure_times_seconds,
+                    observed_filter=exotic_infoDict.get(
+                        'observed_filter',
+                        exotic_infoDict.get('filter'),
+                    ),
+                )
 
             # filter bad images
             badmask = np.isnan(psf_data["target"][:, 0]) | (psf_data["target"][:, 0] == 0)
@@ -27301,7 +29966,7 @@ def _main_impl():
                 apers,
                 annuli,
                 airmass,
-                exotic_infoDict['comp_stars'],
+                science_comp_stars,
                 sigma_display,
                 skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
                 use_psf_photometry=use_psf_photometry,
@@ -27309,6 +29974,10 @@ def _main_impl():
                 psf_flux_data=psf_flux_source,
                 comp_overexposed_masks=comp_overexposed_masks,
             )
+
+            # Fortuitous-only sources were appended solely so the shared image pass could measure them.
+            # Restore the science comparison list before normal target fitting and final metadata output.
+            exotic_infoDict['comp_stars'] = [list(position) for position in science_comp_stars]
 
             if comparison_calibration is not None:
                 log_info("\nCalibrating comparison stars before target fitting. Please wait.")
@@ -27438,6 +30107,13 @@ def _main_impl():
                         fallback_sigma=sigma_display,
                         exposure_times_seconds=exposure_times_seconds,
                         gain_e_per_adu=fallback_gain_e_per_adu,
+                        use_ensemble_photometry=use_ensemble_photometry_for_stellar_variability,
+                        calibration_stars=vsp_comp_stars,
+                        observed_filter=exotic_infoDict.get(
+                            'observed_filter',
+                            exotic_infoDict.get('filter'),
+                        ),
+                        target_catalog_match=primary_target_catalog_match,
                     )
                 else:
                     comparison_fit_search = fit_ranked_comparison_calibration_candidates(
@@ -27502,7 +30178,7 @@ def _main_impl():
                     selected_comp_coords = (
                         None
                         if selected_is_ensemble
-                        else exotic_infoDict['comp_stars'][selected_comp_index]
+                        else science_comp_stars[selected_comp_index]
                     )
                     selected_min_aperture = 0 if comparison_calibration['method'] == 'psf' else comparison_calibration['aper']
                     selected_min_annulus = comparison_calibration['annulus']
@@ -27522,7 +30198,9 @@ def _main_impl():
                         dtype=int,
                     )
                     selected_attempt_label = selected_attempt.get('label', 'comparison candidate')
-                    if stellar_variability_only:
+                    if stellar_variability_only and selected_is_ensemble:
+                        selection_basis = 'stellar_variability_ensemble'
+                    elif stellar_variability_only:
                         selection_basis = 'stellar_variability_scatter'
                     elif selected_attempt.get('search_stopped_after_qc_pass', False):
                         selection_basis = 'first_qc_pass'
@@ -27536,7 +30214,15 @@ def _main_impl():
                         selection_basis = 'comparison_field'
                     else:
                         selection_basis = 'comparison_field_retry'
-                    if selection_basis == 'stellar_variability_scatter':
+                    if selection_basis == 'stellar_variability_ensemble':
+                        ensemble_members = selected_attempt.get('ensemble_member_keys') or []
+                        log_info(
+                            "Stellar-variability-only comparison selection chose the default calibrated "
+                            f"ensemble with {len(ensemble_members)} member(s) using "
+                            f"{comparison_calibration['method_label']}; members are bright, unsaturated, "
+                            "VSX-vetted, and passed the high-side catalog-error clip."
+                        )
+                    elif selection_basis == 'stellar_variability_scatter':
                         log_info(
                             "Stellar-variability-only comparison selection chose "
                             f"{selected_attempt_label} with {comparison_calibration['method_label']} "
@@ -27664,10 +30350,10 @@ def _main_impl():
                     if selected_comp_index is not None:
                         ref_flux[selected_comp_index] = {
                             'myfit': myfit,
-                            'pos': exotic_infoDict['comp_stars'][selected_comp_index]
+                            'pos': science_comp_stars[selected_comp_index]
                         }
 
-                    if vsp_num:
+                    if vsp_num and not (stellar_variability_only and selected_is_ensemble):
                         if comparison_calibration['method'] == 'psf':
                             for j in vsp_num:
                                 ckey = f"comp{j + 1}"
@@ -27913,14 +30599,14 @@ def _main_impl():
                     "stellar-variability-only mode does not fit transit models."
                 )
 
-            if fit_every_comparison_candidate and not stellar_variability_only and exotic_infoDict['comp_stars']:
+            if fit_every_comparison_candidate and not stellar_variability_only and science_comp_stars:
                 candidate_fit_summaries = fit_lightcurve_to_every_comparison_candidate(
                     times,
                     jd_times,
                     airmass,
                     ld,
                     pDict,
-                    exotic_infoDict['comp_stars'],
+                    science_comp_stars,
                     psf_data,
                     aper_data,
                     photometry_info,
@@ -28217,14 +30903,31 @@ def _main_impl():
             # Calculate the standard deviation of the normalized flux values
             # standardDev1 = np.std(goodFluxes)
 
-            if vsp_comp_stars:
+            if stellar_variability_only and bestCompStar == 'ensemble':
+                vsp_params = build_stellar_variability_ensemble_params_from_fit(
+                    best_fit_lc,
+                    exotic_infoDict['save'],
+                    pDict['sName'],
+                    observed_filter=exotic_infoDict.get(
+                        'observed_filter',
+                        exotic_infoDict.get('filter'),
+                    ),
+                    observation_date=exotic_infoDict.get('date'),
+                    target_metadata={
+                        'name': pDict.get('sName'),
+                        'ra_deg': None if ra_dec_tar is None else ra_dec_tar[0],
+                        'dec_deg': None if ra_dec_tar is None else ra_dec_tar[1],
+                        'pixel_position': [exotic_UIprevTPX, exotic_UIprevTPY],
+                    },
+                )
+            elif vsp_comp_stars:
                 if isinstance(bestCompStar, int):
-                    vsp_params = stellar_variability(ref_flux, best_fit_lc, exotic_infoDict['comp_stars'],
+                    vsp_params = stellar_variability(ref_flux, best_fit_lc, science_comp_stars,
                                                       vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                       pDict['sName'],
                                                       observed_filter=exotic_infoDict.get('observed_filter',
                                                                                           exotic_infoDict.get('filter')),
-                                                      comp_ra_dec=ra_dec_wcs,
+                                                      comp_ra_dec=ra_dec_wcs[:len(science_comp_stars)],
                                                       field_catalog=nextastro_field_catalog,
                                                       reference_image=reference_image,
                                                       wcs_file=wcs_file)
@@ -28397,9 +31100,9 @@ def _main_impl():
                     psf_data,
                     aper_data,
                     photometry_info,
-                    len(exotic_infoDict['comp_stars']),
+                    len(science_comp_stars),
                 )
-                plot_obs_stats(myfit, exotic_infoDict['comp_stars'], psf_data, obs_stats_sort_index,
+                plot_obs_stats(myfit, science_comp_stars, psf_data, obs_stats_sort_index,
                                obs_stats_keep_mask, pDict['pName'],
                                exotic_infoDict['save'], exotic_infoDict['date'],
                                relative_flux_mask=None,
@@ -28700,9 +31403,9 @@ def _main_impl():
                 psf_data,
                 aper_data,
                 photometry_info,
-                len(exotic_infoDict['comp_stars']),
+                len(science_comp_stars),
             )
-            plot_obs_stats(myfit, exotic_infoDict['comp_stars'], psf_data, obs_stats_sort_index,
+            plot_obs_stats(myfit, science_comp_stars, psf_data, obs_stats_sort_index,
                            obs_stats_keep_mask, pDict['pName'],
                            exotic_infoDict['save'], exotic_infoDict['date'],
                            relative_flux_mask=None,

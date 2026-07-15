@@ -165,6 +165,10 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "use_psf_photometry": "y",
             "use_aperture_photometry": "y",
             "use_aperture_corrections_and_full_image_fwhm": false,
+            "stellar_variability_only": false,
+            "use_ensemble_photometry_for_stellar_variability": true,
+            "photometer_fortuitous_variables": true,
+            "use_nextastro_vsx_cache_first": false,
             "skip_low_comparison_coverage_rejection": "n",
             "fit_lightcurve_to_every_comparison_candidate": "n",
             "detrend_on_outoftransit_baseline": true,
@@ -181,6 +185,10 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
     }
 }
 ```
+
+`photometer_fortuitous_variables` defaults to `true` for full FITS reductions with a WCS. EXOTIC searches the field in VSX, retains unsaturated stars whose reference-image source-plus-sky noise estimate implies an internal error below 0.05 mag, and measures each retained variable against its own calibrated comparison ensemble. Exported light curves also retain only frames whose final ensemble-calibrated internal magnitude error is below 0.05 mag. Each VSX target uses its own frame-level saturation mask: saturation of the exoplanet target does not remove that image from the VSX target's run, while saturated measurements of that VSX target or an ensemble member are masked only for the affected source and frame. The ensemble's high-side comparison-catalog error sigma clip has a 0.01 mag minimum threshold, so comparison errors at or below 0.01 mag are never rejected by that clip. Every ensemble AAVSO AID file includes an `#ENSEMBLE-COMPARISONS-XC` JSON header listing every selected comparison star with its label, RA, Dec, pixel position, and catalog calibration. Per-star plots, magnitude CSV, AAVSO AID, and ensemble-selection JSON are written below `fortuitous_variables/optimal_variables/` when the VSX period is at most 10 days and amplitude is at least 0.3 mag, or below `fortuitous_variables/rest_of_the_variables/` otherwise. Set the item to `false` to disable these products.
+
+`use_nextastro_vsx_cache_first` defaults to `false`. When enabled, fortuitous-variable discovery queries `https://photometry.nextastro.org/vsx_query` first. EXOTIC falls back to AAVSO when the cache fails or returns no objects. Full-schema cache responses supply period and amplitude directly; legacy cache responses are enriched from AAVSO for optimal/rest classification.
 
 ## Features and Pipeline Architecture
 

@@ -210,6 +210,9 @@ class Inputs:
             'prefer_pixel_values_over_wcs_for_target': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'stellar_variability_only': False,
+            'use_ensemble_photometry_for_stellar_variability': True,
+            'photometer_fortuitous_variables': True,
+            'use_nextastro_vsx_cache_first': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
             'use_eebls_to_initialize_tmid_and_bounds': 'y',
@@ -481,6 +484,19 @@ class Inputs:
                 'stellar variability only',
                 'Stellar Variability Only',
                 'Stellar Variability Only? (y/n)',
+            ),
+            'use_ensemble_photometry_for_stellar_variability': (
+                'use_ensemble_photometry_for_stellar_variability',
+                'stellar_variability_use_ensemble',
+                'Use Ensemble Photometry for Stellar Variability? (y/n)',
+            ),
+            'photometer_fortuitous_variables': (
+                'photometer_fortuitous_variables',
+                'Photometer Fortuitous Variables? (y/n)',
+            ),
+            'use_nextastro_vsx_cache_first': (
+                'use_nextastro_vsx_cache_first',
+                'Use NextAstro VSX Cache First? (y/n)',
             ),
             'detect_bad_pixels_before_photometry': (
                 'detect_bad_pixels_before_photometry',

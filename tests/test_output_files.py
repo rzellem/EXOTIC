@@ -167,6 +167,45 @@ def test_final_params_writes_stellar_variability_only_payload(tmp_path):
     assert root_file.exists()
 
 
+def test_final_params_describes_calibrated_stellar_variability_ensemble(tmp_path):
+    (tmp_path / "temp").mkdir()
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.arange(3, dtype=float),
+        stellar_variability_scatter=0.001,
+        stellar_variability_transit_exclusion={'rejected_point_count': 0},
+    )
+    vsp_params = [{
+        'time': 2460000.1,
+        'mag': 12.3,
+        'mag_err': 0.01,
+        'cname': 'ENSEMBLE (2 stars)',
+        'ensemble_reference': True,
+        'ensemble_member_count': 2,
+        'ensemble_member_labels': ['C1', 'C2'],
+        'mag_band': 'V',
+    }]
+    p_dict = {'pName': 'Syntheticb'}
+    i_dict = {'save': str(tmp_path), 'date': '2020-01-01'}
+
+    OutputFiles(fit, p_dict, i_dict, []).final_planetary_params(
+        phot_opt=True,
+        vsp_params=vsp_params,
+        comp_star='ensemble',
+        comp_coords=None,
+        min_aper=0,
+        min_annul=15,
+    )
+
+    output_path = next((tmp_path / "temp").glob("FinalParams_Syntheticb_2020-01-01.json"))
+    params = json.loads(output_path.read_text())["FINAL STELLAR VARIABILITY PARAMETERS"]
+    assert params["Stellar Variability Reference Star"] == "ensemble"
+    assert params["Variable Reference Star"] == (
+        "Calibrated comparison-star ensemble (2 stars): C1, C2"
+    )
+    assert "calibrated comparison-star ensemble" in params["Variable Reference Measurement"]
+
+
 def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
     (tmp_path / "temp").mkdir()
     fit = SimpleNamespace(
@@ -424,6 +463,69 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.03)
     assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.340,0.050,V,NO,STD" in output_text
+
+
+def test_aid_output_records_calibrated_ensemble_members(tmp_path):
+    fit = DummyFit()
+    p_dict = {"pName": "Target b", "sName": "Target"}
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "aavso_num": "RTZ",
+        "camera": "CCD",
+        "filter": "V",
+        "lat": "+32.4",
+        "long": "-110.7",
+        "elev": 2600,
+    }
+    vsp_params = [{
+        "time": 2450000.12345,
+        "mag": 12.34,
+        "mag_err": 0.02,
+        "airmass": 1.234,
+        "cname": "ENSEMBLE (2 stars)",
+        "cmag": None,
+        "cmag_err": None,
+        "catalog_source": "Calibrated comparison-star ensemble",
+        "is_aavso_vsp": False,
+        "mag_band": "V",
+        "ensemble_reference": True,
+        "ensemble_member_count": 2,
+        "ensemble_member_labels": ["C1", "C2"],
+        "ensemble_member_positions": [[10, 20], [30, 40]],
+        "ensemble_member_catalog_magnitudes": [12.0, 12.5],
+        "ensemble_member_catalog_errors": [0.01, 0.011],
+        "ensemble_member_catalog_sources": ["Catalog A", "Catalog B"],
+        "ensemble_member_ra_degs": [10.1, 10.2],
+        "ensemble_member_dec_degs": [-20.1, -20.2],
+        "ensemble_member_catalog_colors": [0.5, 0.6],
+        "ensemble_member_catalog_color_labels": ["B-V", "B-V"],
+        "ensemble_member_color_deltas": [0.02, 0.08],
+        "ensemble_member_magnitude_deltas": [0.1, 0.4],
+        "ensemble_member_similarity_scores": [0.102, 0.408],
+    }]
+
+    AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
+
+    output_text = (tmp_path / "AID_AAVSO_Target_2020-01-01.txt").read_text(encoding="utf-8")
+    metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
+    ensemble_metadata = aavso_json_header(output_text, "ENSEMBLE-COMPARISONS-XC")
+    assert metadata["ensemble_reference"] is True
+    assert metadata["ensemble_member_count"] == 2
+    assert metadata["ensemble_member_labels"] == ["C1", "C2"]
+    assert metadata["ensemble_member_ra_degs"] == [10.1, 10.2]
+    assert metadata["ensemble_member_dec_degs"] == [-20.1, -20.2]
+    assert metadata["ensemble_member_catalog_colors"] == [0.5, 0.6]
+    assert metadata["ensemble_member_color_deltas"] == [0.02, 0.08]
+    assert metadata["ensemble_member_magnitude_deltas"] == [0.1, 0.4]
+    assert ensemble_metadata["member_count"] == 2
+    assert ensemble_metadata["members"][0]["label"] == "C1"
+    assert ensemble_metadata["members"][0]["ra_deg"] == pytest.approx(10.1)
+    assert ensemble_metadata["members"][0]["dec_deg"] == pytest.approx(-20.1)
+    assert ensemble_metadata["members"][1]["label"] == "C2"
+    assert ensemble_metadata["members"][1]["ra_deg"] == pytest.approx(10.2)
+    assert ensemble_metadata["members"][1]["dec_deg"] == pytest.approx(-20.2)
+    assert "Target,2450000.12345,12.340,0.020,V,NO,STD,ENSEMBLE (2 stars),na" in output_text
 
 
 def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):

@@ -1141,8 +1141,8 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
         image[y_pos, x_pos] = value
 
     add_blob(150, 150, 2000.0)
-    add_blob(220, 220, 1800.0)
-    add_blob(80, 80, 1700.0)
+    add_blob(220, 220, 1700.0)
+    add_blob(80, 80, 1800.0)
     add_blob(230, 80, 6000.0)
 
     ra_wcs = np.tile(np.arange(300, dtype=float), (300, 1))
@@ -1163,6 +1163,20 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
         return {"catalog_row": {"Bmag": b_mag, "Vmag": v_mag}}
 
     monkeypatch.setattr(exotic_module, "nextastro_catalog_nearest_color_row", fake_color_match)
+    monkeypatch.setattr(
+        exotic_module,
+        "nextastro_photometry_catalog_match",
+        lambda catalog_response, ra, dec, obs_filter: (
+            {
+                **fake_color_match(catalog_response, ra, dec, obs_filter),
+                "mag": 12.0,
+                "error": 0.01,
+                "mag_band": "V",
+            }
+            if fake_color_match(catalog_response, ra, dec, obs_filter) is not None
+            else None
+        ),
+    )
 
     comp_stars, candidates = exotic_module.select_automatic_optimal_calibration_stars(
         image,
@@ -1189,6 +1203,25 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
     )
     assert candidates[0]["colour_term_uncertainty_mag"] == pytest.approx(
         0.01 * candidates[0]["color_delta"]
+    )
+
+    brightest_comp_stars, brightest_candidates = exotic_module.select_automatic_optimal_calibration_stars(
+        image,
+        image.shape,
+        target_pixel=[150, 150],
+        ra_wcs=ra_wcs,
+        dec_wcs=dec_wcs,
+        obs_filter="V",
+        field_catalog=catalog,
+        count=2,
+        brightest_first=True,
+        saturation_threshold=5000.0,
+    )
+
+    assert brightest_comp_stars[0] == [80.0, 80.0]
+    assert [candidate["flux"] for candidate in brightest_candidates] == sorted(
+        [candidate["flux"] for candidate in brightest_candidates],
+        reverse=True,
     )
     assert all(0.5 <= candidate["brightness_ratio"] <= 2.0 for candidate in candidates)
 

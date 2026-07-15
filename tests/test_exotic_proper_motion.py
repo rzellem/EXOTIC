@@ -185,6 +185,8 @@ from exotic.exotic import (
     summarize_prior_transit_coverage,
     should_skip_airmass_fit,
     should_use_eebls_to_initialize_tmid_and_bounds,
+    should_use_ensemble_photometry_for_stellar_variability,
+    should_photometer_fortuitous_variables,
     should_reject_overexposed_stars,
     should_fit_lightcurve_to_every_comparison_candidate,
     should_detect_bad_pixels_before_photometry,
@@ -1264,6 +1266,20 @@ def test_should_fit_lightcurve_to_every_comparison_candidate_parses_values():
     assert should_fit_lightcurve_to_every_comparison_candidate(None) is False
     assert should_fit_lightcurve_to_every_comparison_candidate("y") is True
     assert should_fit_lightcurve_to_every_comparison_candidate("n") is False
+
+
+def test_stellar_variability_ensemble_config_defaults_on_and_supports_opt_out():
+    assert should_use_ensemble_photometry_for_stellar_variability(None) is True
+    assert should_use_ensemble_photometry_for_stellar_variability("y") is True
+    assert should_use_ensemble_photometry_for_stellar_variability("n") is False
+    assert should_use_ensemble_photometry_for_stellar_variability(False) is False
+
+
+def test_fortuitous_variable_photometry_config_defaults_on_and_supports_opt_out():
+    assert should_photometer_fortuitous_variables(None) is True
+    assert should_photometer_fortuitous_variables("y") is True
+    assert should_photometer_fortuitous_variables("n") is False
+    assert should_photometer_fortuitous_variables(False) is False
 
 
 def test_should_detect_bad_pixels_before_photometry_parses_values():

@@ -158,6 +158,14 @@ def stellar_variability_reference_summary(vsp_param):
 
     cname = vsp_param.get('cname', 'na')
     band = vsp_param.get('mag_band') or 'V'
+    if vsp_param.get('ensemble_reference'):
+        member_count = int(vsp_param.get('ensemble_member_count', 0) or 0)
+        labels = vsp_param.get('ensemble_member_labels') or []
+        label_text = ", ".join(str(label) for label in labels)
+        return (
+            f"Calibrated comparison-star ensemble ({member_count} stars)"
+            + (f": {label_text}" if label_text else "")
+        )
     if vsp_param.get('is_aavso_vsp', True):
         return f"AAVSO Label: {cname}, Position: {vsp_param.get('pos')}"
 
@@ -178,6 +186,12 @@ def stellar_variability_measurement_summary(vsp_params, transit_fit_comp_star=No
 
     if transit_fit_comp_star is None:
         return None
+
+    if vsp_params[0].get('ensemble_reference'):
+        return (
+            f"Combined {point_count} out-of-transit target measurements against the calibrated "
+            "comparison-star ensemble; AID rows list the BJD_TDB timestamps used."
+        )
 
     return (
         f"Remeasured {point_count} out-of-transit target/reference point(s) against the transit-fit "
@@ -215,12 +229,73 @@ def aid_comparison_metadata(vsp_param):
         'magnitude_band': vsp_param.get('mag_band'),
         'apparent_magnitude': rounded_magnitude_value(vsp_param.get('cmag')),
         'apparent_magnitude_error': rounded_magnitude_error(vsp_param.get('cmag_err')),
+        'ensemble_reference': bool(vsp_param.get('ensemble_reference', False)),
+        'ensemble_member_count': vsp_param.get('ensemble_member_count'),
+        'ensemble_member_labels': vsp_param.get('ensemble_member_labels'),
+        'ensemble_member_positions': vsp_param.get('ensemble_member_positions'),
+        'ensemble_member_catalog_magnitudes': vsp_param.get('ensemble_member_catalog_magnitudes'),
+        'ensemble_member_catalog_errors': vsp_param.get('ensemble_member_catalog_errors'),
+        'ensemble_member_catalog_sources': vsp_param.get('ensemble_member_catalog_sources'),
+        'ensemble_member_ra_degs': vsp_param.get('ensemble_member_ra_degs'),
+        'ensemble_member_dec_degs': vsp_param.get('ensemble_member_dec_degs'),
+        'ensemble_members': vsp_param.get('ensemble_members'),
+        'ensemble_member_catalog_colors': vsp_param.get('ensemble_member_catalog_colors'),
+        'ensemble_member_catalog_color_labels': vsp_param.get('ensemble_member_catalog_color_labels'),
+        'ensemble_member_color_deltas': vsp_param.get('ensemble_member_color_deltas'),
+        'ensemble_member_magnitude_deltas': vsp_param.get('ensemble_member_magnitude_deltas'),
+        'ensemble_member_similarity_scores': vsp_param.get('ensemble_member_similarity_scores'),
     }
     if anchor_labels is not None:
         metadata['derived_reference_anchor_labels'] = anchor_labels
     if anchor_label_sample is not None:
         metadata['derived_reference_anchor_label_sample'] = anchor_label_sample
     return aavso_json_safe(metadata)
+
+
+def aid_ensemble_comparison_metadata(vsp_param):
+    if not vsp_param or not vsp_param.get('ensemble_reference'):
+        return {}
+
+    members = vsp_param.get('ensemble_members')
+    if isinstance(members, np.ndarray):
+        members = members.tolist()
+    if not isinstance(members, (list, tuple)) or not members:
+        labels = list(vsp_param.get('ensemble_member_labels') or [])
+        positions = list(vsp_param.get('ensemble_member_positions') or [])
+        ra_degs = list(vsp_param.get('ensemble_member_ra_degs') or [])
+        dec_degs = list(vsp_param.get('ensemble_member_dec_degs') or [])
+        magnitudes = list(vsp_param.get('ensemble_member_catalog_magnitudes') or [])
+        magnitude_errors = list(vsp_param.get('ensemble_member_catalog_errors') or [])
+        catalog_sources = list(vsp_param.get('ensemble_member_catalog_sources') or [])
+        member_count = max(
+            int(vsp_param.get('ensemble_member_count', 0) or 0),
+            len(labels),
+            len(ra_degs),
+            len(dec_degs),
+        )
+
+        def value_at(values, index):
+            return values[index] if index < len(values) else None
+
+        members = [
+            {
+                'label': value_at(labels, index),
+                'ra_deg': value_at(ra_degs, index),
+                'dec_deg': value_at(dec_degs, index),
+                'pixel_position': value_at(positions, index),
+                'catalog_magnitude': value_at(magnitudes, index),
+                'catalog_magnitude_error': value_at(magnitude_errors, index),
+                'catalog_source': value_at(catalog_sources, index),
+            }
+            for index in range(member_count)
+        ]
+    else:
+        members = list(members)
+
+    return prune_aavso_metadata({
+        'member_count': int(vsp_param.get('ensemble_member_count', len(members)) or len(members)),
+        'members': members,
+    })
 
 
 def prune_aavso_metadata(value):
@@ -1774,11 +1849,17 @@ class OutputFiles:
 
             if vsp_params:
                 params_num["Variable Reference Star"] = stellar_variability_reference_summary(vsp_params[0])
-                params_num["Variable Reference Measurement"] = (
-                    f"Remeasured {len(vsp_params)} out-of-transit target/reference point(s) "
-                    "against the stellar-variability reference catalog star; AID rows list the "
-                    "BJD_TDB timestamps used."
-                )
+                if vsp_params[0].get('ensemble_reference'):
+                    params_num["Variable Reference Measurement"] = (
+                        f"Combined {len(vsp_params)} out-of-transit target measurements against the "
+                        "calibrated comparison-star ensemble; AID rows list the BJD_TDB timestamps used."
+                    )
+                else:
+                    params_num["Variable Reference Measurement"] = (
+                        f"Remeasured {len(vsp_params)} out-of-transit target/reference point(s) "
+                        "against the stellar-variability reference catalog star; AID rows list the "
+                        "BJD_TDB timestamps used."
+                    )
 
             if phot_opt:
                 if comp_star == 'ensemble':
@@ -2284,6 +2365,7 @@ class AIDOutputFiles:
     def aavso(self):
         first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
         comparison_metadata = aid_comparison_metadata(first_vsp_param)
+        ensemble_comparison_metadata = aid_ensemble_comparison_metadata(first_vsp_param)
         variable_name = self.auid or self.p_dict.get('sName') or self.p_dict.get('pName')
 
         params_file = self.dir / safe_output_filename(
@@ -2312,6 +2394,11 @@ class AIDOutputFiles:
                 "aavso.org/data-usage-guidelines\n")
             if comparison_metadata:
                 f.write(f"#COMPARISON-CATALOG-XC={dumps(comparison_metadata, sort_keys=True)}\n")
+            if ensemble_comparison_metadata:
+                f.write(format_aavso_json_header(
+                    "ENSEMBLE-COMPARISONS-XC",
+                    ensemble_comparison_metadata,
+                ))
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:

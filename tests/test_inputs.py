@@ -108,6 +108,98 @@ def test_comp_params_reads_stellar_variability_only_from_optional_info(tmp_path)
     assert inputs.info_dict["stellar_variability_only"] is True
 
 
+def test_comp_params_defaults_stellar_variability_ensemble_to_true(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_ensemble_photometry_for_stellar_variability"] is True
+
+
+def test_comp_params_reads_stellar_variability_ensemble_opt_out(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "use_ensemble_photometry_for_stellar_variability": False,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_ensemble_photometry_for_stellar_variability"] is False
+
+
+def test_comp_params_defaults_fortuitous_variable_photometry_to_true(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["photometer_fortuitous_variables"] is True
+
+
+def test_comp_params_reads_fortuitous_variable_photometry_opt_out(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"photometer_fortuitous_variables": False},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["photometer_fortuitous_variables"] is False
+
+
+def test_comp_params_defaults_nextastro_vsx_cache_first_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_nextastro_vsx_cache_first"] is False
+
+
+def test_comp_params_reads_nextastro_vsx_cache_first_opt_in(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"use_nextastro_vsx_cache_first": True},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_nextastro_vsx_cache_first"] is True
+
+
 def test_comp_params_defaults_overexposure_rejection_options(tmp_path):
     init_data = {
         "user_info": {},

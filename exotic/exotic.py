@@ -369,6 +369,8 @@ ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT = 10.0
 ARS_RANGE_RESTRICTION_ENABLED = ARS_RANGE_RESTRICTION_DEFAULT
 ARS_RANGE_RESTRICTION_PERCENTAGE = ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT
 ARS_POSTERIOR_MAX_RETRIES_DEFAULT = 5
+TOI_TIC_ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT = 30.0
+TOI_TIC_ARS_POSTERIOR_MAX_RETRIES_DEFAULT = 8
 ARS_RETRY_MIN_HALF_WIDTH = 0.0
 IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 INCLINATION_SEARCH_BOUND_MIN = 0.0
@@ -3398,6 +3400,8 @@ def build_search_restriction_prior_from_planet_dict(p_dict):
     if not isinstance(p_dict, dict):
         return {}
     return {
+        'pName': p_dict.get('pName'),
+        'sName': p_dict.get('sName'),
         'rprs': p_dict.get('rprs'),
         'rprs_unc': p_dict.get('rprsUnc'),
         'ars': p_dict.get('aRs'),
@@ -4726,10 +4730,12 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
             "no airmass correction applied."
         )
 
+    search_restriction_prior = build_search_restriction_prior_from_planet_dict(p_dict)
     bounds = build_initial_transit_bounds(
         prior,
         [lower, upper],
         ars_unc=p_dict.get('aRsUnc'),
+        search_restriction_prior=search_restriction_prior,
     )
     apply_vertical_flux_normalization_bound(
         prior,
@@ -4864,7 +4870,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         keep_ultranest_sampler_for_deferred_extension=not bool(fast_binning.get('applied')),
         fix_baseline_terms_for_final=not bool(fast_binning.get('applied')),
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
-        search_restriction_prior=build_search_restriction_prior_from_planet_dict(p_dict),
+        search_restriction_prior=search_restriction_prior,
     )
     annotate_fast_ultranest_binning(final_fit, fast_binning)
     if final_fit is None:
@@ -5308,7 +5314,11 @@ def refit_selected_fast_comparison_on_full_lightcurve(
                     half_width = 0.01
                 bounds[key] = [float(tmid) - half_width, float(tmid) + half_width]
             elif key == 'ars':
-                bounds[key] = build_initial_ars_bounds(prior.get('ars', p_dict.get('aRs')), p_dict.get('aRsUnc'))
+                bounds[key] = build_initial_ars_bounds(
+                    prior.get('ars', p_dict.get('aRs')),
+                    p_dict.get('aRsUnc'),
+                    search_restriction_prior=search_restriction_prior,
+                )
             elif key == 'inc':
                 inc = float(prior.get('inc', p_dict.get('inc', 89.0)))
                 bounds[key] = [inc - 5.0, min(90.0, inc + 5.0)]
@@ -6494,6 +6504,50 @@ def prior_centered_parameter_bounds(
     return [float(lower_bound), float(upper_bound)]
 
 
+def target_name_is_toi_or_tic(value):
+    if value is None:
+        return False
+    return re.match(r'^\s*(?:TOI|TIC)(?:\s*[-_]?\s*)\d', str(value), flags=re.IGNORECASE) is not None
+
+
+def is_toi_or_tic_target(target):
+    if isinstance(target, dict):
+        return any(
+            target_name_is_toi_or_tic(target.get(key))
+            for key in ('pName', 'sName', 'planet_name', 'host_name')
+        )
+    return target_name_is_toi_or_tic(target)
+
+
+def ars_range_restriction_percentage_for_prior(prior):
+    percentage = float(ARS_RANGE_RESTRICTION_PERCENTAGE)
+    if (
+        is_toi_or_tic_target(prior)
+        and np.isclose(
+            percentage,
+            ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+            rtol=0.0,
+            atol=1e-12,
+        )
+    ):
+        return float(TOI_TIC_ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT)
+    return percentage
+
+
+def ars_posterior_retry_limit_for_prior(prior, requested_max_retries):
+    try:
+        requested_max_retries = int(max(0, requested_max_retries))
+    except (TypeError, ValueError):
+        requested_max_retries = ARS_POSTERIOR_MAX_RETRIES_DEFAULT
+
+    if (
+        is_toi_or_tic_target(prior)
+        and requested_max_retries >= ARS_POSTERIOR_MAX_RETRIES_DEFAULT
+    ):
+        return max(requested_max_retries, TOI_TIC_ARS_POSTERIOR_MAX_RETRIES_DEFAULT)
+    return requested_max_retries
+
+
 def configured_prior_centered_bounds_for_key(key, prior):
     if not isinstance(prior, dict):
         return None
@@ -6506,7 +6560,7 @@ def configured_prior_centered_bounds_for_key(key, prior):
             return None
         return prior_centered_parameter_bounds(
             prior.get('ars'),
-            ARS_RANGE_RESTRICTION_PERCENTAGE,
+            ars_range_restriction_percentage_for_prior(prior),
             ARS_SEARCH_BOUND_MIN,
         )
     return None
@@ -6595,6 +6649,7 @@ def build_initial_ars_bounds(
     ars_unc=None,
     sigma_multiplier=INITIAL_ARS_BOUND_SIGMA_MULTIPLIER,
     fallback_relative_half_width=INITIAL_ARS_BOUND_FALLBACK_RELATIVE_HALF_WIDTH,
+    search_restriction_prior=None,
 ):
     try:
         ars = float(ars)
@@ -6620,9 +6675,16 @@ def build_initial_ars_bounds(
         upper_bound = float(lower_bound + max(np.finfo(float).eps, ARS_SEARCH_BOUND_MIN))
 
     bounds = [float(lower_bound), float(upper_bound)]
+    restriction_prior = (
+        dict(search_restriction_prior)
+        if isinstance(search_restriction_prior, dict)
+        else {}
+    )
+    restriction_prior['ars'] = ars
+    restriction_prior['ars_unc'] = ars_unc
     restricted_bounds = intersect_parameter_bounds(
         bounds,
-        configured_prior_centered_bounds_for_key('ars', {'ars': ars}),
+        configured_prior_centered_bounds_for_key('ars', restriction_prior),
     )
     return restricted_bounds if restricted_bounds is not None else bounds
 
@@ -6633,6 +6695,7 @@ def build_initial_transit_bounds(
     ars_unc=None,
     inclination_half_width=5.0,
     rprs_data_uncertainty=None,
+    search_restriction_prior=None,
 ):
     lower, upper = [float(value) for value in np.asarray(tmid_bounds, dtype=float).reshape(-1)[:2]]
     # Keep ars ahead of inc so the internal impact-parameter parameterization
@@ -6643,7 +6706,11 @@ def build_initial_transit_bounds(
             rprs_data_uncertainty=rprs_data_uncertainty,
         ),
         'tmid': [lower, upper],
-        'ars': build_initial_ars_bounds(prior['ars'], ars_unc=ars_unc),
+        'ars': build_initial_ars_bounds(
+            prior['ars'],
+            ars_unc=ars_unc,
+            search_restriction_prior=search_restriction_prior,
+        ),
         'inc': [prior['inc'] - inclination_half_width, min(90, prior['inc'] + inclination_half_width)],
     }
 
@@ -7052,6 +7119,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         return new_lower < previous_lower - 1e-12 or new_upper > previous_upper + 1e-12
 
     partial_retry_limits = partial_transit_geometry_retry_limits(pre_ultranest_coverage_assessment)
+    effective_max_ars_retries = ars_posterior_retry_limit_for_prior(
+        restriction_reference_prior,
+        max_ars_retries,
+    )
     retry_configs = [
         {
             'key': 'rprs',
@@ -7082,10 +7153,10 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'propose_bounds': identity_retry_bounds,
             'expands_bounds': normal_retry_expands,
             'max_retries': min(
-                max_ars_retries,
+                effective_max_ars_retries,
                 partial_retry_limits['max_retries']['ars'],
-            ) if partial_retry_limits['active'] else max_ars_retries,
-            'requested_max_retries': max_ars_retries,
+            ) if partial_retry_limits['active'] else effective_max_ars_retries,
+            'requested_max_retries': effective_max_ars_retries,
             'min_bound': ARS_SEARCH_BOUND_MIN,
             'max_bound': None,
             'prior_mode_key': 'ars',
@@ -21969,6 +22040,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
         [lower, upper],
         ars_unc=pDict.get('aRsUnc'),
         rprs_data_uncertainty=search_restriction_prior.get('rprs_data_uncertainty'),
+        search_restriction_prior=search_restriction_prior,
     )
     apply_vertical_flux_normalization_bound(
         prior,
@@ -30095,6 +30167,22 @@ def _main_impl():
             ),
         )
 
+        target_search_restriction_prior = build_search_restriction_prior_from_planet_dict(pDict)
+        if restrict_ars_range and is_toi_or_tic_target(target_search_restriction_prior):
+            effective_ars_percentage = ars_range_restriction_percentage_for_prior(
+                target_search_restriction_prior
+            )
+            effective_ars_retries = ars_posterior_retry_limit_for_prior(
+                target_search_restriction_prior,
+                ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
+            )
+            log_info(
+                "TOI/TIC a/Rs search policy enabled: the initial range uses five times the "
+                "quoted a/Rs uncertainty, the prior-centered ceiling is "
+                f"+/- {effective_ars_percentage:.1f}%, and edge-pinned posteriors may receive "
+                f"up to {effective_ars_retries} automatic a/Rs refit(s)."
+            )
+
         # Seed random number generator (for run to run consistency)
         if exotic_infoDict['random_seed']:
             log_info(f"Setting random number seed to {exotic_infoDict['random_seed']}")
@@ -33610,6 +33698,7 @@ def _main_impl():
             [lower, upper],
             ars_unc=pDict.get('aRsUnc'),
             rprs_data_uncertainty=search_restriction_prior.get('rprs_data_uncertainty'),
+            search_restriction_prior=search_restriction_prior,
         )
         apply_vertical_flux_normalization_bound(
             prior,

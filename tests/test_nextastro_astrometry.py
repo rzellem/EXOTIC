@@ -56,7 +56,7 @@ def test_generate_source_list(tmp_path):
 
 def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):
     fits_path = _create_test_fits(tmp_path)
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     def fake_post(url, data, headers, timeout):
         payload = _decode_request_body(data, headers)
@@ -102,7 +102,7 @@ def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):
     solver = NextAstroPlateSolution(file=fits_path, directory=tmp_path, ra=210.8023, dec=54.3489, pixel_scale=1.23)
     wcs_file = solver.plate_solution()
 
-    assert wcs_file == tmp_path / 'temp' / 'wcs.fits'
+    assert wcs_file == tmp_path / 'working_artifacts' / 'wcs.fits'
     header = getheader(wcs_file)
     assert header['CTYPE1'] == 'RA---TAN'
     assert header['CTYPE2'] == 'DEC--TAN'
@@ -110,7 +110,7 @@ def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):
 
 def test_plate_solution_logs_json_via_message_logger_when_fail_warnings_suppressed(tmp_path, monkeypatch):
     fits_path = _create_test_fits(tmp_path)
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
     logged = []
 
     monkeypatch.setattr(
@@ -145,7 +145,7 @@ def test_plate_solution_logs_json_via_message_logger_when_fail_warnings_suppress
 
     wcs_file = solver.plate_solution()
 
-    assert wcs_file == tmp_path / 'temp' / 'wcs.fits'
+    assert wcs_file == tmp_path / 'working_artifacts' / 'wcs.fits'
     assert any('NextAstro astrometry request JSON:' in message for message in logged)
     assert any('NextAstro astrometry request compression:' in message for message in logged)
     assert any('NextAstro astrometry submission response JSON:' in message for message in logged)

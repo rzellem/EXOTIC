@@ -46,6 +46,12 @@ def _dated_plot_filename(prefix, *parts, date, extension):
     return safe_output_filename(prefix, *parts, filename_date_token(date), extension=extension)
 
 
+def _working_artifacts_dir(save):
+    output_dir = Path(save) / "working_artifacts"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
 # Plots of the centroid positions as a function of time
 def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date):
     fig, axs = plt.subplots(3, 2, figsize=(12, 10))
@@ -83,7 +89,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
         axs[2, 1].plot(times[e] - np.nanmin(times), abs(y_targ[e] - y_ref[e]), 'k.')
 
     plt.tight_layout()
-    plt.savefig(Path(save) / "temp" / _dated_plot_filename(
+    plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename(
         "CentroidPositions&Distances",
         target_name,
         date=date,
@@ -186,17 +192,17 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)
-        Path(save, "temp").mkdir(parents=True, exist_ok=True)
+        _working_artifacts_dir(save)
 
         stretch_name = str(stretch.__class__).split('.')[-1].split(apos)[0]
-        plt.savefig(Path(save) / "temp" / _dated_plot_filename(
+        plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename(
             "FOV",
             targ_name,
             stretch_name,
             date=date,
             extension="pdf",
         ), bbox_inches='tight')
-        plt.savefig(Path(save) / "temp" / _dated_plot_filename(
+        plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename(
             "FOV",
             targ_name,
             stretch_name,
@@ -212,7 +218,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Flux [ADU]")
     plt.errorbar(times, targ, yerr=targ_unc, linestyle='None', fmt='-o')
-    plt.savefig(Path(save) / "temp" / _dated_plot_filename("TargetRawFlux", targ_name, date=date, extension="pdf"))
+    plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename("TargetRawFlux", targ_name, date=date, extension="pdf"))
     plt.close()
 
     plt.figure()
@@ -220,7 +226,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Flux [ADU]")
     plt.errorbar(times, ref, yerr=ref_unc, linestyle='None', fmt='-o')
-    plt.savefig(Path(save) / "temp" / _dated_plot_filename("CompRawFlux", targ_name, date=date, extension="pdf"))
+    plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename("CompRawFlux", targ_name, date=date, extension="pdf"))
     plt.close()
 
     # Plots final reduced light curve (after the 3 sigma clip)
@@ -229,11 +235,11 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Normalized Flux")
     plt.errorbar(times, norm_flux, yerr=norm_unc, linestyle='None', fmt='-bo')
-    plt.savefig(Path(save) / "temp" / _dated_plot_filename("NormalizedFluxTime", targ_name, date=date, extension="pdf"))
+    plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename("NormalizedFluxTime", targ_name, date=date, extension="pdf"))
     plt.close()
 
     # Save normalized flux to text file prior to NS
-    params_file = Path(save) / "temp" / _dated_plot_filename("NormalizedFlux", targ_name, date=date, extension="txt")
+    params_file = _working_artifacts_dir(save) / _dated_plot_filename("NormalizedFlux", targ_name, date=date, extension="txt")
     with params_file.open('w') as f:
         f.write("BJD,Norm Flux,Norm Err,AM\n")
 
@@ -246,8 +252,7 @@ def plot_comp_star_pairwise_matrix(pairwise_matrix, best_comp_index, targ_name, 
     if matrix.size == 0:
         return
 
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
 
     fig, ax = plt.subplots(figsize=(max(6, matrix.shape[0] * 1.3), max(5, matrix.shape[0] * 1.1)))
     plot_matrix = np.ma.masked_invalid(matrix * 100.0)
@@ -284,8 +289,7 @@ def plot_comp_star_calibration_series(times, comp_summaries, targ_name, save, da
         return
 
     times = np.asarray(times, dtype=float)
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
     colors = plt.cm.tab10(np.linspace(0.0, 1.0, 10))
 
     fig_height = max(3.2, 2.4 * len(comp_summaries))
@@ -309,8 +313,7 @@ def plot_individual_comp_star_calibration_series(times, comp_summaries, targ_nam
         return
 
     times = np.asarray(times, dtype=float)
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
     colors = plt.cm.tab10(np.linspace(0.0, 1.0, 10))
 
     for summary in comp_summaries:
@@ -341,8 +344,7 @@ def plot_comp_star_candidate_lightcurve_fits(candidate_fit_summaries, targ_name,
     if not candidate_fit_summaries:
         return
 
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
 
     for summary in candidate_fit_summaries:
         fit = summary.get('fit')
@@ -449,8 +451,7 @@ def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_lab
     if not comp_summaries:
         return
 
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
 
     labels = [summary['label'] for summary in comp_summaries]
     positions = np.arange(len(labels))
@@ -505,8 +506,7 @@ def plot_adaptive_aperture_diagnostics(times, aperture_series, annulus_series, f
     valid_fwhm = np.isfinite(fwhm_series)
     valid_airmass = np.isfinite(airmass)
 
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8.5))
     fig.suptitle(
@@ -566,7 +566,7 @@ def plot_variable_residuals(save):
     plt.ylabel("Residuals (flux)")
     plt.xlabel("Time [JD]")
     plt.legend()
-    plt.savefig(Path(save) / "temp" / f"Variable_Residuals.png")
+    plt.savefig(_working_artifacts_dir(save) / "Variable_Residuals.png")
     plt.close()
 
 
@@ -588,12 +588,12 @@ def _stellar_variability_reference_label(vsp_param, comparison_label):
         details.append(f"Label: {comparison_label}")
 
     if comp_ra is not None and comp_dec is not None:
-        details.append(f"RA={comp_ra:.6f}, Dec={comp_dec:.6f}")
+        details.extend((f"RA={comp_ra:.6f}", f"Dec={comp_dec:.6f}"))
 
     if not details and comparison_label:
         details.append(comparison_label)
 
-    return " | ".join(details)
+    return "\n".join(details)
 
 
 def _stellar_variability_comparison_metadata_label(vsp_param):
@@ -643,8 +643,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     ax.set_ylabel(f"Magnitude ({band})")
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()
-    output_dir = Path(save) / "temp"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _working_artifacts_dir(save)
     fig.savefig(output_dir / f"Stellar_Variability.png")
     plt.close(fig)
 
@@ -738,8 +737,7 @@ def plot_obs_stats(fit, comp_stars, psf, si, gi, target_name, save, date, relati
                    background_series=None):
     fit_time = np.asarray(fit.time)
     fit_airmass = np.asarray(fit.airmass)
-    temp_dir = Path(save) / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _working_artifacts_dir(save)
 
     for i in range(len(comp_stars) + 1):
         if i == 0:

@@ -69,7 +69,7 @@ def test_plot_obs_stats_applies_relative_flux_mask(tmp_path, monkeypatch):
     assert captured
     np.testing.assert_array_equal(captured[0][0], fit.time)
     np.testing.assert_array_equal(captured[0][1], np.array([14.0, 7.0, 21.0]))
-    assert (tmp_path / "temp" / "Observing_Statistics_target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "Observing_Statistics_target_2026-03-09.png").exists()
 
 
 def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time(tmp_path, monkeypatch):
@@ -207,8 +207,8 @@ def test_plot_adaptive_aperture_diagnostics_writes_outputs(tmp_path):
         annulus_sigma=9.0,
     )
 
-    assert (tmp_path / "temp" / "AdaptiveApertureDiagnostics_Target_2026-03-09.png").exists()
-    assert (tmp_path / "temp" / "AdaptiveApertureDiagnostics_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "working_artifacts" / "AdaptiveApertureDiagnostics_Target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "AdaptiveApertureDiagnostics_Target_2026-03-09.pdf").exists()
 
 
 def test_plot_fov_psf_legend_omits_aperture_annulus_text(tmp_path, monkeypatch):
@@ -270,10 +270,10 @@ def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
         method_label="PSF photometry",
     )
 
-    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.png").exists()
-    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.pdf").exists()
-    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.png").exists()
-    assert (tmp_path / "temp" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarCalibrationCurve_Comp1_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarCalibrationCurve_Comp2_Target_2026-03-09.pdf").exists()
 
 
 def test_plot_individual_comp_star_calibration_series_masks_rejected_frame_lines(tmp_path, monkeypatch):
@@ -349,11 +349,13 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
 
     assert titles[-1] == (
         "Host Star\n"
-        "Label: NextAstro-123 | RA=10.100000, Dec=-20.200000\n"
+        "Label: NextAstro-123\n"
+        "RA=10.100000\n"
+        "Dec=-20.200000\n"
         "Original filter: CV | Comparison mag: r=12.345 +/- 0.067"
     )
     assert ylabels[-1] == "Magnitude (r)"
-    assert (tmp_path / "temp" / "Stellar_Variability.png").exists()
+    assert (tmp_path / "working_artifacts" / "Stellar_Variability.png").exists()
 
 
 def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp_path, monkeypatch):
@@ -386,7 +388,7 @@ def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp
         "000-BJX-718",
     )
 
-    assert "Label: 000-BJX-718 | RA=10.100000, Dec=-20.200000" in titles[-1]
+    assert "Label: 000-BJX-718\nRA=10.100000\nDec=-20.200000" in titles[-1]
     assert "Original filter: CV" in titles[-1]
     assert "Comparison mag: V=12.345 +/- 0.067" in titles[-1]
 
@@ -423,7 +425,7 @@ def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, m
 
     assert titles[-1] == (
         "Host Star\n"
-        "Label: NextAstro-123 | RA=10.100000, Dec=-20.200000\n"
+        "Label: NextAstro-123\nRA=10.100000\nDec=-20.200000\n"
         "Original filter: MObs CV"
     )
     assert "99.99" not in titles[-1]
@@ -447,7 +449,7 @@ def test_plot_stellar_variability_skips_over_30_measurements(tmp_path):
         "Comp",
     )
 
-    assert not (tmp_path / "temp" / "Stellar_Variability.png").exists()
+    assert not (tmp_path / "working_artifacts" / "Stellar_Variability.png").exists()
 
 
 def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
@@ -479,11 +481,11 @@ def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
 
     assert selected_fit.kwargs == {"phase": False, "show_flux_baseline_label": False}
     assert other_fit.kwargs == {"phase": False, "show_flux_baseline_label": False}
-    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.png").exists()
-    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.pdf").exists()
-    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.png").exists()
-    assert (tmp_path / "temp" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.pdf").exists()
-    assert not (tmp_path / "temp" / "CompStarLightCurveFit_Comp3_Target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarLightCurveFit_Comp1_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.png").exists()
+    assert (tmp_path / "working_artifacts" / "CompStarLightCurveFit_Comp2_Target_2026-03-09.pdf").exists()
+    assert not (tmp_path / "working_artifacts" / "CompStarLightCurveFit_Comp3_Target_2026-03-09.png").exists()
 
 
 def test_plot_final_lightcurve_requests_uncertainty_bands_without_baseline_label(tmp_path):

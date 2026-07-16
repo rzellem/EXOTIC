@@ -105,7 +105,7 @@ class PlateSolution:
 
         job_url = self._get_url(f"jobs/{job_id}")
         download_url = self.api_url.replace("/api/", f"/wcs_file/{job_id}/")
-        wcs_file = Path(self.directory) / "temp" / "wcs.fits"
+        wcs_file = Path(self.directory) / "working_artifacts" / "wcs.fits"
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
             return self._fail('Job Status')
@@ -226,7 +226,7 @@ class NextAstroPlateSolution:
         if not wcs_header:
             return self._fail('NextAstro solve status')
 
-        wcs_file = Path(self.directory) / "temp" / "wcs.fits"
+        wcs_file = Path(self.directory) / "working_artifacts" / "wcs.fits"
         hdu = PrimaryHDU(data=getdata(filename=self.file), header=wcs_header)
         hdu.writeto(wcs_file, overwrite=True)
         self._emit_debug("WCS file creation successful.")

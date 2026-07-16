@@ -1708,6 +1708,93 @@ def test_ars_posterior_retry_expands_bounds_when_upper_edge_is_truncated(monkeyp
     assert fit.ars_posterior_refit_bounds == pytest.approx([12.60, 16.30])
 
 
+def test_ars_posterior_pinned_at_configured_restriction_falls_back_to_prior(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
+    captured = {"calls": []}
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        fixed_parameter_errors=None,
+        **kwargs,
+    ):
+        captured["calls"].append({
+            "prior": dict(call_prior),
+            "bounds": dict(call_bounds),
+            "fixed_parameter_errors": dict(fixed_parameter_errors or {}),
+        })
+        parameters = dict(call_prior)
+        if "ars" in call_bounds:
+            parameters["ars"] = 10.99
+        fit = types.SimpleNamespace(
+            parameters=parameters,
+            errors=dict(fixed_parameter_errors or {}),
+            sampled_keys=list(call_bounds),
+            sample_bounds=dict(call_bounds),
+        )
+
+        def diagnostics(key):
+            if key == "ars":
+                return {
+                    "clipped": True,
+                    "edge": "upper",
+                    "mode": 10.99,
+                    "std": 0.20,
+                    "bounds": [9.0, 12.0],
+                }
+            return {
+                "clipped": False,
+                "edge": None,
+                "mode": parameters.get(key, np.nan),
+                "std": 0.01,
+                "bounds": call_bounds.get(key),
+                "reason": "posterior is not clipped",
+            }
+
+        fit.get_parameter_posterior_recenter_diagnostics = diagnostics
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 89.0, "a2": 0.0},
+        {
+            "rprs": [0.0, 0.25],
+            "ars": [9.0, 11.0],
+            "tmid": [-0.01, 0.01],
+            "inc": [84.0, 90.0],
+            "a2": [-3.0, 3.0],
+        },
+        search_restriction_prior={
+            "rprs": 0.1,
+            "ars": 10.0,
+            "ars_unc": 0.4,
+            "inc": 89.0,
+        },
+    )
+
+    assert len(captured["calls"]) == 2
+    assert captured["calls"][0]["bounds"]["ars"] == pytest.approx([9.0, 11.0])
+    assert "ars" not in captured["calls"][1]["bounds"]
+    assert captured["calls"][1]["prior"]["ars"] == pytest.approx(10.0)
+    assert captured["calls"][1]["fixed_parameter_errors"]["ars"] == pytest.approx(0.4)
+    assert fit.parameters["ars"] == pytest.approx(10.0)
+    assert fit.errors["ars"] == pytest.approx(0.4)
+    assert fit.ars_prior_fallback_applied is True
+    assert "configured prior-centered range" in fit.ars_prior_fallback_note
+
+
 def test_partial_coverage_suppresses_open_geometry_posterior_retries(monkeypatch):
     import exotic.exotic as exotic_module
 

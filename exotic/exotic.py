@@ -3162,7 +3162,8 @@ def archive_exception_payload(action, exc):
 
 
 def failed_comparison_archive_dir(save_dir, comp_index):
-    base_dir = Path(save_dir)
+    base_dir = Path(save_dir) / "Diagnostics"
+    base_dir.mkdir(parents=True, exist_ok=True)
     candidate_dir = base_dir / f"comp_{comp_index + 1}_failed"
     if not candidate_dir.exists():
         return candidate_dir
@@ -3176,13 +3177,13 @@ def failed_comparison_archive_dir(save_dir, comp_index):
 
 
 def comparison_candidate_output_dir(save_dir, comp_index):
-    return Path(save_dir) / f"comp{comp_index + 1}"
+    return Path(save_dir) / "Diagnostics" / f"comp{comp_index + 1}"
 
 
 def triangle_plot_output_path(save_dir, planet_name, observation_date):
     return (
         Path(save_dir)
-        / "temp"
+        / "Diagnostics"
         / safe_output_filename("Triangle", planet_name, filename_date_token(observation_date), extension="png")
     )
 
@@ -3190,6 +3191,7 @@ def triangle_plot_output_path(save_dir, planet_name, observation_date):
 def final_triangle_plot_output_path(save_dir, planet_name, observation_date):
     return (
         Path(save_dir)
+        / "Diagnostics"
         / safe_output_filename("FinalTriangle", planet_name, filename_date_token(observation_date), extension="png")
     )
 
@@ -3197,6 +3199,7 @@ def final_triangle_plot_output_path(save_dir, planet_name, observation_date):
 def zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date):
     return (
         Path(save_dir)
+        / "Diagnostics"
         / safe_output_filename("ZoomedTrianglePlot", planet_name, filename_date_token(observation_date), extension="png")
     )
 
@@ -3204,7 +3207,7 @@ def zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_da
 def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observation_date, comp_index):
     return (
         Path(save_dir)
-        / "temp"
+        / "working_artifacts"
         / safe_output_filename(
             f"Comp{int(comp_index) + 1}_Triangle",
             planet_name,
@@ -5703,7 +5706,7 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
         return None
 
     candidate_dir = comparison_candidate_output_dir(save_dir, comp_index)
-    temp_dir = candidate_dir / "temp"
+    temp_dir = candidate_dir / "working_artifacts"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     archive_errors = []
@@ -5852,7 +5855,7 @@ def archive_failed_comparison_fit(save_dir, planet_name, observation_date, attem
         return None
 
     archive_dir = failed_comparison_archive_dir(save_dir, comp_index)
-    temp_dir = archive_dir / "temp"
+    temp_dir = archive_dir / "working_artifacts"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     fit = attempt.get('fit')
@@ -5985,7 +5988,7 @@ def save_selected_photometry_debug_series(save_dir, planet_name, observation_dat
             phase_clip_keep_mask = np.ones(prefit_kept_indices.size, dtype=bool)
         phase_keep_full[prefit_kept_indices] = phase_clip_keep_mask
 
-    output_dir = Path(save_dir) / "temp"
+    output_dir = Path(save_dir) / "working_artifacts"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / safe_output_filename(
         "SelectedPhotometryRawRatio",
@@ -7477,6 +7480,117 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fit = fallback_fit
             final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
 
+    ars_final_diagnostics = None
+    if callable(final_diagnostics_getter) and 'ars' in current_bounds:
+        ars_final_diagnostics = final_diagnostics_getter('ars')
+        latest_diagnostics['ars'] = ars_final_diagnostics
+    elif latest_diagnostics.get('ars') is not None:
+        ars_final_diagnostics = latest_diagnostics['ars']
+
+    ars_restriction_bounds = configured_prior_centered_bounds_for_key(
+        'ars',
+        restriction_reference_prior,
+    )
+    ars_pinned_at_prior_restriction = (
+        isinstance(ars_final_diagnostics, dict)
+        and ars_final_diagnostics.get('clipped')
+        and 'ars' in current_bounds
+        and ars_restriction_bounds is not None
+        and bounds_are_close(current_bounds.get('ars'), ars_restriction_bounds)
+    )
+    if ars_pinned_at_prior_restriction:
+        prior_ars = restriction_reference_prior.get(
+            'ars',
+            prior.get('ars') if isinstance(prior, dict) else np.nan,
+        )
+        try:
+            prior_ars = float(prior_ars)
+        except (TypeError, ValueError):
+            prior_ars = np.nan
+
+        if np.isfinite(prior_ars) and prior_ars > ARS_SEARCH_BOUND_MIN:
+            original_fit = fit
+            original_bounds = clone_lightcurve_bounds(current_bounds)
+            original_ars_value = (getattr(original_fit, 'parameters', {}) or {}).get('ars', np.nan)
+            fixed_prior = dict(current_prior)
+            fixed_prior['ars'] = prior_ars
+            fixed_bounds = clone_lightcurve_bounds(current_bounds)
+            fixed_bounds.pop('ars', None)
+
+            fixed_error_override = {}
+            existing_errors = getattr(original_fit, 'errors', {}) or {}
+            if 'rprs' not in fixed_bounds:
+                fixed_rprs_error = existing_errors.get('rprs', np.nan)
+                try:
+                    fixed_rprs_error = float(fixed_rprs_error)
+                except (TypeError, ValueError):
+                    fixed_rprs_error = np.nan
+                if np.isfinite(fixed_rprs_error) and fixed_rprs_error >= 0:
+                    fixed_error_override['rprs'] = float(fixed_rprs_error)
+            prior_ars_error = restriction_reference_prior.get('ars_unc', np.nan)
+            try:
+                prior_ars_error = float(prior_ars_error)
+            except (TypeError, ValueError):
+                prior_ars_error = np.nan
+            if np.isfinite(prior_ars_error) and prior_ars_error >= 0:
+                fixed_error_override['ars'] = prior_ars_error
+
+            log_info(
+                "a/Rs posterior remains pinned against the "
+                f"{ars_final_diagnostics.get('edge', 'active')} edge of the configured "
+                f"prior-centered range [{ars_restriction_bounds[0]:.6f}, "
+                f"{ars_restriction_bounds[1]:.6f}]; rerunning UltraNest with a/Rs fixed "
+                f"to the input prior ({prior_ars:.6f})."
+            )
+            fallback_fit = build_fit(
+                fixed_prior,
+                fixed_bounds,
+                fixed_parameter_errors_override=fixed_error_override,
+            )
+            fallback_parameters = getattr(fallback_fit, 'parameters', None)
+            if isinstance(fallback_parameters, dict):
+                fallback_parameters['ars'] = prior_ars
+            fallback_errors = getattr(fallback_fit, 'errors', None)
+            if not isinstance(fallback_errors, dict):
+                fallback_fit.errors = {}
+                fallback_errors = fallback_fit.errors
+            if np.isfinite(prior_ars_error) and prior_ars_error >= 0:
+                fallback_errors['ars'] = prior_ars_error
+                fixed_errors = getattr(fallback_fit, 'fixed_parameter_errors', None)
+                if not isinstance(fixed_errors, dict):
+                    fallback_fit.fixed_parameter_errors = {}
+                    fixed_errors = fallback_fit.fixed_parameter_errors
+                fixed_errors['ars'] = prior_ars_error
+
+            for attribute_name, attribute_value in getattr(original_fit, '__dict__', {}).items():
+                if attribute_name.startswith('rprs_prior_fallback_'):
+                    setattr(fallback_fit, attribute_name, attribute_value)
+
+            fallback_note = (
+                "Applied a/Rs prior fallback because the sampled posterior remained pinned against "
+                f"the {ars_final_diagnostics.get('edge', 'active')} edge of the configured "
+                f"prior-centered range [{ars_restriction_bounds[0]:.6f}, "
+                f"{ars_restriction_bounds[1]:.6f}]. EXOTIC reran UltraNest with a/Rs fixed "
+                f"to the input prior ({prior_ars:.6f})"
+            )
+            if np.isfinite(prior_ars_error) and prior_ars_error >= 0:
+                fallback_note += f" with input uncertainty {prior_ars_error:.6f}."
+            else:
+                fallback_note += "."
+            fallback_fit.ars_prior_fallback_applied = True
+            fallback_fit.ars_prior_fallback_prior_value = prior_ars
+            fallback_fit.ars_prior_fallback_prior_uncertainty = prior_ars_error
+            fallback_fit.ars_prior_fallback_original_fit_value = original_ars_value
+            fallback_fit.ars_prior_fallback_original_bounds = original_bounds.get('ars')
+            fallback_fit.ars_prior_fallback_edge = ars_final_diagnostics.get('edge')
+            fallback_fit.ars_prior_fallback_original_diagnostics = dict(ars_final_diagnostics)
+            fallback_fit.ars_prior_fallback_note = fallback_note
+            retry_notes['ars'] = fallback_note
+            current_prior = fixed_prior
+            current_bounds = fixed_bounds
+            fit = fallback_fit
+            final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
+
     annotate_posterior_refit_final_bounds(fit, current_bounds)
     for config in retry_configs:
         key = config['key']
@@ -7487,10 +7601,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         final_diagnostics = None
         available = config.get('available')
         config_available = not callable(available) or available(fit, current_bounds)
-        prior_fallback_applied = (
-            key == 'rprs'
-            and bool(getattr(fit, 'rprs_prior_fallback_applied', False))
-        )
+        prior_fallback_applied = bool(getattr(fit, f'{key}_prior_fallback_applied', False))
         if prior_fallback_applied:
             final_diagnostics = None
         elif callable(final_diagnostics_getter) and bounds_key in current_bounds and config_available:
@@ -7499,12 +7610,12 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             final_diagnostics = latest_diagnostics[key]
 
         if prior_fallback_applied:
-            fallback_note = getattr(fit, 'rprs_prior_fallback_note', None) or retry_notes.get(key)
+            fallback_note = getattr(fit, f'{key}_prior_fallback_note', None) or retry_notes.get(key)
             note = fallback_note
             if history:
                 note = (
                     f"Applied {len(history)} automatic {label} posterior range refit(s), "
-                    "then applied the Rp/R* prior fallback."
+                    f"then applied the {label} prior fallback."
                 )
         elif history:
             note = f"Applied {len(history)} automatic {label} posterior range refit(s)."
@@ -17296,7 +17407,7 @@ def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None
     counts_path = None
     mask_path = None
     if save_directory is not None:
-        temp_dir = Path(save_directory) / "temp"
+        temp_dir = Path(save_directory) / "working_artifacts"
         temp_dir.mkdir(parents=True, exist_ok=True)
         counts_path = temp_dir / BAD_PIXEL_COUNTS_FILENAME
         mask_path = temp_dir / BAD_PIXEL_MASK_FILENAME
@@ -17310,7 +17421,7 @@ def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None
         f"({required_count}+ detections)."
     )
     if counts_path is not None and mask_path is not None:
-        summary += f" Saved {counts_path.name} and {mask_path.name} to temp/."
+        summary += f" Saved {counts_path.name} and {mask_path.name} to working_artifacts/."
     log_info(summary)
 
     return {
@@ -19029,8 +19140,14 @@ def fit_legacy_psf_photometry_flux_row(data, centroid_row, starIndex, psf_functi
 def _psf_seed_track_candidate_paths(seed_track_directory, key):
     root = Path(seed_track_directory).expanduser()
     search_dirs = [root]
-    if root.name.lower() != 'temp':
-        search_dirs.append(root / 'temp')
+    if root.name.lower() not in {'working_artifacts', 'temp'}:
+        search_dirs.extend((root / 'working_artifacts', root / 'temp'))
+
+    expanded_search_dirs = []
+    for directory in search_dirs:
+        expanded_search_dirs.append(directory)
+        expanded_search_dirs.append(directory / 'psf_flux_data')
+    search_dirs = expanded_search_dirs
 
     if key == 'target':
         names = (
@@ -28026,7 +28143,7 @@ def clear_previous_fortuitous_variable_products(variable_dir):
         for path in output_dir.glob(f'{prefix}*'):
             if path.is_file():
                 path.unlink()
-    plot_path = output_dir / 'temp' / 'Stellar_Variability.png'
+    plot_path = output_dir / 'working_artifacts' / 'Stellar_Variability.png'
     if plot_path.is_file():
         plot_path.unlink()
 
@@ -29874,8 +29991,8 @@ def _main_impl():
                 )
         log_ultranest_mpi_status()
 
-        # Make a temp directory of helpful files
-        Path(Path(exotic_infoDict['save']) / "temp").mkdir(exist_ok=True)
+        # Keep non-final reduction products separate from the primary results.
+        Path(Path(exotic_infoDict['save']) / "working_artifacts").mkdir(exist_ok=True)
 
         archive_planet_dict = None
         if not args.override:
@@ -32097,13 +32214,16 @@ def _main_impl():
             exotic_infoDict['exposure'] = exp_time_med(exptimes)
 
             # save PSF data to disk using savetxt
-            np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_target.txt", psf_data["target"],
+            working_artifacts_dir = Path(exotic_infoDict['save']) / "working_artifacts"
+            psf_flux_artifacts_dir = working_artifacts_dir / "psf_flux_data"
+            np.savetxt(working_artifacts_dir / "psf_data_target.txt", psf_data["target"],
                           header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                           fmt="%.6f")
                         # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
             if use_psf_photometry:
+                psf_flux_artifacts_dir.mkdir(parents=True, exist_ok=True)
                 np.savetxt(
-                    Path(exotic_infoDict['save']) / "temp" / "psf_flux_data_target.txt",
+                    psf_flux_artifacts_dir / "psf_flux_data_target.txt",
                     psf_flux_data["target"],
                     header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                     fmt="%.6f",
@@ -32111,7 +32231,7 @@ def _main_impl():
                 for j in range(len(exotic_infoDict['comp_stars'])):
                     ckey = f"comp{j + 1}"
                     np.savetxt(
-                        Path(exotic_infoDict['save']) / "temp" / f"psf_flux_data_{ckey}.txt",
+                        psf_flux_artifacts_dir / f"psf_flux_data_{ckey}.txt",
                         psf_flux_data[ckey],
                         header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                         fmt="%.6f",
@@ -32845,7 +32965,7 @@ def _main_impl():
                             selected_method_label,
                         )
                         log_info(
-                            f"Saved {saved_candidate_fit_count} comparison-candidate lightcurve fit plot(s) to temp/."
+                            f"Saved {saved_candidate_fit_count} comparison-candidate lightcurve fit plot(s) to working_artifacts/."
                         )
                         if failed_candidate_fit_count:
                             log_info(
@@ -32856,7 +32976,7 @@ def _main_impl():
 
             # save psf_data to disk for best comparison star
             if isinstance(bestCompStar, int):
-                np.savetxt(Path(exotic_infoDict['save']) / "temp" / "psf_data_comp.txt", psf_data[f"comp{bestCompStar}"],
+                np.savetxt(working_artifacts_dir / "psf_data_comp.txt", psf_data[f"comp{bestCompStar}"],
                             header="#x_centroid, y_centroid, amplitude, sigma_x, sigma_y, rotation offset",
                             fmt="%.6f")
 
@@ -33613,8 +33733,9 @@ def _main_impl():
                 pass
 
         plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
-        plot_prior_posterior_comparison(myfit, pDict, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
-        plot_ktmf_qc_metrics(myfit, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+        diagnostics_dir = Path(exotic_infoDict['save']) / "Diagnostics"
+        plot_prior_posterior_comparison(myfit, pDict, pDict['pName'], diagnostics_dir, exotic_infoDict['date'])
+        plot_ktmf_qc_metrics(myfit, pDict['pName'], diagnostics_dir, exotic_infoDict['date'])
 
         if fitsortext == 1:
             observing_background_series = build_observing_background_series(

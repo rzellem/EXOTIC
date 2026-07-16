@@ -137,8 +137,8 @@ def test_build_persistent_bad_pixel_map_thresholds_recurrence_and_saves_outputs(
     assert reference["mask"][2, 3]
     assert not reference["mask"][6, 5]
 
-    count_image = fits.getdata(tmp_path / "temp" / "BadPixelDetectionCounts.fits")
-    mask_image = fits.getdata(tmp_path / "temp" / "BadPixelMask.fits").astype(bool)
+    count_image = fits.getdata(tmp_path / "working_artifacts" / "BadPixelDetectionCounts.fits")
+    mask_image = fits.getdata(tmp_path / "working_artifacts" / "BadPixelMask.fits").astype(bool)
 
     assert count_image[2, 3] == 4
     assert count_image[6, 5] == 3

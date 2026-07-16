@@ -11,6 +11,7 @@ from exotic.output_files import (
     PRIOR_OBSERVABLE_DEPTH_LABEL,
     AIDOutputFiles,
     OutputFiles,
+    aid_comparison_coordinate_headers,
     aavso_dicts,
     build_aavso_qc_metadata,
     fit_empirical_transit_uncertainty,
@@ -125,7 +126,7 @@ def test_prior_depth_respects_inclination_for_non_transiting_geometry():
 
 
 def test_final_params_writes_stellar_variability_only_payload(tmp_path):
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
     fit = SimpleNamespace(
         stellar_variability_only=True,
         time=np.arange(6, dtype=float),
@@ -154,7 +155,7 @@ def test_final_params_writes_stellar_variability_only_payload(tmp_path):
         publish_to_root=True,
     )
 
-    temp_file = next((tmp_path / "temp").glob("FinalParams_Syntheticb_2020-01-01.json"))
+    temp_file = next((tmp_path / "working_artifacts").glob("FinalParams_Syntheticb_2020-01-01.json"))
     root_file = tmp_path / temp_file.name
     payload = json.loads(temp_file.read_text())
 
@@ -169,7 +170,7 @@ def test_final_params_writes_stellar_variability_only_payload(tmp_path):
 
 
 def test_final_params_describes_calibrated_stellar_variability_ensemble(tmp_path):
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
     fit = SimpleNamespace(
         stellar_variability_only=True,
         time=np.arange(3, dtype=float),
@@ -198,7 +199,7 @@ def test_final_params_describes_calibrated_stellar_variability_ensemble(tmp_path
         min_annul=15,
     )
 
-    output_path = next((tmp_path / "temp").glob("FinalParams_Syntheticb_2020-01-01.json"))
+    output_path = next((tmp_path / "working_artifacts").glob("FinalParams_Syntheticb_2020-01-01.json"))
     params = json.loads(output_path.read_text())["FINAL STELLAR VARIABILITY PARAMETERS"]
     assert params["Stellar Variability Reference Star"] == "ensemble"
     assert params["Variable Reference Star"] == (
@@ -208,7 +209,7 @@ def test_final_params_describes_calibrated_stellar_variability_ensemble(tmp_path
 
 
 def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
     fit = SimpleNamespace(
         stellar_variability_only=True,
         stellar_variability_params=[
@@ -233,7 +234,7 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
 
     OutputFiles(fit, p_dict, i_dict, []).final_lightcurve(np.array([]))
 
-    output_text = next((tmp_path / "temp").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
+    output_text = next((tmp_path / "working_artifacts").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
 
     assert "# FINAL STELLAR VARIABILITY TIMESERIES OF WASP-194" in output_text
     assert "# BJD_TDB,Magnitude,Uncertainty,Band,Airmass" in output_text
@@ -242,7 +243,7 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
 
 
 def test_final_lightcurve_adds_transit_apparent_magnitude_columns_when_calibrated(tmp_path):
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
     fit = SimpleNamespace(
         time=np.array([2461229.9, 2461229.91]),
         detrended=np.array([1.0, 0.99]),
@@ -259,7 +260,7 @@ def test_final_lightcurve_adds_transit_apparent_magnitude_columns_when_calibrate
 
     OutputFiles(fit, p_dict, i_dict, []).final_lightcurve(np.array([0.1, 0.2]))
 
-    output_text = next((tmp_path / "temp").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
+    output_text = next((tmp_path / "working_artifacts").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
 
     assert "Apparent Magnitude,Magnitude Uncertainty,Band" in output_text
     assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, 13.740" in output_text
@@ -415,6 +416,26 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
     assert "#GAIAPMDEC=" not in output_text
 
 
+def test_aid_comparison_coordinate_headers_index_unique_comparisons_on_separate_lines():
+    headers = aid_comparison_coordinate_headers(
+        [
+            {"cname": "Comp A", "comp_ra": 10.1, "comp_dec": -20.2},
+            {"cname": "Comp A", "comp_ra": 10.1, "comp_dec": -20.2},
+            {"cname": "Comp B", "comp_ra": 11.3, "comp_dec": -21.4},
+        ],
+        indexed=True,
+    )
+
+    assert headers.splitlines() == [
+        "#COMPARISON_1_NAME=Comp A",
+        "#COMPARISON_1_RA=10.1000000",
+        "#COMPARISON_1_DEC=-20.2000000",
+        "#COMPARISON_2_NAME=Comp B",
+        "#COMPARISON_2_RA=11.3000000",
+        "#COMPARISON_2_DEC=-21.4000000",
+    ]
+
+
 def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     fit = DummyFit()
     p_dict = {
@@ -462,6 +483,7 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert metadata["comparison_dec_deg"] == pytest.approx(-20.2)
     assert metadata["apparent_magnitude"] == pytest.approx(12.1)
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.03)
+    assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
     assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.340,0.050,V,NO,STD" in output_text
 
@@ -695,7 +717,7 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
     fit = DummyFit()
     fit.airmass_fit_skipped = True
     fit.airmass_correction_note = "Skipped (airmass span 0.0400 <= 0.05); no airmass correction applied."
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -705,7 +727,7 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Airmass correction" in output_text
@@ -715,7 +737,7 @@ def test_final_planetary_params_reports_skipped_airmass_correction(tmp_path):
 
 def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -736,7 +758,7 @@ def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path
         vsp_params=vsp_params,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     reference = final_params["Variable Reference Star"]
@@ -752,7 +774,7 @@ def test_transit_outputs_use_rprs_fallback_uncertainty_when_model_error_missing(
     fit.rprs_prior_fallback_applied = True
     fit.rprs_prior_fallback_data_uncertainty = 0.005
     fit.rprs_prior_fallback_note = "Rp/R* fixed to prior."
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {
         "pName": "HAT-P-32 b",
@@ -780,7 +802,7 @@ def test_transit_outputs_use_rprs_fallback_uncertainty_when_model_error_missing(
         vsp_params=[],
     )
     final_params = json.loads(
-        (tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json").read_text(encoding="utf-8")
+        (tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json").read_text(encoding="utf-8")
     )["FINAL PLANETARY PARAMETERS"]
 
     assert "0.005" in final_params["Ratio of Planet to Stellar Radius (Rp/R*)"]
@@ -801,7 +823,7 @@ def test_transit_outputs_use_rprs_fallback_uncertainty_when_model_error_missing(
 
 def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -835,7 +857,7 @@ def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp
         min_annul=10.15,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert final_params["Transit Fit Comparison Star"] == "#1 - [616, 113]"
@@ -848,7 +870,7 @@ def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp
 
 def test_final_planetary_params_suppresses_variable_reference_without_transit_comparison(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -871,7 +893,7 @@ def test_final_planetary_params_suppresses_variable_reference_without_transit_co
         min_annul=10.15,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert final_params["Transit Fit Comparison Star"] == "None"
@@ -881,7 +903,7 @@ def test_final_planetary_params_suppresses_variable_reference_without_transit_co
 
 def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclination(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -891,7 +913,7 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
     keys = list(final_params)
@@ -908,7 +930,7 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
 
 def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertainties(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {
         "pName": "HAT-P-32 b",
@@ -924,7 +946,7 @@ def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertaintie
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert final_params["Mid-Transit Time (Tmid)"].endswith("+/- 0.0001 BJD_TDB")
@@ -1012,7 +1034,7 @@ def test_final_planetary_params_reports_model_and_red_noise_uncertainties(tmp_pa
     fit.residuals = fit.data - fit.model
     fit.dataerr = np.full_like(fit.model, 0.01)
     fit.airmass_model = np.ones_like(fit.model)
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1022,7 +1044,7 @@ def test_final_planetary_params_reports_model_and_red_noise_uncertainties(tmp_pa
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert final_params["Ratio of Planet to Stellar Radius (Rp/R*)"] == (
@@ -1083,7 +1105,7 @@ def test_final_planetary_params_reports_prior_fallback_data_only_uncertainty(tmp
     fit.residuals = fit.data - fit.model
     fit.dataerr = np.full_like(fit.model, 0.01)
     fit.airmass_model = np.ones_like(fit.model)
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1093,7 +1115,7 @@ def test_final_planetary_params_reports_prior_fallback_data_only_uncertainty(tmp
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert final_params["Rp/R* uncertainty basis"] == "prior_assumed_data_only"
@@ -1106,7 +1128,7 @@ def test_final_planetary_params_reports_prior_fallback_data_only_uncertainty(tmp
 
 def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1117,7 +1139,7 @@ def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
         publish_to_root=True,
     )
 
-    temp_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    temp_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     root_file = tmp_path / "FinalParams_HAT-P-32b_2020-01-01.json"
 
     assert temp_file.exists()
@@ -1127,7 +1149,7 @@ def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
 
 def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
     fit = DummyFit()
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1154,7 +1176,7 @@ def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
         adaptive_summary=adaptive_summary,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Adaptive Aperture Scale" in output_text
@@ -1205,7 +1227,7 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
         ],
         "notes": ["The transit model is strongly preferred over the flat/null model."],
     }
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1215,7 +1237,7 @@ def test_final_planetary_params_reports_transit_qc_summary(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Transit detection QC" in output_text
@@ -1263,7 +1285,7 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
             },
         ],
     }
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1321,7 +1343,7 @@ def test_final_planetary_params_reports_ktmf_decision_details(tmp_path):
         photometry_info=photometry_info,
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
     final_param_keys = list(final_params)
@@ -1352,7 +1374,7 @@ def test_final_planetary_params_reports_absolute_fit_quality(tmp_path):
     fit.time = np.arange(6, dtype=float)
     fit.airmass_model = np.ones(6, dtype=float)
     fit.bounds = {"tmid": [0, 1], "rprs": [0, 1], "a1": [0, 2]}
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1362,7 +1384,7 @@ def test_final_planetary_params_reports_absolute_fit_quality(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     output_data = json.loads(output_file.read_text(encoding="utf-8"))
     final_params = output_data["FINAL PLANETARY PARAMETERS"]
 
@@ -1380,7 +1402,7 @@ def test_final_planetary_params_reports_prior_assumed_geometry_note(tmp_path):
     fit.partial_transit_geometry_prior_assumption_note = (
         "Applied prior-assumed transit geometry for a one-sided partial light curve."
     )
-    (tmp_path / "temp").mkdir()
+    (tmp_path / "working_artifacts").mkdir()
 
     p_dict = {"pName": "HAT-P-32 b"}
     i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
@@ -1390,7 +1412,7 @@ def test_final_planetary_params_reports_prior_assumed_geometry_note(tmp_path):
         vsp_params=[],
     )
 
-    output_file = tmp_path / "temp" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
     assert (
@@ -1651,8 +1673,8 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
             "frame_count": 10,
             "required_count": 4,
             "minimum_fraction": 0.3,
-            "counts_path": tmp_path / "temp" / "BadPixelDetectionCounts.fits",
-            "mask_path": tmp_path / "temp" / "BadPixelMask.fits",
+            "counts_path": tmp_path / "working_artifacts" / "BadPixelDetectionCounts.fits",
+            "mask_path": tmp_path / "working_artifacts" / "BadPixelMask.fits",
         },
     )
 

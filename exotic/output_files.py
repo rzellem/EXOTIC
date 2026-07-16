@@ -252,6 +252,42 @@ def aid_comparison_metadata(vsp_param):
     return aavso_json_safe(metadata)
 
 
+def aid_comparison_coordinate_headers(vsp_params, indexed=False):
+    """Return standards-safe comparison coordinates with RA and Dec on separate lines."""
+    if isinstance(vsp_params, dict):
+        vsp_params = [vsp_params]
+
+    coordinates = []
+    seen = set()
+    for vsp_param in vsp_params or []:
+        if not isinstance(vsp_param, dict) or vsp_param.get('ensemble_reference'):
+            continue
+        comp_ra = finite_float(vsp_param.get('comp_ra'))
+        comp_dec = finite_float(vsp_param.get('comp_dec'))
+        if not np.isfinite(comp_ra) or not np.isfinite(comp_dec):
+            continue
+        comparison_name = format_aavso_header_value(vsp_param.get('cname'))
+        identity = (comparison_name, round(float(comp_ra), 10), round(float(comp_dec), 10))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        coordinates.append((comparison_name, float(comp_ra), float(comp_dec)))
+
+    if not coordinates:
+        return ""
+    if not indexed and len(coordinates) == 1:
+        _, comp_ra, comp_dec = coordinates[0]
+        return f"#COMPARISON_RA={comp_ra:.7f}\n#COMPARISON_DEC={comp_dec:.7f}\n"
+
+    headers = []
+    for index, (comparison_name, comp_ra, comp_dec) in enumerate(coordinates, start=1):
+        if comparison_name:
+            headers.append(f"#COMPARISON_{index}_NAME={comparison_name}")
+        headers.append(f"#COMPARISON_{index}_RA={comp_ra:.7f}")
+        headers.append(f"#COMPARISON_{index}_DEC={comp_dec:.7f}")
+    return "\n".join(headers) + "\n"
+
+
 def aid_ensemble_comparison_metadata(vsp_param):
     if not vsp_param or not vsp_param.get('ensemble_reference'):
         return {}
@@ -1741,7 +1777,7 @@ class OutputFiles:
         self.dir = Path(self.i_dict['save'])
 
     def final_lightcurve(self, phase):
-        params_file = self.dir / "temp" / safe_output_filename(
+        params_file = self.dir / "working_artifacts" / safe_output_filename(
             "FinalLightCurve",
             self.p_dict['pName'],
             filename_date_token(self.i_dict['date']),
@@ -1814,7 +1850,7 @@ class OutputFiles:
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
                                min_annul=None, adaptive_summary=None, photometry_info=None,
                                publish_to_root=False):
-        params_file = self.dir / "temp" / safe_output_filename(
+        params_file = self.dir / "working_artifacts" / safe_output_filename(
             "FinalParams",
             self.p_dict['pName'],
             filename_date_token(self.i_dict['date']),
@@ -2046,6 +2082,9 @@ class OutputFiles:
         geometry_prior_note = getattr(self.fit, 'partial_transit_geometry_prior_assumption_note', None)
         if geometry_prior_note:
             params_num["Prior-assumed partial-transit geometry note"] = str(geometry_prior_note)
+        ars_prior_fallback_note = getattr(self.fit, 'ars_prior_fallback_note', None)
+        if ars_prior_fallback_note:
+            params_num["a/Rs prior fallback note"] = str(ars_prior_fallback_note)
         oot_baseline_parameter_note = getattr(self.fit, 'oot_baseline_parameter_fit_note', None)
         if oot_baseline_parameter_note:
             params_num["Out-of-transit baseline parameter-fit note"] = str(oot_baseline_parameter_note)
@@ -2348,7 +2387,7 @@ class OutputFiles:
                         f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
                         f"{round(detrend_model[aavsoC], 7)}\n")
     def plate_status(self, plate_status: PlateStatus):
-        plate_status_file = self.dir / "temp" / safe_output_filename(
+        plate_status_file = self.dir / "working_artifacts" / safe_output_filename(
             "PlateStatus",
             self.p_dict['pName'],
             filename_date_token(self.i_dict['date']),
@@ -2378,6 +2417,10 @@ class AIDOutputFiles:
         first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
         comparison_metadata = aid_comparison_metadata(first_vsp_param)
         ensemble_comparison_metadata = aid_ensemble_comparison_metadata(first_vsp_param)
+        comparison_coordinate_headers = aid_comparison_coordinate_headers(
+            self.vsp_params,
+            indexed=use_row_names,
+        )
         default_variable_name = self.auid or self.p_dict.get('sName') or self.p_dict.get('pName')
 
         with params_file.open('w', encoding="utf-8") as f:
@@ -2400,6 +2443,8 @@ class AIDOutputFiles:
                 "aavso.org/data-usage-guidelines\n")
             if include_comparison_metadata and comparison_metadata:
                 f.write(f"#COMPARISON-CATALOG-XC={dumps(comparison_metadata, sort_keys=True)}\n")
+            if comparison_coordinate_headers:
+                f.write(comparison_coordinate_headers)
             if include_comparison_metadata and ensemble_comparison_metadata:
                 f.write(format_aavso_json_header(
                     "ENSEMBLE-COMPARISONS-XC",
@@ -2586,7 +2631,7 @@ def format_aavso_header_value(value):
 
 def save_comp_star_calibration_summary(save_dir, target_name, date, method_label, field_score,
                                        comp_summaries, best_comp_index):
-    temp_dir = Path(save_dir) / "temp"
+    temp_dir = Path(save_dir) / "working_artifacts"
     temp_dir.mkdir(parents=True, exist_ok=True)
     summary_file = temp_dir / safe_output_filename(
         "CompStarCalibrationSummary",

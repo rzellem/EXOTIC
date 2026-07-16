@@ -128,6 +128,9 @@ from exotic.exotic import (
     diagnose_lightcurve_fit_inputs,
     detrend_flux_on_out_of_transit_baseline,
     alignment_candidate_quality_score,
+    aperture_estimation_comparison_stars,
+    aperture_frame_sigma_from_psf_data,
+    collapse_aperture_data_to_selected_grid_cell,
     ensure_lightcurve_fit_failure_reason,
     evaluate_lightcurve_candidate,
     evaluate_transit_detection_qc,
@@ -1954,6 +1957,178 @@ def test_populate_aperture_data_skips_field_star_corrections_when_disabled(monke
 
     assert profile["applied"] is False
     assert np.isfinite(aper_data["target"][0, 0, 0])
+
+
+def test_stellar_variability_aperture_estimation_uses_first_five_vetted_comparisons():
+    science_comp_stars = [[float(index), float(index + 100)] for index in range(8)]
+
+    assert aperture_estimation_comparison_stars(
+        science_comp_stars,
+        stellar_variability_only=False,
+    ) == science_comp_stars
+    assert aperture_estimation_comparison_stars(
+        science_comp_stars,
+        stellar_variability_only=True,
+    ) == science_comp_stars[:5]
+
+
+def test_stellar_variability_aperture_grid_excludes_variable_target_and_uses_comp_seeing(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    measured = []
+
+    def fake_compute_star_aperture_grid(
+        _data,
+        star_index,
+        _xc,
+        _yc,
+        apertures,
+        annuli,
+        **_kwargs,
+    ):
+        aperture_values = np.asarray(apertures, dtype=float).reshape(-1)
+        annulus_values = np.asarray(annuli, dtype=float).reshape(-1)
+        measured.append((star_index, aperture_values.copy(), annulus_values.copy()))
+        shape = (len(aperture_values), len(annulus_values))
+        flux = np.full(shape, 100.0 + star_index, dtype=float)
+        background = np.full(shape, 10.0 + star_index, dtype=float)
+        noise = {
+            component: np.ones(shape, dtype=float)
+            for component in exotic_module.NOISE_BUDGET_COMPONENT_KEYS
+        }
+        return flux, background, noise
+
+    monkeypatch.setattr(exotic_module, "compute_star_aperture_grid", fake_compute_star_aperture_grid)
+    psf_data = {
+        # The VSX science target deliberately has very different seeing. It must not
+        # determine the stellar-variability aperture grid.
+        "target": np.array([[10.0, 10.0, 100.0, 9.0, 9.0, 0.0, 0.0]]),
+        "comp1": np.array([[12.0, 10.0, 90.0, 2.0, 2.0, 0.0, 0.0]]),
+        "comp2": np.array([[14.0, 10.0, 80.0, 4.0, 4.0, 0.0, 0.0]]),
+    }
+    assert aperture_frame_sigma_from_psf_data(
+        psf_data,
+        0,
+        comparison_indices=[0, 1],
+    ) == pytest.approx(3.0)
+
+    full_grid = initialize_aperture_data_store(1, 1, 1, 2)
+    populate_aperture_data_for_frame(
+        np.zeros((25, 25), dtype=float),
+        0,
+        psf_data,
+        2,
+        full_grid,
+        np.array([2.0]),
+        np.array([8.0]),
+        fast_aperture_mask=False,
+        adaptive_apertures=True,
+        comp_indices=[0, 1],
+        include_target=False,
+        frame_sigma_comp_indices=[0, 1],
+    )
+
+    assert [star_index for star_index, _apers, _annuli in measured] == [1, 2]
+    assert all(apers[0] == pytest.approx(6.0) for _index, apers, _annuli in measured)
+    assert np.all(np.isnan(full_grid["target"]))
+
+    frozen = collapse_aperture_data_to_selected_grid_cell(full_grid, 0, 0)
+    measured.clear()
+    populate_aperture_data_for_frame(
+        np.zeros((25, 25), dtype=float),
+        0,
+        psf_data,
+        2,
+        frozen,
+        np.array([2.0]),
+        np.array([8.0]),
+        fast_aperture_mask=False,
+        adaptive_apertures=True,
+        comp_indices=[],
+        include_target=True,
+        frame_sigma_comp_indices=[0, 1],
+    )
+
+    assert len(measured) == 1
+    assert measured[0][0] == 0
+    assert measured[0][1][0] == pytest.approx(6.0)
+    assert frozen["target"][0, 0, 0] == pytest.approx(100.0)
+
+
+def test_frozen_aperture_path_only_grids_estimators_then_backfills_additional_stars(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    measured_star_indices = []
+
+    def fake_compute_star_aperture_grid(
+        _data,
+        star_index,
+        _xc,
+        _yc,
+        apertures,
+        annuli,
+        **_kwargs,
+    ):
+        measured_star_indices.append(star_index)
+        shape = (len(np.asarray(apertures).reshape(-1)), len(np.asarray(annuli).reshape(-1)))
+        flux = np.full(shape, 100.0 + star_index, dtype=float)
+        background = np.full(shape, 10.0 + star_index, dtype=float)
+        noise = {
+            component: np.full(shape, 1.0 + star_index, dtype=float)
+            for component in exotic_module.NOISE_BUDGET_COMPONENT_KEYS
+        }
+        return flux, background, noise
+
+    monkeypatch.setattr(exotic_module, "compute_star_aperture_grid", fake_compute_star_aperture_grid)
+    psf_data = {
+        "target": np.array([[10.0, 10.0, 100.0, 2.0, 2.0, 0.0, 0.0]]),
+        "comp1": np.array([[12.0, 10.0, 90.0, 2.0, 2.0, 0.0, 0.0]]),
+        "comp2": np.array([[14.0, 10.0, 80.0, 2.0, 2.0, 0.0, 0.0]]),
+        "comp3": np.array([[16.0, 10.0, 70.0, 2.0, 2.0, 0.0, 0.0]]),
+        "comp4": np.array([[18.0, 10.0, 60.0, 2.0, 2.0, 0.0, 0.0]]),
+    }
+    full_grid = initialize_aperture_data_store(1, 2, 2, 4)
+    populate_aperture_data_for_frame(
+        np.zeros((25, 25), dtype=float),
+        0,
+        psf_data,
+        4,
+        full_grid,
+        np.array([3.0, 4.0]),
+        np.array([8.0, 10.0]),
+        fast_aperture_mask=False,
+        comp_indices=[0, 1],
+    )
+
+    assert measured_star_indices == [0, 1, 2]
+    assert np.all(np.isfinite(full_grid["target"]))
+    assert np.all(np.isfinite(full_grid["comp1"]))
+    assert np.all(np.isfinite(full_grid["comp2"]))
+    assert np.all(np.isnan(full_grid["comp3"]))
+    assert np.all(np.isnan(full_grid["comp4"]))
+
+    frozen = collapse_aperture_data_to_selected_grid_cell(full_grid, 1, 0)
+    measured_star_indices.clear()
+    populate_aperture_data_for_frame(
+        np.zeros((25, 25), dtype=float),
+        0,
+        psf_data,
+        4,
+        frozen,
+        np.array([4.0]),
+        np.array([8.0]),
+        fast_aperture_mask=False,
+        comp_indices=[2, 3],
+        include_target=False,
+    )
+
+    assert measured_star_indices == [3, 4]
+    assert frozen["target"].shape == (1, 1, 1)
+    assert frozen["target"][0, 0, 0] == pytest.approx(100.0)
+    assert frozen["comp1"][0, 0, 0] == pytest.approx(101.0)
+    assert frozen["comp2"][0, 0, 0] == pytest.approx(102.0)
+    assert frozen["comp3"][0, 0, 0] == pytest.approx(103.0)
+    assert frozen["comp4"][0, 0, 0] == pytest.approx(104.0)
 
 
 def test_should_use_fast_target_centroid_disables_fast_sigma_path_for_adaptive_runs():
@@ -7569,10 +7744,15 @@ def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatc
 def _run_main_until_vertical_flux_bound(
         monkeypatch,
         tmp_path,
-        disable_vertical_flux_normalization=Ellipsis,
-        random_seed=123,
-        override=True,
-        nasa_result=None):
+         disable_vertical_flux_normalization=Ellipsis,
+         random_seed=123,
+         override=True,
+         nasa_result=None,
+         target_ra=10.0,
+         target_dec=20.0,
+         ephemeris_overrides=None,
+         expected_ephemeris=None,
+         expected_error=None):
     import exotic.exotic as exotic_module
 
     class BoundReached(Exception):
@@ -7593,8 +7773,8 @@ def _run_main_until_vertical_flux_bound(
     )
 
     user_pdict = {
-        "ra": 10.0,
-        "dec": 20.0,
+        "ra": target_ra,
+        "dec": target_dec,
         "pName": "Test Planet b",
         "sName": "Test Star",
         "pPer": 1.0,
@@ -7622,6 +7802,8 @@ def _run_main_until_vertical_flux_bound(
         "pm_ra": 0.0,
         "pm_dec": 0.0,
     }
+    if ephemeris_overrides:
+        user_pdict.update(ephemeris_overrides)
     exotic_info = {
         "save": tmp_path,
         "prered_file": prered_file,
@@ -7664,8 +7846,9 @@ def _run_main_until_vertical_flux_bound(
     monkeypatch.setattr(exotic_module, "Inputs", FakeInputs)
     if nasa_result is not None:
         class FakeNASAExoplanetArchive:
-            def __init__(self, planet):
+            def __init__(self, planet, non_interactive=False):
                 self.planet = planet
+                self.non_interactive = non_interactive
 
             def planet_info(self):
                 return nasa_result
@@ -7679,6 +7862,9 @@ def _run_main_until_vertical_flux_bound(
 
     def fake_apply_vertical_flux_normalization_bound(prior, bounds, flux_values, disabled):
         captured["disabled"] = disabled
+        if expected_ephemeris is not None:
+            assert prior['per'] == pytest.approx(expected_ephemeris['pPer'])
+            assert prior['tmid'] == pytest.approx(expected_ephemeris['midT'])
         raise BoundReached()
 
     monkeypatch.setattr(
@@ -7686,6 +7872,11 @@ def _run_main_until_vertical_flux_bound(
         "apply_vertical_flux_normalization_bound",
         fake_apply_vertical_flux_normalization_bound,
     )
+
+    if expected_error is not None:
+        with pytest.raises(ValueError, match=expected_error):
+            exotic_module.main()
+        return None
 
     with pytest.raises(BoundReached):
         exotic_module.main()
@@ -7703,6 +7894,56 @@ def test_main_prereduced_respects_disable_vertical_flux_normalization_option(mon
     disabled = _run_main_until_vertical_flux_bound(monkeypatch, tmp_path, disable_vertical_flux_normalization=True)
 
     assert disabled is True
+
+
+def test_main_prereduced_override_invalid_coordinates_use_nasa_fallback_without_prompt(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        'builtins.input',
+        lambda prompt: pytest.fail("non-interactive coordinate resolution must not prompt"),
+    )
+
+    disabled = _run_main_until_vertical_flux_bound(
+        monkeypatch,
+        tmp_path,
+        override=True,
+        nasa_result=("Test Planet b", False, {"ra": 123.456, "dec": -45.678}),
+        target_ra="not-an-ra",
+        target_dec="not-a-dec",
+    )
+
+    assert disabled is False
+
+
+def test_main_prereduced_override_missing_ephemeris_uses_nasa_fallback(monkeypatch, tmp_path):
+    archive_parameters = {
+        'pPer': 2.5,
+        'pPerUnc': 0.001,
+        'midT': 2450000.25,
+        'midTUnc': 0.002,
+    }
+
+    disabled = _run_main_until_vertical_flux_bound(
+        monkeypatch,
+        tmp_path,
+        override=True,
+        nasa_result=("Test Planet b", False, archive_parameters),
+        ephemeris_overrides={'pPer': None, 'midT': 0.0},
+        expected_ephemeris=archive_parameters,
+    )
+
+    assert disabled is False
+
+
+def test_main_prereduced_stops_before_fitting_when_required_ephemeris_cannot_be_resolved(
+        monkeypatch, tmp_path):
+    _run_main_until_vertical_flux_bound(
+        monkeypatch,
+        tmp_path,
+        override=True,
+        nasa_result=("Test Planet b", False, {'pPer': np.nan, 'midT': None}),
+        ephemeris_overrides={'pPer': None, 'midT': 0.0},
+        expected_error=r"Cannot start EXOTIC reduction.*pPer.*midT",
+    )
 
 
 def test_main_prereduced_generates_seed_after_candidate_falls_back_to_inits(monkeypatch, tmp_path):

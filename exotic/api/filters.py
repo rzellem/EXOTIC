@@ -52,8 +52,9 @@ __fwhm = {
         "MObs CV": {"name": "CV", "fwhm": ("350.0", "850.0")},
         "ClearV": {"name": "CV", "fwhm": ("350.0", "1000.0")},
 
-        # Astrodon CBB; Source(s): George Silvis; https://astrodon.com/products/astrodon-exo-planet-filter/
-        "Astrodon ExoPlanet-BB": {"name": "CBB", "fwhm": ("500.0", "1000.0")},
+        # Clear with blue-blocking (CBB); wavelength source:
+        # https://astrodon.com/products/astrodon-exo-planet-filter/
+        "CBB": {"name": "CBB", "fwhm": ("500.0", "1000.0")},
 }
 # expose as fwhm and for convenience set 'desc' field equal to key
 fwhm = {k: v for k, v in __fwhm.items() if (v.update(desc=k),)}
@@ -81,9 +82,10 @@ fwhm_alias = {
         "Clear (unfiltered) reduced to V sequence": "MObs CV",
         "Clear (unfiltered) reduced to R sequence": "Cousins R",
 
-        "Clear with blue-blocking": "Astrodon ExoPlanet-BB",
-        "Astrodon-Exo": "Astrodon ExoPlanet-BB",
-        "Exop": "Astrodon ExoPlanet-BB",
+        "Clear with blue-blocking": "CBB",
+        "Astrodon ExoPlanet-BB": "CBB",
+        "Astrodon-Exo": "CBB",
+        "Exop": "CBB",
 
         # additional short aliases found in FILTER column values
         "bu": "Johnson U",
@@ -115,7 +117,7 @@ fwhm_alias = {
         "luminosity": "ClearV",
         "w": "ClearV",
         "pl": "ClearV",
-        "exo": "Astrodon ExoPlanet-BB",
+        "exo": "CBB",
 
         # OSC split-channel aliases
         "b1": "Photographic B",
@@ -128,7 +130,6 @@ fwhm_alias = {
 # standard filters w/o precisely defined FWHM values
 fwhm_names_nonspecific = {
         'CR': "Clear (unfiltered) reduced to R sequence",
-        'CBB': "Clear with blue-blocking",
         'CV': "Clear (unfiltered) reduced to V sequence",
         'TB': "DSLR Blue",
         'TG': "DSLR Green",

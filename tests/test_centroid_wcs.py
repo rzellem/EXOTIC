@@ -776,6 +776,118 @@ def test_parallel_alignment_task_uses_precomputed_fallback_transform(monkeypatch
     assert np.allclose(result["fallback"]["coords"], [[6.0, 1.0], [8.0, 3.0]])
 
 
+def test_classify_wcs_fallback_frames_queues_only_missing_or_rejected_candidates():
+    def candidate(target_xy, comp_xy):
+        coords = np.array([target_xy, comp_xy], dtype=float)
+        return {
+            "coords": coords,
+            "projected_off_frame": False,
+            "psf_rows": {
+                "target": np.array([*target_xy, 100.0, 2.0, 2.0, 0.0, 50.0]),
+                "comp1": np.array([*comp_xy, 90.0, 2.0, 2.0, 0.0, 50.0]),
+            },
+            "warnings": [],
+        }
+
+    results = [
+        {"index": 0, "file_name": "frame0.fits", "wcs": candidate((10.0, 10.0), (20.0, 10.0)), "fallback": None},
+        {"index": 1, "file_name": "frame1.fits", "wcs": candidate((11.0, 10.0), (50.0, 50.0)), "fallback": None},
+        {"index": 2, "file_name": "frame2.fits", "wcs": None, "fallback": None},
+        {"index": 3, "file_name": "frame3.fits", "wcs": candidate((13.0, 10.0), (23.0, 10.0)), "fallback": None},
+    ]
+
+    missing, rejected = exotic_module.classify_wcs_fallback_frames(
+        results,
+        np.array([[10.0, 10.0], [20.0, 10.0]]),
+    )
+
+    assert missing == [2]
+    assert rejected == [1]
+
+
+def test_build_multiprocess_alignment_results_runs_legacy_batch_only_for_wcs_failures(monkeypatch):
+    def candidate(target_xy, comp_xy):
+        coords = np.array([target_xy, comp_xy], dtype=float)
+        return {
+            "coords": coords,
+            "projected_off_frame": False,
+            "psf_rows": {
+                "target": np.array([*target_xy, 100.0, 2.0, 2.0, 0.0, 50.0]),
+                "comp1": np.array([*comp_xy, 90.0, 2.0, 2.0, 0.0, 50.0]),
+            },
+            "warnings": [],
+        }
+
+    batches = []
+
+    def fake_run_batch(tasks, *_args, **_kwargs):
+        batches.append(tasks)
+        if len(batches) == 1:
+            return {
+                0: {"index": 0, "file_name": "frame0.fits", "wcs": candidate((10.0, 10.0), (20.0, 10.0)), "fallback": None},
+                1: {"index": 1, "file_name": "frame1.fits", "wcs": candidate((11.0, 10.0), (21.0, 10.0)), "fallback": None},
+                2: {"index": 2, "file_name": "frame2.fits", "wcs": candidate((12.0, 10.0), (50.0, 50.0)), "fallback": None},
+                3: {"index": 3, "file_name": "frame3.fits", "wcs": None, "fallback": None},
+            }
+
+        return {
+            task[0]: {
+                "index": task[0],
+                "file_name": task[1],
+                "wcs": None,
+                "fallback": candidate((10.0 + task[0], 10.0), (20.0 + task[0], 10.0)),
+            }
+            for task in tasks
+        }
+
+    monkeypatch.setattr(exotic_module, "_run_multiprocess_alignment_task_batch", fake_run_batch)
+
+    results = exotic_module.build_multiprocess_alignment_results(
+        np.array(["frame0.fits", "frame1.fits", "frame2.fits", "frame3.fits"]),
+        4,
+        np.array([[10.0, 10.0], [20.0, 10.0]]),
+        target_and_comp_radec=np.array([[1.0, 2.0], [1.1, 2.1]]),
+        compute_fallback_transform=True,
+    )
+
+    assert [task[0] for task in batches[0]] == [0, 1, 2, 3]
+    assert all(task[7] is False for task in batches[0])
+    assert [task[0] for task in batches[1]] == [2, 3]
+    assert all(task[4] is True and task[7] is True for task in batches[1])
+    assert results[0]["fallback"] is None
+    assert results[1]["fallback"] is None
+    assert results[2]["fallback"] is not None
+    assert results[3]["fallback"] is not None
+
+
+def test_downsampled_fallback_transformation_restores_full_resolution_translation(monkeypatch):
+    calls = []
+
+    def fake_transformation(image_data, _file_name, **kwargs):
+        calls.append((image_data.shape, kwargs["reference_image"].shape))
+        return exotic_module.SimilarityTransform(
+            scale=1.01,
+            rotation=0.02,
+            translation=[2.0, -3.0],
+        )
+
+    monkeypatch.setattr(exotic_module, "transformation", fake_transformation)
+    image = np.ones((8, 12), dtype=float)
+    reference = np.ones((8, 12), dtype=float)
+
+    result = exotic_module.downsampled_fallback_transformation(
+        image,
+        "frame.fits",
+        reference_image=reference,
+        max_dimension=6,
+    )
+
+    assert calls == [((4, 6), (4, 6))]
+    assert result.scale == pytest.approx(1.01)
+    assert result.rotation == pytest.approx(0.02)
+    assert np.allclose(result.translation, [4.0, -6.0])
+
+
 def test_fit_alignment_candidate_psfs_serializes_plate_status_swap(monkeypatch):
     sentinel_status = types.SimpleNamespace(name="original-plate-status")
     started = threading.Event()

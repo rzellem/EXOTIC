@@ -212,6 +212,7 @@ class Inputs:
             'stellar_variability_only': False,
             'use_ensemble_photometry_for_stellar_variability': True,
             'photometer_fortuitous_variables': True,
+            'use_single_comparison_for_fortuitous_variables': True,
             'use_nextastro_vsx_cache_first': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
@@ -493,6 +494,10 @@ class Inputs:
             'photometer_fortuitous_variables': (
                 'photometer_fortuitous_variables',
                 'Photometer Fortuitous Variables? (y/n)',
+            ),
+            'use_single_comparison_for_fortuitous_variables': (
+                'use_single_comparison_for_fortuitous_variables',
+                'Use Single Comparison for Fortuitous Variables? (y/n)',
             ),
             'use_nextastro_vsx_cache_first': (
                 'use_nextastro_vsx_cache_first',

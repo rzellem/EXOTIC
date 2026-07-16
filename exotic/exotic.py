@@ -59,6 +59,7 @@ warnings.simplefilter('ignore', category=AstropyDeprecationWarning)
 import argparse
 import csv
 import copy
+from datetime import datetime
 import faulthandler
 from functools import lru_cache
 import inspect
@@ -252,11 +253,19 @@ STELLAR_VARIABILITY_ONLY_DEFAULT = False
 STELLAR_VARIABILITY_ENSEMBLE_DEFAULT = True
 STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS = 2
 STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS = 5
+STELLAR_VARIABILITY_APERTURE_ESTIMATION_MAX_COMPARISONS = 5
 STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_SIGMA = 3.0
 STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_FLOOR = 1.0e-4
 STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_FLOOR_FRACTION = 0.05
 STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_HIGH_THRESHOLD_FLOOR_MAG = 0.01
+STELLAR_VARIABILITY_COMPARISON_GAP_MIN_RATIO = 5.0
+STELLAR_VARIABILITY_COMPARISON_GAP_MIN_SECONDS = 30.0
+STELLAR_VARIABILITY_COMPARISON_GAP_WINDOW_FRAMES = 50
+STELLAR_VARIABILITY_COMPARISON_GAP_MIN_POINTS = 10
+STELLAR_VARIABILITY_COMPARISON_GAP_MAX_STEP_MAG = 0.02
+STELLAR_VARIABILITY_COMPARISON_GAP_MIN_SIGNIFICANCE = 5.0
 PHOTOMETER_FORTUITOUS_VARIABLES_DEFAULT = True
+USE_SINGLE_COMPARISON_FOR_FORTUITOUS_VARIABLES_DEFAULT = True
 USE_NEXTASTRO_VSX_CACHE_FIRST_DEFAULT = False
 FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR = 0.05
 FORTUITOUS_VARIABLE_OPTIMAL_MAX_PERIOD_DAYS = 10.0
@@ -388,6 +397,7 @@ PSF_FIT_MAX_SIGMA_PIXELS = 8.0
 PSF_FIT_SELECTION_MARGIN = 0.35
 PSF_ALIGNMENT_TARGET_WIDTH_MAX_COMP_RATIO = 3.0
 PSF_ALIGNMENT_CANDIDATE_SELECTION_MARGIN = 0.20
+LEGACY_ALIGNMENT_MAX_DIMENSION = 1600
 TIME_REJECTION_RANGE_DISPLAY_LIMIT = 6
 TIME_REJECTION_GROUP_GAP_CADENCE_MULTIPLIER = 2.5
 NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS = 5
@@ -404,6 +414,7 @@ NEXTASTRO_PHOTOMETRY_COLUMNS = (
 NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
 NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 2.0
 CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX = 0.05
+CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX = 0.10
 REFERENCE_FALLBACK_COMPARISON_LIMIT = 10
 REFERENCE_FALLBACK_DETECTION_MAX_STARS = 60
 REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS = 12
@@ -7519,16 +7530,43 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     return fit
 
 
+def format_clock_log_message(string, clock_time=None):
+    clock_time = datetime.now() if clock_time is None else clock_time
+    message = str(string)
+    leading_newlines = len(message) - len(message.lstrip('\r\n'))
+    prefix = message[:leading_newlines]
+    body = message[leading_newlines:]
+    return f"{prefix}[{clock_time.strftime('%H:%M')}] {body}"
+
+
 def log_info(string, warn=False, error=False):
+    timestamped_string = format_clock_log_message(string)
     if error:
-        print(f"\033[31m {string}\033[0m", flush=True)
+        print(f"\033[31m {timestamped_string}\033[0m", flush=True)
     elif warn:
-        print(f"\033[34m {string}\033[0m", flush=True)
+        print(f"\033[34m {timestamped_string}\033[0m", flush=True)
     else:
-        print(string, flush=True)
-    log.debug(string)
+        print(timestamped_string, flush=True)
+    log.debug(timestamped_string)
     _reset_runtime_traceback_watchdog()
     return True
+
+
+class ReductionStageTimer:
+    def __init__(self, time_source=perf_counter):
+        self._time_source = time_source
+        self.started_at = float(time_source())
+        self.previous_checkpoint = self.started_at
+
+    def checkpoint(self, label):
+        now = float(self._time_source())
+        elapsed_seconds = max(0.0, now - self.previous_checkpoint)
+        total_seconds = max(0.0, now - self.started_at)
+        log_info(
+            f"STEP TIMING | {label} | elapsed_s={elapsed_seconds:.2f} | total_s={total_seconds:.2f}"
+        )
+        self.previous_checkpoint = now
+        return elapsed_seconds
 
 
 def _find_runtime_handler(handler_name):
@@ -8231,6 +8269,14 @@ def should_photometer_fortuitous_variables(config_value):
     )
 
 
+def should_use_single_comparison_for_fortuitous_variables(config_value):
+    return parse_bool_config_value(
+        config_value,
+        USE_SINGLE_COMPARISON_FOR_FORTUITOUS_VARIABLES_DEFAULT,
+        'use_single_comparison_for_fortuitous_variables',
+    )
+
+
 def should_use_nextastro_vsx_cache_first(config_value):
     return parse_bool_config_value(
         config_value,
@@ -8720,6 +8766,19 @@ def configure_windows_multiprocessing_main_spec():
 def ProcessPoolExecutor(*args, **kwargs):
     if sys.platform == "win32":
         return ThreadPoolExecutor(*args, **kwargs)
+    return _ProcessPoolExecutor(*args, **kwargs)
+
+
+def ImageProcessPoolExecutor(*args, **kwargs):
+    """Use real processes for CPU-bound image work, including on Windows.
+
+    The general EXOTIC executor intentionally retains its Windows thread fallback
+    for GUI/fitter compatibility.  Image alignment workers are module-level,
+    pickle-safe functions and benefit materially from bypassing the GIL, so use
+    a spawned process context for that narrower workload.
+    """
+    if sys.platform == "win32":
+        kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
     return _ProcessPoolExecutor(*args, **kwargs)
 
 
@@ -12902,6 +12961,109 @@ def check_parameters(init_parameters, parameters):
             return False
 
 
+REQUIRED_TRANSIT_EPHEMERIS_FIELDS = {
+    'pPer': {
+        'label': 'Orbital Period (days)',
+        'uncertainty_key': 'pPerUnc',
+    },
+    'midT': {
+        'label': 'Published Mid-Transit Time (BJD-UTC)',
+        'uncertainty_key': 'midTUnc',
+    },
+}
+
+
+def _positive_finite_ephemeris_value(value):
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(numeric_value) or numeric_value <= 0:
+        return None
+    return numeric_value
+
+
+def invalid_required_transit_ephemeris_fields(planet_dict):
+    if not isinstance(planet_dict, dict):
+        return list(REQUIRED_TRANSIT_EPHEMERIS_FIELDS)
+    return [
+        key
+        for key in REQUIRED_TRANSIT_EPHEMERIS_FIELDS
+        if _positive_finite_ephemeris_value(planet_dict.get(key)) is None
+    ]
+
+
+def resolve_required_transit_ephemeris(planet_dict, archive_planet_dict=None, archive_lookup=None,
+                                       target_name=None):
+    """Fill missing period/Tmid values from NEA, then fail before reduction if either remains invalid."""
+    resolved = dict(planet_dict) if isinstance(planet_dict, dict) else {}
+    target_name = target_name or resolved.get('pName')
+    invalid_fields = invalid_required_transit_ephemeris_fields(resolved)
+    archive_error = None
+
+    if invalid_fields and not isinstance(archive_planet_dict, dict) and callable(archive_lookup):
+        try:
+            archive_planet_dict = archive_lookup()
+        except Exception as exc:
+            archive_error = exc
+
+    if isinstance(archive_planet_dict, dict):
+        for key in invalid_fields:
+            archive_value = _positive_finite_ephemeris_value(archive_planet_dict.get(key))
+            if archive_value is None:
+                continue
+
+            field = REQUIRED_TRANSIT_EPHEMERIS_FIELDS[key]
+            original_value = resolved.get(key)
+            resolved[key] = archive_value
+            log_info(
+                f"Required ephemeris fallback for {target_name or 'the target'}: "
+                f"{field['label']} was missing or invalid ({original_value!r}); using NASA Exoplanet "
+                f"Archive value {archive_value}."
+            )
+
+            uncertainty_key = field['uncertainty_key']
+            if _positive_finite_ephemeris_value(resolved.get(uncertainty_key)) is None:
+                archive_uncertainty = _positive_finite_ephemeris_value(
+                    archive_planet_dict.get(uncertainty_key)
+                )
+                if archive_uncertainty is not None:
+                    resolved[uncertainty_key] = archive_uncertainty
+
+    invalid_fields = invalid_required_transit_ephemeris_fields(resolved)
+    if invalid_fields:
+        invalid_descriptions = [
+            f"{REQUIRED_TRANSIT_EPHEMERIS_FIELDS[key]['label']} ({key})={resolved.get(key)!r}"
+            for key in invalid_fields
+        ]
+        if archive_error is not None:
+            archive_note = (
+                f" NASA Exoplanet Archive fallback failed with "
+                f"{type(archive_error).__name__}: {archive_error}."
+            )
+        elif isinstance(archive_planet_dict, dict):
+            archive_note = " The NASA Exoplanet Archive did not provide usable replacement value(s)."
+        else:
+            archive_note = " NASA Exoplanet Archive parameters were unavailable."
+
+        message = (
+            f"Cannot start EXOTIC reduction for {target_name or 'the target'}: required planetary "
+            f"ephemeris is missing or invalid: {', '.join(invalid_descriptions)}. Orbital Period and "
+            f"Published Mid-Transit Time must both be finite numbers greater than zero."
+            f"{archive_note} Correct the initialization file or archive metadata before rerunning."
+        )
+        log_info(message, error=True)
+        if archive_error is not None:
+            raise ValueError(message) from archive_error
+        raise ValueError(message)
+
+    for key in REQUIRED_TRANSIT_EPHEMERIS_FIELDS:
+        resolved[key] = _positive_finite_ephemeris_value(resolved[key])
+    return resolved
+
+
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
 def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
@@ -12943,7 +13105,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
         userpdict['ra'] = user_input(f"\nEnter the {planet_params[0]}: ", type_=str)
     if userpdict['dec'] is None:
         userpdict['dec'] = user_input(f"\nEnter the {planet_params[1]}: ", type_=str)
-    if type(userpdict['ra']) and type(userpdict['dec']) is str:
+    if isinstance(userpdict['ra'], str) or isinstance(userpdict['dec'], str):
         userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
     radeclist = ['ra', 'dec']
@@ -12972,7 +13134,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                     userpdict['dec'] = user_input(f"Enter the {planet_params[1]}: ", type_=str)
                     break
 
-    if type(userpdict['ra']) and type(userpdict['dec']) is str:
+    if isinstance(userpdict['ra'], str) or isinstance(userpdict['dec'], str):
         userpdict['ra'], userpdict['dec'] = radec_hours_to_degree(userpdict['ra'], userpdict['dec'])
 
     # Exoplanet confirmed in NASA Exoplanet Archive
@@ -13037,27 +13199,69 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
 
 
 # Conversion of Right Ascension and Declination: hours -> degrees
-def radec_hours_to_degree(ra, dec):
+def radec_hours_to_degree(ra, dec, non_interactive_run=False, archive_ra=None, archive_dec=None,
+                          target_name=None):
+    def parse_coordinates(ra_input, dec_input):
+        ra_value = str(ra_input).strip()
+        dec_value = str(dec_input).strip()
+
+        # Accept either sexagesimal RA strings (HH:MM:SS) or decimal RA degrees.
+        # A decimal-like value with no separators should be treated as degrees.
+        ra_unit = u.hourangle if any(sep in ra_value for sep in (':', ' ')) else u.deg
+
+        # Declination can be provided as either sexagesimal or decimal degrees.
+        dec_unit = u.deg
+        if any(sep in dec_value for sep in (':', ' ')):
+            dec_value = dec_value.replace(':', ' ')
+
+        if ra_unit is u.hourangle:
+            ra_value = ra_value.replace(':', ' ')
+
+        coordinates = SkyCoord(ra=ra_value, dec=dec_value, unit=(ra_unit, dec_unit))
+        ra_degrees = float(coordinates.ra.degree)
+        dec_degrees = float(coordinates.dec.degree)
+        if not np.isfinite(ra_degrees) or not np.isfinite(dec_degrees):
+            raise ValueError("RA and Dec must both be finite values")
+        return ra_degrees, dec_degrees
+
     while True:
         try:
-            ra_value = str(ra).strip()
-            dec_value = str(dec).strip()
+            return parse_coordinates(ra, dec)
+        except (TypeError, ValueError) as input_error:
+            if non_interactive_run:
+                target_description = f" for target {target_name}" if target_name else ""
+                archive_coordinates_supplied = archive_ra is not None or archive_dec is not None
+                if archive_ra is not None and archive_dec is not None:
+                    try:
+                        fallback_ra, fallback_dec = parse_coordinates(archive_ra, archive_dec)
+                    except (TypeError, ValueError) as archive_error:
+                        raise ValueError(
+                            f"Non-interactive run cancelled{target_description}: initialization-file RA={ra!r} "
+                            f"and Dec={dec!r} are invalid ({input_error}), and the NASA Exoplanet Archive "
+                            f"coordinates RA={archive_ra!r} and Dec={archive_dec!r} are also unusable "
+                            f"({archive_error}). Provide valid target coordinates in the initialization file."
+                        ) from archive_error
 
-            # Accept either sexagesimal RA strings (HH:MM:SS) or decimal RA degrees.
-            # A decimal-like value with no separators should be treated as degrees.
-            ra_unit = u.hourangle if any(sep in ra_value for sep in (':', ' ')) else u.deg
+                    log_info(
+                        f"Warning: initialization-file RA={ra!r} and Dec={dec!r} are invalid"
+                        f"{target_description} ({input_error}). Using NASA Exoplanet Archive coordinates "
+                        f"RA={fallback_ra:.8f} deg, Dec={fallback_dec:.8f} deg instead.",
+                        warn=True,
+                    )
+                    return fallback_ra, fallback_dec
 
-            # Declination can be provided as either sexagesimal or decimal degrees.
-            dec_unit = u.deg
-            if any(sep in dec_value for sep in (':', ' ')):
-                dec_value = dec_value.replace(':', ' ')
+                archive_reason = (
+                    f"the NASA Exoplanet Archive returned incomplete coordinates "
+                    f"(RA={archive_ra!r}, Dec={archive_dec!r})"
+                    if archive_coordinates_supplied
+                    else "NASA Exoplanet Archive coordinates are unavailable"
+                )
+                raise ValueError(
+                    f"Non-interactive run cancelled{target_description}: initialization-file RA={ra!r} "
+                    f"and Dec={dec!r} are invalid ({input_error}), and {archive_reason}. Provide valid target "
+                    "coordinates in the initialization file."
+                ) from input_error
 
-            if ra_unit is u.hourangle:
-                ra_value = ra_value.replace(':', ' ')
-
-            c = SkyCoord(ra=ra_value, dec=dec_value, unit=(ra_unit, dec_unit))
-            return c.ra.degree, c.dec.degree
-        except ValueError:
             log_info("Error: The format entered for Right Ascension and/or Declination is not correct, "
                      "please try again.", error=True)
             ra = input("Input the Right Ascension of target (HH:MM:SS): ")
@@ -13551,7 +13755,7 @@ def collect_transform_frame_pointings(inputfiles, frame_loader=None, return_tran
             if getattr(image_data, "ndim", 0) != 2:
                 continue
 
-            tform = transformation(
+            tform = downsampled_fallback_transformation(
                 image_data,
                 file_name,
                 report_failure=False,
@@ -15026,7 +15230,8 @@ def normalize_nextastro_filter_key(obs_filter):
     return re.sub(r"[^a-z0-9]", "", str(obs_filter or "").lower())
 
 
-def nextastro_photometry_band_candidates(obs_filter):
+def nextastro_photometry_band_candidates(obs_filter, include_fallback=True):
+    raw_filter = str(obs_filter or '').strip()
     filter_key = normalize_nextastro_filter_key(obs_filter)
     direct_map = {
         'u': [('umag', 'err_umag', 'u')],
@@ -15052,11 +15257,8 @@ def nextastro_photometry_band_candidates(obs_filter):
         'sg': [('g', 'dg', 'g')],
         'sloang': [('g', 'dg', 'g')],
         'sdssg': [('g', 'dg', 'g')],
-        'photographicg': [('g', 'dg', 'g')],
         'gp': [('g', 'dg', 'g')],
         'g': [('g', 'dg', 'g')],
-        'pg': [('g', 'dg', 'g')],
-        'tg': [('g', 'dg', 'g')],
         'sr': [('r', 'dr', 'r')],
         'sloanr': [('r', 'dr', 'r')],
         'sdssr': [('r', 'dr', 'r')],
@@ -15098,8 +15300,13 @@ def nextastro_photometry_band_candidates(obs_filter):
         ('z', 'dz', 'z'),
         ('umag', 'err_umag', 'u'),
     ]
-    candidates = list(direct_map.get(filter_key, []))
-    candidates.extend(candidate for candidate in fallback if candidate not in candidates)
+    # EXOTIC's exact uppercase ``G`` means Photographic G.  It is not the
+    # NextAstro catalogue's Sloan-like ``g`` column, nor Gaia ``G``
+    # (``phot_g_mean_mag``).  Preserve case here because the normalized key
+    # intentionally cannot distinguish G from g.
+    candidates = [] if raw_filter == 'G' else list(direct_map.get(filter_key, []))
+    if include_fallback:
+        candidates.extend(candidate for candidate in fallback if candidate not in candidates)
     return candidates
 
 
@@ -15173,22 +15380,36 @@ def nextastro_catalog_rows(catalog_response):
 
 
 def row_nextastro_magnitude(row, band_candidates, max_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX):
+    base_error_limit = _finite_float(max_error)
+    if base_error_limit is None:
+        base_error_limit = CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
     for priority, (mag_column, error_column, band_label) in enumerate(band_candidates):
+        allow_bv_error_fallback = (
+            str(band_label).strip().upper() in {'B', 'V'}
+            and base_error_limit == CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
+        )
+        effective_error_limit = (
+            CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX
+            if allow_bv_error_fallback
+            else base_error_limit
+        )
         usable_magnitude = usable_catalog_reference_magnitude(
             row.get(mag_column),
             row.get(error_column),
-            max_error=max_error,
+            max_error=effective_error_limit,
         )
         if usable_magnitude is None:
             continue
         magnitude, magnitude_error = usable_magnitude
         return {
             'priority': priority,
+            'magnitude_error_tier': int(magnitude_error > base_error_limit),
             'mag': magnitude,
             'error': magnitude_error,
             'mag_band': band_label,
             'mag_column': mag_column,
             'mag_error_column': error_column,
+            'uses_relaxed_bv_error_limit': bool(magnitude_error > base_error_limit),
         }
     return None
 
@@ -15244,7 +15465,11 @@ def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
 
     if not matches:
         return None
-    matches.sort(key=lambda match: (match['priority'], match['separation_arcsec']))
+    matches.sort(key=lambda match: (
+        match['priority'],
+        match.get('magnitude_error_tier', 0),
+        match['separation_arcsec'],
+    ))
     return matches[0]
 
 
@@ -15995,7 +16220,10 @@ def select_automatic_optimal_calibration_stars(
                 obs_filter,
             )
             color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
-            if match is None:
+            if (
+                match is None
+                or catalog_band_priority(match.get('mag_band'), obs_filter) != 0
+            ):
                 continue
             color_delta = (
                 abs(color['color'] - target_color['color'])
@@ -16192,6 +16420,14 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
                 warn=True,
             )
             continue
+        if catalog_band_priority(match.get('mag_band'), obs_filter) != 0:
+            log_info(
+                "Warning: rejecting NextAstro photometry calibration for comparison star "
+                f"#{index + 1} because catalog band {match.get('mag_band')!r} does not match "
+                f"observed filter {obs_filter!r}.",
+                warn=True,
+            )
+            continue
 
         catalog_identity = calibration_catalog_identity(match)
         if catalog_identity is not None and catalog_identity in existing_catalog_identities:
@@ -16239,6 +16475,14 @@ def nextastro_prereduced_calibration_star(phot_comp_star, obs_filter):
 
     match = nextastro_photometry_for_coordinate(comp_ra, comp_dec, obs_filter)
     if match is None:
+        return None, None
+    if catalog_band_priority(match.get('mag_band'), obs_filter) != 0:
+        log_info(
+            "Warning: rejecting NextAstro photometry calibration for the pre-reduced "
+            f"comparison star because catalog band {match.get('mag_band')!r} does not match "
+            f"observed filter {obs_filter!r}.",
+            warn=True,
+        )
         return None, None
 
     match.update({
@@ -16708,6 +16952,42 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
         plateStatus.alignmentError()
     return SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
 
+
+def downsampled_fallback_transformation(image_data, file_name, report_failure=True, reference_image=None,
+                                        max_dimension=LEGACY_ALIGNMENT_MAX_DIMENSION):
+    """Run the legacy image transform on a reduced image and return full-resolution coordinates."""
+    if reference_image is None:
+        current_image = np.asarray(image_data[0])
+        reference_image = np.asarray(image_data[1])
+    else:
+        current_image = np.asarray(image_data)
+        reference_image = np.asarray(reference_image)
+
+    largest_dimension = max(current_image.shape[:2] + reference_image.shape[:2])
+    max_dimension = max(1, int(max_dimension))
+    downsample_factor = max(1, int(np.ceil(float(largest_dimension) / max_dimension)))
+    if downsample_factor == 1:
+        return transformation(
+            current_image,
+            file_name,
+            report_failure=report_failure,
+            reference_image=reference_image,
+        )
+
+    reduced_current = current_image[::downsample_factor, ::downsample_factor]
+    reduced_reference = reference_image[::downsample_factor, ::downsample_factor]
+    reduced_tform = transformation(
+        reduced_current,
+        file_name,
+        report_failure=report_failure,
+        reference_image=reduced_reference,
+    )
+    return SimilarityTransform(
+        scale=float(reduced_tform.scale),
+        rotation=float(reduced_tform.rotation),
+        translation=np.asarray(reduced_tform.translation, dtype=float) * downsample_factor,
+    )
+
 def load_image_data(file_name):
     hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
     extension = 0
@@ -17108,7 +17388,12 @@ def transformation_task(i, file_name, reference_file):
     reference_image = load_image_data(reference_file)
     # Multiprocess pre-computation should not emit plate-status warnings; the
     # serial reduction path decides whether the fallback transform is needed.
-    return i, transformation(image_data, file_name, report_failure=False, reference_image=reference_image)
+    return i, downsampled_fallback_transformation(
+        image_data,
+        file_name,
+        report_failure=False,
+        reference_image=reference_image,
+    )
 
 
 _TRANSFORM_REFERENCE_IMAGE = None
@@ -17163,7 +17448,12 @@ def _transformation_pool_initializer(reference_file):
 
 def transformation_task_with_cached_reference(i, file_name):
     image_data = load_image_data(file_name)
-    return i, transformation(image_data, file_name, report_failure=False, reference_image=_TRANSFORM_REFERENCE_IMAGE)
+    return i, downsampled_fallback_transformation(
+        image_data,
+        file_name,
+        report_failure=False,
+        reference_image=_TRANSFORM_REFERENCE_IMAGE,
+    )
 
 
 class _ParallelPlateStatusRecorder:
@@ -17199,47 +17489,87 @@ def _alignment_pool_initializer(reference_file, generalDark, generalBias, genera
         'demosaic_out': demosaic_out,
         'demosaic_mult': demosaic_mult,
         'bad_pixel_reference': bad_pixel_reference,
+        'reference_file': str(reference_file),
     }
-    _TRANSFORM_REFERENCE_IMAGE = load_calibrated_reduction_image(
-        reference_file,
-        generalDark,
-        generalBias,
-        generalFlat,
-        demosaic_fmt,
-        demosaic_out,
-        demosaic_mult,
-        bad_pixel_reference=bad_pixel_reference,
-    )
+    # WCS-first jobs do not need the large reference image.  Load it lazily only
+    # inside a worker that is actually assigned a legacy alignment fallback.
+    _TRANSFORM_REFERENCE_IMAGE = None
     _TRANSFORM_REFERENCE_CACHE = None
+
+
+def _alignment_worker_reference_image():
+    global _TRANSFORM_REFERENCE_IMAGE
+    if _TRANSFORM_REFERENCE_IMAGE is None:
+        context = _ALIGNMENT_POOL_CONTEXT
+        _TRANSFORM_REFERENCE_IMAGE = load_calibrated_reduction_image(
+            context['reference_file'],
+            context.get('generalDark'),
+            context.get('generalBias'),
+            context.get('generalFlat'),
+            context.get('demosaic_fmt'),
+            context.get('demosaic_out'),
+            context.get('demosaic_mult'),
+            bad_pixel_reference=context.get('bad_pixel_reference'),
+        )
+    return _TRANSFORM_REFERENCE_IMAGE
 
 
 def _load_alignment_worker_frame(file_name):
     context = _ALIGNMENT_POOL_CONTEXT
-    hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+    use_memmap = can_memmap_aperture_tuning_cutouts(
+        generalDark=context.get('generalDark'),
+        generalBias=context.get('generalBias'),
+        generalFlat=context.get('generalFlat'),
+        demosaic_fmt=context.get('demosaic_fmt'),
+        bad_pixel_reference=context.get('bad_pixel_reference'),
+    )
+    hdul = fits.open(
+        name=file_name,
+        memmap=use_memmap,
+        cache=False,
+        lazy_load_hdus=use_memmap,
+        ignore_missing_end=True,
+    )
     extension = 0
     image_header = hdul[extension].header
     while image_header["NAXIS"] == 0:
         extension += 1
         image_header = hdul[extension].header
 
+    if use_memmap and not fits_header_supports_memmap(image_header):
+        hdul.close()
+        hdul = fits.open(
+            name=file_name,
+            memmap=False,
+            cache=False,
+            lazy_load_hdus=False,
+            ignore_missing_end=True,
+        )
+        extension = 0
+        image_header = hdul[extension].header
+        while image_header["NAXIS"] == 0:
+            extension += 1
+            image_header = hdul[extension].header
+        use_memmap = False
     image_data = hdul[extension].data
     hdul.close()
 
-    image_data = apply_cals(
-        image_data,
-        context.get('generalDark'),
-        context.get('generalBias'),
-        context.get('generalFlat'),
-        1,
-    )
-    image_data = demosaic_img(
-        image_data,
-        context.get('demosaic_fmt'),
-        context.get('demosaic_out'),
-        context.get('demosaic_mult'),
-        1,
-    )
-    image_data = repair_bad_pixels_in_frame(image_data, context.get('bad_pixel_reference'))
+    if not use_memmap:
+        image_data = apply_cals(
+            image_data,
+            context.get('generalDark'),
+            context.get('generalBias'),
+            context.get('generalFlat'),
+            1,
+        )
+        image_data = demosaic_img(
+            image_data,
+            context.get('demosaic_fmt'),
+            context.get('demosaic_out'),
+            context.get('demosaic_mult'),
+            1,
+        )
+        image_data = repair_bad_pixels_in_frame(image_data, context.get('bad_pixel_reference'))
     return image_header, image_data
 
 
@@ -17256,11 +17586,11 @@ def _pointing_precheck_alignment_task(task):
                 'transform': None,
             }
 
-        tform = transformation(
+        tform = downsampled_fallback_transformation(
             image_data,
             file_name,
             report_failure=False,
-            reference_image=_TRANSFORM_REFERENCE_IMAGE,
+            reference_image=_alignment_worker_reference_image(),
         )
         mapped_anchor = np.asarray(tform(reference_anchor), dtype=float).reshape(-1, 2)[0]
         usable = bool(np.all(np.isfinite(mapped_anchor)))
@@ -17433,17 +17763,17 @@ def _parallel_alignment_task(task):
         except Exception as exc:
             result['wcs_error'] = str(exc)
 
-    if precomputed_fallback_transform is not None or compute_fallback_transform or result['wcs'] is None:
+    if precomputed_fallback_transform is not None or compute_fallback_transform:
         if precomputed_fallback_transform is not None:
             tform = precomputed_fallback_transform
         elif i == 0:
             tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
         else:
-            tform = transformation(
+            tform = downsampled_fallback_transformation(
                 image_data,
                 file_name,
                 report_failure=False,
-                reference_image=_TRANSFORM_REFERENCE_IMAGE,
+                reference_image=_alignment_worker_reference_image(),
             )
         transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
         result['fallback'] = _fit_alignment_candidate_psfs(
@@ -17698,6 +18028,112 @@ def apply_parallel_alignment_result(result, frame_index, psf_data, tar_comp_dist
     return selected_source
 
 
+def wcs_alignment_candidate_is_acceptable(result, frame_index, psf_data, tar_comp_dist, comp_keys):
+    if not isinstance(result, dict) or result.get('wcs') is None:
+        return False
+
+    _, _, diagnostics = select_alignment_candidate(
+        result,
+        frame_index,
+        psf_data,
+        tar_comp_dist,
+        comp_keys,
+    )
+    return bool(
+        diagnostics['wcs_decision'].get('use_wcs_alignment')
+        and np.isfinite(diagnostics['wcs_score'])
+    )
+
+
+def classify_wcs_fallback_frames(results, target_and_comp_pixels):
+    """Return missing and rejected WCS frame indices without running legacy alignment."""
+    target_and_comp_pixels = np.asarray(target_and_comp_pixels, dtype=float).reshape(-1, 2)
+    comp_keys = [f"comp{comp_idx + 1}" for comp_idx in range(max(0, len(target_and_comp_pixels) - 1))]
+    psf_data = {'target': np.zeros((len(results), 7), dtype=float)}
+    tar_comp_dist = {}
+    for comp_idx, comp_key in enumerate(comp_keys):
+        psf_data[comp_key] = np.zeros((len(results), 7), dtype=float)
+        tar_comp_dist[comp_key] = np.abs(
+            target_and_comp_pixels[comp_idx + 1] - target_and_comp_pixels[0]
+        )
+
+    missing_wcs_indices = []
+    rejected_wcs_indices = []
+    for frame_index, result in enumerate(results):
+        if result is None or result.get('wcs') is None:
+            missing_wcs_indices.append(frame_index)
+        elif wcs_alignment_candidate_is_acceptable(
+            result,
+            frame_index,
+            psf_data,
+            tar_comp_dist,
+            comp_keys,
+        ):
+            _store_alignment_candidate_psfs(result['wcs'], frame_index, psf_data, comp_keys)
+            if frame_index == 0:
+                _update_reference_comp_offsets(psf_data, tar_comp_dist, comp_keys)
+            continue
+        else:
+            rejected_wcs_indices.append(frame_index)
+
+        # Keep the last accepted solution as the continuity reference while the
+        # rejected frame waits for its fallback result.
+        if frame_index > 0:
+            psf_data['target'][frame_index] = psf_data['target'][frame_index - 1]
+            for comp_key in comp_keys:
+                psf_data[comp_key][frame_index] = psf_data[comp_key][frame_index - 1]
+
+    return missing_wcs_indices, rejected_wcs_indices
+
+
+def _run_multiprocess_alignment_task_batch(tasks, max_processes, reference_file,
+                                            generalDark=None, generalBias=None, generalFlat=None,
+                                            demosaic_fmt=None, demosaic_out=None, demosaic_mult=None,
+                                            bad_pixel_reference=None, progress_label='alignment'):
+    total_jobs = len(tasks)
+    if total_jobs == 0:
+        return {}
+
+    batch_start = perf_counter()
+    max_workers = min(max_processes, os.cpu_count() or 1, total_jobs, MAX_MULTIPROCESS_TRANSFORM_WORKERS)
+    log_info(
+        f"Using multiprocessing for {progress_label} "
+        f"with {max_workers} worker(s) across {total_jobs} image(s)."
+    )
+
+    results = {}
+    with suppress_tk_cleanup_during_process_pool():
+        with ImageProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_alignment_pool_initializer,
+            initargs=(
+                str(reference_file),
+                generalDark,
+                generalBias,
+                generalFlat,
+                demosaic_fmt,
+                demosaic_out,
+                demosaic_mult,
+                bad_pixel_reference,
+            ),
+        ) as executor:
+            futures = [executor.submit(_parallel_alignment_task, task) for task in tasks]
+            completed = 0
+            for future in as_completed(futures):
+                result = future.result()
+                results[result['index']] = result
+                completed += 1
+                if completed == total_jobs or completed % 10 == 0:
+                    log_info(f"Multiprocessing {progress_label} progress: {completed}/{total_jobs}")
+
+    elapsed_seconds = perf_counter() - batch_start
+    log_info(
+        f"Multiprocessing {progress_label} completed {total_jobs} image(s) in "
+        f"{elapsed_seconds:.2f}s ({1000.0 * elapsed_seconds / total_jobs:.1f} ms/image wall time)."
+    )
+    return results
+
+
 def build_multiprocess_alignment_results(inputfiles, max_processes, target_and_comp_pixels,
                                          target_and_comp_radec=None, ignore_header_wcs=False,
                                          generalDark=None, generalBias=None, generalFlat=None,
@@ -17710,16 +18146,61 @@ def build_multiprocess_alignment_results(inputfiles, max_processes, target_and_c
     if total_jobs == 0:
         return []
 
-    max_workers = min(max_processes, os.cpu_count() or 1, total_jobs, MAX_MULTIPROCESS_TRANSFORM_WORKERS)
-    results = [None] * total_jobs
-
-    log_info(
-        "Using multiprocessing for alignment "
-        f"with {max_workers} worker(s) across {total_jobs} image(s)."
-    )
-
-    tasks = []
+    wcs_tasks = []
     for i, file_name in enumerate(inputfiles):
+        frame_fast_centroid = should_use_fast_centroid(i) if use_fast_centroid_cadence else False
+        target_fast_centroid = (
+            should_use_fast_target_centroid(i, adaptive_apertures=use_adaptive_apertures)
+            if use_fast_centroid_cadence else False
+        )
+        wcs_tasks.append((
+            i,
+            str(file_name),
+            target_and_comp_pixels,
+            target_and_comp_radec,
+            ignore_header_wcs,
+            target_fast_centroid,
+            frame_fast_centroid,
+            False,
+            first_frame_uses_input_comp_pixels,
+            None,
+        ))
+
+    wcs_results_by_index = _run_multiprocess_alignment_task_batch(
+        wcs_tasks,
+        max_processes,
+        inputfiles[0],
+        generalDark=generalDark,
+        generalBias=generalBias,
+        generalFlat=generalFlat,
+        demosaic_fmt=demosaic_fmt,
+        demosaic_out=demosaic_out,
+        demosaic_mult=demosaic_mult,
+        bad_pixel_reference=bad_pixel_reference,
+        progress_label='WCS-first alignment',
+    )
+    results = [wcs_results_by_index.get(i) for i in range(total_jobs)]
+    if not compute_fallback_transform:
+        return results
+
+    missing_wcs_indices, rejected_wcs_indices = classify_wcs_fallback_frames(
+        results,
+        target_and_comp_pixels,
+    )
+    fallback_indices = sorted(missing_wcs_indices + rejected_wcs_indices)
+    log_info(
+        f"WCS-first alignment accepted {total_jobs - len(fallback_indices)}/{total_jobs} frame(s); "
+        f"queued {len(fallback_indices)} legacy fallback(s) "
+        f"(missing WCS: {len(missing_wcs_indices)}, rejected WCS: {len(rejected_wcs_indices)}). "
+        f"Legacy fallback images are downsampled to at most {LEGACY_ALIGNMENT_MAX_DIMENSION} pixels "
+        "on their longest side."
+    )
+    if not fallback_indices:
+        return results
+
+    fallback_tasks = []
+    for i in fallback_indices:
+        file_name = inputfiles[i]
         precomputed_fallback_transform = None
         if precomputed_fallback_transforms:
             precomputed_fallback_transform = precomputed_fallback_transforms.get(str(file_name))
@@ -17728,41 +18209,36 @@ def build_multiprocess_alignment_results(inputfiles, max_processes, target_and_c
             should_use_fast_target_centroid(i, adaptive_apertures=use_adaptive_apertures)
             if use_fast_centroid_cadence else False
         )
-        tasks.append((
+        fallback_tasks.append((
             i,
             str(file_name),
             target_and_comp_pixels,
             target_and_comp_radec,
-            ignore_header_wcs,
+            True,
             target_fast_centroid,
             frame_fast_centroid,
-            compute_fallback_transform,
+            True,
             first_frame_uses_input_comp_pixels,
             precomputed_fallback_transform,
         ))
 
-    with ProcessPoolExecutor(
-        max_workers=max_workers,
-        initializer=_alignment_pool_initializer,
-        initargs=(
-            str(inputfiles[0]),
-            generalDark,
-            generalBias,
-            generalFlat,
-            demosaic_fmt,
-            demosaic_out,
-            demosaic_mult,
-            bad_pixel_reference,
-        ),
-    ) as executor:
-        futures = [executor.submit(_parallel_alignment_task, task) for task in tasks]
-        completed = 0
-        for future in as_completed(futures):
-            result = future.result()
-            results[result['index']] = result
-            completed += 1
-            if completed == total_jobs or completed % 10 == 0:
-                log_info(f"Multiprocessing alignment progress: {completed}/{total_jobs}")
+    fallback_results = _run_multiprocess_alignment_task_batch(
+        fallback_tasks,
+        max_processes,
+        inputfiles[0],
+        generalDark=generalDark,
+        generalBias=generalBias,
+        generalFlat=generalFlat,
+        demosaic_fmt=demosaic_fmt,
+        demosaic_out=demosaic_out,
+        demosaic_mult=demosaic_mult,
+        bad_pixel_reference=bad_pixel_reference,
+        progress_label='legacy alignment fallback',
+    )
+    for i in fallback_indices:
+        fallback_result = fallback_results.get(i)
+        if fallback_result is not None:
+            results[i]['fallback'] = fallback_result.get('fallback')
 
     return results
 
@@ -17802,7 +18278,7 @@ APERTURE_AUTOTUNE_REFINED_ANNULUS_POINTS = 6
 APERTURE_AUTOTUNE_APER_HALF_WIDTH_SIGMA = 0.9
 APERTURE_AUTOTUNE_ANNULUS_HALF_WIDTH_SIGMA = 2.0
 APERTURE_AUTOTUNE_MIN_FRAMES = 8
-APERTURE_AUTOTUNE_MAX_FRAMES = 12
+APERTURE_AUTOTUNE_MAX_FRAMES = 24
 
 # Refit full PSF moments periodically; use a faster moment estimator for most frames.
 CENTROID_FULL_FIT_CADENCE = 6
@@ -20086,6 +20562,12 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     comp_mag_error = normalized_magnitude_error(comp_star.get('error'))
     derived_catalog_reference = bool(comp_star.get('derived_catalog_reference', False))
     allow_high_error_catalog_reference = bool(comp_star.get('allow_high_error_catalog_reference', False))
+    allow_relaxed_bv_error = (
+        bool(comp_star.get('uses_relaxed_bv_error_limit', False))
+        and str(comp_star.get('mag_band') or '').strip().upper() in {'B', 'V'}
+        and comp_mag_error is not None
+        and comp_mag_error <= CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX
+    )
     if (
         comp_mag is None
         or comp_mag_error is None
@@ -20093,11 +20575,18 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
             comp_mag_error > CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX
             and not derived_catalog_reference
             and not allow_high_error_catalog_reference
+            and not allow_relaxed_bv_error
         )
         or not is_usable_apparent_magnitude(comp_mag)
     ):
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
     observed_filter = observed_filter or comp_star.get('observed_filter')
+    if catalog_band_priority(comp_star.get('mag_band'), observed_filter) != 0:
+        raise RuntimeError(
+            "Comparison-star catalog magnitude band "
+            f"{comp_star.get('mag_band')!r} does not match observed filter "
+            f"{observed_filter!r}; cross-band absolute calibration is not permitted."
+        )
 
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
     fit_airmass_model = np.asarray(
@@ -20105,7 +20594,9 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
         dtype=float,
     )
     fit_airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones_like(fit_data)), dtype=float)
-    fit_times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
+    # Public magnitude products are labelled BJD_TDB; ``time`` is the
+    # barycentric series and ``jd_times`` retains the original FITS JD/UTC.
+    fit_times = np.asarray(getattr(lc_fit, 'time', getattr(lc_fit, 'jd_times', [])), dtype=float)
     transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
 
     if not (fit_data.shape == fit_airmass_model.shape == fit_airmass.shape == fit_times.shape):
@@ -20235,7 +20726,7 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
 
 def stellar_variability_reference_series(lc_fit):
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
-    fit_times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
+    fit_times = np.asarray(getattr(lc_fit, 'time', getattr(lc_fit, 'jd_times', [])), dtype=float)
     transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
 
     if fit_data.shape != fit_times.shape:
@@ -20374,7 +20865,7 @@ def combine_catalog_reference_estimates(derived_estimates, selected_pos, observe
 
 
 def preferred_catalog_magnitude_band_for_filter(observed_filter):
-    candidates = nextastro_photometry_band_candidates(observed_filter)
+    candidates = nextastro_photometry_band_candidates(observed_filter, include_fallback=False)
     if not candidates:
         return None
     return candidates[0][2]
@@ -20385,7 +20876,7 @@ def catalog_band_priority(mag_band, observed_filter):
         return 0
     preferred_band = preferred_catalog_magnitude_band_for_filter(observed_filter)
     if preferred_band is None:
-        return 0
+        return 1
     return 0 if str(mag_band or '').strip().lower() == str(preferred_band).strip().lower() else 1
 
 
@@ -21119,22 +21610,33 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 use_multiprocess_transform_precompute,
             )
 
-            cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
-            if cached_tform is not None:
-                tform = cached_tform
-            elif i == 0:
-                tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-            else:
-                tform = transformation(imageData, fileName, reference_image=firstImage)
+            if not wcs_alignment_candidate_is_acceptable(
+                alignment_result,
+                i,
+                psf_data,
+                tar_comp_dist,
+                ['comp'],
+            ):
+                cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
+                if cached_tform is not None:
+                    tform = cached_tform
+                elif i == 0:
+                    tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+                else:
+                    tform = downsampled_fallback_transformation(
+                        imageData,
+                        fileName,
+                        reference_image=firstImage,
+                    )
 
-            transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
-            alignment_result['fallback'] = _fit_alignment_candidate_psfs(
-                imageData,
-                transformed_coords,
-                target_fast_centroid,
-                frame_fast_centroid,
-                previous_psf_rows=previous_psf_rows,
-            )
+                transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+                alignment_result['fallback'] = _fit_alignment_candidate_psfs(
+                    imageData,
+                    transformed_coords,
+                    target_fast_centroid,
+                    frame_fast_centroid,
+                    previous_psf_rows=previous_psf_rows,
+                )
             apply_parallel_alignment_result(
                 alignment_result,
                 i,
@@ -22720,6 +23222,75 @@ def merge_automatic_comparison_star_coords(primary_stars, additional_stars,
             continue
         merged.append(candidate)
     return merged, messages
+
+
+def fortuitous_variable_overlap(position, fortuitous_variables,
+                                 duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS):
+    """Return the closest full-field VSX variable matching a tracked pixel position."""
+    try:
+        candidate = np.asarray(position, dtype=float).reshape(-1)
+        if candidate.size < 2 or not np.all(np.isfinite(candidate[:2])):
+            return None
+        duplicate_radius = max(float(duplicate_radius_pixels), 0.0)
+    except (TypeError, ValueError):
+        return None
+
+    closest_match = None
+    for variable in fortuitous_variables or []:
+        try:
+            variable_position = np.asarray(
+                variable.get('pos', [variable.get('x'), variable.get('y')]),
+                dtype=float,
+            ).reshape(-1)
+            if variable_position.size < 2 or not np.all(np.isfinite(variable_position[:2])):
+                continue
+        except (AttributeError, TypeError, ValueError):
+            continue
+
+        distance = float(np.hypot(
+            candidate[0] - variable_position[0],
+            candidate[1] - variable_position[1],
+        ))
+        if distance > duplicate_radius:
+            continue
+        if closest_match is None or distance < closest_match['distance_pixels']:
+            closest_match = {
+                'variable': variable,
+                'variable_name': str(variable.get('name') or 'unnamed VSX variable'),
+                'variable_position': [float(variable_position[0]), float(variable_position[1])],
+                'distance_pixels': distance,
+            }
+    return closest_match
+
+
+def filter_comparison_stars_against_fortuitous_variables(
+        comparison_stars,
+        fortuitous_variables,
+        duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS):
+    """Remove every science comparison later identified by the full-field VSX search."""
+    retained = []
+    rejected = []
+    for index, position in enumerate(comparison_stars or []):
+        try:
+            normalized_position = [float(position[0]), float(position[1])]
+        except (TypeError, ValueError, IndexError):
+            continue
+
+        overlap = fortuitous_variable_overlap(
+            normalized_position,
+            fortuitous_variables,
+            duplicate_radius_pixels=duplicate_radius_pixels,
+        )
+        if overlap is None:
+            retained.append(normalized_position)
+            continue
+
+        rejected.append({
+            'comparison_index': index,
+            'position': normalized_position,
+            **overlap,
+        })
+    return retained, rejected
 
 
 def format_comp_star_coverage_text(summary):
@@ -24873,6 +25444,62 @@ def initialize_aperture_data_store(frame_count, aperture_count, annulus_count, c
     return aper_data
 
 
+def aperture_estimation_comparison_stars(science_comp_stars, stellar_variability_only=False):
+    """Choose from comparison stars after the caller's VSX-variable rejection pass."""
+    candidates = [list(position) for position in (science_comp_stars or [])]
+    if stellar_variability_only:
+        return candidates[:STELLAR_VARIABILITY_APERTURE_ESTIMATION_MAX_COMPARISONS]
+    return candidates
+
+
+def collapse_aperture_data_to_selected_grid_cell(aper_data, aperture_index, annulus_index):
+    if not isinstance(aper_data, dict):
+        return None
+
+    aperture_index = int(aperture_index)
+    annulus_index = int(annulus_index)
+    selected = {}
+    for key, values in aper_data.items():
+        array = np.asarray(values)
+        if array.ndim == 3:
+            if not (
+                0 <= aperture_index < array.shape[1]
+                and 0 <= annulus_index < array.shape[2]
+            ):
+                raise IndexError(
+                    f"Selected aperture grid cell [{aperture_index}, {annulus_index}] "
+                    f"is outside {key} shape {array.shape}."
+                )
+            selected[key] = np.array(
+                array[:, aperture_index:aperture_index + 1, annulus_index:annulus_index + 1],
+                copy=True,
+            )
+        else:
+            selected[key] = np.array(array, copy=True)
+    return selected
+
+
+def aperture_frame_sigma_from_psf_data(psf_data, frame_index, fallback_sigma=np.nan,
+                                       comparison_indices=None):
+    if comparison_indices is None:
+        return psf_sigma_from_fit(
+            psf_data['target'][frame_index],
+            fallback_sigma=fallback_sigma,
+        )
+
+    comparison_sigmas = []
+    for comp_idx in comparison_indices:
+        ckey = f"comp{int(comp_idx) + 1}"
+        if ckey not in psf_data:
+            continue
+        comp_sigma = psf_sigma_from_fit(psf_data[ckey][frame_index], fallback_sigma=np.nan)
+        if np.isfinite(comp_sigma) and comp_sigma > 0:
+            comparison_sigmas.append(float(comp_sigma))
+    if comparison_sigmas:
+        return float(np.median(comparison_sigmas))
+    return finite_positive_or_nan(fallback_sigma)
+
+
 def mask_aperture_star_frame(aper_data, key, frame_index):
     if not isinstance(aper_data, dict) or key not in aper_data:
         return
@@ -24995,18 +25622,25 @@ def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast
 def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_star_count, aper_data, apertures, annuli,
                                      fast_aperture_mask, adaptive_apertures=False, fallback_sigma=np.nan,
                                      use_aperture_corrections_and_full_image_fwhm=False,
-                                     noise_config=None, exposure_s=np.nan, airmass=np.nan):
-    target_sigma = psf_sigma_from_fit(psf_data['target'][frame_index], fallback_sigma=fallback_sigma)
-    target_fwhm = psf_fwhm_from_sigma(target_sigma)
+                                     noise_config=None, exposure_s=np.nan, airmass=np.nan,
+                                     comp_indices=None, include_target=True,
+                                     frame_sigma_comp_indices=None):
+    frame_seed_sigma = aperture_frame_sigma_from_psf_data(
+        psf_data,
+        frame_index,
+        fallback_sigma=fallback_sigma,
+        comparison_indices=frame_sigma_comp_indices,
+    )
+    frame_seed_fwhm = psf_fwhm_from_sigma(frame_seed_sigma)
     field_star_psfs = np.empty((0, 7), dtype=float)
-    image_fwhm = target_fwhm
+    image_fwhm = frame_seed_fwhm
     if use_aperture_corrections_and_full_image_fwhm:
-        field_star_psfs = estimate_isolated_field_star_psfs(image_data, fwhm_hint=target_fwhm)
-        image_fwhm = image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=target_fwhm)
+        field_star_psfs = estimate_isolated_field_star_psfs(image_data, fwhm_hint=frame_seed_fwhm)
+        image_fwhm = image_fwhm_from_field_star_psfs(field_star_psfs, fallback_fwhm=frame_seed_fwhm)
     frame_sigma = (
         image_fwhm / GAUSSIAN_SIGMA_TO_FWHM
         if np.isfinite(image_fwhm) and image_fwhm > 0
-        else target_sigma
+        else frame_seed_sigma
     )
     frame_apertures, frame_annuli = resolve_frame_aperture_radii(
         apertures,
@@ -25033,28 +25667,38 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         )
         aperture_correction_factors = aperture_correction.get('correction_factors')
 
-    target_flux, target_bg, target_noise = compute_star_aperture_grid(
-        image_data,
-        0,
-        psf_data['target'][frame_index, 0],
-        psf_data['target'][frame_index, 1],
-        frame_apertures,
-        frame_annuli,
-        fast_mode=fast_aperture_mask,
-        sigma_hint=frame_sigma,
-        aperture_correction_factors=aperture_correction_factors,
-        noise_config=noise_config,
-        exposure_s=exposure_s,
-        airmass=airmass,
-        return_noise=True,
-    )
-    aper_data['target'][frame_index] = target_flux
-    aper_data['target_bg'][frame_index] = target_bg
-    aper_data['target_unc'][frame_index] = target_noise['total']
-    for component in NOISE_BUDGET_COMPONENT_KEYS:
-        aper_data[f"target_noise_{component}"][frame_index] = target_noise[component]
+    if include_target:
+        target_flux, target_bg, target_noise = compute_star_aperture_grid(
+            image_data,
+            0,
+            psf_data['target'][frame_index, 0],
+            psf_data['target'][frame_index, 1],
+            frame_apertures,
+            frame_annuli,
+            fast_mode=fast_aperture_mask,
+            sigma_hint=frame_sigma,
+            aperture_correction_factors=aperture_correction_factors,
+            noise_config=noise_config,
+            exposure_s=exposure_s,
+            airmass=airmass,
+            return_noise=True,
+        )
+        aper_data['target'][frame_index] = target_flux
+        aper_data['target_bg'][frame_index] = target_bg
+        aper_data['target_unc'][frame_index] = target_noise['total']
+        for component in NOISE_BUDGET_COMPONENT_KEYS:
+            aper_data[f"target_noise_{component}"][frame_index] = target_noise[component]
 
-    for comp_idx in range(comp_star_count):
+    if comp_indices is None:
+        selected_comp_indices = range(comp_star_count)
+    else:
+        selected_comp_indices = sorted({
+            int(comp_idx)
+            for comp_idx in comp_indices
+            if 0 <= int(comp_idx) < int(comp_star_count)
+        })
+
+    for comp_idx in selected_comp_indices:
         ckey = f"comp{comp_idx + 1}"
         comp_sigma = psf_sigma_from_fit(psf_data[ckey][frame_index], fallback_sigma=frame_sigma)
         comp_flux, comp_bg, comp_noise = compute_star_aperture_grid(
@@ -25084,6 +25728,22 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
 def load_calibrated_reduction_image(file_name, generalDark, generalBias, generalFlat,
                                     demosaic_fmt, demosaic_out, demosaic_mult,
                                     bad_pixel_reference=None):
+    _, image_data = load_calibrated_reduction_frame(
+        file_name,
+        generalDark,
+        generalBias,
+        generalFlat,
+        demosaic_fmt,
+        demosaic_out,
+        demosaic_mult,
+        bad_pixel_reference=bad_pixel_reference,
+    )
+    return image_data
+
+
+def load_calibrated_reduction_frame(file_name, generalDark, generalBias, generalFlat,
+                                    demosaic_fmt, demosaic_out, demosaic_mult,
+                                    bad_pixel_reference=None):
     hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
     extension = 0
     image_header = hdul[extension].header
@@ -25097,7 +25757,257 @@ def load_calibrated_reduction_image(file_name, generalDark, generalBias, general
     image_data = apply_cals(image_data, generalDark, generalBias, generalFlat, 1)
     image_data = demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, 1)
     image_data = repair_bad_pixels_in_frame(image_data, bad_pixel_reference)
-    return image_data
+    return image_header, image_data
+
+
+def evenly_spaced_aperture_tuning_indices(frame_count, max_frames=APERTURE_AUTOTUNE_MAX_FRAMES,
+                                          min_frames=APERTURE_AUTOTUNE_MIN_FRAMES):
+    """Select representative frames from the beginning through the end of a run."""
+    frame_count = max(0, int(frame_count))
+    if frame_count == 0:
+        return np.array([], dtype=int)
+
+    requested = min(frame_count, max(1, int(max_frames)))
+    if frame_count >= int(min_frames):
+        requested = max(int(min_frames), requested)
+    return np.linspace(0, frame_count - 1, requested, dtype=int)
+
+
+def centered_numpy_cutout(data, xc, yc, radius):
+    """Copy only the square slice needed for local aperture measurements."""
+    data = np.asarray(data)
+    if data.ndim != 2 or not (np.isfinite(xc) and np.isfinite(yc) and np.isfinite(radius)):
+        return None, np.nan, np.nan
+
+    radius = max(float(radius), 1.0)
+    x0 = max(0, int(np.floor(float(xc) - radius)))
+    x1 = min(data.shape[1], int(np.ceil(float(xc) + radius)) + 1)
+    y0 = max(0, int(np.floor(float(yc) - radius)))
+    y1 = min(data.shape[0], int(np.ceil(float(yc) + radius)) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return None, np.nan, np.nan
+    return np.array(data[y0:y1, x0:x1], copy=True), float(xc) - x0, float(yc) - y0
+
+
+def can_memmap_aperture_tuning_cutouts(generalDark=None, generalBias=None, generalFlat=None,
+                                       demosaic_fmt=None, bad_pixel_reference=None):
+    calibration_arrays = (generalDark, generalBias, generalFlat)
+    has_calibration = any(
+        value is not None and np.asarray(value).size > 0
+        for value in calibration_arrays
+    )
+    return bool(
+        not has_calibration
+        and not demosaic_fmt
+        and bad_pixel_reference is None
+    )
+
+
+def fits_header_supports_memmap(header):
+    """Astropy cannot expose scaled FITS image arrays through a memory map."""
+    try:
+        bscale = float(header.get('BSCALE', 1.0))
+        bzero = float(header.get('BZERO', 0.0))
+    except (TypeError, ValueError):
+        return False
+    return bool(bscale == 1.0 and bzero == 0.0)
+
+
+def _open_memmapped_reduction_frame(file_name):
+    hdul = fits.open(
+        name=file_name,
+        memmap=True,
+        cache=False,
+        lazy_load_hdus=True,
+        ignore_missing_end=True,
+    )
+    extension = 0
+    image_header = hdul[extension].header
+    while image_header["NAXIS"] == 0:
+        extension += 1
+        image_header = hdul[extension].header
+    if not fits_header_supports_memmap(image_header):
+        hdul.close()
+        raise ValueError("Scaled FITS image requires the non-memmap reduction path.")
+    return hdul, image_header, hdul[extension].data
+
+
+def build_aperture_tuning_cutouts(inputfiles, frame_indices, psf_data, comparison_indices,
+                                   adaptive_apertures, reference_sigma,
+                                   generalDark=None, generalBias=None, generalFlat=None,
+                                   demosaic_fmt=None, demosaic_out=None, demosaic_mult=None,
+                                   bad_pixel_reference=None, p_dict=None, info_dict=None,
+                                   jd_times=None, reject_overexposed=False,
+                                   overexposure_threshold=np.nan, fast_aperture_mask=False):
+    """Read each tuning frame once and retain compact star-local NumPy slices."""
+    comparison_indices = tuple(int(index) for index in comparison_indices)
+    frame_indices = np.asarray(frame_indices, dtype=int)
+    frames = []
+    sample_airmass = []
+    sample_overexposed_masks = {
+        f"comp{comp_idx + 1}": np.zeros(len(frame_indices), dtype=bool)
+        for comp_idx in comparison_indices
+    }
+    use_memmap = can_memmap_aperture_tuning_cutouts(
+        generalDark=generalDark,
+        generalBias=generalBias,
+        generalFlat=generalFlat,
+        demosaic_fmt=demosaic_fmt,
+        bad_pixel_reference=bad_pixel_reference,
+    )
+
+    for sample_index, frame_index in enumerate(frame_indices):
+        memmap_hdul = None
+        if use_memmap:
+            try:
+                memmap_hdul, header, image_data = _open_memmapped_reduction_frame(
+                    inputfiles[frame_index]
+                )
+            except (OSError, ValueError, TypeError):
+                if memmap_hdul is not None:
+                    memmap_hdul.close()
+                memmap_hdul = None
+                header, image_data = load_calibrated_reduction_frame(
+                    inputfiles[frame_index],
+                    generalDark,
+                    generalBias,
+                    generalFlat,
+                    demosaic_fmt,
+                    demosaic_out,
+                    demosaic_mult,
+                    bad_pixel_reference=bad_pixel_reference,
+                )
+        else:
+            header, image_data = load_calibrated_reduction_frame(
+                inputfiles[frame_index],
+                generalDark,
+                generalBias,
+                generalFlat,
+                demosaic_fmt,
+                demosaic_out,
+                demosaic_mult,
+                bad_pixel_reference=bad_pixel_reference,
+            )
+        frame_sigma = aperture_frame_sigma_from_psf_data(
+            psf_data,
+            frame_index,
+            fallback_sigma=reference_sigma,
+            comparison_indices=comparison_indices,
+        )
+        if not np.isfinite(frame_sigma) or frame_sigma <= 0:
+            frame_sigma = finite_positive_or_nan(reference_sigma)
+        if not np.isfinite(frame_sigma) or frame_sigma <= 0:
+            frame_sigma = 1.0
+
+        max_aperture, max_annulus = resolve_frame_aperture_radii(
+            [APERTURE_SIGMA_MAX if adaptive_apertures else APERTURE_SIGMA_MAX * reference_sigma],
+            [ANNULUS_SIGMA_MAX if adaptive_apertures else ANNULUS_SIGMA_MAX * reference_sigma],
+            adaptive_apertures=adaptive_apertures,
+            frame_sigma=frame_sigma,
+            fallback_sigma=reference_sigma,
+        )
+        max_geometry = resolve_sky_annulus_geometry(
+            float(max_aperture[0]),
+            float(max_annulus[0]),
+            psf_sigma=frame_sigma,
+        )
+        cutout_radius = float(
+            max_geometry['inner_radius'] + max_geometry['annulus_width'] + 2.0
+        )
+
+        stars = {}
+        for comp_idx in comparison_indices:
+            ckey = f"comp{comp_idx + 1}"
+            row = np.asarray(psf_data[ckey][frame_index], dtype=float)
+            xc = row[0] if row.size > 0 else np.nan
+            yc = row[1] if row.size > 1 else np.nan
+            cutout, local_xc, local_yc = centered_numpy_cutout(
+                image_data,
+                xc,
+                yc,
+                cutout_radius,
+            )
+            stars[ckey] = {
+                'data': cutout,
+                'xc': local_xc,
+                'yc': local_yc,
+                'sigma': psf_sigma_from_fit(row, fallback_sigma=frame_sigma),
+            }
+            if reject_overexposed:
+                sample_overexposed_masks[ckey][sample_index] = aperture_contains_overexposed_pixel(
+                    image_data,
+                    xc,
+                    yc,
+                    overexposure_aperture_radius_from_psf_row(row, fallback_sigma=frame_sigma),
+                    overexposure_threshold,
+                    fast_mode=fast_aperture_mask,
+                )
+
+        if p_dict is not None and info_dict is not None and jd_times is not None:
+            sample_airmass.append(air_mass(
+                header,
+                p_dict['ra'],
+                p_dict['dec'],
+                info_dict['lat'],
+                info_dict['long'],
+                info_dict['elev'],
+                jd_times[frame_index],
+            ))
+        else:
+            sample_airmass.append(np.nan)
+        frames.append({'frame_sigma': frame_sigma, 'stars': stars})
+        del image_data
+        if memmap_hdul is not None:
+            memmap_hdul.close()
+
+    return frames, np.asarray(sample_airmass, dtype=float), sample_overexposed_masks
+
+
+def populate_aperture_tuning_data_from_cutouts(cutout_frames, apertures, annuli,
+                                                comparison_indices, adaptive_apertures,
+                                                reference_sigma, fast_aperture_mask=False):
+    """Evaluate an aperture grid using only compact per-star image slices."""
+    comparison_indices = tuple(int(index) for index in comparison_indices)
+    comp_star_count = max(comparison_indices, default=-1) + 1
+    aper_data = initialize_aperture_data_store(
+        len(cutout_frames),
+        len(apertures),
+        len(annuli),
+        comp_star_count,
+    )
+    for frame_index, frame in enumerate(cutout_frames):
+        frame_sigma = finite_positive_or_nan(frame.get('frame_sigma'))
+        if not np.isfinite(frame_sigma) or frame_sigma <= 0:
+            frame_sigma = finite_positive_or_nan(reference_sigma)
+        if not np.isfinite(frame_sigma) or frame_sigma <= 0:
+            frame_sigma = 1.0
+        frame_apertures, frame_annuli = resolve_frame_aperture_radii(
+            apertures,
+            annuli,
+            adaptive_apertures=adaptive_apertures,
+            frame_sigma=frame_sigma,
+            fallback_sigma=reference_sigma,
+        )
+        for comp_idx in comparison_indices:
+            ckey = f"comp{comp_idx + 1}"
+            star = frame['stars'].get(ckey, {})
+            cutout = star.get('data')
+            if cutout is None:
+                continue
+            flux, background = compute_star_aperture_grid(
+                cutout,
+                comp_idx + 1,
+                star.get('xc', np.nan),
+                star.get('yc', np.nan),
+                frame_apertures,
+                frame_annuli,
+                fast_mode=fast_aperture_mask,
+                sigma_hint=star.get('sigma', frame_sigma),
+                return_noise=False,
+            )
+            aper_data[ckey][frame_index] = flux
+            aper_data[f"{ckey}_bg"][frame_index] = background
+    return aper_data
 
 
 def _refined_sigma_grid(center, lower_bound, upper_bound, half_width, points):
@@ -25365,12 +26275,14 @@ def stellar_variability_calibration_for_position(calibration_stars, position, ob
         magnitude_error = normalized_magnitude_error(star.get('error'))
         if not is_usable_apparent_magnitude(magnitude) or magnitude_error is None:
             continue
+        if catalog_band_priority(star.get('mag_band'), observed_filter) != 0:
+            continue
         candidates.append({
             'label': label,
             'star': star,
             'magnitude': float(magnitude),
             'magnitude_error': float(magnitude_error),
-            'band_priority': catalog_band_priority(star.get('mag_band'), observed_filter),
+            'band_priority': 0,
         })
     if not candidates:
         return None
@@ -25502,13 +26414,173 @@ def stellar_variability_ensemble_calibration_error_clip(
     }
 
 
+def stellar_variability_acquisition_gap_boundaries(
+        times,
+        minimum_gap_ratio=STELLAR_VARIABILITY_COMPARISON_GAP_MIN_RATIO,
+        minimum_gap_seconds=STELLAR_VARIABILITY_COMPARISON_GAP_MIN_SECONDS,
+        minimum_side_points=STELLAR_VARIABILITY_COMPARISON_GAP_MIN_POINTS):
+    values = np.asarray(times, dtype=float).reshape(-1)
+    if values.size < (2 * int(minimum_side_points)):
+        return []
+    differences = np.diff(values)
+    positive = differences[np.isfinite(differences) & (differences > 0)]
+    if positive.size == 0:
+        return []
+    cadence_days = float(bn.nanmedian(positive))
+    threshold_days = max(
+        float(minimum_gap_ratio) * cadence_days,
+        float(minimum_gap_seconds) / 86400.0,
+    )
+    boundaries = []
+    for boundary_index in np.flatnonzero(
+            np.isfinite(differences) & (differences >= threshold_days)) + 1:
+        if (
+            boundary_index < int(minimum_side_points)
+            or values.size - boundary_index < int(minimum_side_points)
+        ):
+            continue
+        boundaries.append({
+            'source_index': int(boundary_index),
+            'pre_time': float(values[boundary_index - 1]),
+            'post_time': float(values[boundary_index]),
+            'gap_seconds': float(differences[boundary_index - 1] * 86400.0),
+            'median_cadence_seconds': float(cadence_days * 86400.0),
+        })
+    return boundaries
+
+
+def _robust_median_scatter_count(values):
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return np.nan, np.nan, 0
+    median = float(bn.nanmedian(finite))
+    scatter = float(1.4826 * bn.nanmedian(np.abs(finite - median)))
+    return median, scatter, int(finite.size)
+
+
+def stellar_variability_comparison_gap_stability(
+        candidates,
+        comp_flux_map,
+        times,
+        window_frames=STELLAR_VARIABILITY_COMPARISON_GAP_WINDOW_FRAMES,
+        minimum_points=STELLAR_VARIABILITY_COMPARISON_GAP_MIN_POINTS,
+        maximum_step_magnitude=STELLAR_VARIABILITY_COMPARISON_GAP_MAX_STEP_MAG,
+        minimum_significance=STELLAR_VARIABILITY_COMPARISON_GAP_MIN_SIGNIFICANCE):
+    candidates = list(candidates or [])
+    boundaries = stellar_variability_acquisition_gap_boundaries(
+        times,
+        minimum_side_points=minimum_points,
+    )
+    summary = {
+        'applied': False,
+        'reason': None,
+        'boundaries': boundaries,
+        'window_frames': int(window_frames),
+        'minimum_points_per_side': int(minimum_points),
+        'maximum_allowed_step_magnitude': float(maximum_step_magnitude),
+        'minimum_rejection_significance': float(minimum_significance),
+        'candidates': {},
+    }
+    if len(candidates) < 3:
+        summary['reason'] = 'fewer than three independently calibrated comparison candidates'
+        return summary
+    if not boundaries:
+        summary['reason'] = 'no acquisition gap exceeded the cadence-based threshold'
+        return summary
+
+    times_array = np.asarray(times, dtype=float).reshape(-1)
+    instrumental_columns = []
+    usable_candidates = []
+    for candidate in candidates:
+        key = candidate.get('key')
+        flux = np.asarray(comp_flux_map.get(key, []), dtype=float).reshape(-1)
+        if flux.shape != times_array.shape:
+            continue
+        instrumental = np.full(flux.shape, np.nan, dtype=float)
+        valid = np.isfinite(flux) & (flux > 0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            instrumental[valid] = -2.5 * np.log10(flux[valid])
+        center = bn.nanmedian(instrumental)
+        if not np.isfinite(center):
+            continue
+        instrumental_columns.append(instrumental - center)
+        usable_candidates.append(candidate)
+
+    if len(usable_candidates) < 3:
+        summary['reason'] = 'fewer than three comparison candidates had usable flux series'
+        return summary
+
+    instrumental_stack = np.column_stack(instrumental_columns)
+    window = max(int(window_frames), int(minimum_points))
+    for candidate_index, candidate in enumerate(usable_candidates):
+        other_stack = np.delete(instrumental_stack, candidate_index, axis=1)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            leave_one_out_reference = np.nanmedian(other_stack, axis=1)
+        residual = instrumental_stack[:, candidate_index] - leave_one_out_reference
+        boundary_results = []
+        rejected = False
+        maximum_absolute_step = 0.0
+        maximum_step_significance = 0.0
+        for boundary in boundaries:
+            boundary_index = boundary['source_index']
+            pre = residual[max(0, boundary_index - window):boundary_index]
+            post = residual[boundary_index:min(residual.size, boundary_index + window)]
+            pre_median, pre_scatter, pre_count = _robust_median_scatter_count(pre)
+            post_median, post_scatter, post_count = _robust_median_scatter_count(post)
+            if pre_count < int(minimum_points) or post_count < int(minimum_points):
+                continue
+            step = float(post_median - pre_median)
+            uncertainty = float(np.hypot(
+                pre_scatter / np.sqrt(pre_count),
+                post_scatter / np.sqrt(post_count),
+            ))
+            significance = (
+                float(abs(step) / uncertainty)
+                if np.isfinite(uncertainty) and uncertainty > 0
+                else (float('inf') if step != 0 else 0.0)
+            )
+            step_rejected = (
+                abs(step) > float(maximum_step_magnitude)
+                and significance >= float(minimum_significance)
+            )
+            rejected = rejected or step_rejected
+            maximum_absolute_step = max(maximum_absolute_step, abs(step))
+            maximum_step_significance = max(maximum_step_significance, significance)
+            boundary_results.append({
+                **boundary,
+                'step_magnitude': step,
+                'step_uncertainty_magnitude': uncertainty,
+                'step_significance': significance,
+                'pre_point_count': pre_count,
+                'post_point_count': post_count,
+                'rejected': step_rejected,
+            })
+        summary['candidates'][candidate.get('key')] = {
+            'label': candidate.get('label'),
+            'position': candidate.get('position'),
+            'catalog_source': candidate.get('star', {}).get('catalog_source'),
+            'catalog_magnitude_band': candidate.get('star', {}).get('mag_band'),
+            'maximum_absolute_step_magnitude': maximum_absolute_step,
+            'maximum_step_significance': maximum_step_significance,
+            'rejected': rejected,
+            'boundary_results': boundary_results,
+        }
+
+    summary['applied'] = True
+    return summary
+
+
 def select_stellar_variability_ensemble_members(
         ranked_summaries,
         calibration_stars,
         comp_flux_map,
         observed_filter=None,
         target_catalog_match=None,
-        max_members=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
+        max_members=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
+        min_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+        times=None):
     target_profile = stellar_variability_catalog_profile(target_catalog_match, observed_filter)
     candidates = []
     rejected = []
@@ -25560,8 +26632,57 @@ def select_stellar_variability_ensemble_members(
         if catalog_identity is not None:
             represented_catalog_identities.add(catalog_identity)
 
+    gap_stability = stellar_variability_comparison_gap_stability(
+        candidates,
+        comp_flux_map,
+        times,
+    ) if times is not None else {
+        'applied': False,
+        'reason': 'observation times were unavailable',
+        'boundaries': [],
+        'candidates': {},
+    }
+    if gap_stability.get('applied'):
+        stable_candidates = []
+        for candidate in candidates:
+            diagnostic = gap_stability.get('candidates', {}).get(candidate.get('key'), {})
+            candidate['gap_stability'] = diagnostic
+            candidate['gap_stability_max_abs_step_mag'] = diagnostic.get(
+                'maximum_absolute_step_magnitude'
+            )
+            candidate['gap_stability_max_significance'] = diagnostic.get(
+                'maximum_step_significance'
+            )
+            if diagnostic.get('rejected'):
+                rejected.append({
+                    'key': candidate.get('key'),
+                    'label': candidate.get('label'),
+                    'position': candidate.get('position'),
+                    'catalog_source': candidate.get('star', {}).get('catalog_source'),
+                    'catalog_magnitude_band': candidate.get('star', {}).get('mag_band'),
+                    'reason': (
+                        'comparison changed discontinuously relative to the leave-one-out comparison '
+                        'ensemble across an acquisition gap'
+                    ),
+                    'maximum_absolute_step_magnitude': diagnostic.get(
+                        'maximum_absolute_step_magnitude'
+                    ),
+                    'maximum_step_significance': diagnostic.get('maximum_step_significance'),
+                    'boundary_results': diagnostic.get('boundary_results', []),
+                })
+                continue
+            stable_candidates.append(candidate)
+        candidates = stable_candidates
+
     candidates.sort(key=lambda candidate: (-candidate['median_flux'], candidate.get('comp_index', np.inf)))
-    keep_mask, clip_summary = stellar_variability_ensemble_calibration_error_clip(candidates)
+    try:
+        minimum_members = max(1, int(min_members))
+    except (TypeError, ValueError):
+        minimum_members = STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
+    keep_mask, clip_summary = stellar_variability_ensemble_calibration_error_clip(
+        candidates,
+        min_members=minimum_members,
+    )
     clipped_members = []
     for candidate, keep in zip(candidates, keep_mask):
         if keep:
@@ -25577,13 +26698,14 @@ def select_stellar_variability_ensemble_members(
             })
 
     try:
-        member_limit = max(int(max_members), STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS)
+        member_limit = max(int(max_members), minimum_members)
     except (TypeError, ValueError):
         member_limit = STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
     prelimit_member_count = len(clipped_members)
     members = list(clipped_members)
     if len(members) > member_limit:
         members.sort(key=lambda candidate: (
+            _finite_float(candidate.get('gap_stability_max_abs_step_mag'), np.inf),
             0 if _finite_float(candidate.get('color_magnitude_similarity_score')) is not None else 1,
             _finite_float(candidate.get('color_magnitude_similarity_score'), np.inf),
             _finite_float(candidate.get('color_delta'), np.inf),
@@ -25614,11 +26736,13 @@ def select_stellar_variability_ensemble_members(
         'target_catalog_profile': target_profile,
         'prelimit_member_count': prelimit_member_count,
         'member_limit': member_limit,
+        'gap_stability': gap_stability,
     }
 
 
 def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flux_error,
-                                                         comp_flux_map, comp_error_map, members):
+                                                         comp_flux_map, comp_error_map, members,
+                                                         minimum_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS):
     target_flux = np.asarray(target_flux, dtype=float)
     if target_flux.ndim != 1:
         target_flux = target_flux.reshape(-1)
@@ -25667,9 +26791,16 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
         zero_points.append(zero_point)
         zero_point_errors.append(zero_point_error)
 
+    try:
+        required_members = max(1, int(minimum_members))
+    except (TypeError, ValueError):
+        required_members = STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
+    member_text = "comparison star" if required_members == 1 else "comparison stars"
     empty = {
         'applied': False,
-        'failure_reason': 'fewer than two calibrated comparison stars were usable for the ensemble.',
+        'failure_reason': (
+            f'fewer than {required_members} calibrated {member_text} were usable for the reference.'
+        ),
         'magnitude': np.full(target_flux.shape, np.nan, dtype=float),
         'magnitude_error': np.full(target_flux.shape, np.nan, dtype=float),
         'relative_flux': np.full(target_flux.shape, np.nan, dtype=float),
@@ -25678,7 +26809,7 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
         'synthetic_reference_flux_error': np.full(target_flux.shape, np.nan, dtype=float),
         'valid_member_count': np.zeros(target_flux.shape, dtype=int),
     }
-    if len(zero_points) < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+    if len(zero_points) < required_members:
         return empty
 
     zero_point_stack = np.vstack(zero_points)
@@ -25701,13 +26832,15 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
     )
     valid = (
         valid_target
-        & (valid_member_count >= STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS)
+        & (valid_member_count >= required_members)
         & np.isfinite(weight_sum)
         & (weight_sum > 0)
     )
     if np.count_nonzero(valid) < LIGHTCURVE_MIN_VALID_POINTS:
         empty['valid_member_count'] = valid_member_count
-        empty['failure_reason'] = 'too few frames retained at least two calibrated ensemble members.'
+        empty['failure_reason'] = (
+            f'too few frames retained at least {required_members} calibrated {member_text}.'
+        )
         return empty
 
     magnitude = np.full(target_flux.shape, np.nan, dtype=float)
@@ -25797,6 +26930,7 @@ def stellar_variability_ensemble_member_json(member):
         'overexposure_rejected_frame_count': member.get('summary', {}).get(
             'overexposure_rejected_count', 0
         ),
+        'gap_stability': member.get('gap_stability'),
     }
 
 
@@ -25839,6 +26973,7 @@ def save_stellar_variability_ensemble_selection_json(
             ),
             'members': [stellar_variability_ensemble_member_json(member) for member in members],
             'rejected_candidates': selection.get('rejected', []),
+            'comparison_gap_stability': selection.get('gap_stability', {}),
         },
     }
     output_dir = Path(save)
@@ -25896,7 +27031,10 @@ def build_stellar_variability_ensemble_params_from_fit(
         getattr(lc_fit, 'stellar_variability_ensemble_magnitude_errors', []),
         dtype=float,
     )
-    times = np.asarray(getattr(lc_fit, 'jd_times', getattr(lc_fit, 'time', [])), dtype=float)
+    # Public stellar-variability products are explicitly labelled BJD_TDB.  The
+    # light-curve ``time`` array carries BJD_TDB, while ``jd_times`` preserves
+    # the original FITS JD/UTC timestamps for frame-level diagnostics.
+    times = np.asarray(getattr(lc_fit, 'time', getattr(lc_fit, 'jd_times', [])), dtype=float)
     airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones(times.shape)), dtype=float)
     members = list(getattr(lc_fit, 'stellar_variability_ensemble_members', []) or [])
     if not (magnitudes.shape == magnitude_errors.shape == times.shape == airmass.shape):
@@ -26155,13 +27293,14 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
             comp_flux_map,
             observed_filter=observed_filter,
             target_catalog_match=target_catalog_match,
+            times=times,
         )
         ensemble_members = member_selection['members']
         clip_summary = member_selection['calibration_error_clip']
         for rejected_member in member_selection['rejected']:
             log_info(
                 "Stellar-variability ensemble excluded "
-                f"{rejected_member.get('key') or 'comparison candidate'}: "
+                f"{rejected_member.get('label') or rejected_member.get('key') or 'comparison candidate'}: "
                 f"{rejected_member.get('reason')}."
             )
 
@@ -26798,6 +27937,16 @@ def fortuitous_variable_target_series(
 
 
 def fortuitous_variable_target_metadata(variable):
+    reference_mode = variable.get('reference_mode', 'ensemble')
+    reference_description = (
+        'single-comparison calibrated'
+        if reference_mode == 'single_comparison'
+        else 'ensemble-calibrated'
+    )
+    output_error_limit = _finite_float(
+        variable.get('output_magnitude_error_limit'),
+        FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+    )
     return {
         'name': variable.get('name'),
         'auid': variable.get('auid'),
@@ -26824,11 +27973,13 @@ def fortuitous_variable_target_metadata(variable):
         'reference_flux_error_adu': variable.get('reference_flux_error_adu'),
         'reference_noise_components_adu': variable.get('reference_noise_components_adu'),
         'detection_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
-        'output_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+        'output_magnitude_error_limit': output_error_limit,
         'output_magnitude_error_rule': (
-            'Only frames with a finite positive ensemble-calibrated magnitude error below '
-            '0.05 mag are written.'
+            f'Only frames with a finite positive {reference_description} magnitude error below '
+            f'{output_error_limit:.2f} mag are written.'
         ),
+        'reference_mode': reference_mode,
+        'comparison_label': variable.get('comparison_label'),
         'saturation_rejection_scope': (
             'Frames are rejected using this VSX target own overexposure mask; '
             'the exoplanet target overexposure mask is not applied.'
@@ -26853,6 +28004,33 @@ def fortuitous_variable_target_metadata(variable):
     }
 
 
+def fortuitous_output_magnitude_error_limit(members):
+    for member in members or []:
+        star = member.get('star', {}) if isinstance(member, dict) else {}
+        if (
+            bool(star.get('uses_relaxed_bv_error_limit', False))
+            and str(star.get('mag_band') or '').strip().upper() in {'B', 'V'}
+        ):
+            return CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX
+    return FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR
+
+
+def clear_previous_fortuitous_variable_products(variable_dir):
+    output_dir = Path(variable_dir)
+    for prefix in (
+        'AID_AAVSO_',
+        'StellarVariability_',
+        'EnsembleSelection_',
+        'FortuitousVariableStatus_',
+    ):
+        for path in output_dir.glob(f'{prefix}*'):
+            if path.is_file():
+                path.unlink()
+    plot_path = output_dir / 'temp' / 'Stellar_Variability.png'
+    if plot_path.is_file():
+        plot_path.unlink()
+
+
 def process_fortuitous_variables(
         variables,
         comparison_calibration,
@@ -26867,7 +28045,8 @@ def process_fortuitous_variables(
         psf_noise_data=None,
         comp_overexposed_masks=None,
         exposure_times_seconds=None,
-        observed_filter=None):
+        observed_filter=None,
+        use_single_comparison=USE_SINGLE_COMPARISON_FOR_FORTUITOUS_VARIABLES_DEFAULT):
     if not variables or comparison_calibration is None:
         return []
     times = np.asarray(times, dtype=float)
@@ -26875,6 +28054,11 @@ def process_fortuitous_variables(
     airmass = np.asarray(airmass, dtype=float)
     if not (times.shape == jd_times.shape == airmass.shape):
         return []
+    use_single_comparison = bool(use_single_comparison)
+    required_comparison_members = (
+        1 if use_single_comparison else STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
+    )
+    reference_mode = 'single_comparison' if use_single_comparison else 'ensemble'
 
     ranked_summaries, comp_flux_map, comp_error_map = fortuitous_ensemble_flux_maps(
         comparison_calibration,
@@ -26883,10 +28067,11 @@ def process_fortuitous_variables(
         psf_flux_data=psf_flux_data,
         psf_noise_data=psf_noise_data,
     )
-    if len(ranked_summaries) < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+    if len(ranked_summaries) < required_comparison_members:
         log_info(
-            "Warning: fortuitous-variable photometry skipped because fewer than two independent "
-            "non-variable comparison candidates were usable.",
+            "Warning: fortuitous-variable photometry skipped because fewer than "
+            f"{required_comparison_members} independent non-variable comparison candidate(s) "
+            "were usable.",
             warn=True,
         )
         return []
@@ -26904,9 +28089,16 @@ def process_fortuitous_variables(
             exposure_array = None
 
     base_dir = Path(info_dict['save']) / 'fortuitous_variables'
+    base_dir.mkdir(parents=True, exist_ok=True)
+    for stale_combined_aid in base_dir.glob('AID_AAVSO_FortuitousVariables_*.txt'):
+        if stale_combined_aid.is_file():
+            stale_combined_aid.unlink()
     results = []
+    combined_vsp_params = []
+    logged_comparison_gap_rejections = set()
     for variable in variables:
         variable = dict(variable)
+        variable['reference_mode'] = reference_mode
         variable_name = variable.get('name') or 'VSX variable'
         category = variable.get('category') or 'rest_of_the_variables'
         variable['input_frame_count'] = int(times.size)
@@ -26923,6 +28115,7 @@ def process_fortuitous_variables(
             'VSX', variable_name, extension=''
         )
         variable_dir.mkdir(parents=True, exist_ok=True)
+        clear_previous_fortuitous_variable_products(variable_dir)
         try:
             target_flux, target_flux_error, target_quality_mask = fortuitous_variable_target_series(
                 variable,
@@ -26945,16 +28138,48 @@ def process_fortuitous_variables(
                 comp_flux_map,
                 observed_filter=observed_filter,
                 target_catalog_match=variable.get('catalog_match'),
+                max_members=(
+                    1 if use_single_comparison else STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
+                ),
+                min_members=required_comparison_members,
+                times=times,
             )
+            variable['comparison_gap_stability'] = member_selection.get('gap_stability', {})
+            variable['comparison_gap_rejected_candidates'] = [
+                candidate
+                for candidate in member_selection.get('rejected', [])
+                if candidate.get('maximum_absolute_step_magnitude') is not None
+            ]
+            for rejected_candidate in variable['comparison_gap_rejected_candidates']:
+                rejection_identity = (
+                    rejected_candidate.get('key'),
+                    rejected_candidate.get('maximum_absolute_step_magnitude'),
+                )
+                if rejection_identity in logged_comparison_gap_rejections:
+                    continue
+                logged_comparison_gap_rejections.add(rejection_identity)
+                log_info(
+                    "Fortuitous-variable comparison rejected across acquisition gap: "
+                    f"{rejected_candidate.get('label') or rejected_candidate.get('key')} "
+                    f"at {rejected_candidate.get('position')}, "
+                    f"step={rejected_candidate.get('maximum_absolute_step_magnitude'):.4f} mag, "
+                    f"significance={rejected_candidate.get('maximum_step_significance'):.2f} sigma."
+                )
             members = member_selection.get('members', [])
-            if len(members) < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
-                raise ValueError('fewer than two independently calibrated ensemble members')
+            if len(members) < required_comparison_members:
+                raise ValueError(
+                    f'fewer than {required_comparison_members} independently calibrated '
+                    'comparison member(s)'
+                )
+            output_magnitude_error_limit = fortuitous_output_magnitude_error_limit(members)
+            variable['output_magnitude_error_limit'] = output_magnitude_error_limit
             ensemble_series = build_stellar_variability_calibrated_ensemble_series(
                 target_flux,
                 target_flux_error,
                 comp_flux_map,
                 comp_error_map,
                 members,
+                minimum_members=required_comparison_members,
             )
             if not ensemble_series.get('applied'):
                 raise ValueError(ensemble_series.get('failure_reason') or 'ensemble combination failed')
@@ -26971,7 +28196,7 @@ def process_fortuitous_variables(
             magnitude_error_valid = (
                 np.isfinite(magnitude_errors)
                 & (magnitude_errors > 0)
-                & (magnitude_errors < FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR)
+                & (magnitude_errors <= output_magnitude_error_limit)
             )
             valid = base_valid & magnitude_error_valid
             eligible_magnitude_errors = magnitude_errors[base_valid & np.isfinite(magnitude_errors)]
@@ -26985,14 +28210,44 @@ def process_fortuitous_variables(
                 variable['output_magnitude_error_max'] = float(np.nanmax(eligible_magnitude_errors))
             if np.count_nonzero(valid) < LIGHTCURVE_MIN_VALID_POINTS:
                 raise ValueError(
-                    'fewer than five ensemble-calibrated frames have internal magnitude error '
-                    f'below {FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR:.3f} mag'
+                    f'fewer than five {reference_mode.replace("_", "-")}-calibrated frames '
+                    'have internal magnitude error '
+                    f'at or below {output_magnitude_error_limit:.3f} mag'
                 )
             variable['valid_output_frame_count'] = int(np.count_nonzero(valid))
             target_error_values = target_flux_error
             if target_error_values is None:
                 target_error_values = source_flux_uncertainty_from_counts(target_flux)
             target_error_values = np.asarray(target_error_values, dtype=float)
+            if use_single_comparison:
+                selected_member = members[0]
+                selected_comparison_key = selected_member.get('key')
+                selected_comparison_flux = np.asarray(
+                    comp_flux_map[selected_comparison_key],
+                    dtype=float,
+                )
+                selected_comparison_error = None
+                if selected_comparison_key in comp_error_map:
+                    selected_comparison_error = np.asarray(
+                        comp_error_map[selected_comparison_key],
+                        dtype=float,
+                    )
+                if (
+                    selected_comparison_error is None
+                    or selected_comparison_error.shape != selected_comparison_flux.shape
+                ):
+                    selected_comparison_error = source_flux_uncertainty_from_counts(
+                        selected_comparison_flux
+                    )
+                reference_label = selected_member.get('label') or selected_comparison_key
+                reference_position = selected_member.get('position')
+                variable['comparison_label'] = reference_label
+            else:
+                selected_member = None
+                selected_comparison_flux = ensemble_series['synthetic_reference_flux']
+                selected_comparison_error = ensemble_series['synthetic_reference_flux_error']
+                reference_label = f"ENSEMBLE ({len(members)} stars)"
+                reference_position = [member.get('position') for member in members]
             prepared = {
                 'applied': True,
                 'failure_reason': None,
@@ -27003,9 +28258,9 @@ def process_fortuitous_variables(
                 'jd_time': jd_times[valid],
                 'exposure_time_seconds': None if exposure_array is None else exposure_array[valid],
                 'target_flux': np.asarray(target_flux, dtype=float)[valid],
-                'comp_flux': ensemble_series['synthetic_reference_flux'][valid],
+                'comp_flux': selected_comparison_flux[valid],
                 'target_flux_error': target_error_values[valid],
-                'comp_flux_error': ensemble_series['synthetic_reference_flux_error'][valid],
+                'comp_flux_error': selected_comparison_error[valid],
                 'source_indices': np.flatnonzero(valid),
             }
             variable_period = _finite_float(variable.get('period_days'), 1.0)
@@ -27029,39 +28284,50 @@ def process_fortuitous_variables(
                 prepared,
                 variable_prior,
                 comp_index=None,
-                comp_label=f"ENSEMBLE ({len(members)} stars)",
-                comp_position=[member.get('position') for member in members],
+                comp_label=reference_label,
+                comp_position=reference_position,
                 method_label=comparison_calibration.get('method_label'),
                 plot_time_range=times,
             )
             if fit is None:
                 raise ValueError('stellar-variability light curve construction failed')
-            selected_indices = np.asarray(fit.stellar_variability_source_indices, dtype=int)
-            fit.stellar_variability_ensemble_members = members
-            fit.stellar_variability_ensemble_magnitudes = ensemble_series['magnitude'][selected_indices]
-            fit.stellar_variability_ensemble_magnitude_errors = (
-                ensemble_series['magnitude_error'][selected_indices]
-            )
-            fit.stellar_variability_ensemble_valid_member_counts = (
-                ensemble_series['valid_member_count'][selected_indices]
-            )
-            fit.stellar_variability_ensemble_calibration_error_clip = member_selection.get(
-                'calibration_error_clip', {}
-            )
-            fit.stellar_variability_ensemble_selection = member_selection
-            fit.stellar_variability_target_catalog_profile = member_selection.get(
-                'target_catalog_profile', {}
-            )
+            if use_single_comparison:
+                vsp_params = build_stellar_variability_params_from_fit(
+                    fit,
+                    selected_member.get('star', {}),
+                    selected_member.get('position'),
+                    reference_label,
+                    variable_dir,
+                    variable_name,
+                    observed_filter=observed_filter,
+                )
+            else:
+                selected_indices = np.asarray(fit.stellar_variability_source_indices, dtype=int)
+                fit.stellar_variability_ensemble_members = members
+                fit.stellar_variability_ensemble_magnitudes = ensemble_series['magnitude'][selected_indices]
+                fit.stellar_variability_ensemble_magnitude_errors = (
+                    ensemble_series['magnitude_error'][selected_indices]
+                )
+                fit.stellar_variability_ensemble_valid_member_counts = (
+                    ensemble_series['valid_member_count'][selected_indices]
+                )
+                fit.stellar_variability_ensemble_calibration_error_clip = member_selection.get(
+                    'calibration_error_clip', {}
+                )
+                fit.stellar_variability_ensemble_selection = member_selection
+                fit.stellar_variability_target_catalog_profile = member_selection.get(
+                    'target_catalog_profile', {}
+                )
 
-            target_metadata = fortuitous_variable_target_metadata(variable)
-            vsp_params = build_stellar_variability_ensemble_params_from_fit(
-                fit,
-                variable_dir,
-                variable_name,
-                observed_filter=observed_filter,
-                observation_date=info_dict.get('date'),
-                target_metadata=target_metadata,
-            )
+                target_metadata = fortuitous_variable_target_metadata(variable)
+                vsp_params = build_stellar_variability_ensemble_params_from_fit(
+                    fit,
+                    variable_dir,
+                    variable_name,
+                    observed_filter=observed_filter,
+                    observation_date=info_dict.get('date'),
+                    target_metadata=target_metadata,
+                )
             if not vsp_params:
                 raise ValueError('no calibrated magnitude rows were produced')
             csv_path = save_stellar_variability_magnitude_csv(
@@ -27081,12 +28347,27 @@ def process_fortuitous_variables(
                 None,
                 vsp_params,
             ).aavso()
+            aid_variable_name = variable.get('auid') or variable_name
+            combined_vsp_params.extend([
+                {**vsp_param, '_aid_name': aid_variable_name}
+                for vsp_param in vsp_params
+            ])
             results.append({
                 'name': variable_name,
                 'auid': variable.get('auid'),
                 'category': category,
                 'output_directory': str(variable_dir),
                 'point_count': len(vsp_params),
+                'reference_mode': reference_mode,
+                'comparison_label': reference_label,
+                'selected_comparison_gap_stability': (
+                    selected_member.get('gap_stability') if selected_member is not None else None
+                ),
+                'comparison_gap_stability': variable.get('comparison_gap_stability'),
+                'comparison_gap_rejected_candidates': variable.get(
+                    'comparison_gap_rejected_candidates', []
+                ),
+                'comparison_member_count': len(members),
                 'ensemble_member_count': len(members),
                 'input_frame_count': variable.get('input_frame_count'),
                 'target_overexposure_rejected_frame_count': variable.get(
@@ -27098,14 +28379,18 @@ def process_fortuitous_variables(
                 'output_magnitude_error_qualified_frame_count': variable.get(
                     'output_magnitude_error_qualified_frame_count'
                 ),
-                'output_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+                'output_magnitude_error_limit': variable.get(
+                    'output_magnitude_error_limit',
+                    FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+                ),
                 'output_magnitude_error_max': variable.get('output_magnitude_error_max'),
                 'magnitude_csv': str(csv_path) if csv_path else None,
                 'status': 'completed',
             })
             log_info(
                 f"Fortuitous-variable photometry completed for {variable_name}: "
-                f"{len(vsp_params)} point(s), {len(members)} ensemble member(s), outputs={variable_dir}."
+                f"{len(vsp_params)} point(s), reference={reference_label} "
+                f"({reference_mode}), outputs={variable_dir}."
             )
         except Exception as exc:
             results.append({
@@ -27113,6 +28398,12 @@ def process_fortuitous_variables(
                 'auid': variable.get('auid'),
                 'category': category,
                 'output_directory': str(variable_dir),
+                'reference_mode': reference_mode,
+                'comparison_label': variable.get('comparison_label'),
+                'comparison_gap_stability': variable.get('comparison_gap_stability'),
+                'comparison_gap_rejected_candidates': variable.get(
+                    'comparison_gap_rejected_candidates', []
+                ),
                 'input_frame_count': variable.get('input_frame_count'),
                 'target_overexposure_rejected_frame_count': variable.get(
                     'target_overexposure_rejected_frame_count'
@@ -27123,7 +28414,10 @@ def process_fortuitous_variables(
                 'output_magnitude_error_qualified_frame_count': variable.get(
                     'output_magnitude_error_qualified_frame_count'
                 ),
-                'output_magnitude_error_limit': FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+                'output_magnitude_error_limit': variable.get(
+                    'output_magnitude_error_limit',
+                    FORTUITOUS_VARIABLE_MAX_ESTIMATED_MAGNITUDE_ERROR,
+                ),
                 'status': 'skipped',
                 'reason': str(exc),
             })
@@ -27151,13 +28445,47 @@ def process_fortuitous_variables(
             )
 
     base_dir.mkdir(parents=True, exist_ok=True)
+    combined_aid_path = None
+    combined_aid_error = None
+    if combined_vsp_params:
+        try:
+            combined_info = dict(info_dict)
+            combined_info['save'] = str(base_dir)
+            combined_target = {
+                'sName': 'FortuitousVariables',
+                'pName': 'FortuitousVariables',
+            }
+            combined_aid_path = AIDOutputFiles(
+                None,
+                combined_target,
+                combined_info,
+                None,
+                None,
+                combined_vsp_params,
+            ).combined_aavso()
+            log_info(
+                f"Combined fortuitous-variable AID file written with "
+                f"{len(combined_vsp_params)} row(s): {combined_aid_path}."
+            )
+        except Exception as exc:
+            combined_aid_error = str(exc)
+            log_info(
+                f"Warning: could not create the combined fortuitous-variable AID file ({exc}).",
+                warn=True,
+            )
     manifest_path = base_dir / safe_output_filename(
         'FortuitousVariables',
         filename_date_token(info_dict.get('date')),
         extension='json',
     )
     with manifest_path.open('w', encoding='utf-8') as handle:
-        json.dump(stellar_variability_json_safe({'variables': results}), handle, indent=2, sort_keys=True)
+        manifest_payload = {
+            'variables': results,
+            'combined_aid': str(combined_aid_path) if combined_aid_path else None,
+        }
+        if combined_aid_error:
+            manifest_payload['combined_aid_error'] = combined_aid_error
+        json.dump(stellar_variability_json_safe(manifest_payload), handle, indent=2, sort_keys=True)
         handle.write('\n')
     return results
 
@@ -28153,9 +29481,11 @@ def parse_args():
                              "If the service returns an error, EXOTIC falls back to individual VSX checks.")
     parser.add_argument('--non-interactive-run',
                         action='store_true',
-                        help="Run without interactive prompts for target pixel-coordinate mismatch checks "
-                             "or unrecognized limb-darkening filters. Coordinate mismatches use an automatic "
-                             "fallback; unrecognized filters abort unless wl_min and wl_max are provided.")
+                        help="Avoid interactive prompts for invalid target RA/Dec values, target pixel-coordinate "
+                             "mismatches, and unrecognized limb-darkening filters. Invalid initialization-file "
+                             "RA/Dec values use NASA Exoplanet Archive coordinates when available, otherwise "
+                             "the run aborts. Pixel mismatches use an automatic fallback; unrecognized filters "
+                             "abort unless wl_min and wl_max are provided.")
     parser.add_argument('--multiprocess-transformations',
                         type=int,
                         default=None,
@@ -28261,6 +29591,7 @@ def _main_impl():
 
     # ----USER INPUTS----------------------------------------------------------
     else:
+        reduction_stage_timer = ReductionStageTimer()
         log_info("\n**************************")
         log_info("Complete Reduction Routine")
         log_info("**************************")
@@ -28379,6 +29710,14 @@ def _main_impl():
             exotic_infoDict.get(
                 'photometer_fortuitous_variables',
                 PHOTOMETER_FORTUITOUS_VARIABLES_DEFAULT,
+            )
+        )
+        use_single_comparison_for_fortuitous_variables = (
+            should_use_single_comparison_for_fortuitous_variables(
+                exotic_infoDict.get(
+                    'use_single_comparison_for_fortuitous_variables',
+                    USE_SINGLE_COMPARISON_FOR_FORTUITOUS_VARIABLES_DEFAULT,
+                )
             )
         )
         use_nextastro_vsx_cache_first = should_use_nextastro_vsx_cache_first(
@@ -28538,9 +29877,15 @@ def _main_impl():
         # Make a temp directory of helpful files
         Path(Path(exotic_infoDict['save']) / "temp").mkdir(exist_ok=True)
 
+        archive_planet_dict = None
         if not args.override:
-            nea_obj = NASAExoplanetArchive(planet=userpDict['pName'])
+            nea_obj = NASAExoplanetArchive(
+                planet=userpDict['pName'],
+                non_interactive=args.non_interactive_run,
+            )
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+            if isinstance(pDict, dict):
+                archive_planet_dict = dict(pDict)
         else:
             pDict = userpDict
             CandidatePlanetBool = False
@@ -28549,13 +29894,55 @@ def _main_impl():
             if args.nasaexoarch:
                 pass
             elif args.override:
-                if type(pDict['ra']) and type(pDict['dec']) is str:
-                    pDict['ra'], pDict['dec'] = radec_hours_to_degree(pDict['ra'], pDict['dec'])
+                try:
+                    pDict['ra'], pDict['dec'] = radec_hours_to_degree(
+                        pDict.get('ra'),
+                        pDict.get('dec'),
+                        non_interactive_run=args.non_interactive_run,
+                        target_name=pDict.get('pName'),
+                    )
+                except ValueError as coordinate_error:
+                    if not args.non_interactive_run:
+                        raise
+
+                    try:
+                        coordinate_nea_obj = NASAExoplanetArchive(
+                            planet=pDict.get('pName'),
+                            non_interactive=True,
+                        )
+                        _, _, coordinate_pdict = coordinate_nea_obj.planet_info()
+                    except Exception as archive_error:
+                        raise ValueError(
+                            f"Non-interactive run cancelled for target {pDict.get('pName')}: the "
+                            f"initialization-file coordinates are invalid ({coordinate_error}), and the "
+                            f"NASA Exoplanet Archive coordinate lookup failed ({archive_error})."
+                        ) from archive_error
+
+                    archive_ra = coordinate_pdict.get('ra') if isinstance(coordinate_pdict, dict) else None
+                    archive_dec = coordinate_pdict.get('dec') if isinstance(coordinate_pdict, dict) else None
+                    if isinstance(coordinate_pdict, dict):
+                        archive_planet_dict = dict(coordinate_pdict)
+                    pDict['ra'], pDict['dec'] = radec_hours_to_degree(
+                        pDict.get('ra'),
+                        pDict.get('dec'),
+                        non_interactive_run=True,
+                        archive_ra=archive_ra,
+                        archive_dec=archive_dec,
+                        target_name=pDict.get('pName'),
+                    )
             else:
                 diff = False
 
-                if type(userpDict['ra']) and type(userpDict['dec']) is str:
-                    userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(userpDict['ra'], userpDict['dec'])
+                archive_ra = pDict.get('ra') if isinstance(pDict, dict) else None
+                archive_dec = pDict.get('dec') if isinstance(pDict, dict) else None
+                userpDict['ra'], userpDict['dec'] = radec_hours_to_degree(
+                    userpDict.get('ra'),
+                    userpDict.get('dec'),
+                    non_interactive_run=args.non_interactive_run,
+                    archive_ra=archive_ra,
+                    archive_dec=archive_dec,
+                    target_name=userpDict.get('pName'),
+                )
 
                 if not CandidatePlanetBool:
                     diff = check_parameters(userpDict, pDict)
@@ -28565,6 +29952,31 @@ def _main_impl():
                     pDict = userpDict
         else:
             pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+
+        def lookup_archive_ephemeris():
+            lookup_name = (
+                pDict.get('pName')
+                if isinstance(pDict, dict)
+                else userpDict.get('pName')
+            )
+            _, archive_candidate, archive_parameters = NASAExoplanetArchive(
+                planet=lookup_name,
+                non_interactive=True,
+            ).planet_info()
+            if archive_candidate or not isinstance(archive_parameters, dict):
+                return None
+            return archive_parameters
+
+        pDict = resolve_required_transit_ephemeris(
+            pDict,
+            archive_planet_dict=archive_planet_dict,
+            archive_lookup=lookup_archive_ephemeris if args.override else None,
+            target_name=(
+                pDict.get('pName')
+                if isinstance(pDict, dict)
+                else userpDict.get('pName')
+            ),
+        )
 
         # Seed random number generator (for run to run consistency)
         if exotic_infoDict['random_seed']:
@@ -28607,6 +30019,7 @@ def _main_impl():
             log_info("\n**************************"
                      "\nStarting Reduction Process"
                      "\n**************************\n")
+            reduction_stage_timer.checkpoint("Initialization, configuration, and calibration masters")
 
             #########################################
             # FLUX DATA EXTRACTION AND MANIPULATION
@@ -28667,6 +30080,7 @@ def _main_impl():
                 non_interactive_run=args.non_interactive_run,
             )
             log_info("Limb-darkening coefficients ready.")
+            reduction_stage_timer.checkpoint("FITS validation, timestamp conversion, and limb darkening")
 
             # check for EPW_MD5 checksum
             if 'EPW_MD5' in header:
@@ -29090,6 +30504,16 @@ def _main_impl():
                 )
 
                 if photometer_fortuitous_variables:
+                    if use_single_comparison_for_fortuitous_variables:
+                        log_info(
+                            "Fortuitous-variable single-comparison mode enabled (default): each "
+                            "retained VSX target will use one unsaturated, non-variable, "
+                            "catalog-calibrated comparison star."
+                        )
+                    else:
+                        log_info(
+                            "Fortuitous-variable calibrated ensemble mode enabled per optional_info setting."
+                        )
                     fortuitous_variables = discover_fortuitous_vsx_variables(
                         wcs_file,
                         reference_image.shape,
@@ -29107,6 +30531,37 @@ def _main_impl():
                     log_info("Fortuitous-variable photometry disabled per optional_info setting.")
 
                 if fortuitous_variables:
+                    science_comp_stars, variable_comparison_rejections = (
+                        filter_comparison_stars_against_fortuitous_variables(
+                            science_comp_stars,
+                            fortuitous_variables,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        )
+                    )
+                    if variable_comparison_rejections:
+                        for rejection in variable_comparison_rejections:
+                            log_info(
+                                "Removed science comparison star "
+                                f"#{rejection['comparison_index'] + 1} at "
+                                f"[{rejection['position'][0]:.1f}, {rejection['position'][1]:.1f}] because "
+                                f"the full-field VSX search identified the same source as "
+                                f"{rejection['variable_name']} "
+                                f"({rejection['distance_pixels']:.2f} pixel separation).",
+                                warn=True,
+                            )
+                        exotic_infoDict['comp_stars'] = [
+                            list(position) for position in science_comp_stars
+                        ]
+                        vsp_comp_stars = {
+                            key: star
+                            for key, star in vsp_comp_stars.items()
+                            if fortuitous_variable_overlap(
+                                star.get('pos'),
+                                fortuitous_variables,
+                                duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                            ) is None
+                        }
+
                     if stellar_variability_ensemble_candidate_search:
                         # The stellar-variability target path just selected and VSX-vetted the
                         # same brightest-first pool with the same count and saturation limit.
@@ -29139,17 +30594,21 @@ def _main_impl():
                             fortuitous_auto_stars,
                             use_nextastro_variability_server=args.use_nextastro_variability_server,
                         )
-                    variable_positions = [variable['pos'] for variable in fortuitous_variables]
-                    fortuitous_auto_stars = [
-                        position for position in fortuitous_auto_stars
-                        if not any(
-                            np.hypot(
-                                float(position[0]) - float(variable_position[0]),
-                                float(position[1]) - float(variable_position[1]),
-                            ) <= REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS
-                            for variable_position in variable_positions
+                    fortuitous_auto_stars, automatic_variable_rejections = (
+                        filter_comparison_stars_against_fortuitous_variables(
+                            fortuitous_auto_stars,
+                            fortuitous_variables,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
                         )
-                    ]
+                    )
+                    for rejection in automatic_variable_rejections:
+                        log_info(
+                            "Removed automatic fortuitous-variable comparison candidate at "
+                            f"[{rejection['position'][0]:.1f}, {rejection['position'][1]:.1f}] because "
+                            f"the full-field VSX search identified {rejection['variable_name']} "
+                            f"at the same source ({rejection['distance_pixels']:.2f} pixel separation).",
+                            warn=True,
+                        )
                     fortuitous_ensemble_stars, fortuitous_duplicate_messages = (
                         merge_automatic_comparison_star_coords(
                             science_comp_stars,
@@ -29229,6 +30688,26 @@ def _main_impl():
             tar_comp_dist = {}
             vsp_num = []
             comp_star_count = len(exotic_infoDict['comp_stars'])
+            tracked_vsx_labels = {
+                str(variable.get('tracking_key')): f"Tracked VSX variable {variable.get('name', 'unknown')}"
+                for variable in fortuitous_variables
+                if variable.get('tracking_key')
+            }
+            plateStatus.setComparisonStarLabels({
+                int(comp_key[4:]): label
+                for comp_key, label in tracked_vsx_labels.items()
+                if comp_key.startswith('comp') and comp_key[4:].isdigit()
+            })
+            aperture_estimation_stars = aperture_estimation_comparison_stars(
+                science_comp_stars,
+                stellar_variability_only=stellar_variability_only,
+            )
+            aperture_estimation_comp_count = len(aperture_estimation_stars)
+            aperture_estimation_comp_indices = tuple(range(aperture_estimation_comp_count))
+            aperture_estimation_includes_target = not stellar_variability_only
+            aperture_frame_sigma_comp_indices = (
+                aperture_estimation_comp_indices if stellar_variability_only else None
+            )
             psf_noise_data = initialize_psf_noise_data(len(inputfiles), comp_star_count)
             target_overexposed_frame_mask = np.zeros(len(inputfiles), dtype=bool)
             comp_overexposed_masks = {
@@ -29379,12 +30858,17 @@ def _main_impl():
                 tar_comp_dist[ckey] = np.zeros(2)
 
             coarse_tune_frames = 0
+            coarse_tune_frame_indices = np.array([], dtype=int)
             coarse_apertures_sigma = None
             coarse_annuli_sigma = None
             if use_aperture_photometry:
                 coarse_tune_frames = min(len(inputfiles), APERTURE_AUTOTUNE_MAX_FRAMES)
                 if len(inputfiles) >= APERTURE_AUTOTUNE_MIN_FRAMES:
                     coarse_tune_frames = max(APERTURE_AUTOTUNE_MIN_FRAMES, coarse_tune_frames)
+                coarse_tune_frame_indices = evenly_spaced_aperture_tuning_indices(
+                    len(inputfiles),
+                    max_frames=coarse_tune_frames,
+                )
                 coarse_apertures_sigma = np.linspace(
                     APERTURE_SIGMA_MIN,
                     APERTURE_SIGMA_MAX,
@@ -29398,7 +30882,7 @@ def _main_impl():
                 log_info(
                     "Automatic aperture tuning enabled: "
                     f"coarse_grid={len(coarse_apertures_sigma)}x{len(coarse_annuli_sigma)}, "
-                    f"coarse_frames={coarse_tune_frames}."
+                    f"coarse_frames={coarse_tune_frames}, sampling=evenly_spaced_full_sequence."
                 )
 
             sigma = np.nan
@@ -29441,11 +30925,39 @@ def _main_impl():
                 )
                 if use_aperture_corrections_and_full_image_fwhm:
                     log_info("Aperture corrections and full-image FWHM estimation enabled per optional_info setting.")
+                if stellar_variability_only:
+                    if use_ensemble_photometry_for_stellar_variability:
+                        estimator_text = (
+                            f"{aperture_estimation_comp_count} bright, reference-frame non-saturated, "
+                            "VSX-vetted non-variable comparison star(s)"
+                        )
+                    else:
+                        estimator_text = (
+                            f"the first {aperture_estimation_comp_count} supplied science comparison star(s), "
+                            "with existing saturation and PSF-quality masks"
+                        )
+                    log_info(
+                        f"Stellar-variability aperture estimation will use only {estimator_text}. "
+                        "The variable science target and additional tracked stars will be measured once "
+                        "with the selected aperture."
+                    )
+                elif comp_star_count > aperture_estimation_comp_count:
+                    log_info(
+                        "Aperture-grid estimation will use only the science target and "
+                        f"{aperture_estimation_comp_count} science comparison star(s); "
+                        f"{comp_star_count - aperture_estimation_comp_count} fortuitous-only tracked "
+                        "star(s) will reuse the selected aperture."
+                    )
+
+            reduction_stage_timer.checkpoint("Frame prechecks, WCS, catalogs, and comparison preparation")
 
             # open files, calibrate, align, photometry
             reset_transform_timing_stats()
             reset_photometry_timing_stats()
             multiprocess_alignment_results = None
+            multiprocess_alignment_results_applied = False
+            aperture_preselected_from_sample = False
+            aperture_tuning_sample_score = np.nan
             use_multiprocess_alignment = (
                 args.multiprocess_transformations is not None and args.multiprocess_transformations > 0
             )
@@ -29474,11 +30986,189 @@ def _main_impl():
                     compute_fallback_transform=True,
                     precomputed_fallback_transforms=pointing_alignment_transforms,
                 )
+                for alignment_index, alignment_result in enumerate(multiprocess_alignment_results):
+                    apply_parallel_alignment_result(
+                        alignment_result,
+                        alignment_index,
+                        psf_data,
+                        tar_comp_dist,
+                        comp_alignment_keys,
+                    )
+                multiprocess_alignment_results_applied = True
+
+            if (
+                use_aperture_photometry
+                and multiprocess_alignment_results_applied
+                and aperture_estimation_comp_count > 0
+                and not use_aperture_corrections_and_full_image_fwhm
+            ):
+                aperture_tuning_start = perf_counter()
+                sigma = aperture_frame_sigma_from_psf_data(
+                    psf_data,
+                    0,
+                    comparison_indices=aperture_frame_sigma_comp_indices,
+                )
+                if not np.isfinite(sigma) or sigma <= 0:
+                    sigma = 1.0
+
+                memmap_cutouts = can_memmap_aperture_tuning_cutouts(
+                    generalDark=generalDark,
+                    generalBias=generalBias,
+                    generalFlat=generalFlat,
+                    demosaic_fmt=demosaic_fmt,
+                    bad_pixel_reference=bad_pixel_reference,
+                )
+                log_info(
+                    "Aperture tuning sample: "
+                    f"{len(coarse_tune_frame_indices)} evenly spaced frame(s) spanning "
+                    f"1-{len(inputfiles)}; image access="
+                    + ("FITS memmap star cutouts" if memmap_cutouts else "calibrated full-frame fallback")
+                    + "."
+                )
+                tuning_cutouts, tuning_airmass, tuning_overexposed_masks = build_aperture_tuning_cutouts(
+                    inputfiles,
+                    coarse_tune_frame_indices,
+                    psf_data,
+                    aperture_estimation_comp_indices,
+                    use_adaptive_apertures,
+                    sigma,
+                    generalDark=generalDark,
+                    generalBias=generalBias,
+                    generalFlat=generalFlat,
+                    demosaic_fmt=demosaic_fmt,
+                    demosaic_out=demosaic_out,
+                    demosaic_mult=demosaic_mult,
+                    bad_pixel_reference=bad_pixel_reference,
+                    p_dict=pDict,
+                    info_dict=exotic_infoDict,
+                    jd_times=jd_times,
+                    reject_overexposed=reject_overexposed_stars,
+                    overexposure_threshold=overexposure_threshold,
+                    fast_aperture_mask=fast_aperture_mask,
+                )
+                tuning_psf_data = {
+                    key: np.asarray(values)[coarse_tune_frame_indices]
+                    for key, values in psf_data.items()
+                }
+                coarse_aper_data = populate_aperture_tuning_data_from_cutouts(
+                    tuning_cutouts,
+                    coarse_apertures_sigma if use_adaptive_apertures else coarse_apertures_sigma * sigma,
+                    coarse_annuli_sigma if use_adaptive_apertures else coarse_annuli_sigma * sigma,
+                    aperture_estimation_comp_indices,
+                    use_adaptive_apertures,
+                    sigma,
+                    fast_aperture_mask=fast_aperture_mask,
+                )
+                for tuning_frame_index in range(len(tuning_cutouts)):
+                    apply_overexposure_masks_to_aperture_frame(
+                        coarse_aper_data,
+                        tuning_frame_index,
+                        False,
+                        tuning_overexposed_masks,
+                    )
+                tuning_psf_quality_masks = {
+                    f"comp{comp_idx + 1}": psf_quality_mask_for_key(
+                        tuning_psf_data,
+                        f"comp{comp_idx + 1}",
+                        len(tuning_cutouts),
+                    )
+                    for comp_idx in range(aperture_estimation_comp_count)
+                }
+                refined_apertures_sigma, refined_annuli_sigma, best_coarse_candidate, best_coarse_score = auto_tune_aperture_sigma_grid(
+                    coarse_apertures_sigma,
+                    coarse_annuli_sigma,
+                    coarse_aper_data,
+                    aperture_estimation_comp_count,
+                    tuning_airmass,
+                    require_comp_star=require_comp_star,
+                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                    psf_quality_masks=tuning_psf_quality_masks,
+                )
+                refined_tuning_data = populate_aperture_tuning_data_from_cutouts(
+                    tuning_cutouts,
+                    refined_apertures_sigma if use_adaptive_apertures else refined_apertures_sigma * sigma,
+                    refined_annuli_sigma if use_adaptive_apertures else refined_annuli_sigma * sigma,
+                    aperture_estimation_comp_indices,
+                    use_adaptive_apertures,
+                    sigma,
+                    fast_aperture_mask=fast_aperture_mask,
+                )
+                for tuning_frame_index in range(len(tuning_cutouts)):
+                    apply_overexposure_masks_to_aperture_frame(
+                        refined_tuning_data,
+                        tuning_frame_index,
+                        False,
+                        tuning_overexposed_masks,
+                    )
+                tuning_selection = select_comparison_calibrated_photometry(
+                    tuning_psf_data,
+                    refined_tuning_data,
+                    refined_apertures_sigma * sigma,
+                    refined_annuli_sigma * sigma,
+                    tuning_airmass,
+                    aperture_estimation_stars,
+                    sigma,
+                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                    use_psf_photometry=False,
+                    use_aperture_photometry=True,
+                    comp_overexposed_masks=tuning_overexposed_masks,
+                )
+                if tuning_selection is not None:
+                    selected_aperture_index = int(tuning_selection['a'])
+                    selected_annulus_index = int(tuning_selection['an'])
+                    selected_aperture_sigma = float(refined_apertures_sigma[selected_aperture_index])
+                    selected_annulus_sigma = float(refined_annuli_sigma[selected_annulus_index])
+                    if use_adaptive_apertures:
+                        aperture_values = np.asarray([selected_aperture_sigma], dtype=float)
+                        annulus_values = np.asarray([selected_annulus_sigma], dtype=float)
+                    else:
+                        aperture_values = np.asarray([selected_aperture_sigma * sigma], dtype=float)
+                        annulus_values = np.asarray([selected_annulus_sigma * sigma], dtype=float)
+                    apers = np.asarray([selected_aperture_sigma * sigma], dtype=float)
+                    annuli = np.asarray([selected_annulus_sigma * sigma], dtype=float)
+                    aper_data = initialize_aperture_data_store(
+                        len(inputfiles),
+                        1,
+                        1,
+                        comp_star_count,
+                    )
+                    aperture_grid_tuned = True
+                    aperture_preselected_from_sample = True
+                    aperture_tuning_sample_score = float(tuning_selection['field_score'])
+                    best_aper_fwhm = selected_aperture_sigma / GAUSSIAN_SIGMA_TO_FWHM
+                    log_info(
+                        "Distributed aperture tuning selected "
+                        f"aper={selected_aperture_sigma:.2f} sigma/{best_aper_fwhm:.2f} FWHM, "
+                        f"annulus={selected_annulus_sigma:.2f} sigma, "
+                        f"sample_field_score={aperture_tuning_sample_score * 100.0:.4f}%. "
+                        "The selected 1x1 aperture will now be measured for every tracked star on every frame."
+                    )
+                del tuning_cutouts
+                log_info(
+                    "Distributed aperture tuning completed in "
+                    f"{perf_counter() - aperture_tuning_start:.2f}s."
+                )
+                reset_photometry_timing_stats()
             use_multiprocess_transform_precompute = False
             fallback_transforms = pointing_alignment_transforms
+            use_memmap_initial_photometry = can_memmap_aperture_tuning_cutouts(
+                generalDark=generalDark,
+                generalBias=generalBias,
+                generalFlat=generalFlat,
+                demosaic_fmt=demosaic_fmt,
+                bad_pixel_reference=bad_pixel_reference,
+            )
+            if use_memmap_initial_photometry:
+                log_info(
+                    "Initial photometry image access: FITS memmap enabled; only tracked-star pixel "
+                    "neighborhoods will be paged in."
+                )
+            initial_photometry_start = perf_counter()
             for i, fileName in enumerate(inputfiles):
                 plateStatus.setCurrentFilename(fileName)
-                hdul = fits.open(name=fileName, memmap=False, cache=False, lazy_load_hdus=False,
+                frame_uses_memmap = use_memmap_initial_photometry
+                hdul = fits.open(name=fileName, memmap=frame_uses_memmap, cache=False,
+                                 lazy_load_hdus=frame_uses_memmap,
                                  ignore_missing_end=True)
                 # Final reductions should always use the full centroid fit so the
                 # centroid series does not inherit the fast moment-estimator cadence.
@@ -29490,6 +31180,22 @@ def _main_impl():
                 while image_header["NAXIS"] == 0:
                     extension += 1
                     image_header = hdul[extension].header
+
+                if frame_uses_memmap and not fits_header_supports_memmap(image_header):
+                    hdul.close()
+                    frame_uses_memmap = False
+                    hdul = fits.open(
+                        name=fileName,
+                        memmap=False,
+                        cache=False,
+                        lazy_load_hdus=False,
+                        ignore_missing_end=True,
+                    )
+                    extension = 0
+                    image_header = hdul[extension].header
+                    while image_header["NAXIS"] == 0:
+                        extension += 1
+                        image_header = hdul[extension].header
 
                 airMassList.append(air_mass(image_header, pDict['ra'], pDict['dec'], exotic_infoDict['lat'], exotic_infoDict['long'],
                                             exotic_infoDict['elev'], jd_times[i]))
@@ -29509,22 +31215,24 @@ def _main_impl():
                 imageData = hdul[extension].data
 
                 # CALS
-                imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
-                # Demosaic, if needed
-                imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
-                imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference)
+                if not frame_uses_memmap:
+                    imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
+                    # Demosaic, if needed
+                    imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
+                    imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference)
 
-                if i == 0:
+                if i == 0 and multiprocess_alignment_results is None:
                     firstImage = np.copy(imageData)
 
                 if multiprocess_alignment_results is not None:
-                    apply_parallel_alignment_result(
-                        multiprocess_alignment_results[i],
-                        i,
-                        psf_data,
-                        tar_comp_dist,
-                        comp_alignment_keys,
-                    )
+                    if not multiprocess_alignment_results_applied:
+                        apply_parallel_alignment_result(
+                            multiprocess_alignment_results[i],
+                            i,
+                            psf_data,
+                            tar_comp_dist,
+                            comp_alignment_keys,
+                        )
                 else:
                     alignment_result = {
                         'index': i,
@@ -29580,22 +31288,33 @@ def _main_impl():
                         use_multiprocess_transform_precompute,
                     )
 
-                    cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
-                    if cached_tform is not None:
-                        tform = cached_tform
-                    elif i == 0:
-                        tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
-                    else:
-                        tform = transformation(imageData, fileName, reference_image=firstImage)
+                    if not wcs_alignment_candidate_is_acceptable(
+                        alignment_result,
+                        i,
+                        psf_data,
+                        tar_comp_dist,
+                        comp_alignment_keys,
+                    ):
+                        cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
+                        if cached_tform is not None:
+                            tform = cached_tform
+                        elif i == 0:
+                            tform = SimilarityTransform(scale=1, rotation=0, translation=[0, 0])
+                        else:
+                            tform = downsampled_fallback_transformation(
+                                imageData,
+                                fileName,
+                                reference_image=firstImage,
+                            )
 
-                    transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
-                    alignment_result['fallback'] = _fit_alignment_candidate_psfs(
-                        imageData,
-                        transformed_coords,
-                        target_fast_centroid,
-                        frame_fast_centroid,
-                        previous_psf_rows=previous_psf_rows,
-                    )
+                        transformed_coords = np.asarray(tform(target_and_comp_pixels), dtype=float)
+                        alignment_result['fallback'] = _fit_alignment_candidate_psfs(
+                            imageData,
+                            transformed_coords,
+                            target_fast_centroid,
+                            frame_fast_centroid,
+                            previous_psf_rows=previous_psf_rows,
+                        )
                     apply_parallel_alignment_result(
                         alignment_result,
                         i,
@@ -29647,6 +31366,7 @@ def _main_impl():
                                 comp_row[0] if comp_row.size > 0 else np.nan,
                                 comp_row[1] if comp_row.size > 1 else np.nan,
                                 overexposure_threshold,
+                                starLabel=tracked_vsx_labels.get(comp_key),
                             )
 
                 if use_psf_photometry:
@@ -29710,8 +31430,12 @@ def _main_impl():
                         )
 
                 # aperture photometry
-                if use_aperture_photometry and i == 0:
-                    sigma = psf_sigma_from_fit(psf_data['target'][0])
+                if use_aperture_photometry and i == 0 and not aperture_preselected_from_sample:
+                    sigma = aperture_frame_sigma_from_psf_data(
+                        psf_data,
+                        0,
+                        comparison_indices=aperture_frame_sigma_comp_indices,
+                    )
                     if use_aperture_corrections_and_full_image_fwhm:
                         image_fwhm = estimate_image_fwhm_from_isolated_stars(
                             imageData,
@@ -29730,7 +31454,33 @@ def _main_impl():
                         coarse_aperture_values = coarse_apertures_sigma * sigma
                         coarse_annulus_values = coarse_annuli_sigma * sigma
 
-                if use_aperture_photometry and i < coarse_tune_frames:
+                if use_aperture_photometry and aperture_preselected_from_sample:
+                    populate_aperture_data_for_frame(
+                        imageData,
+                        i,
+                        psf_data,
+                        comp_star_count,
+                        aper_data,
+                        aperture_values,
+                        annulus_values,
+                        fast_aperture_mask,
+                        adaptive_apertures=use_adaptive_apertures,
+                        fallback_sigma=sigma,
+                        use_aperture_corrections_and_full_image_fwhm=False,
+                        noise_config=frame_noise_config,
+                        exposure_s=frame_exposure_s,
+                        airmass=frame_airmass,
+                        comp_indices=range(comp_star_count),
+                        include_target=True,
+                        frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
+                    )
+                    apply_overexposure_masks_to_aperture_frame(
+                        aper_data,
+                        i,
+                        target_overexposed_frame_mask[i],
+                        comp_overexposed_masks,
+                    )
+                elif use_aperture_photometry and i < coarse_tune_frames:
                     coarse_frame_cache[i] = np.array(imageData, copy=True)
                     populate_aperture_data_for_frame(
                         imageData,
@@ -29747,6 +31497,9 @@ def _main_impl():
                         noise_config=frame_noise_config,
                         exposure_s=frame_exposure_s,
                         airmass=frame_airmass,
+                        comp_indices=aperture_estimation_comp_indices,
+                        include_target=aperture_estimation_includes_target,
+                        frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
                     )
                     apply_overexposure_masks_to_aperture_frame(
                         coarse_aper_data,
@@ -29763,13 +31516,13 @@ def _main_impl():
                                 f"comp{comp_idx + 1}",
                                 coarse_tune_frames,
                             )
-                            for comp_idx in range(comp_star_count)
+                            for comp_idx in range(aperture_estimation_comp_count)
                         }
                         refined_apertures_sigma, refined_annuli_sigma, best_coarse_candidate, best_coarse_score = auto_tune_aperture_sigma_grid(
                             coarse_apertures_sigma,
                             coarse_annuli_sigma,
                             coarse_aper_data,
-                            comp_star_count,
+                            aperture_estimation_comp_count,
                             subset_airmass,
                             require_comp_star=require_comp_star,
                             skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
@@ -29801,7 +31554,10 @@ def _main_impl():
 
                         log_info(f"Backfilling refined aperture photometry for the first {coarse_tune_frames} frame(s).")
                         for backfill_idx in range(coarse_tune_frames):
-                            if target_overexposed_frame_mask[backfill_idx]:
+                            if (
+                                aperture_estimation_includes_target
+                                and target_overexposed_frame_mask[backfill_idx]
+                            ):
                                 apply_overexposure_masks_to_aperture_frame(
                                     aper_data,
                                     backfill_idx,
@@ -29842,6 +31598,9 @@ def _main_impl():
                                     noise_config=frame_noise_configs[backfill_idx],
                                     exposure_s=exptimes[backfill_idx],
                                     airmass=airMassList[backfill_idx],
+                                    comp_indices=aperture_estimation_comp_indices,
+                                    include_target=aperture_estimation_includes_target,
+                                    frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
                                 )
                                 apply_overexposure_masks_to_aperture_frame(
                                     aper_data,
@@ -29882,6 +31641,9 @@ def _main_impl():
                         noise_config=frame_noise_config,
                         exposure_s=frame_exposure_s,
                         airmass=frame_airmass,
+                        comp_indices=aperture_estimation_comp_indices,
+                        include_target=aperture_estimation_includes_target,
+                        frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
                     )
                     apply_overexposure_masks_to_aperture_frame(
                         aper_data,
@@ -29895,9 +31657,211 @@ def _main_impl():
                 del hdul
                 del imageData
 
+                completed_photometry_frames = i + 1
+                if completed_photometry_frames == len(inputfiles) or completed_photometry_frames % 50 == 0:
+                    log_info(
+                        "Initial photometry progress: "
+                        f"{completed_photometry_frames}/{len(inputfiles)} frame(s)."
+                    )
+
+            log_info(
+                "Initial selected-aperture/PSF photometry completed in "
+                f"{perf_counter() - initial_photometry_start:.2f}s."
+            )
+            plateStatus.logAggregatedWarningSummary()
             log_transform_timing_stats('Transformation timing summary (full reduction)')
             log_photometry_timing_stats('Photometry timing summary (full reduction)')
             log_reduction_timing_overview('Reduction timing overview (full reduction)')
+            reduction_stage_timer.checkpoint("WCS alignment, centroiding, and initial frame photometry")
+
+            frozen_aperture_data = None
+            frozen_aperture_values = None
+            frozen_annulus_values = None
+            frozen_apers = None
+            frozen_annuli = None
+            frozen_backfill_comp_indices = tuple(range(aperture_estimation_comp_count, comp_star_count))
+            if (
+                use_aperture_photometry
+                and aper_data is not None
+                and aperture_values is not None
+                and annulus_values is not None
+                and (frozen_backfill_comp_indices or stellar_variability_only)
+            ):
+                full_airmass = np.asarray(airMassList, dtype=float)
+                aperture_reference_sigmas = np.asarray([
+                    aperture_frame_sigma_from_psf_data(
+                        psf_data,
+                        frame_index,
+                        comparison_indices=aperture_frame_sigma_comp_indices,
+                    )
+                    for frame_index in range(len(inputfiles))
+                ], dtype=float)
+                aperture_reference_sigmas = aperture_reference_sigmas[
+                    np.isfinite(aperture_reference_sigmas) & (aperture_reference_sigmas > 0)
+                ]
+                aperture_reference_sigma = (
+                    float(np.median(aperture_reference_sigmas))
+                    if aperture_reference_sigmas.size
+                    else finite_positive_or_nan(sigma)
+                )
+                if not np.isfinite(aperture_reference_sigma) or aperture_reference_sigma <= 0:
+                    aperture_reference_sigma = 1.0
+                if use_adaptive_apertures:
+                    aperture_grid_apers = np.asarray(aperture_values, dtype=float) * aperture_reference_sigma
+                    aperture_grid_annuli = np.asarray(annulus_values, dtype=float) * aperture_reference_sigma
+                else:
+                    aperture_grid_apers = np.asarray(aperture_values, dtype=float)
+                    aperture_grid_annuli = np.asarray(annulus_values, dtype=float)
+
+                aperture_estimation_calibration = select_comparison_calibrated_photometry(
+                    psf_data,
+                    aper_data,
+                    aperture_grid_apers,
+                    aperture_grid_annuli,
+                    full_airmass,
+                    aperture_estimation_stars,
+                    aperture_reference_sigma,
+                    skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                    use_psf_photometry=False,
+                    use_aperture_photometry=True,
+                    comp_overexposed_masks=comp_overexposed_masks,
+                )
+                if aperture_estimation_calibration is None:
+                    log_info(
+                        "Warning: science comparison stars did not yield a usable aperture-grid "
+                        "selection, so additional tracked stars cannot be aperture-photometered "
+                        "with a frozen science aperture. PSF photometry remains available when enabled.",
+                        warn=True,
+                    )
+                else:
+                    selected_aperture_index = int(aperture_estimation_calibration['a'])
+                    selected_annulus_index = int(aperture_estimation_calibration['an'])
+                    frozen_aperture_values = np.asarray([
+                        np.asarray(aperture_values, dtype=float)[selected_aperture_index]
+                    ])
+                    frozen_annulus_values = np.asarray([
+                        np.asarray(annulus_values, dtype=float)[selected_annulus_index]
+                    ])
+                    frozen_apers = np.asarray([aperture_estimation_calibration['aper']], dtype=float)
+                    frozen_annuli = np.asarray([aperture_estimation_calibration['annulus']], dtype=float)
+                    frozen_aperture_data = collapse_aperture_data_to_selected_grid_cell(
+                        aper_data,
+                        selected_aperture_index,
+                        selected_annulus_index,
+                    )
+                    estimator_description = (
+                        "the first five bright, reference-frame non-saturated, VSX-vetted "
+                        "non-variable comparison stars"
+                        if (
+                            stellar_variability_only
+                            and use_ensemble_photometry_for_stellar_variability
+                            and aperture_estimation_comp_count == 5
+                        )
+                        else f"{aperture_estimation_comp_count} science comparison star(s)"
+                    )
+                    if aperture_preselected_from_sample:
+                        score_delta = (
+                            aperture_estimation_calibration['field_score'] - aperture_tuning_sample_score
+                            if np.isfinite(aperture_tuning_sample_score)
+                            else np.nan
+                        )
+                        delta_text = (
+                            f", delta={score_delta * 100.0:+.4f}%"
+                            if np.isfinite(score_delta)
+                            else ""
+                        )
+                        log_info(
+                            "Full-sequence aperture validation: "
+                            f"aper={frozen_apers[0]:.2f}px, annulus={frozen_annuli[0]:.2f}px, "
+                            f"field_score={aperture_estimation_calibration['field_score'] * 100.0:.4f}%"
+                            f"{delta_text}. Target and all {comp_star_count} tracked star(s) were already "
+                            "measured in the initial pass; frozen-aperture reread skipped."
+                        )
+                    else:
+                        log_info(
+                            "Frozen aperture selected from the science reduction grid using "
+                            f"{estimator_description}: aper={frozen_apers[0]:.2f}px, "
+                            f"annulus={frozen_annuli[0]:.2f}px. "
+                            + (
+                                "Measuring the variable science target once and "
+                                if stellar_variability_only
+                                else "Measuring "
+                            )
+                            + f"{len(frozen_backfill_comp_indices)} additional tracked star(s) once "
+                            "with this setup."
+                        )
+
+                        reset_photometry_timing_stats()
+                        frozen_backfill_total = len(inputfiles)
+                        for frozen_frame_index, frozen_file_name in enumerate(inputfiles):
+                            active_comp_indices = [
+                                comp_idx
+                                for comp_idx in frozen_backfill_comp_indices
+                                if not comp_overexposed_masks.get(
+                                    f"comp{comp_idx + 1}",
+                                    np.zeros(frozen_backfill_total, dtype=bool),
+                                )[frozen_frame_index]
+                            ]
+                            measure_frozen_target = bool(
+                                stellar_variability_only
+                                and not target_overexposed_frame_mask[frozen_frame_index]
+                            )
+                            if active_comp_indices or measure_frozen_target:
+                                frozen_image = load_calibrated_reduction_image(
+                                    frozen_file_name,
+                                    generalDark,
+                                    generalBias,
+                                    generalFlat,
+                                    demosaic_fmt,
+                                    demosaic_out,
+                                    demosaic_mult,
+                                    bad_pixel_reference=bad_pixel_reference,
+                                )
+                                try:
+                                    populate_aperture_data_for_frame(
+                                        frozen_image,
+                                        frozen_frame_index,
+                                        psf_data,
+                                        comp_star_count,
+                                        frozen_aperture_data,
+                                        frozen_aperture_values,
+                                        frozen_annulus_values,
+                                        fast_aperture_mask,
+                                        adaptive_apertures=use_adaptive_apertures,
+                                        fallback_sigma=sigma,
+                                        use_aperture_corrections_and_full_image_fwhm=(
+                                            use_aperture_corrections_and_full_image_fwhm
+                                        ),
+                                        noise_config=frame_noise_configs[frozen_frame_index],
+                                        exposure_s=exptimes[frozen_frame_index],
+                                        airmass=airMassList[frozen_frame_index],
+                                        comp_indices=active_comp_indices,
+                                        include_target=measure_frozen_target,
+                                        frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
+                                    )
+                                finally:
+                                    del frozen_image
+                            apply_overexposure_masks_to_aperture_frame(
+                                frozen_aperture_data,
+                                frozen_frame_index,
+                                bool(
+                                    stellar_variability_only
+                                    and target_overexposed_frame_mask[frozen_frame_index]
+                                ),
+                                comp_overexposed_masks,
+                            )
+                            completed_frozen_frames = frozen_frame_index + 1
+                            if (
+                                completed_frozen_frames == frozen_backfill_total
+                                or completed_frozen_frames % 50 == 0
+                            ):
+                                log_info(
+                                    "Frozen-aperture photometry progress: "
+                                    f"{completed_frozen_frames}/{frozen_backfill_total}"
+                                )
+                        log_photometry_timing_stats(
+                            'Photometry timing summary (frozen-aperture additional stars)'
+                        )
 
             # Fortuitous VSX targets are independent science targets. Process them against
             # the full image sequence before the exoplanet target validity/overexposure mask
@@ -29921,9 +31885,18 @@ def _main_impl():
                 if not np.isfinite(fortuitous_sigma_display) or fortuitous_sigma_display <= 0:
                     fortuitous_sigma_display = 1.0
 
-                fortuitous_apers = apers
-                fortuitous_annuli = annuli
-                if aperture_values is not None and annulus_values is not None:
+                fortuitous_aperture_data = frozen_aperture_data
+                fortuitous_apers = frozen_apers
+                fortuitous_annuli = frozen_annuli
+                if fortuitous_aperture_data is None:
+                    fortuitous_aperture_data = aper_data
+                    fortuitous_apers = apers
+                    fortuitous_annuli = annuli
+                if (
+                    frozen_aperture_data is None
+                    and aperture_values is not None
+                    and annulus_values is not None
+                ):
                     if use_adaptive_apertures:
                         fortuitous_apers = (
                             np.asarray(aperture_values, dtype=float) * fortuitous_sigma_display
@@ -29940,7 +31913,7 @@ def _main_impl():
                 )
                 fortuitous_comparison_calibration = select_comparison_calibrated_photometry(
                     psf_data,
-                    aper_data,
+                    fortuitous_aperture_data,
                     fortuitous_apers,
                     fortuitous_annuli,
                     full_airmass,
@@ -29961,7 +31934,7 @@ def _main_impl():
                     jd_times,
                     full_airmass,
                     psf_data,
-                    aper_data,
+                    fortuitous_aperture_data,
                     exotic_infoDict,
                     psf_flux_data=fortuitous_psf_flux_source,
                     psf_noise_data=psf_noise_data if use_psf_photometry else None,
@@ -29971,7 +31944,17 @@ def _main_impl():
                         'observed_filter',
                         exotic_infoDict.get('filter'),
                     ),
+                    use_single_comparison=use_single_comparison_for_fortuitous_variables,
                 )
+
+            reduction_stage_timer.checkpoint("Aperture finalization and fortuitous-variable photometry")
+
+            if stellar_variability_only and frozen_aperture_data is not None:
+                aper_data = frozen_aperture_data
+                apers = frozen_apers
+                annuli = frozen_annuli
+                aperture_values = frozen_aperture_values
+                annulus_values = frozen_annulus_values
 
             # filter bad images
             badmask = np.isnan(psf_data["target"][:, 0]) | (psf_data["target"][:, 0] == 0)
@@ -30202,7 +32185,7 @@ def _main_impl():
                 comp_overexposed_masks=comp_overexposed_masks,
             )
 
-            # Fortuitous-only sources were appended solely so the shared image pass could measure them.
+            # Fortuitous-only sources remain in the shared centroid/PSF tracks and frozen-aperture store.
             # Restore the science comparison list before normal target fitting and final metadata output.
             exotic_infoDict['comp_stars'] = [list(position) for position in science_comp_stars]
 
@@ -30794,6 +32777,7 @@ def _main_impl():
                     log_info(f"Optimal Aperture: {np.round(display_aperture, 2)}")
                     log_info(f"Optimal Annulus: {np.round(display_annulus, 2)}")
             log_info("*********************************************\n")
+            reduction_stage_timer.checkpoint("Comparison calibration and target light-curve selection")
 
             best_fit_lc = photometry_info['best_fit_lc']
             bestCompStar = photometry_info['comp_star_num']
@@ -31339,6 +33323,8 @@ def _main_impl():
                                relative_flux_mask=None,
                                background_series=observing_background_series)
 
+            reduction_stage_timer.checkpoint("Final stellar-variability light curve, plots, and diagnostics")
+
             log_info("\n*********************************************************")
             log_info("FINAL STELLAR VARIABILITY ANALYSIS\n")
             log_info("                Analysis Mode: stellar variability only")
@@ -31406,6 +33392,7 @@ def _main_impl():
                 log_info(f"\nError: Could not create AID_AAVSO.txt. {error_txt}\n\t{e}", error=True)
 
             log_info("Output Files Saved")
+            reduction_stage_timer.checkpoint("Output file generation")
 
             log_info("\n************************")
             log_info("End of Reduction Process")
@@ -31928,6 +33915,7 @@ def _main_impl():
             log_info(f"\nError: Could not create plate_status.csv. {error_txt}\n\t{e}", error=True)
 
         log_info("Output Files Saved")
+        reduction_stage_timer.checkpoint("Final transit analysis and output file generation")
 
         log_info("\n************************")
         log_info("End of Reduction Process")

@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 from tenacity import Future, RetryError
 
+from exotic.plate_status import PlateStatus
+
 fake_barycorrpy = types.ModuleType('barycorrpy')
 fake_utc_tdb = types.ModuleType('barycorrpy.utc_tdb')
 fake_utc_tdb.JDUTC_to_BJDTDB = lambda *args, **kwargs: None
@@ -408,7 +410,7 @@ def test_nextastro_photometry_catalog_match_floors_zero_magnitude_error():
     assert match['error'] == pytest.approx(0.001)
 
 
-def test_nextastro_photometry_catalog_match_rejects_high_magnitude_error():
+def test_nextastro_photometry_catalog_match_accepts_relaxed_v_magnitude_error():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
         'count': 1,
@@ -427,7 +429,9 @@ def test_nextastro_photometry_catalog_match_rejects_high_magnitude_error():
 
     match = exotic_module.nextastro_photometry_catalog_match(catalog, 10.0, 20.0, 'CV')
 
-    assert match is None
+    assert match['mag_band'] == 'V'
+    assert match['error'] == pytest.approx(0.051)
+    assert match['uses_relaxed_bv_error_limit'] is True
 
 
 def test_nextastro_photometry_catalog_match_ignores_over_30_magnitudes():
@@ -485,6 +489,89 @@ def test_aavso_vsp_band_for_filter_uses_observed_filter_aliases():
     assert exotic_module.aavso_vsp_band_for_filter('Clear (unfiltered) reduced to V sequence') == 'V'
     assert exotic_module.aavso_vsp_band_for_filter('Cousins R') == 'Rc'
     assert exotic_module.aavso_vsp_band_for_filter('Sloan g') == 'SG'
+
+
+def test_nextastro_catalog_band_tokens_keep_bessell_sloan_and_gaia_distinct():
+    assert exotic_module.nextastro_photometry_band_candidates('bv', include_fallback=False) == [
+        ('Vmag', 'err_Vmag', 'V')
+    ]
+    assert exotic_module.nextastro_photometry_band_candidates('bb', include_fallback=False) == [
+        ('Bmag', 'err_Bmag', 'B')
+    ]
+    assert exotic_module.nextastro_photometry_band_candidates(
+        'Sloan g', include_fallback=False
+    ) == [('g', 'dg', 'g')]
+    assert exotic_module.nextastro_photometry_band_candidates('G', include_fallback=False) == []
+    assert exotic_module.nextastro_photometry_band_candidates('Gaia G', include_fallback=False) == []
+    assert exotic_module.catalog_band_priority('V', 'bv') == 0
+    assert exotic_module.catalog_band_priority('B', 'bb') == 0
+    assert exotic_module.catalog_band_priority('g', 'Sloan g') == 0
+    assert exotic_module.catalog_band_priority('g', 'G') == 1
+    assert exotic_module.catalog_band_priority('g', 'Gaia G') == 1
+
+
+def test_nextastro_catalog_match_uses_relaxed_error_only_as_bv_fallback():
+    catalog = {
+        'row_format': 'objects',
+        'rows': [
+            {
+                'id': 1, 'ra': 10.00001, 'dec': 20.0,
+                'Vmag': 12.1, 'err_Vmag': 0.07,
+            },
+            {
+                'id': 2, 'ra': 10.00010, 'dec': 20.0,
+                'Vmag': 12.2, 'err_Vmag': 0.03,
+            },
+        ],
+    }
+
+    preferred = exotic_module.nextastro_photometry_catalog_match(catalog, 10.0, 20.0, 'V')
+    assert preferred['id'] == 2
+    assert preferred['uses_relaxed_bv_error_limit'] is False
+
+    relaxed_v = exotic_module.nextastro_photometry_catalog_match(
+        {'row_format': 'objects', 'rows': [catalog['rows'][0]]},
+        10.0,
+        20.0,
+        'bv',
+    )
+    assert relaxed_v['id'] == 1
+    assert relaxed_v['error'] == pytest.approx(0.07)
+    assert relaxed_v['uses_relaxed_bv_error_limit'] is True
+
+    relaxed_b = exotic_module.nextastro_photometry_catalog_match(
+        {
+            'row_format': 'objects',
+            'rows': [{'id': 3, 'ra': 10.0, 'dec': 20.0, 'Bmag': 13.0, 'err_Bmag': 0.10}],
+        },
+        10.0,
+        20.0,
+        'bb',
+    )
+    assert relaxed_b['id'] == 3
+    assert relaxed_b['uses_relaxed_bv_error_limit'] is True
+
+    rejected_g = exotic_module.nextastro_photometry_catalog_match(
+        {
+            'row_format': 'objects',
+            'rows': [{'id': 4, 'ra': 10.0, 'dec': 20.0, 'g': 13.0, 'dg': 0.051}],
+        },
+        10.0,
+        20.0,
+        'Sloan g',
+    )
+    assert rejected_g is None
+
+    rejected_v = exotic_module.nextastro_photometry_catalog_match(
+        {
+            'row_format': 'objects',
+            'rows': [{'id': 5, 'ra': 10.0, 'dec': 20.0, 'Vmag': 13.0, 'err_Vmag': 0.101}],
+        },
+        10.0,
+        20.0,
+        'V',
+    )
+    assert rejected_v is None
 
 
 def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
@@ -651,6 +738,36 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
     assert params[0]['cmag'] == pytest.approx(12.0)
     assert params[0]['cmag_err'] == pytest.approx(0.05)
     assert params[0]['observed_filter'] == 'CV'
+
+
+def test_build_stellar_variability_params_rejects_cross_band_calibration(tmp_path):
+    class DummyFit:
+        data = np.ones(3, dtype=float)
+        dataerr = np.full(3, 0.01, dtype=float)
+        airmass_model = np.ones(3, dtype=float)
+        airmass = np.array([1.1, 1.2, 1.3], dtype=float)
+        jd_times = np.array([2450000.1, 2450000.2, 2450000.3], dtype=float)
+        transit = np.ones(3, dtype=float)
+        stellar_variability_target_flux = np.full(3, 1000.0, dtype=float)
+        stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+        stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+        stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
+
+    with pytest.raises(RuntimeError, match='cross-band absolute calibration is not permitted'):
+        exotic_module.build_stellar_variability_params_from_fit(
+            DummyFit(),
+            {
+                'mag': 11.615,
+                'error': 0.001,
+                'mag_band': 'g',
+                'observed_filter': 'V',
+            },
+            [100, 200],
+            'NextAstro-invalid-g-reference',
+            tmp_path,
+            'Host Star',
+            observed_filter='V',
+        )
 
 
 def test_build_stellar_variability_params_uses_raw_ratio_and_per_exposure_errors(monkeypatch, tmp_path):
@@ -1404,6 +1521,125 @@ def test_stellar_variability_ensemble_masks_saturated_frames_and_error_clips_mem
     assert selection['calibration_error_clip']['minimum_high_threshold'] == pytest.approx(0.01)
 
 
+def test_stellar_variability_ensemble_skips_cross_band_catalog_reference():
+    frame_count = 8
+    ranked_summaries = [
+        {
+            'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+            'overexposure_rejected_count': 0,
+        },
+        {
+            'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+            'overexposure_rejected_count': 0,
+        },
+    ]
+    calibration_stars = {
+        'C1': {'pos': [10, 20], 'mag': 11.0, 'error': 0.001, 'mag_band': 'g'},
+        'C2': {'pos': [30, 40], 'mag': 12.5, 'error': 0.011, 'mag_band': 'V'},
+    }
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        {
+            'comp1': np.full(frame_count, 2000.0),
+            'comp2': np.full(frame_count, 1000.0),
+        },
+        observed_filter='V',
+        min_members=1,
+        max_members=1,
+    )
+
+    assert [member['key'] for member in selection['members']] == ['comp2']
+    assert selection['members'][0]['star']['mag_band'] == 'V'
+    rejected = {item['key']: item['reason'] for item in selection['rejected']}
+    assert rejected['comp1'] == 'no usable catalog calibration'
+
+
+def test_stellar_variability_rejects_comparison_that_steps_across_acquisition_gap():
+    frame_count = 180
+    cadence_days = 6.0 / 86400.0
+    times = 2460000.0 + (np.arange(frame_count, dtype=float) * cadence_days)
+    times[90:] += 120.0 / 86400.0
+    ranked_summaries = [
+        {
+            'key': f'comp{index}',
+            'comp_index': index - 1,
+            'label': f'Comp {index}',
+            'position': [10 * index, 20 * index],
+            'overexposure_rejected_count': 0,
+        }
+        for index in range(1, 5)
+    ]
+    calibration_stars = {
+            f'C{index}': {
+                'pos': [10 * index, 20 * index],
+                'mag': 12.0 + (0.1 * index),
+                'error': 0.01,
+                'mag_band': 'V',
+                'catalog_source': 'Synthetic catalog',
+            }
+        for index in range(1, 5)
+    }
+    phase = np.linspace(0, 4 * np.pi, frame_count)
+    common = 1000.0 * (1.0 + (0.01 * np.sin(phase)))
+    comp_flux_map = {
+        f'comp{index}': common * (1.0 + (0.001 * index * np.cos(phase)))
+        for index in range(1, 5)
+    }
+    # A +0.06 mag instrumental discontinuity in comparison 1.
+    comp_flux_map['comp1'] = comp_flux_map['comp1'].copy()
+    comp_flux_map['comp1'][90:] *= 10.0 ** (-0.4 * 0.06)
+
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        comp_flux_map,
+        observed_filter='V',
+        min_members=1,
+        max_members=1,
+        times=times,
+    )
+
+    assert selection['gap_stability']['applied'] is True
+    assert selection['gap_stability']['boundaries'][0]['source_index'] == 90
+    assert selection['gap_stability']['candidates']['comp1']['rejected'] is True
+    assert selection['gap_stability']['candidates']['comp1'][
+        'maximum_absolute_step_magnitude'
+    ] == pytest.approx(0.06, abs=0.003)
+    assert selection['gap_stability']['candidates']['comp1']['label'] == 'C1'
+    assert selection['gap_stability']['candidates']['comp1']['position'] == [10, 20]
+    assert selection['gap_stability']['candidates']['comp1']['catalog_magnitude_band'] == 'V'
+    assert selection['gap_stability']['candidates']['comp1']['catalog_source'] == 'Synthetic catalog'
+    assert selection['members'][0]['key'] != 'comp1'
+    rejected = {item['key']: item for item in selection['rejected']}
+    assert rejected['comp1']['label'] == 'C1'
+    assert rejected['comp1']['position'] == [10, 20]
+    assert 'changed discontinuously' in rejected['comp1']['reason']
+
+
+def test_fortuitous_output_error_limit_relaxes_only_for_flagged_bv_catalog_reference():
+    assert exotic_module.fortuitous_output_magnitude_error_limit([
+        {'star': {'mag_band': 'V', 'uses_relaxed_bv_error_limit': True}}
+    ]) == pytest.approx(0.10)
+    assert exotic_module.fortuitous_output_magnitude_error_limit([
+        {'star': {'mag_band': 'B', 'uses_relaxed_bv_error_limit': True}}
+    ]) == pytest.approx(0.10)
+    assert exotic_module.fortuitous_output_magnitude_error_limit([
+        {'star': {'mag_band': 'g', 'uses_relaxed_bv_error_limit': True}}
+    ]) == pytest.approx(0.05)
+    assert exotic_module.fortuitous_output_magnitude_error_limit([
+        {'star': {'mag_band': 'V', 'uses_relaxed_bv_error_limit': False}}
+    ]) == pytest.approx(0.05)
+
+    metadata = exotic_module.fortuitous_variable_target_metadata({
+        'name': 'Synthetic',
+        'reference_mode': 'single_comparison',
+        'output_magnitude_error_limit': 0.10,
+    })
+    assert metadata['detection_magnitude_error_limit'] == pytest.approx(0.05)
+    assert metadata['output_magnitude_error_limit'] == pytest.approx(0.10)
+
+
 def test_stellar_variability_ensemble_error_clip_does_not_reject_below_point_zero_one_mag():
     candidates = [
         {'magnitude_error': error}
@@ -1428,6 +1664,58 @@ def test_automatic_comparison_merge_deduplicates_only_added_sources():
     # cannot repeat either a primary source or an earlier automatic source.
     assert merged == [[10.0, 20.0], [11.0, 20.0], [50.0, 60.0]]
     assert len(messages) == 2
+
+
+def test_full_field_vsx_variables_are_removed_from_science_comparisons():
+    comparison_stars = [
+        [4969.0, 1695.0],
+        [5221.0, 2714.0],
+        [3923.0, 1362.0],
+    ]
+    fortuitous_variables = [
+        {'name': 'DI Her', 'pos': [4971.55, 1695.42]},
+        {
+            'name': 'ASASSN-V J185327.35+241158.6',
+            'x': 3926.38,
+            'y': 1360.36,
+        },
+    ]
+
+    retained, rejected = exotic_module.filter_comparison_stars_against_fortuitous_variables(
+        comparison_stars,
+        fortuitous_variables,
+        duplicate_radius_pixels=10.0,
+    )
+
+    assert retained == [[5221.0, 2714.0]]
+    assert [item['comparison_index'] for item in rejected] == [0, 2]
+    assert [item['variable_name'] for item in rejected] == [
+        'DI Her',
+        'ASASSN-V J185327.35+241158.6',
+    ]
+    assert rejected[0]['distance_pixels'] == pytest.approx(2.5840, abs=1.0e-3)
+    assert rejected[1]['distance_pixels'] == pytest.approx(3.7563, abs=1.0e-3)
+
+
+def test_tracked_vsx_overexposure_warning_does_not_call_variable_a_comparison_star():
+    messages = []
+    status = PlateStatus(lambda message, **kwargs: messages.append(message))
+    status.setCurrentFilename('frame.fits')
+
+    status.overexposedWarning(
+        12,
+        4973.2,
+        1676.6,
+        58981.5,
+        starLabel='Tracked VSX variable DI Her',
+    )
+
+    assert messages[0] == (
+        'Tracked VSX variable DI Her is overexposed in file frame.fits; '
+        'aperture pixels near [4973.2, 1676.6] exceeded 58981.5.'
+    )
+    assert 'repeated frame-level star warnings are aggregated' in messages[1]
+    assert 'Comparison star' not in messages[0]
 
 
 def test_stellar_variability_ensemble_caps_at_five_by_target_color_and_magnitude():
@@ -1668,6 +1956,7 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
         ),
     )
     fit = types.SimpleNamespace(
+        time=np.array([2460000.105, 2460000.205]),
         jd_times=np.array([2460000.1, 2460000.2]),
         airmass=np.array([1.1, 1.2]),
         stellar_variability_ensemble_magnitudes=np.array([12.30, 12.31]),
@@ -1694,6 +1983,7 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
     )
 
     assert len(params) == 2
+    assert [row['time'] for row in params] == pytest.approx([2460000.105, 2460000.205])
     assert params[0]['cname'] == 'ENSEMBLE (2 stars)'
     assert params[0]['cmag'] is None
     assert params[0]['ensemble_member_labels'] == ['C1', 'C2']
@@ -1769,7 +2059,7 @@ def test_stellar_variability_ensemble_selection_json_lists_color_and_magnitude(m
     assert payload['ensemble']['members'][0]['magnitude_delta'] == pytest.approx(0.1)
 
 
-def test_process_fortuitous_variable_writes_independent_ensemble_products(monkeypatch, tmp_path):
+def test_process_fortuitous_variables_write_independent_and_combined_aid_products(monkeypatch, tmp_path):
     monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
     monkeypatch.setattr(
         exotic_module,
@@ -1809,6 +2099,7 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
         'comp1': np.ones((frame_count, 7)),
         'comp2': np.ones((frame_count, 7)),
         'comp3': np.ones((frame_count, 7)),
+        'comp4': np.ones((frame_count, 7)),
     }
     aper_data = {
         'target': np.full((frame_count, 1, 1), 1000.0),
@@ -1820,6 +2111,10 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
             800.0 * (1.0 + 0.02 * np.sin(np.linspace(0, 2 * np.pi, frame_count)))
         )[:, None, None],
         'comp3_unc': np.full((frame_count, 1, 1), 1.0),
+        'comp4': (
+            700.0 * (1.0 + 0.01 * np.cos(np.linspace(0, 2 * np.pi, frame_count)))
+        )[:, None, None],
+        'comp4_unc': np.full((frame_count, 1, 1), 1.0),
     }
     # One otherwise valid frame has an internal target error above 0.05 mag.
     aper_data['comp3_unc'][2, 0, 0] = 80.0
@@ -1858,6 +2153,15 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
             'catalog_row': {'Bmag': 12.95, 'Vmag': 12.4},
         },
     }
+    second_variable = {
+        **variable,
+        'name': 'Synthetic VSX 2',
+        'auid': '000-AAA-002',
+        'pos': [70, 80],
+        'tracking_key': 'comp4',
+        'aperture_flux_adu': 700.0,
+        'count_rate_adu_per_second': 11.7,
+    }
     info_dict = {
         'save': str(tmp_path),
         'date': '2024-01-02',
@@ -1872,7 +2176,7 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
     variable_overexposed = np.zeros(frame_count, dtype=bool)
     variable_overexposed[:2] = True
     results = exotic_module.process_fortuitous_variables(
-        [variable],
+        [variable, second_variable],
         comparison_calibration,
         calibrations,
         times,
@@ -1884,6 +2188,7 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
         comp_overexposed_masks={'comp3': variable_overexposed},
         exposure_times_seconds=np.full(frame_count, 60.0),
         observed_filter='V',
+        use_single_comparison=False,
     )
 
     assert results[0]['status'] == 'completed'
@@ -1893,14 +2198,36 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
     assert results[0]['point_count'] == frame_count - 3
     variable_dir = tmp_path / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX'
     assert next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).is_file()
+    second_variable_dir = (
+        tmp_path / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX2'
+    )
+    assert next(second_variable_dir.glob('AID_AAVSO_SyntheticVSX2_2024-01-02.txt')).is_file()
     assert next(variable_dir.glob('EnsembleSelection_SyntheticVSX_2024-01-02.json')).is_file()
     assert next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv')).is_file()
+    combined_aid_path = (
+        tmp_path / 'fortuitous_variables' / 'AID_AAVSO_FortuitousVariables_2024-01-02.txt'
+    )
+    combined_aid_text = combined_aid_path.read_text(encoding='utf-8')
+    combined_aid_rows = [
+        line for line in combined_aid_text.splitlines()
+        if line and not line.startswith('#')
+    ]
+    assert combined_aid_text.count('#TYPE=EXTENDED') == 1
+    assert '#ENSEMBLE-COMPARISONS-XC=' not in combined_aid_text
+    assert len(combined_aid_rows) == sum(result['point_count'] for result in results)
+    assert {row.split(',', 1)[0] for row in combined_aid_rows} == {
+        '000-AAA-001',
+        '000-AAA-002',
+    }
     manifest = json.loads(
         next((tmp_path / 'fortuitous_variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
             encoding='utf-8'
         )
     )
+    assert manifest['combined_aid'] == str(combined_aid_path)
     assert manifest['variables'][0]['ensemble_member_count'] == 2
+    assert manifest['variables'][0]['comparison_gap_stability']['applied'] is False
+    assert manifest['variables'][0]['comparison_gap_rejected_candidates'] == []
     assert manifest['variables'][0]['output_magnitude_error_rejected_frame_count'] == 1
     assert manifest['variables'][0]['output_magnitude_error_max'] > 0.05
     selection = json.loads(
@@ -1936,6 +2263,46 @@ def test_process_fortuitous_variable_writes_independent_ensemble_products(monkey
     ]
     assert exported_errors
     assert max(exported_errors) < 0.05
+
+    single_root = tmp_path / 'single'
+    single_info = {**info_dict, 'save': str(single_root)}
+    single_results = exotic_module.process_fortuitous_variables(
+        [variable],
+        comparison_calibration,
+        calibrations,
+        times,
+        times - 0.005,
+        np.linspace(1.1, 1.3, frame_count),
+        psf_data,
+        aper_data,
+        single_info,
+        comp_overexposed_masks={'comp3': variable_overexposed},
+        exposure_times_seconds=np.full(frame_count, 60.0),
+        observed_filter='V',
+    )
+
+    assert single_results[0]['status'] == 'completed'
+    assert single_results[0]['reference_mode'] == 'single_comparison'
+    assert single_results[0]['comparison_member_count'] == 1
+    assert single_results[0]['comparison_label'] == 'C2'
+    single_dir = (
+        single_root / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX'
+    )
+    assert not list(single_dir.glob('EnsembleSelection_*.json'))
+    single_csv = next(single_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv'))
+    single_csv_rows = [
+        line for line in single_csv.read_text(encoding='utf-8').splitlines()[1:]
+        if line.strip()
+    ]
+    assert float(single_csv_rows[0].split(',')[0]) == pytest.approx(times[3])
+    single_aid = next(single_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt'))
+    single_aid_text = single_aid.read_text(encoding='utf-8')
+    assert '#ENSEMBLE-COMPARISONS-XC=' not in single_aid_text
+    single_aid_row = next(
+        line for line in single_aid_text.splitlines()
+        if line and not line.startswith('#')
+    )
+    assert single_aid_row.split(',')[7] == 'C2'
 
 
 def test_stellar_variability_selector_uses_calibrated_ensemble_by_default():

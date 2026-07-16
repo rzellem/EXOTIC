@@ -2,7 +2,7 @@ import pandas
 import pytest
 import requests
 
-from exotic.api.nea import NASAExoplanetArchive
+from exotic.api.nea import NASAExoplanetArchive, planet_name_lookup_candidates
 
 
 class DummyResponse:
@@ -97,3 +97,57 @@ def test_new_scrape_auto_marks_candidate_like_names_without_prompt(monkeypatch, 
     output = capsys.readouterr().out
     assert f"Cannot find target ({planet_name}) in NASA Exoplanet Archive." in output
     assert f"Assuming {planet_name} is a planet candidate because {reason}." in output
+
+
+def test_new_scrape_non_interactive_unknown_target_aborts_without_prompt(monkeypatch, tmp_path):
+    planet_name = 'Definitely Not A Planet b'
+    nea = NASAExoplanetArchive(planet_name, non_interactive=True)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nea, 'planet_names', lambda filename="pl_names.json": None)
+    monkeypatch.setattr(nea, '_tap_query', lambda *args, **kwargs: pandas.DataFrame())
+    monkeypatch.setattr(
+        'builtins.input',
+        lambda prompt: pytest.fail("non-interactive NASA lookup must not prompt"),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Non-interactive run cancelled: target \(Definitely Not A Planet b\) was not found",
+    ):
+        nea._new_scrape()
+
+
+def test_planet_name_lookup_candidates_strip_phase_and_preserve_planet_letter():
+    candidates = planet_name_lookup_candidates('field WASP-164 b ingress')
+
+    assert 'field WASP-164 b' in candidates
+    assert 'field WASP-164b' in candidates
+    assert 'WASP-164b' in candidates
+    assert 'ingress' not in candidates
+
+
+@pytest.mark.parametrize('phase', ['ingress', 'EGRESS'])
+def test_new_scrape_resolves_phase_labeled_name_from_planet_cache(
+    monkeypatch,
+    tmp_path,
+    phase,
+):
+    nea = NASAExoplanetArchive(f'WASP-164 b {phase}', non_interactive=True)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'pl_names.json').write_text(
+        '{"wasp164b": "WASP-164 b"}',
+        encoding='utf-8',
+    )
+
+    class LookupResolved(Exception):
+        pass
+
+    def stop_after_name_resolution(*args, **kwargs):
+        assert nea.planet == 'WASP-164 b'
+        raise LookupResolved
+
+    monkeypatch.setattr(nea, '_tap_query', stop_after_name_resolution)
+
+    with pytest.raises(LookupResolved):
+        nea._new_scrape()

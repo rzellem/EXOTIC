@@ -2366,18 +2366,20 @@ class AIDOutputFiles:
         self.dir = Path(self.i_dict['save'])
         self.vsp_params = vsp_params
 
-    def aavso(self):
-        first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
-        comparison_metadata = aid_comparison_metadata(first_vsp_param)
-        ensemble_comparison_metadata = aid_ensemble_comparison_metadata(first_vsp_param)
-        variable_name = self.auid or self.p_dict.get('sName') or self.p_dict.get('pName')
-
-        params_file = self.dir / safe_output_filename(
+    def _aavso_path(self):
+        return self.dir / safe_output_filename(
             "AID_AAVSO",
             self.p_dict['sName'],
             filename_date_token(self.i_dict['date']),
             extension="txt",
         )
+
+    def _write_aavso(self, params_file, use_row_names=False, include_comparison_metadata=True):
+        first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
+        comparison_metadata = aid_comparison_metadata(first_vsp_param)
+        ensemble_comparison_metadata = aid_ensemble_comparison_metadata(first_vsp_param)
+        default_variable_name = self.auid or self.p_dict.get('sName') or self.p_dict.get('pName')
+
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
@@ -2396,9 +2398,9 @@ class AIDOutputFiles:
                 "Space Telescope Science Institute.\n"
                 "# Use of this data is governed by the AAVSO Data Usage Guidelines: "
                 "aavso.org/data-usage-guidelines\n")
-            if comparison_metadata:
+            if include_comparison_metadata and comparison_metadata:
                 f.write(f"#COMPARISON-CATALOG-XC={dumps(comparison_metadata, sort_keys=True)}\n")
-            if ensemble_comparison_metadata:
+            if include_comparison_metadata and ensemble_comparison_metadata:
                 f.write(format_aavso_json_header(
                     "ENSEMBLE-COMPARISONS-XC",
                     ensemble_comparison_metadata,
@@ -2406,6 +2408,9 @@ class AIDOutputFiles:
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:
+                variable_name = default_variable_name
+                if use_row_names:
+                    variable_name = vsp_p.get('_aid_name') or variable_name
                 mag = format_magnitude(vsp_p.get('mag'), default=None)
                 if mag is None:
                     continue
@@ -2415,6 +2420,18 @@ class AIDOutputFiles:
                 f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"
                         f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{cmag},na,na,"
                         f"{round(vsp_p['airmass'], 7)},na,{chart_id},na\n")
+        return params_file
+
+    def aavso(self):
+        return self._write_aavso(self._aavso_path())
+
+    def combined_aavso(self):
+        """Write one AID file containing rows for multiple named variables."""
+        return self._write_aavso(
+            self._aavso_path(),
+            use_row_names=True,
+            include_comparison_metadata=False,
+        )
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

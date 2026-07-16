@@ -64,12 +64,54 @@ def result_if_max_retry_count(retry_state):
     pass
 
 
+def _strip_observation_phase_suffix(name):
+    """Remove scheduler phase labels that are not part of a target name."""
+    text = str(name or '').strip()
+    return re.sub(r'(?:\s+(?:ingress|egress))+\s*$', '', text, flags=re.IGNORECASE).strip()
+
+
+def _collapse_number_planet_letter_spaces(name):
+    """Keep a trailing single planet letter attached to its numeric identifier."""
+    return re.sub(r'(?<=\d)\s+(?=[a-z](?:\s|$))', '', str(name or '').strip())
+
+
+def planet_name_lookup_candidates(name):
+    """Return progressively smaller names for tolerant archive matching.
+
+    The exact value is retained first.  Observation-phase suffixes are then
+    removed, spaces between a number and a single planet letter are collapsed,
+    and finally each contiguous group of remaining space-separated terms is
+    offered from longest to shortest.
+    """
+    candidates = []
+
+    def add(value):
+        value = str(value or '').strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    original = str(name or '').strip()
+    add(original)
+    without_phase = _strip_observation_phase_suffix(original)
+    add(without_phase)
+    collapsed = _collapse_number_planet_letter_spaces(without_phase)
+    add(collapsed)
+
+    parts = collapsed.split()
+    for width in range(len(parts) - 1, 0, -1):
+        for start in range(0, len(parts) - width + 1):
+            add(' '.join(parts[start:start + width]))
+
+    return candidates
+
+
 class NASAExoplanetArchive:
 
-    def __init__(self, planet=None, candidate=False):
+    def __init__(self, planet=None, candidate=False, non_interactive=False):
         self.planet = planet
         # self.candidate = candidate
         self.pl_dict = None
+        self.non_interactive = bool(non_interactive)
 
         # CONFIGURATIONS
         self.requests_timeout = 16, 512  # connection timeout, response timeout in secs.
@@ -330,12 +372,12 @@ class NASAExoplanetArchive:
         if os.path.exists('pl_names.json'):
             with open("pl_names.json", "r") as f:
                 planets = json.load(f)
-                planet_key = re.sub(r'[^a-zA-Z0-9]', '', self.planet.lower())
-
-                planet_exists = planets.get(planet_key, False)
-
-                if planet_exists:
-                    self.planet = planet_exists
+                for candidate_name in planet_name_lookup_candidates(self.planet):
+                    planet_key = re.sub(r'[^a-zA-Z0-9]', '', candidate_name.lower())
+                    planet_exists = planets.get(planet_key, False)
+                    if planet_exists:
+                        self.planet = planet_exists
+                        break
 
         print(f"\nLooking up {self.planet} on the NASA Exoplanet Archive. Please wait....")
 
@@ -358,6 +400,13 @@ class NASAExoplanetArchive:
                 print(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
                       f"\nAssuming {self.planet} is a planet candidate because {candidate_reason}.")
                 return self.planet, True
+
+            if self.non_interactive:
+                raise RuntimeError(
+                    f"Non-interactive run cancelled: target ({self.planet}) was not found in the NASA "
+                    "Exoplanet Archive, so archive coordinates are unavailable. Check the Planet Name "
+                    "in the initialization file or provide valid target RA and Dec coordinates."
+                )
 
             self.planet = input(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."
                                 f"\nPlease go to https://exoplanetarchive.ipac.caltech.edu to check naming and"

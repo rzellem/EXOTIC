@@ -251,6 +251,33 @@ def test_photographic_filter_aliases_in_filter_column() -> None:
         }
 
 
+def test_cbb_filter_uses_neutral_canonical_name() -> None:
+    observed_filter = {'filter': "CBB", 'name': None, 'wl_min': None, 'wl_max': None}
+
+    setting_filter_values(observed_filter)
+
+    assert observed_filter == {
+        'filter': "CBB",
+        'name': "CBB",
+        'wl_min': "500.0",
+        'wl_max': "1000.0",
+    }
+
+
+def test_cbb_brand_names_remain_accepted_as_input_aliases() -> None:
+    for alias in ("Astrodon ExoPlanet-BB", "Astrodon-Exo", "Exop", "exo"):
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+
+        setting_filter_values(observed_filter)
+
+        assert observed_filter == {
+            'filter': "CBB",
+            'name': "CBB",
+            'wl_min': "500.0",
+            'wl_max': "1000.0",
+        }
+
+
 def test_additional_standard_filter_aliases_in_filter_column() -> None:
     alias_cases = [
         ("bu", "Johnson U", "U", "333.8", "398.8"),
@@ -269,8 +296,9 @@ def test_additional_standard_filter_aliases_in_filter_column() -> None:
         ("clearV", "MObs CV", "CV", "350.0", "850.0"),
         ("w", "MObs CV", "CV", "350.0", "850.0"),
         ("pl", "MObs CV", "CV", "350.0", "850.0"),
-        ("exo", "Astrodon ExoPlanet-BB", "CBB", "500.0", "1000.0"),
-        ("Astrodon-Exo", "Astrodon ExoPlanet-BB", "CBB", "500.0", "1000.0"),
+        ("exo", "CBB", "CBB", "500.0", "1000.0"),
+        ("Astrodon ExoPlanet-BB", "CBB", "CBB", "500.0", "1000.0"),
+        ("Astrodon-Exo", "CBB", "CBB", "500.0", "1000.0"),
     ]
 
     for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:

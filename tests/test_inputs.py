@@ -170,6 +170,38 @@ def test_comp_params_reads_fortuitous_variable_photometry_opt_out(tmp_path):
     assert inputs.info_dict["photometer_fortuitous_variables"] is False
 
 
+def test_comp_params_defaults_fortuitous_variables_to_single_comparison(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_single_comparison_for_fortuitous_variables"] is True
+
+
+def test_comp_params_reads_fortuitous_single_comparison_opt_out(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "use_single_comparison_for_fortuitous_variables": False,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_single_comparison_for_fortuitous_variables"] is False
+
+
 def test_comp_params_defaults_nextastro_vsx_cache_first_to_false(tmp_path):
     init_data = {
         "user_info": {},
@@ -1540,7 +1572,7 @@ def test_parse_aavso_prereduced_overrides_uses_known_filter_lookup_when_filter_x
     overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
 
     assert overrides["filter"] == "CBB"
-    assert overrides["filter_desc"] == "Astrodon ExoPlanet-BB"
+    assert overrides["filter_desc"] == "CBB"
     assert overrides["wl_min"] == "500.0"
     assert overrides["wl_max"] == "1000.0"
 
@@ -1557,7 +1589,7 @@ def test_parse_aavso_prereduced_overrides_uses_astrodon_exo_alias_lookup(tmp_pat
     overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
 
     assert overrides["filter"] == "Astrodon-Exo"
-    assert overrides["filter_desc"] == "Astrodon ExoPlanet-BB"
+    assert overrides["filter_desc"] == "CBB"
     assert overrides["wl_min"] == "500.0"
     assert overrides["wl_max"] == "1000.0"
 

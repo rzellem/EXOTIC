@@ -1280,7 +1280,7 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
     dec_wcs = np.tile(np.arange(300, dtype=float)[:, None], (1, 300))
     catalog = {"rows": []}
 
-    def fake_color_match(_catalog, ra, dec, obs_filter, max_separation_arcsec=5.0):
+    def fake_color_match(_catalog, ra, dec, obs_filter, max_separation_arcsec=5.0, **kwargs):
         colors = {
             (150, 150): (12.0, 11.4),
             (220, 220): (13.0, 12.41),
@@ -1291,13 +1291,21 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
         if key not in colors:
             return None
         b_mag, v_mag = colors[key]
-        return {"catalog_row": {"Bmag": b_mag, "Vmag": v_mag}}
+        return {
+            "catalog_row": {"Bmag": b_mag, "Vmag": v_mag},
+            "color": {
+                "color": b_mag - v_mag,
+                "label": "B-V",
+                "first_column": "Bmag",
+                "second_column": "Vmag",
+            },
+        }
 
     monkeypatch.setattr(exotic_module, "nextastro_catalog_nearest_color_row", fake_color_match)
     monkeypatch.setattr(
         exotic_module,
         "nextastro_photometry_catalog_match",
-        lambda catalog_response, ra, dec, obs_filter: (
+        lambda catalog_response, ra, dec, obs_filter, **kwargs: (
             {
                 **fake_color_match(catalog_response, ra, dec, obs_filter),
                 "mag": 12.0,

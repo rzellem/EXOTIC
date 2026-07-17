@@ -603,7 +603,7 @@ def _stellar_variability_comparison_metadata_label(vsp_param):
         details.append(f"Original filter: {observed_filter}")
 
     comparison_mag = magnitude_text(
-        vsp_param.get('mag_band') or 'V',
+        vsp_param.get('catalog_mag_band') or vsp_param.get('mag_band') or 'V',
         vsp_param.get('cmag'),
         vsp_param.get('cmag_err'),
     )
@@ -644,7 +644,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()
     output_dir = _working_artifacts_dir(save)
-    fig.savefig(output_dir / f"Stellar_Variability.png")
+    fig.savefig(output_dir / f"Stellar_Variability.png", bbox_inches="tight")
     plt.close(fig)
 
 

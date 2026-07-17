@@ -467,7 +467,8 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
         "catalog_dec": -20.20001,
         "catalog_source": "NextAstro photometry catalog",
         "is_aavso_vsp": False,
-        "mag_band": "V",
+        "mag_band": "ClearV",
+        "catalog_mag_band": "V",
         "source_id": 12345,
         "separation_arcsec": 0.2,
     }]
@@ -483,6 +484,8 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert metadata["comparison_dec_deg"] == pytest.approx(-20.2)
     assert metadata["apparent_magnitude"] == pytest.approx(12.1)
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.03)
+    assert metadata["magnitude_band"] == "V"
+    assert metadata["reported_measurement_band"] == "ClearV"
     assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
     assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.340,0.050,V,NO,STD" in output_text

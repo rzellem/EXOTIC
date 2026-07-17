@@ -360,13 +360,20 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
 
 def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp_path, monkeypatch):
     titles = []
+    ylabels = []
     original_set_title = Axes.set_title
+    original_set_ylabel = Axes.set_ylabel
 
     def spy_set_title(self, label, *args, **kwargs):
         titles.append(label)
         return original_set_title(self, label, *args, **kwargs)
 
+    def spy_set_ylabel(self, label, *args, **kwargs):
+        ylabels.append(label)
+        return original_set_ylabel(self, label, *args, **kwargs)
+
     monkeypatch.setattr(Axes, "set_title", spy_set_title)
+    monkeypatch.setattr(Axes, "set_ylabel", spy_set_ylabel)
 
     plot_stellar_variability(
         [
@@ -378,7 +385,8 @@ def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp
                 "cmag_err": 0.067,
                 "comp_ra": 10.1,
                 "comp_dec": -20.2,
-                "mag_band": "V",
+                "mag_band": "ClearV",
+                "catalog_mag_band": "V",
                 "observed_filter": "CV",
                 "is_aavso_vsp": True,
             }
@@ -391,6 +399,7 @@ def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp
     assert "Label: 000-BJX-718\nRA=10.100000\nDec=-20.200000" in titles[-1]
     assert "Original filter: CV" in titles[-1]
     assert "Comparison mag: V=12.345 +/- 0.067" in titles[-1]
+    assert ylabels[-1] == "Magnitude (ClearV)"
 
 
 def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, monkeypatch):

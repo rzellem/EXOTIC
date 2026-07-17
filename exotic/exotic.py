@@ -121,9 +121,9 @@ try:  # light curve numerics
 except ImportError:  # package import
     from api.elca import lc_fitter, transit, get_phase
 try:  # output files
-    from inputs import Inputs, comparison_star_coords
+    from inputs import Inputs, NEXTASTRO_GAIA_DISTPM_ENDPOINT, comparison_star_coords
 except ImportError:  # package import
-    from .inputs import Inputs, comparison_star_coords
+    from .inputs import Inputs, NEXTASTRO_GAIA_DISTPM_ENDPOINT, comparison_star_coords
 try:  # ld
     from .api.ld import LimbDarkening, ld_re_punct_p
 except ImportError:  # package import
@@ -415,8 +415,11 @@ NEXTASTRO_PHOTOMETRY_COLUMNS = (
     'Bmag', 'err_Bmag', 'Vmag', 'err_Vmag',
     'umag', 'err_umag', 'g', 'dg', 'r', 'dr', 'i', 'di', 'z', 'dz',
 )
+NEXTASTRO_PHOTOMETRY_IDENTITY_COLUMNS = ('id', 'source_id', 'ra', 'dec')
 NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
 NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 2.0
+NEXTASTRO_GAIA_COLOR_LOOKUP_TIMEOUT_SECONDS = 10
+NEXTASTRO_GAIA_COLOR_LOOKUP_MAX_PER_SELECTOR = 25
 CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX = 0.05
 CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX = 0.10
 VSP_COMPARISON_MATCH_TOLERANCE_PIXELS = 3.0
@@ -14844,7 +14847,7 @@ def fortuitous_variable_category(period_days, amplitude_mag):
         and amplitude >= FORTUITOUS_VARIABLE_OPTIMAL_MIN_AMPLITUDE_MAG
     ):
         return 'optimal_variables'
-    return 'rest_of_the_variables'
+    return 'normal'
 
 
 def nextastro_vsx_query_boxes(ra, dec, radius_degrees):
@@ -15507,9 +15510,57 @@ def normalize_nextastro_filter_key(obs_filter):
     return re.sub(r"[^a-z0-9]", "", str(obs_filter or "").lower())
 
 
-def nextastro_photometry_band_candidates(obs_filter, include_fallback=True):
+def observed_filter_uses_clear_v_calibration(obs_filter):
     raw_filter = str(obs_filter or '').strip()
+    clear_v_filter_keys = {
+        'cv',
+        'clearv',
+        'clearunfilteredreducedtovsequence',
+        'mobscv',
+        'c',
+        'clear',
+        'lum',
+        'luminance',
+        'w',
+        'pl',
+        'photographicg',
+        'gaiag',
+        'pg',
+        'g1',
+        'g2',
+    }
+    # Exact uppercase G is EXOTIC's short alias for Photographic G. Lowercase
+    # g remains the distinct Sloan-like catalogue band.
+    return (
+        raw_filter == 'G'
+        or normalize_nextastro_filter_key(raw_filter) in clear_v_filter_keys
+    )
+
+
+def nextastro_catalog_match_radius_arcsec(img_scale=None):
+    """Allow at least one image pixel when matching pixel-derived sky positions."""
+    pixel_scale_arcsec = _finite_float(img_scale)
+    if pixel_scale_arcsec is None or pixel_scale_arcsec <= 0:
+        return NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC
+    return max(NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC, float(pixel_scale_arcsec))
+
+
+def reported_stellar_variability_band(observed_filter, fallback_band=None):
+    """Keep the catalogue anchor band separate from the measured passband."""
+    if observed_filter_uses_clear_v_calibration(observed_filter):
+        return 'ClearV'
+    return fallback_band or observed_filter or 'V'
+
+
+def nextastro_photometry_band_candidates(obs_filter):
+    """Return the one explicitly configured catalogue calibration band.
+
+    Absolute calibration never falls through to another band when that
+    configured magnitude or uncertainty is unavailable.
+    """
     filter_key = normalize_nextastro_filter_key(obs_filter)
+    if observed_filter_uses_clear_v_calibration(obs_filter):
+        return [('Vmag', 'err_Vmag', 'V')]
     direct_map = {
         'u': [('umag', 'err_umag', 'u')],
         'johnsonu': [('umag', 'err_umag', 'u')],
@@ -15568,26 +15619,27 @@ def nextastro_photometry_band_candidates(obs_filter, include_fallback=True):
         'zs': [('z', 'dz', 'z')],
     }
 
-    fallback = [
-        ('Vmag', 'err_Vmag', 'V'),
-        ('g', 'dg', 'g'),
-        ('r', 'dr', 'r'),
-        ('i', 'di', 'i'),
-        ('Bmag', 'err_Bmag', 'B'),
-        ('z', 'dz', 'z'),
-        ('umag', 'err_umag', 'u'),
-    ]
-    # EXOTIC's exact uppercase ``G`` means Photographic G.  It is not the
-    # NextAstro catalogue's Sloan-like ``g`` column, nor Gaia ``G``
-    # (``phot_g_mean_mag``).  Preserve case here because the normalized key
-    # intentionally cannot distinguish G from g.
-    candidates = [] if raw_filter == 'G' else list(direct_map.get(filter_key, []))
-    if include_fallback:
-        candidates.extend(candidate for candidate in fallback if candidate not in candidates)
-    return candidates
+    return list(direct_map.get(filter_key, []))
+
+
+def nextastro_photometry_lookup_columns(obs_filter):
+    band_candidates = nextastro_photometry_band_candidates(obs_filter)
+    if not band_candidates:
+        return None
+    magnitude_column, error_column, _ = band_candidates[0]
+    return {
+        'columns': [
+            *NEXTASTRO_PHOTOMETRY_IDENTITY_COLUMNS,
+            magnitude_column,
+            error_column,
+        ],
+        'required_columns': [magnitude_column, error_column],
+    }
 
 
 def aavso_vsp_band_for_filter(obs_filter):
+    if observed_filter_uses_clear_v_calibration(obs_filter):
+        return 'V'
     filter_key = normalize_nextastro_filter_key(obs_filter)
     direct_map = {
         'u': 'U',
@@ -15711,12 +15763,8 @@ def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
                                        max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC,
                                        max_magnitude_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX):
     effective_max_separation_arcsec = _finite_float(max_separation_arcsec)
-    if effective_max_separation_arcsec is None:
+    if effective_max_separation_arcsec is None or effective_max_separation_arcsec <= 0:
         effective_max_separation_arcsec = NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC
-    effective_max_separation_arcsec = min(
-        effective_max_separation_arcsec,
-        NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC,
-    )
     band_candidates = nextastro_photometry_band_candidates(obs_filter)
     matches = []
     for row in nextastro_catalog_rows(catalog_response):
@@ -15806,13 +15854,16 @@ def _validate_nextastro_object_match(result, context):
     wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
     retry=retry_if_exception(should_retry_nextastro_variability_error),
 )
-def nextastro_photometry_single_object_query(ra, dec, radius_arcsec, columns=None):
+def nextastro_photometry_single_object_query(
+        ra, dec, radius_arcsec, columns=None, required_columns=None):
     payload = {
         'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
         'ra': float(ra),
         'dec': float(dec),
         'radius_arcsec': float(radius_arcsec),
     }
+    if required_columns:
+        payload['required_columns'] = list(required_columns)
     log_info(f"NextAstro single-object photometry request JSON: {json.dumps(payload)}")
     result = requests.post(
         NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL,
@@ -15842,7 +15893,8 @@ def nextastro_photometry_single_object_query(ra, dec, radius_arcsec, columns=Non
     wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
     retry=retry_if_exception(should_retry_nextastro_variability_error),
 )
-def nextastro_photometry_objects_query(coordinates, radius_arcsec, columns=None):
+def nextastro_photometry_objects_query(
+        coordinates, radius_arcsec, columns=None, required_columns=None):
     objects = [
         {'key': str(index), 'ra': float(ra), 'dec': float(dec)}
         for index, (ra, dec) in enumerate(coordinates)
@@ -15858,6 +15910,8 @@ def nextastro_photometry_objects_query(coordinates, radius_arcsec, columns=None)
         'objects': objects,
         'radius_arcsec': float(radius_arcsec),
     }
+    if required_columns:
+        payload['required_columns'] = list(required_columns)
     log_info(
         "NextAstro multi-object photometry request JSON: "
         f"{json.dumps({'objects': objects, 'radius_arcsec': payload['radius_arcsec']})}"
@@ -15941,6 +15995,9 @@ def nextastro_photometry_for_coordinates(
     coordinates = list(coordinates)
     if not coordinates:
         return []
+    lookup_columns = nextastro_photometry_lookup_columns(obs_filter)
+    if lookup_columns is None:
+        return [None] * len(coordinates)
     if len(coordinates) == 1:
         ra, dec = coordinates[0]
         return [
@@ -15951,7 +16008,11 @@ def nextastro_photometry_for_coordinates(
                 radius_arcsec=radius_arcsec,
             )
         ]
-    response = nextastro_photometry_objects_query(coordinates, radius_arcsec)
+    response = nextastro_photometry_objects_query(
+        coordinates,
+        radius_arcsec,
+        **lookup_columns,
+    )
     return [
         nextastro_photometry_match_from_object_result(
             object_result,
@@ -15984,10 +16045,14 @@ def nextastro_photometry_catalog_for_wcs(wcs_file, axis, img_scale, obs_filter):
 
 def nextastro_photometry_for_coordinate(ra, dec, obs_filter,
                                         radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    lookup_columns = nextastro_photometry_lookup_columns(obs_filter)
+    if lookup_columns is None:
+        return None
     object_result = nextastro_photometry_single_object_query(
         ra,
         dec,
         radius_arcsec,
+        **lookup_columns,
     )
     return nextastro_photometry_match_from_object_result(
         object_result,
@@ -16375,13 +16440,15 @@ def image_aperture_signal_flux(image_data, x_pos, y_pos,
 
 def nextastro_color_candidate_pairs(obs_filter):
     filter_key = normalize_nextastro_filter_key(obs_filter)
-    if filter_key in ('u', 'johnsonu', 'su', 'up'):
+    if observed_filter_uses_clear_v_calibration(obs_filter):
+        preferred = [('Bmag', 'Vmag', 'B-V')]
+    elif filter_key in ('u', 'johnsonu', 'su', 'up'):
         preferred = [('umag', 'g', 'u-g')]
     elif filter_key in ('b', 'johnsonb', 'photographicb', 'bb', 'pb'):
         preferred = [('Bmag', 'Vmag', 'B-V')]
     elif filter_key in ('v', 'johnsonv', 'bv', 'cv', 'clearv', 'c', 'clear', 'lum', 'luminance'):
         preferred = [('Bmag', 'Vmag', 'B-V')]
-    elif filter_key in ('sg', 'sloang', 'sdssg', 'photographicg', 'gp', 'g', 'pg', 'tg'):
+    elif filter_key in ('sg', 'sloang', 'sdssg', 'gp', 'g', 'tg'):
         preferred = [('g', 'r', 'g-r')]
     elif filter_key in ('sr', 'sloanr', 'sdssr', 'johnsonr', 'cousinsr', 'rp', 'r', 'rc', 'rj', 'pr', 'tr', 'cr'):
         preferred = [('r', 'i', 'r-i')]
@@ -16392,22 +16459,95 @@ def nextastro_color_candidate_pairs(obs_filter):
     else:
         preferred = []
 
-    fallback = [
+    universal_fallbacks = [
         ('Bmag', 'Vmag', 'B-V'),
-        ('g', 'r', 'g-r'),
-        ('r', 'i', 'r-i'),
-        ('i', 'z', 'i-z'),
-        ('umag', 'g', 'u-g'),
+        ('phot_bp_mean_mag', 'phot_rp_mean_mag', 'BP-RP'),
     ]
-    pairs = list(preferred)
-    pairs.extend(pair for pair in fallback if pair not in pairs)
-    return pairs
+    return preferred + [pair for pair in universal_fallbacks if pair not in preferred]
 
 
-def nextastro_catalog_color(row, obs_filter):
+def nextastro_catalog_bp_rp(row):
+    for direct_key in (
+        'bp_rp', 'BP_RP', 'BP-RP', 'BPRP', 'gaia_bp_rp', 'GAIA_BP_RP', 'phot_bp_rp'
+    ):
+        direct_value = _finite_float(row.get(direct_key))
+        if direct_value is not None:
+            return direct_value, direct_key, None
+
+    for bp_key, rp_key in (
+        ('phot_bp_mean_mag', 'phot_rp_mean_mag'),
+        ('PHOT_BP_MEAN_MAG', 'PHOT_RP_MEAN_MAG'),
+        ('GAIA_BP', 'GAIA_RP'),
+        ('BP_MAG', 'RP_MAG'),
+        ('BP', 'RP'),
+    ):
+        bp_magnitude = _finite_float(row.get(bp_key))
+        rp_magnitude = _finite_float(row.get(rp_key))
+        if bp_magnitude is not None and rp_magnitude is not None:
+            return float(bp_magnitude - rp_magnitude), bp_key, rp_key
+    return None
+
+
+@lru_cache(maxsize=2048)
+def _cached_nextastro_gaia_bp_rp(ra, dec, max_separation_arcsec):
+    response = requests.get(
+        NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        params={'ra': float(ra), 'dec': float(dec)},
+        timeout=NEXTASTRO_GAIA_COLOR_LOOKUP_TIMEOUT_SECONDS,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"NextAstro Gaia lookup returned HTTP {response.status_code}.")
+    body = response.json()
+    gaia = body.get('gaia') if isinstance(body, dict) else None
+    if not isinstance(gaia, dict):
+        return None
+    separation = _finite_float(gaia.get('separation_arcsec'))
+    if separation is None or separation > float(max_separation_arcsec):
+        return None
+    bp_rp = nextastro_catalog_bp_rp(gaia)
+    if bp_rp is None:
+        return None
+    color, first_column, second_column = bp_rp
+    return {
+        'color': float(color),
+        'label': 'BP-RP',
+        'first_column': first_column,
+        'second_column': second_column,
+        'catalog_source': 'NextAstro Gaia DR3',
+        'gaia_source_id': gaia.get('source_id'),
+        'gaia_separation_arcsec': separation,
+    }
+
+
+def nextastro_gaia_bp_rp_for_coordinate(
+        ra, dec, max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    parsed_ra = _finite_float(ra)
+    parsed_dec = _finite_float(dec)
+    parsed_radius = _finite_float(max_separation_arcsec)
+    if parsed_ra is None or parsed_dec is None or parsed_radius is None or parsed_radius <= 0:
+        return None
+    return _cached_nextastro_gaia_bp_rp(
+        round(parsed_ra, 7),
+        round(parsed_dec, 7),
+        round(parsed_radius, 3),
+    )
+
+
+def nextastro_catalog_color_from_pairs(row, pairs):
     if not isinstance(row, dict):
         return None
-    for first_column, second_column, label in nextastro_color_candidate_pairs(obs_filter):
+    for first_column, second_column, label in pairs:
+        if label == 'BP-RP':
+            bp_rp = nextastro_catalog_bp_rp(row)
+            if bp_rp is None:
+                continue
+            color, first_column, second_column = bp_rp
+            return {
+                'color': float(color),
+                'label': label,
+                'first_column': first_column,
+                'second_column': second_column,
+            }
         first = _finite_float(row.get(first_column))
         second = _finite_float(row.get(second_column))
         if first is None or second is None:
@@ -16419,6 +16559,13 @@ def nextastro_catalog_color(row, obs_filter):
             'second_column': second_column,
         }
     return None
+
+
+def nextastro_catalog_color(row, obs_filter):
+    return nextastro_catalog_color_from_pairs(
+        row,
+        nextastro_color_candidate_pairs(obs_filter),
+    )
 
 
 def normalize_colour_index_label(value):
@@ -16522,32 +16669,40 @@ def colour_term_for_catalog_label(metadata, color_label):
 
 def nextastro_catalog_nearest_color_row(catalog_response, ra, dec, obs_filter,
                                         max_separation_arcsec=
-                                        AUTOMATIC_CALIBRATION_SELECTOR_COLOR_MATCH_RADIUS_ARCSEC):
-    best_match = None
-    best_separation = None
+                                        AUTOMATIC_CALIBRATION_SELECTOR_COLOR_MATCH_RADIUS_ARCSEC,
+                                        gaia_lookup_state=None,
+                                        gaia_match_radius_arcsec=
+                                        NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    nearby_rows = []
     for row in nextastro_catalog_rows(catalog_response):
         row_ra = _finite_float(row.get('ra'))
         row_dec = _finite_float(row.get('dec'))
         if row_ra is None or row_dec is None:
             continue
-        color = nextastro_catalog_color(row, obs_filter)
-        if color is None:
-            continue
         separation = sky_separation_arcsec(ra, dec, row_ra, row_dec)
         if separation > float(max_separation_arcsec):
             continue
-        if best_separation is None or separation < best_separation:
-            best_match = {
-                'catalog_row': row,
-                'catalog_ra': row_ra,
-                'catalog_dec': row_dec,
-                'source_id': row.get('source_id'),
-                'id': row.get('id'),
-                'separation_arcsec': separation,
-                'color': color,
-            }
-            best_separation = separation
-    return best_match
+        nearby_rows.append((separation, row, row_ra, row_dec))
+
+    for separation, row, row_ra, row_dec in sorted(nearby_rows, key=lambda item: item[0]):
+        color = nextastro_catalog_color_with_gaia_fallback(
+            row,
+            obs_filter,
+            lookup_state=gaia_lookup_state,
+            max_separation_arcsec=gaia_match_radius_arcsec,
+        )
+        if color is None:
+            continue
+        return {
+            'catalog_row': row,
+            'catalog_ra': row_ra,
+            'catalog_dec': row_dec,
+            'source_id': row.get('source_id'),
+            'id': row.get('id'),
+            'separation_arcsec': separation,
+            'color': color,
+        }
+    return None
 
 
 def select_automatic_optimal_calibration_stars(
@@ -16562,7 +16717,8 @@ def select_automatic_optimal_calibration_stars(
         min_comp_target_sep=REFERENCE_FALLBACK_MIN_COMP_TARGET_SEP_PIXELS,
         colour_term_metadata=None,
         brightest_first=False,
-        saturation_threshold=None):
+        saturation_threshold=None,
+        catalog_match_radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
     max_count = parse_automatic_calibration_selector_count(count)
     if image_data is None or field_catalog is None:
         return [], []
@@ -16584,12 +16740,27 @@ def select_automatic_optimal_calibration_stars(
     height, width = image_shape[:2]
     target_xi = int(np.clip(round(target_x), 0, width - 1))
     target_yi = int(np.clip(round(target_y), 0, height - 1))
+    gaia_lookup_state = {
+        'remaining': min(
+            NEXTASTRO_GAIA_COLOR_LOOKUP_MAX_PER_SELECTOR,
+            max(1, max_count * 2 + 1),
+        ),
+        'attempted': 0,
+        'matched': 0,
+    }
     if brightest_first:
         target_match = nextastro_photometry_catalog_match(
             field_catalog,
             ra_wcs[target_yi][target_xi],
             dec_wcs[target_yi][target_xi],
             obs_filter,
+            max_separation_arcsec=catalog_match_radius_arcsec,
+        )
+        target_color = nextastro_catalog_color_with_gaia_fallback(
+            (target_match or {}).get('catalog_row'),
+            obs_filter,
+            lookup_state=gaia_lookup_state,
+            max_separation_arcsec=catalog_match_radius_arcsec,
         )
     else:
         target_match = nextastro_catalog_nearest_color_row(
@@ -16597,12 +16768,15 @@ def select_automatic_optimal_calibration_stars(
             ra_wcs[target_yi][target_xi],
             dec_wcs[target_yi][target_xi],
             obs_filter,
+            gaia_lookup_state=gaia_lookup_state,
+            gaia_match_radius_arcsec=catalog_match_radius_arcsec,
         )
-    target_color = nextastro_catalog_color((target_match or {}).get('catalog_row'), obs_filter)
+        target_color = (target_match or {}).get('color')
     if not brightest_first and target_color is None:
+        log_nextastro_gaia_color_lookup_summary(gaia_lookup_state)
         log_info(
             "Warning: automatic calibration selector could not derive a target color from the "
-            "NextAstro photometry catalog.",
+            "NextAstro photometry catalog or Gaia DR3.",
             warn=True,
         )
         return [], []
@@ -16685,8 +16859,14 @@ def select_automatic_optimal_calibration_stars(
                 comp_ra,
                 comp_dec,
                 obs_filter,
+                max_separation_arcsec=catalog_match_radius_arcsec,
             )
-            color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
+            color = nextastro_catalog_color_with_gaia_fallback(
+                (match or {}).get('catalog_row'),
+                obs_filter,
+                lookup_state=gaia_lookup_state,
+                max_separation_arcsec=catalog_match_radius_arcsec,
+            )
             if (
                 match is None
                 or catalog_band_priority(match.get('mag_band'), obs_filter) != 0
@@ -16698,8 +16878,15 @@ def select_automatic_optimal_calibration_stars(
                 else np.nan
             )
         else:
-            match = nextastro_catalog_nearest_color_row(field_catalog, comp_ra, comp_dec, obs_filter)
-            color = nextastro_catalog_color((match or {}).get('catalog_row'), obs_filter)
+            match = nextastro_catalog_nearest_color_row(
+                field_catalog,
+                comp_ra,
+                comp_dec,
+                obs_filter,
+                gaia_lookup_state=gaia_lookup_state,
+                gaia_match_radius_arcsec=catalog_match_radius_arcsec,
+            )
+            color = (match or {}).get('color')
             if match is None or color is None:
                 continue
             color_delta = abs(color['color'] - target_color['color'])
@@ -16772,6 +16959,7 @@ def select_automatic_optimal_calibration_stars(
         )
     selected_candidates = candidates[:max_count]
     comp_stars = [[candidate['x'], candidate['y']] for candidate in selected_candidates]
+    log_nextastro_gaia_color_lookup_summary(gaia_lookup_state)
     return comp_stars, selected_candidates
 
 
@@ -16844,8 +17032,75 @@ def calibration_catalog_identity(star, label=None):
     return None
 
 
-def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, existing_comp_stars=None,
-                                      field_catalog=None):
+def nextastro_catalog_color_with_gaia_fallback(
+        row,
+        obs_filter,
+        lookup_state=None,
+        max_separation_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    local_color = nextastro_catalog_color(row, obs_filter)
+    if local_color is not None or not isinstance(row, dict):
+        return local_color
+    if lookup_state is None or lookup_state.get('remaining', 0) <= 0:
+        return None
+    if lookup_state.get('error') is not None:
+        return None
+
+    row_ra = _finite_float(row.get('ra'))
+    row_dec = _finite_float(row.get('dec'))
+    if row_ra is None or row_dec is None:
+        return None
+
+    lookup_state['remaining'] -= 1
+    lookup_state['attempted'] = lookup_state.get('attempted', 0) + 1
+    try:
+        color = nextastro_gaia_bp_rp_for_coordinate(
+            row_ra,
+            row_dec,
+            max_separation_arcsec=max_separation_arcsec,
+        )
+    except Exception as exc:
+        lookup_state['error'] = describe_retry_exception(exc)
+        return None
+    if color is not None:
+        lookup_state['matched'] = lookup_state.get('matched', 0) + 1
+        return color
+    return None
+
+
+def log_nextastro_gaia_color_lookup_summary(lookup_state):
+    if not isinstance(lookup_state, dict) or lookup_state.get('reported'):
+        return
+    lookup_state['reported'] = True
+    attempted = int(lookup_state.get('attempted', 0))
+    matched = int(lookup_state.get('matched', 0))
+    if attempted <= 0:
+        return
+    if matched:
+        log_info(
+            "Gaia DR3 BP-RP fallback supplied color data for "
+            f"{matched} of {attempted} queried star(s)."
+        )
+    if lookup_state.get('error'):
+        log_info(
+            "Warning: Gaia DR3 BP-RP fallback became unavailable after "
+            f"{attempted} request(s): {lookup_state['error']}",
+            warn=True,
+        )
+    elif lookup_state.get('remaining', 0) <= 0:
+        log_info(
+            "Warning: Gaia DR3 BP-RP fallback reached its per-selection request limit; "
+            "remaining candidates were evaluated only with photometry-catalog colors.",
+            warn=True,
+        )
+
+
+def merge_nextastro_calibration_stars(
+        comp_stars,
+        comp_ra_dec,
+        obs_filter,
+        existing_comp_stars=None,
+        field_catalog=None,
+        match_radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
     calibration_stars = dict(existing_comp_stars or {})
     existing_positions = {
         tuple(value.get('pos', []))
@@ -16869,7 +17124,13 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
 
         match = None
         if field_catalog is not None:
-            match = nextastro_photometry_catalog_match(field_catalog, comp_ra, comp_dec, obs_filter)
+            match = nextastro_photometry_catalog_match(
+                field_catalog,
+                comp_ra,
+                comp_dec,
+                obs_filter,
+                max_separation_arcsec=match_radius_arcsec,
+            )
         candidates.append({
             'index': index,
             'comp_pos': comp_pos,
@@ -16885,6 +17146,7 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
             remote_matches = nextastro_photometry_for_coordinates(
                 [(candidate['ra'], candidate['dec']) for candidate in unresolved],
                 obs_filter,
+                radius_arcsec=match_radius_arcsec,
             )
             for candidate, match in zip(unresolved, remote_matches):
                 candidate['match'] = match
@@ -17325,6 +17587,17 @@ def comparison_star_pixel_distance(first_position, second_position):
     if first.size < 2 or second.size < 2 or not np.all(np.isfinite([*first[:2], *second[:2]])):
         return np.inf
     return float(np.hypot(first[0] - second[0], first[1] - second[1]))
+
+
+def tracked_comparison_position(tracked_comparison_stars, comp_index):
+    """Return a position using the stable full tracking-list index space."""
+    index = int(comp_index)
+    if index < 0 or index >= len(tracked_comparison_stars):
+        raise IndexError(
+            f"Tracked comparison index {index} is outside the "
+            f"{len(tracked_comparison_stars)}-star calibration pool."
+        )
+    return list(tracked_comparison_stars[index])
 
 
 def check_comp_star_exists(user_stars, vsp_star, tol=VSP_COMPARISON_MATCH_TOLERANCE_PIXELS):
@@ -21248,12 +21521,17 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     ):
         raise RuntimeError("Comparison-star magnitude or magnitude uncertainty is unavailable.")
     observed_filter = observed_filter or comp_star.get('observed_filter')
-    if catalog_band_priority(comp_star.get('mag_band'), observed_filter) != 0:
+    catalog_mag_band = comp_star.get('mag_band', 'V')
+    if catalog_band_priority(catalog_mag_band, observed_filter) != 0:
         raise RuntimeError(
             "Comparison-star catalog magnitude band "
-            f"{comp_star.get('mag_band')!r} does not match observed filter "
+            f"{catalog_mag_band!r} does not match observed filter "
             f"{observed_filter!r}; cross-band absolute calibration is not permitted."
         )
+    measurement_mag_band = reported_stellar_variability_band(
+        observed_filter,
+        fallback_band=catalog_mag_band,
+    )
 
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
     fit_airmass_model = np.asarray(
@@ -21369,7 +21647,8 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
             'catalog_dec': comp_star.get('catalog_dec'),
             'catalog_source': comp_star.get('catalog_source', 'AAVSO VSP'),
             'is_aavso_vsp': bool(comp_star.get('is_aavso_vsp', True)),
-            'mag_band': comp_star.get('mag_band', 'V'),
+            'mag_band': measurement_mag_band,
+            'catalog_mag_band': catalog_mag_band,
             'observed_filter': observed_filter,
             'source_id': comp_star.get('source_id'),
             'catalog_id': comp_star.get('id'),
@@ -21442,8 +21721,13 @@ def aligned_reference_curve_ratio(selected_fit, anchor_fit):
     ]
 
 
-def build_direct_selected_catalog_candidate(comp_stars, comp_ra_dec, field_catalog, best_comp,
-                                            observed_filter=None):
+def build_direct_selected_catalog_candidate(
+        comp_stars,
+        comp_ra_dec,
+        field_catalog,
+        best_comp,
+        observed_filter=None,
+        match_radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
     if best_comp is None or best_comp < 0 or best_comp >= len(comp_stars):
         return None
     if field_catalog is None or not comp_ra_dec or best_comp >= len(comp_ra_dec):
@@ -21459,8 +21743,28 @@ def build_direct_selected_catalog_candidate(comp_stars, comp_ra_dec, field_catal
         comp_ra,
         comp_dec,
         observed_filter,
+        max_separation_arcsec=match_radius_arcsec,
         max_magnitude_error=MAX_APPARENT_MAGNITUDE,
     )
+    effective_match_radius = _finite_float(match_radius_arcsec)
+    if (
+        match is None
+        and effective_match_radius is not None
+        and effective_match_radius > NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC
+    ):
+        try:
+            match = nextastro_photometry_for_coordinate(
+                comp_ra,
+                comp_dec,
+                observed_filter,
+                radius_arcsec=effective_match_radius,
+            )
+        except Exception as exc:
+            log_info(
+                "Warning: scale-aware direct catalog lookup for the selected comparison star "
+                f"failed ({describe_retry_exception(exc)}).",
+                warn=True,
+            )
     if match is None:
         return None
     if catalog_band_priority(match.get('mag_band'), observed_filter) != 0:
@@ -21532,7 +21836,7 @@ def combine_catalog_reference_estimates(derived_estimates, selected_pos, observe
 
 
 def preferred_catalog_magnitude_band_for_filter(observed_filter):
-    candidates = nextastro_photometry_band_candidates(observed_filter, include_fallback=False)
+    candidates = nextastro_photometry_band_candidates(observed_filter)
     if not candidates:
         return None
     return candidates[0][2]
@@ -21774,8 +22078,14 @@ def choose_selected_comp_catalog_reference_candidate(candidates, observed_filter
     ]
     if not usable:
         return None
+    source_priority = {
+        'direct_catalog': 0,
+        'provided_comp_derived': 1,
+        'field_derived': 2,
+    }
     usable.sort(key=lambda candidate: (
         catalog_band_priority((candidate.get('star') or {}).get('mag_band'), observed_filter),
+        source_priority.get(candidate.get('source'), 3),
         catalog_reference_candidate_error(candidate),
     ))
     return usable[0]
@@ -21783,9 +22093,8 @@ def choose_selected_comp_catalog_reference_candidate(candidates, observed_filter
 
 def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name,
                         observed_filter=None, comp_ra_dec=None, field_catalog=None, reference_image=None,
-                        wcs_file=None):
-    info_comps = {}
-
+                        wcs_file=None,
+                        catalog_match_radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
     try:
         if best_comp is None:
             log_info(
@@ -21794,7 +22103,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
             )
             return []
         comp_pos = comp_stars[best_comp]
-        info_comps[best_comp] = calculate_variablility(fit_lc_refs[best_comp]['myfit'], fit_lc_best)
+        selected_comp_fit = fit_lc_refs[best_comp]['myfit']
     except Exception as e:
         log_info(f"Error selecting or calculating variability for comparison star: {e}", warn=True)
         return []
@@ -21816,6 +22125,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
         field_catalog,
         best_comp,
         observed_filter=observed_filter,
+        match_radius_arcsec=catalog_match_radius_arcsec,
     )
     if direct_relaxed is not None:
         candidates.append(direct_relaxed)
@@ -21892,9 +22202,8 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
         )
 
     try:
-        info_comp = info_comps[comp_stars.index(comp_pos)]
         return build_stellar_variability_params_from_fit(
-            info_comp['fit_lc'],
+            selected_comp_fit,
             comp_star,
             comp_pos,
             vsp_auid_comp,
@@ -26980,12 +27289,17 @@ def stellar_variability_calibration_for_position(calibration_stars, position, ob
     return candidates[0]
 
 
-def stellar_variability_catalog_profile(catalog_match, observed_filter=None):
+def stellar_variability_catalog_profile(
+        catalog_match, observed_filter=None, gaia_lookup_state=None):
     if not isinstance(catalog_match, dict):
         return {}
     magnitude = _finite_float(catalog_match.get('mag'))
     magnitude_error = normalized_magnitude_error(catalog_match.get('error'))
-    color = nextastro_catalog_color(catalog_match.get('catalog_row'), observed_filter)
+    color = nextastro_catalog_color_with_gaia_fallback(
+        catalog_match.get('catalog_row'),
+        observed_filter,
+        lookup_state=gaia_lookup_state,
+    )
     return {
         'magnitude': float(magnitude) if magnitude is not None else None,
         'magnitude_error': float(magnitude_error) if magnitude_error is not None else None,
@@ -26999,11 +27313,13 @@ def stellar_variability_catalog_profile(catalog_match, observed_filter=None):
     }
 
 
-def add_stellar_variability_member_similarity(candidate, target_profile, observed_filter=None):
+def add_stellar_variability_member_similarity(
+        candidate, target_profile, observed_filter=None, gaia_lookup_state=None):
     enriched = dict(candidate)
-    member_color = nextastro_catalog_color(
+    member_color = nextastro_catalog_color_with_gaia_fallback(
         enriched.get('star', {}).get('catalog_row'),
         observed_filter,
+        lookup_state=gaia_lookup_state,
     )
     member_color_value = _finite_float((member_color or {}).get('color'))
     target_color_value = _finite_float((target_profile or {}).get('color'))
@@ -27268,7 +27584,16 @@ def select_stellar_variability_ensemble_members(
         max_members=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
         min_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
         times=None):
-    target_profile = stellar_variability_catalog_profile(target_catalog_match, observed_filter)
+    gaia_lookup_state = {
+        'remaining': NEXTASTRO_GAIA_COLOR_LOOKUP_MAX_PER_SELECTOR,
+        'attempted': 0,
+        'matched': 0,
+    }
+    target_profile = stellar_variability_catalog_profile(
+        target_catalog_match,
+        observed_filter,
+        gaia_lookup_state=gaia_lookup_state,
+    )
     candidates = []
     rejected = []
     represented_catalog_identities = set()
@@ -27307,15 +27632,20 @@ def select_stellar_variability_ensemble_members(
             rejected.append({'key': ckey, 'reason': 'invalid median brightness'})
             continue
 
-        candidates.append(add_stellar_variability_member_similarity({
-            'key': ckey,
-            'comp_index': summary.get('comp_index'),
-            'label': summary.get('label', ckey),
-            'position': position,
-            'summary': summary,
-            'median_flux': median_flux,
-            **calibration,
-        }, target_profile, observed_filter=observed_filter))
+        candidates.append(add_stellar_variability_member_similarity(
+            {
+                'key': ckey,
+                'comp_index': summary.get('comp_index'),
+                'label': summary.get('label', ckey),
+                'position': position,
+                'summary': summary,
+                'median_flux': median_flux,
+                **calibration,
+            },
+            target_profile,
+            observed_filter=observed_filter,
+            gaia_lookup_state=gaia_lookup_state,
+        ))
         if catalog_identity is not None:
             represented_catalog_identities.add(catalog_identity)
 
@@ -27416,6 +27746,7 @@ def select_stellar_variability_ensemble_members(
     for selection_rank, member in enumerate(members, start=1):
         member['selection_rank'] = selection_rank
 
+    log_nextastro_gaia_color_lookup_summary(gaia_lookup_state)
     return {
         'members': members,
         'rejected': rejected,
@@ -27697,7 +28028,7 @@ def save_stellar_variability_magnitude_csv(vsp_params, save, target_name, observ
                 row.get('airmass'),
                 row.get('mag'),
                 row.get('mag_err'),
-                row.get('observed_filter') or row.get('mag_band'),
+                row.get('mag_band') or row.get('observed_filter'),
                 row.get('cname'),
             ])
     return output_path
@@ -27796,7 +28127,11 @@ def build_stellar_variability_ensemble_params_from_fit(
             'catalog_dec': None,
             'catalog_source': 'Calibrated comparison-star ensemble',
             'is_aavso_vsp': False,
-            'mag_band': observed_filter or 'V',
+            'mag_band': reported_stellar_variability_band(
+                observed_filter,
+                fallback_band=observed_filter or 'V',
+            ),
+            'catalog_mag_band': preferred_catalog_magnitude_band_for_filter(observed_filter),
             'observed_filter': observed_filter,
             'ensemble_reference': True,
             'ensemble_member_count': len(members),
@@ -28646,7 +28981,7 @@ def fortuitous_variable_target_metadata(variable):
         'classification_folder': variable.get('category'),
         'classification_rule': (
             'optimal_variables requires VSX period <= 10 days and amplitude >= 0.3 mag; '
-            'all other retained VSX stars use rest_of_the_variables.'
+            'all other retained VSX stars use normal.'
         ),
         'reference_aperture_flux_adu': variable.get('aperture_flux_adu'),
         'reference_count_rate_adu_per_second': variable.get('count_rate_adu_per_second'),
@@ -28716,6 +29051,17 @@ def clear_previous_fortuitous_variable_products(variable_dir):
     plot_path = output_dir / 'working_artifacts' / 'Stellar_Variability.png'
     if plot_path.is_file():
         plot_path.unlink()
+    working_artifacts_dir = output_dir / 'working_artifacts'
+    if working_artifacts_dir.is_dir():
+        try:
+            working_artifacts_dir.rmdir()
+        except OSError:
+            pass
+    if output_dir.is_dir():
+        try:
+            output_dir.rmdir()
+        except OSError:
+            pass
 
 
 def process_fortuitous_variables(
@@ -28775,7 +29121,7 @@ def process_fortuitous_variables(
         if exposure_array.shape != times.shape:
             exposure_array = None
 
-    base_dir = Path(info_dict['save']) / 'fortuitous_variables'
+    base_dir = Path(info_dict['save']) / 'variables'
     base_dir.mkdir(parents=True, exist_ok=True)
     for stale_combined_aid in base_dir.glob('AID_AAVSO_FortuitousVariables_*.txt'):
         if stale_combined_aid.is_file():
@@ -28787,7 +29133,10 @@ def process_fortuitous_variables(
         variable = dict(variable)
         variable['reference_mode'] = reference_mode
         variable_name = variable.get('name') or 'VSX variable'
-        category = variable.get('category') or 'rest_of_the_variables'
+        category = variable.get('category') or 'normal'
+        if category == 'rest_of_the_variables':
+            category = 'normal'
+        variable['category'] = category
         variable['input_frame_count'] = int(times.size)
         variable_overexposed_mask = np.zeros(times.shape, dtype=bool)
         tracking_key = variable.get('tracking_key')
@@ -28798,10 +29147,7 @@ def process_fortuitous_variables(
         variable['target_overexposure_rejected_frame_count'] = int(
             np.count_nonzero(variable_overexposed_mask)
         )
-        variable_dir = base_dir / category / safe_output_filename(
-            'VSX', variable_name, extension=''
-        )
-        variable_dir.mkdir(parents=True, exist_ok=True)
+        variable_dir = base_dir / category / safe_output_filename(variable_name, extension='')
         clear_previous_fortuitous_variable_products(variable_dir)
         try:
             target_flux, target_flux_error, target_quality_mask = fortuitous_variable_target_series(
@@ -28978,6 +29324,7 @@ def process_fortuitous_variables(
             )
             if fit is None:
                 raise ValueError('stellar-variability light curve construction failed')
+            variable_dir.mkdir(parents=True, exist_ok=True)
             if use_single_comparison:
                 vsp_params = build_stellar_variability_params_from_fit(
                     fit,
@@ -29080,11 +29427,12 @@ def process_fortuitous_variables(
                 f"({reference_mode}), outputs={variable_dir}."
             )
         except Exception as exc:
+            clear_previous_fortuitous_variable_products(variable_dir)
             results.append({
                 'name': variable_name,
                 'auid': variable.get('auid'),
                 'category': category,
-                'output_directory': str(variable_dir),
+                'output_directory': None,
                 'reference_mode': reference_mode,
                 'comparison_label': variable.get('comparison_label'),
                 'comparison_gap_stability': variable.get('comparison_gap_stability'),
@@ -29108,24 +29456,6 @@ def process_fortuitous_variables(
                 'status': 'skipped',
                 'reason': str(exc),
             })
-            status_path = variable_dir / safe_output_filename(
-                'FortuitousVariableStatus',
-                variable_name,
-                filename_date_token(info_dict.get('date')),
-                extension='json',
-            )
-            with status_path.open('w', encoding='utf-8') as handle:
-                json.dump(
-                    stellar_variability_json_safe({
-                        'target': fortuitous_variable_target_metadata(variable),
-                        'status': 'skipped',
-                        'reason': str(exc),
-                    }),
-                    handle,
-                    indent=2,
-                    sort_keys=True,
-                )
-                handle.write('\n')
             log_info(
                 f"Warning: fortuitous-variable photometry skipped {variable_name} ({exc}).",
                 warn=True,
@@ -30996,6 +31326,12 @@ def _main_impl():
                                  ra=hint_ra, dec=hint_dec, pixel_scale=exotic_infoDict.get('pixel_scale'),
                                  ignore_header_wcs=ignore_header_wcs)
             img_scale_str, img_scale = get_img_scale(header, wcs_file, exotic_infoDict['pixel_scale'])
+            photometry_catalog_match_radius_arcsec = nextastro_catalog_match_radius_arcsec(img_scale)
+            log_info(
+                "NextAstro photometry matches for image-derived positions will use a "
+                f"{photometry_catalog_match_radius_arcsec:.2f} arcsec radius "
+                f"(max of {NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC:.1f} arcsec and one image pixel)."
+            )
             plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             ra_dec_tar, ra_dec_wcs = None, []
             chart_id, vsp_comp_stars, vsp_list = None, {}, []
@@ -31088,6 +31424,7 @@ def _main_impl():
                         ra_dec_tar[0],
                         ra_dec_tar[1],
                         exotic_infoDict['filter'],
+                        max_separation_arcsec=photometry_catalog_match_radius_arcsec,
                     )
 
                 if reference_fallback is not None:
@@ -31157,6 +31494,7 @@ def _main_impl():
                         colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
                         brightest_first=stellar_variability_ensemble_candidate_search,
                         saturation_threshold=ensemble_candidate_saturation_threshold,
+                        catalog_match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                     )
                     log_automatic_optimal_calibration_selection(
                         automatic_comp_stars,
@@ -31295,6 +31633,7 @@ def _main_impl():
                             colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
                             brightest_first=True,
                             saturation_threshold=fortuitous_saturation_threshold,
+                            catalog_match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                         )
                         check_for_variable_stars(
                             ra_wcs,
@@ -31343,6 +31682,7 @@ def _main_impl():
                     exotic_infoDict['filter'],
                     existing_comp_stars=vsp_comp_stars,
                     field_catalog=nextastro_field_catalog,
+                    match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                 )
                 usable_science_nextastro_v = any(
                     star.get('catalog_source') == 'NextAstro photometry catalog'
@@ -31377,6 +31717,7 @@ def _main_impl():
                         colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
                         brightest_first=True,
                         saturation_threshold=fortuitous_saturation_threshold,
+                        catalog_match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                     )
                     check_for_variable_stars(
                         ra_wcs,
@@ -31423,6 +31764,7 @@ def _main_impl():
                     exotic_infoDict['filter'],
                     existing_comp_stars=vsp_comp_stars,
                     field_catalog=nextastro_field_catalog,
+                    match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                 )
                 _, fallback_vsp_stars, fallback_chart_id, fallback_vsp_queried = (
                     merge_aavso_vsp_v_calibration_fallback(
@@ -31483,6 +31825,7 @@ def _main_impl():
                         exotic_infoDict['filter'],
                         existing_comp_stars=vsp_comp_stars,
                         field_catalog=nextastro_field_catalog,
+                        match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                     )
                     fortuitous_calibration_stars = merge_nextastro_calibration_stars(
                         fortuitous_ensemble_stars,
@@ -31490,6 +31833,7 @@ def _main_impl():
                         exotic_infoDict['filter'],
                         existing_comp_stars=vsp_comp_stars,
                         field_catalog=nextastro_field_catalog,
+                        match_radius_arcsec=photometry_catalog_match_radius_arcsec,
                     )
                 # The target variability plot can use any tracked, VSX-vetted
                 # catalog calibration, including full-field NextAstro candidates
@@ -33413,6 +33757,19 @@ def _main_impl():
                                               x_ref=ref_centroid_x,
                                               y_ref=ref_centroid_y)
 
+                    # A selected full-resolution retry can replace the original
+                    # fit object after its raw photometry annotations were made.
+                    # Reattach the final aligned flux arrays here so absolute
+                    # stellar-variability magnitudes never have to be inferred
+                    # from the normalized light curve.
+                    annotate_stellar_variability_raw_photometry(
+                        myfit,
+                        tFlux1,
+                        cFlux1,
+                        target_flux_error=tFlux1_error,
+                        comp_flux_error=cFlux1_error,
+                    )
+
                     if selected_comp_index is not None:
                         ref_flux[selected_comp_index] = {
                             'myfit': myfit,
@@ -33438,7 +33795,7 @@ def _main_impl():
                                         gain_e_per_adu=fallback_gain_e_per_adu,
                                         comp_index=j,
                                         comp_label=f"Comp {j + 1}",
-                                        comp_position=exotic_infoDict['comp_stars'][j],
+                                        comp_position=tracked_comparison_position(fortuitous_ensemble_stars, j),
                                         method_label=comparison_calibration['method_label'],
                                         plot_time_range=full_plot_time_range,
                                     )
@@ -33459,7 +33816,7 @@ def _main_impl():
                                     continue
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
-                                    'pos': exotic_infoDict['comp_stars'][j]
+                                    'pos': tracked_comparison_position(fortuitous_ensemble_stars, j)
                                 }
                         else:
                             best_a = comparison_calibration['a']
@@ -33502,7 +33859,7 @@ def _main_impl():
                                         gain_e_per_adu=fallback_gain_e_per_adu,
                                         comp_index=j,
                                         comp_label=f"Comp {j + 1}",
-                                        comp_position=exotic_infoDict['comp_stars'][j],
+                                        comp_position=tracked_comparison_position(fortuitous_ensemble_stars, j),
                                         method_label=comparison_calibration['method_label'],
                                         plot_time_range=full_plot_time_range,
                                     )
@@ -33526,7 +33883,7 @@ def _main_impl():
                                     continue
                                 ref_flux[j] = {
                                     'myfit': vsp_fit,
-                                    'pos': exotic_infoDict['comp_stars'][j]
+                                    'pos': tracked_comparison_position(fortuitous_ensemble_stars, j)
                                 }
                 else:
                     if fit_attempts:
@@ -34008,7 +34365,9 @@ def _main_impl():
                                                       comp_ra_dec=ra_dec_wcs[:len(fortuitous_ensemble_stars)],
                                                       field_catalog=nextastro_field_catalog,
                                                       reference_image=reference_image,
-                                                      wcs_file=wcs_file)
+                                                      wcs_file=wcs_file,
+                                                      catalog_match_radius_arcsec=
+                                                      photometry_catalog_match_radius_arcsec)
                 else:
                     log_info(
                         "Skipping AID magnitude output because no reference comparison star was selected.",

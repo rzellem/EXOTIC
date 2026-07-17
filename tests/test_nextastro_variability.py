@@ -456,7 +456,7 @@ def test_nextastro_photometry_catalog_match_ignores_over_30_magnitudes():
     assert match is None
 
 
-def test_nextastro_photometry_catalog_match_rejects_separations_over_two_arcsec():
+def test_nextastro_photometry_catalog_match_honors_scale_aware_radius():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],
         'count': 1,
@@ -473,41 +473,349 @@ def test_nextastro_photometry_catalog_match_rejects_separations_over_two_arcsec(
         ],
     }
 
-    match = exotic_module.nextastro_photometry_catalog_match(
+    default_match = exotic_module.nextastro_photometry_catalog_match(
         catalog,
         10.0,
         20.0,
         'CV',
-        max_separation_arcsec=30.0,
+    )
+    scale_aware_match = exotic_module.nextastro_photometry_catalog_match(
+        catalog,
+        10.0,
+        20.0,
+        'CV',
+        max_separation_arcsec=5.2,
     )
 
-    assert match is None
+    assert default_match is None
+    assert scale_aware_match['source_id'] == 111
+    assert 2.0 < scale_aware_match['separation_arcsec'] < 5.2
+
+
+def test_nextastro_catalog_match_radius_uses_one_pixel_with_two_arcsec_floor():
+    assert exotic_module.nextastro_catalog_match_radius_arcsec(None) == pytest.approx(2.0)
+    assert exotic_module.nextastro_catalog_match_radius_arcsec(1.4) == pytest.approx(2.0)
+    assert exotic_module.nextastro_catalog_match_radius_arcsec(5.153485) == pytest.approx(5.153485)
+
+
+def test_direct_selected_catalog_candidate_uses_targeted_scale_aware_lookup(monkeypatch):
+    calls = []
+
+    def fake_lookup(ra, dec, observed_filter, radius_arcsec=2.0):
+        calls.append((ra, dec, observed_filter, radius_arcsec))
+        return {
+            'id': 185212647,
+            'source_id': None,
+            'mag': 10.038,
+            'error': 0.027,
+            'mag_band': 'V',
+            'catalog_ra': 294.68751,
+            'catalog_dec': 31.360037,
+            'separation_arcsec': 2.643594,
+        }
+
+    monkeypatch.setattr(exotic_module, 'nextastro_photometry_for_coordinate', fake_lookup)
+
+    candidate = exotic_module.build_direct_selected_catalog_candidate(
+        [[232.0, 348.0]],
+        [(294.68834158880503, 31.36022406806484)],
+        {'row_format': 'objects', 'rows': []},
+        0,
+        observed_filter='CV',
+        match_radius_arcsec=5.153485,
+    )
+
+    assert calls == [(294.68834158880503, 31.36022406806484, 'CV', 5.153485)]
+    assert candidate['source'] == 'direct_catalog'
+    assert candidate['star']['mag'] == pytest.approx(10.038)
+    assert candidate['star']['mag_band'] == 'V'
+    assert candidate['star']['pos'] == [232.0, 348.0]
+
+
+def test_reported_stellar_variability_band_distinguishes_clearv_from_catalog_v():
+    for observed_filter in (
+        'MObs CV',
+        'CV',
+        'Clear',
+        'Luminance',
+        'Photographic G',
+        'Gaia G',
+        'G',
+        'G1',
+        'G2',
+    ):
+        assert exotic_module.reported_stellar_variability_band(
+            observed_filter, 'V'
+        ) == 'ClearV'
+    assert exotic_module.reported_stellar_variability_band('bv', 'V') == 'V'
+
+
+def test_selected_comparison_direct_catalog_match_precedes_derived_fallback():
+    selected = exotic_module.choose_selected_comp_catalog_reference_candidate(
+        [
+            {
+                'source': 'field_derived',
+                'error': 0.010,
+                'star': {'mag_band': 'V', 'error': 0.010},
+            },
+            {
+                'source': 'direct_catalog',
+                'error': 0.027,
+                'star': {'mag_band': 'V', 'error': 0.027},
+            },
+        ],
+        observed_filter='CV',
+    )
+
+    assert selected['source'] == 'direct_catalog'
 
 
 def test_aavso_vsp_band_for_filter_uses_observed_filter_aliases():
     assert exotic_module.aavso_vsp_band_for_filter('MObs CV') == 'V'
     assert exotic_module.aavso_vsp_band_for_filter('Clear (unfiltered) reduced to V sequence') == 'V'
+    assert exotic_module.aavso_vsp_band_for_filter('Photographic G') == 'V'
+    assert exotic_module.aavso_vsp_band_for_filter('Gaia G') == 'V'
     assert exotic_module.aavso_vsp_band_for_filter('Cousins R') == 'Rc'
     assert exotic_module.aavso_vsp_band_for_filter('Sloan g') == 'SG'
 
 
-def test_nextastro_catalog_band_tokens_keep_bessell_sloan_and_gaia_distinct():
-    assert exotic_module.nextastro_photometry_band_candidates('bv', include_fallback=False) == [
+def test_nextastro_catalog_band_tokens_keep_bessell_sloan_and_clearv_distinct():
+    assert exotic_module.nextastro_photometry_band_candidates('bv') == [
         ('Vmag', 'err_Vmag', 'V')
     ]
-    assert exotic_module.nextastro_photometry_band_candidates('bb', include_fallback=False) == [
+    assert exotic_module.nextastro_photometry_band_candidates('bb') == [
         ('Bmag', 'err_Bmag', 'B')
     ]
-    assert exotic_module.nextastro_photometry_band_candidates(
-        'Sloan g', include_fallback=False
-    ) == [('g', 'dg', 'g')]
-    assert exotic_module.nextastro_photometry_band_candidates('G', include_fallback=False) == []
-    assert exotic_module.nextastro_photometry_band_candidates('Gaia G', include_fallback=False) == []
+    assert exotic_module.nextastro_photometry_band_candidates('Sloan g') == [('g', 'dg', 'g')]
+    for observed_filter in ('G', 'Photographic G', 'Gaia G', 'G1', 'G2'):
+        assert exotic_module.nextastro_photometry_band_candidates(observed_filter) == [
+            ('Vmag', 'err_Vmag', 'V')
+        ]
     assert exotic_module.catalog_band_priority('V', 'bv') == 0
     assert exotic_module.catalog_band_priority('B', 'bb') == 0
     assert exotic_module.catalog_band_priority('g', 'Sloan g') == 0
     assert exotic_module.catalog_band_priority('g', 'G') == 1
     assert exotic_module.catalog_band_priority('g', 'Gaia G') == 1
+    assert exotic_module.catalog_band_priority('V', 'G') == 0
+    assert exotic_module.catalog_band_priority('V', 'Gaia G') == 0
+
+
+@pytest.mark.parametrize(
+    ('observed_filter', 'expected_labels'),
+    [
+        ('u', ['u-g', 'B-V', 'BP-RP']),
+        ('Johnson U', ['u-g', 'B-V', 'BP-RP']),
+        ('B', ['B-V', 'BP-RP']),
+        ('Photographic B', ['B-V', 'BP-RP']),
+        ('V', ['B-V', 'BP-RP']),
+        ('Sloan g', ['g-r', 'B-V', 'BP-RP']),
+        ('Sloan r', ['r-i', 'B-V', 'BP-RP']),
+        ('Cousins R', ['r-i', 'B-V', 'BP-RP']),
+        ('Sloan i', ['r-i', 'B-V', 'BP-RP']),
+        ('Cousins I', ['r-i', 'B-V', 'BP-RP']),
+        ('Sloan z', ['i-z', 'B-V', 'BP-RP']),
+        ('CV', ['B-V', 'BP-RP']),
+        ('Clear', ['B-V', 'BP-RP']),
+        ('Luminance', ['B-V', 'BP-RP']),
+        ('Photographic G', ['B-V', 'BP-RP']),
+        ('Gaia G', ['B-V', 'BP-RP']),
+        ('G', ['B-V', 'BP-RP']),
+        ('G1', ['B-V', 'BP-RP']),
+        ('G2', ['B-V', 'BP-RP']),
+        ('Unknown', ['B-V', 'BP-RP']),
+    ],
+)
+def test_all_filters_use_filter_specific_color_then_universal_fallbacks(
+        observed_filter, expected_labels):
+    pairs = exotic_module.nextastro_color_candidate_pairs(observed_filter)
+    assert [pair[2] for pair in pairs] == expected_labels
+
+
+@pytest.mark.parametrize(
+    ('observed_filter', 'primary_label', 'primary_columns'),
+    [
+        ('u', 'u-g', ('umag',)),
+        ('B', 'B-V', ()),
+        ('V', 'B-V', ()),
+        ('Sloan g', 'g-r', ('g',)),
+        ('Sloan r', 'r-i', ('r',)),
+        ('Sloan i', 'r-i', ('r',)),
+        ('Sloan z', 'i-z', ('i',)),
+        ('Clear', 'B-V', ()),
+        ('Photographic G', 'B-V', ()),
+        ('Gaia G', 'B-V', ()),
+    ],
+)
+def test_all_filters_fall_back_from_specific_color_to_bv_then_bp_rp(
+        observed_filter, primary_label, primary_columns):
+    row = {
+        'Bmag': 13.0,
+        'Vmag': 12.5,
+        'umag': 13.8,
+        'g': 12.8,
+        'r': 12.2,
+        'i': 12.0,
+        'z': 11.8,
+        'bp_rp': 1.1,
+    }
+    assert exotic_module.nextastro_catalog_color(row, observed_filter)['label'] == primary_label
+
+    for column in primary_columns:
+        row[column] = None
+    assert exotic_module.nextastro_catalog_color(row, observed_filter)['label'] == 'B-V'
+
+    row['Bmag'] = None
+    assert exotic_module.nextastro_catalog_color(row, observed_filter) == {
+        'color': pytest.approx(1.1),
+        'label': 'BP-RP',
+        'first_column': 'bp_rp',
+        'second_column': None,
+    }
+
+
+def test_clearv_catalog_color_derives_bp_rp_from_gaia_magnitudes():
+    color = exotic_module.nextastro_catalog_color(
+        {
+            'Vmag': 12.5,
+            'phot_bp_mean_mag': 13.4,
+            'phot_rp_mean_mag': 12.1,
+        },
+        'Gaia G',
+    )
+
+    assert color == {
+        'color': pytest.approx(1.3),
+        'label': 'BP-RP',
+        'first_column': 'phot_bp_mean_mag',
+        'second_column': 'phot_rp_mean_mag',
+    }
+
+
+def test_nextastro_gaia_bp_rp_lookup_is_cached(monkeypatch):
+    captured = []
+
+    def fake_get(url, params, timeout):
+        captured.append((url, params, timeout))
+        return DummyResponse({
+            'gaia': {
+                'source_id': 123456,
+                'separation_arcsec': 0.2,
+                'phot_bp_mean_mag': 13.4,
+                'phot_rp_mean_mag': 12.1,
+                'bp_rp': 1.3,
+            },
+        })
+
+    exotic_module._cached_nextastro_gaia_bp_rp.cache_clear()
+    monkeypatch.setattr(exotic_module.requests, 'get', fake_get)
+
+    first = exotic_module.nextastro_gaia_bp_rp_for_coordinate(10.12345678, -20.25)
+    second = exotic_module.nextastro_gaia_bp_rp_for_coordinate(10.12345678, -20.25)
+
+    assert first == second
+    assert first['color'] == pytest.approx(1.3)
+    assert first['label'] == 'BP-RP'
+    assert first['catalog_source'] == 'NextAstro Gaia DR3'
+    assert captured == [(
+        exotic_module.NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        {'ra': 10.1234568, 'dec': -20.25},
+        exotic_module.NEXTASTRO_GAIA_COLOR_LOOKUP_TIMEOUT_SECONDS,
+    )]
+
+
+def test_local_catalog_color_does_not_query_gaia(monkeypatch):
+    monkeypatch.setattr(
+        exotic_module,
+        'nextastro_gaia_bp_rp_for_coordinate',
+        lambda *args, **kwargs: pytest.fail('Gaia should not be queried when B-V is available.'),
+    )
+    state = {'remaining': 3, 'attempted': 0, 'matched': 0}
+
+    color = exotic_module.nextastro_catalog_color_with_gaia_fallback(
+        {'ra': 10.0, 'dec': 20.0, 'Bmag': 13.0, 'Vmag': 12.5},
+        'V',
+        lookup_state=state,
+    )
+
+    assert color['label'] == 'B-V'
+    assert color['color'] == pytest.approx(0.5)
+    assert state == {'remaining': 3, 'attempted': 0, 'matched': 0}
+
+
+def test_nearest_catalog_color_row_uses_gaia_bp_rp_last_resort(monkeypatch):
+    calls = []
+
+    def fake_gaia_lookup(ra, dec, max_separation_arcsec):
+        calls.append((ra, dec, max_separation_arcsec))
+        return {'color': 1.25, 'label': 'BP-RP'}
+
+    monkeypatch.setattr(exotic_module, 'nextastro_gaia_bp_rp_for_coordinate', fake_gaia_lookup)
+    state = {'remaining': 3, 'attempted': 0, 'matched': 0}
+    catalog = {
+        'rows': [
+            {'source_id': 42, 'ra': 10.00001, 'dec': 20.0, 'Vmag': 12.5},
+        ],
+    }
+
+    match = exotic_module.nextastro_catalog_nearest_color_row(
+        catalog,
+        10.0,
+        20.0,
+        'V',
+        gaia_lookup_state=state,
+        gaia_match_radius_arcsec=1.5,
+    )
+
+    assert match['source_id'] == 42
+    assert match['color'] == {'color': 1.25, 'label': 'BP-RP'}
+    assert calls == [(10.00001, 20.0, 1.5)]
+    assert state == {'remaining': 2, 'attempted': 1, 'matched': 1}
+
+
+@pytest.mark.parametrize(
+    ('observed_filter', 'magnitude_column', 'error_column'),
+    [
+        ('u', 'umag', 'err_umag'),
+        ('B', 'Bmag', 'err_Bmag'),
+        ('V', 'Vmag', 'err_Vmag'),
+        ('Sloan g', 'g', 'dg'),
+        ('Sloan r', 'r', 'dr'),
+        ('Sloan i', 'i', 'di'),
+        ('Sloan z', 'z', 'dz'),
+    ],
+)
+def test_nextastro_catalog_match_never_falls_back_to_another_band(
+        observed_filter, magnitude_column, error_column):
+    row = {
+        'id': 1,
+        'ra': 10.0,
+        'dec': 20.0,
+        'Bmag': 12.1,
+        'err_Bmag': 0.01,
+        'Vmag': 12.2,
+        'err_Vmag': 0.01,
+        'umag': 12.3,
+        'err_umag': 0.01,
+        'g': 12.4,
+        'dg': 0.01,
+        'r': 12.5,
+        'dr': 0.01,
+        'i': 12.6,
+        'di': 0.01,
+        'z': 12.7,
+        'dz': 0.01,
+    }
+    row[magnitude_column] = None
+    row[error_column] = None
+
+    match = exotic_module.nextastro_photometry_catalog_match(
+        {'row_format': 'objects', 'rows': [row]},
+        10.0,
+        20.0,
+        observed_filter,
+    )
+
+    assert match is None
 
 
 def test_nextastro_catalog_match_uses_relaxed_error_only_as_bv_fallback():
@@ -603,7 +911,10 @@ def test_nextastro_photometry_for_coordinate_uses_single_object_endpoint(monkeyp
     assert captured['json']['ra'] == pytest.approx(10.0)
     assert captured['json']['dec'] == pytest.approx(-20.0)
     assert captured['json']['radius_arcsec'] == pytest.approx(2.0)
-    assert captured['json']['columns'] == list(exotic_module.NEXTASTRO_PHOTOMETRY_COLUMNS)
+    assert captured['json']['columns'] == [
+        'id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag',
+    ]
+    assert captured['json']['required_columns'] == ['Vmag', 'err_Vmag']
     assert captured['timeout'] == 30
     assert match['source_id'] == 12345
     assert match['mag'] == pytest.approx(11.2)
@@ -659,6 +970,10 @@ def test_nextastro_photometry_for_coordinates_uses_objects_query_endpoint(monkey
         {'key': '1', 'ra': 11.0, 'dec': -21.0},
     ]
     assert captured['json']['radius_arcsec'] == pytest.approx(2.0)
+    assert captured['json']['columns'] == [
+        'id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag',
+    ]
+    assert captured['json']['required_columns'] == ['Vmag', 'err_Vmag']
     assert captured['timeout'] == 30
     assert matches[0]['source_id'] == 12345
     assert matches[0]['mag_band'] == 'V'
@@ -769,6 +1084,33 @@ def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
     assert calibration['mag'] == pytest.approx(11.2)
     assert calibration['error'] == pytest.approx(0.03)
     assert calibration['observed_filter'] == 'V'
+
+
+def test_merge_nextastro_calibration_stars_uses_image_scale_match_radius():
+    catalog = {
+        'row_format': 'objects',
+        'rows': [{
+            'id': 9,
+            'source_id': 12345,
+            'ra': 10.001,
+            'dec': 20.0,
+            'Vmag': 10.038,
+            'err_Vmag': 0.027,
+        }],
+    }
+
+    calibration_stars = exotic_module.merge_nextastro_calibration_stars(
+        comp_stars=[[232, 348]],
+        comp_ra_dec=[(10.0, 20.0)],
+        obs_filter='MObs CV',
+        field_catalog=catalog,
+        match_radius_arcsec=5.153485,
+    )
+
+    assert list(calibration_stars) == ['NextAstro-12345']
+    assert calibration_stars['NextAstro-12345']['mag'] == pytest.approx(10.038)
+    assert calibration_stars['NextAstro-12345']['mag_band'] == 'V'
+    assert calibration_stars['NextAstro-12345']['separation_arcsec'] > 2.0
 
 
 def test_merge_nextastro_calibration_stars_deduplicates_catalog_source_ids():
@@ -951,6 +1293,28 @@ def test_vsp_query_assigns_only_nearest_catalog_source_to_supplied_coordinate(mo
     assert user_comp_stars == [[50, 50]]
 
 
+def test_tracked_comparison_position_keeps_full_field_anchor_index_after_science_reset():
+    science_comp_stars = [[217.0, 210.0], [408.0, 261.0]]
+    tracked_calibration_stars = [
+        *science_comp_stars,
+        [415.0, 203.0],
+        [449.0, 267.0],
+    ]
+
+    # The target fit restores the shorter science list, while catalog-anchor
+    # indices retain the full tracking-list index space.
+    restored_science_comp_stars = list(science_comp_stars)
+    assert len(restored_science_comp_stars) == 2
+    assert exotic_module.tracked_comparison_position(
+        tracked_calibration_stars,
+        2,
+    ) == [415.0, 203.0]
+    assert exotic_module.tracked_comparison_position(
+        tracked_calibration_stars,
+        3,
+    ) == [449.0, 267.0]
+
+
 def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(monkeypatch):
     calls = []
     supplied_positions = [[100, 200]]
@@ -1042,7 +1406,12 @@ def test_clear_v_calibration_fallback_skips_vsp_when_nextastro_has_usable_v(monk
     assert queried is False
 
 
-def test_build_stellar_variability_params_records_nextastro_reference(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    'observed_filter',
+    ['CV', 'Clear', 'Luminance', 'Photographic G', 'Gaia G'],
+)
+def test_build_stellar_variability_params_records_nextastro_reference(
+        monkeypatch, tmp_path, observed_filter):
     captured = {}
 
     class DummyFit:
@@ -1085,7 +1454,7 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
         'NextAstro-123',
         tmp_path,
         'Host Star',
-        observed_filter='CV',
+        observed_filter=observed_filter,
     )
 
     assert captured['label'] == 'RA=10.1000000 Dec=-20.2000000'
@@ -1096,7 +1465,9 @@ def test_build_stellar_variability_params_records_nextastro_reference(monkeypatc
     assert params[0]['comp_dec'] == pytest.approx(-20.2)
     assert params[0]['cmag'] == pytest.approx(12.0)
     assert params[0]['cmag_err'] == pytest.approx(0.05)
-    assert params[0]['observed_filter'] == 'CV'
+    assert params[0]['observed_filter'] == observed_filter
+    assert params[0]['mag_band'] == 'ClearV'
+    assert params[0]['catalog_mag_band'] == 'V'
 
 
 def test_build_stellar_variability_params_rejects_cross_band_calibration(tmp_path):
@@ -1184,6 +1555,32 @@ def test_build_stellar_variability_params_uses_raw_ratio_and_per_exposure_errors
     np.testing.assert_allclose([row['mag'] for row in params], target_mag, atol=1.0e-10)
     assert params[1]['mag_err'] == pytest.approx(expected_mag_error)
     assert params[1]['mag_err'] < 0.08
+
+
+def test_annotate_stellar_variability_raw_photometry_restores_final_selected_fit_fluxes():
+    class DummyFit:
+        data = np.array([0.99, 1.0, 1.01], dtype=float)
+
+    target_flux = np.array([9900.0, 10000.0, 10100.0], dtype=float)
+    comp_flux = np.full(3, 20000.0, dtype=float)
+    target_error = np.array([10.0, 11.0, 12.0], dtype=float)
+    comp_error = np.array([20.0, 21.0, 22.0], dtype=float)
+    fit = DummyFit()
+
+    exotic_module.annotate_stellar_variability_raw_photometry(
+        fit,
+        target_flux,
+        comp_flux,
+        target_flux_error=target_error,
+        comp_flux_error=comp_error,
+    )
+
+    retained = exotic_module.stellar_variability_raw_photometry(fit)
+    for actual, expected in zip(
+        retained,
+        (target_flux, comp_flux, target_error, comp_error),
+    ):
+        np.testing.assert_array_equal(actual, expected)
 
 
 def test_build_stellar_variability_params_rejects_normalized_only_absolute_calibration(
@@ -1293,7 +1690,7 @@ def test_stellar_variability_derives_selected_comparison_catalog_magnitude(monke
     assert any('derived catalog magnitude' in message for message in logged)
 
 
-def test_stellar_variability_uses_direct_catalog_when_derived_error_is_worse(monkeypatch, tmp_path):
+def test_stellar_variability_uses_direct_catalog_without_shared_fit_oot_points(monkeypatch, tmp_path):
     logged = []
 
     class DummyFit:
@@ -1314,12 +1711,14 @@ def test_stellar_variability_uses_direct_catalog_when_derived_error_is_worse(mon
 
     selected_fit = DummyFit([1.0, 1.0, 1.0, 1.0])
     noisy_anchor_fit = DummyFit([2.0, 0.8, 2.2, 0.7])
+    best_fit = DummyFit([1.0, 1.0, 1.0, 1.0])
+    best_fit.transit = np.zeros(4, dtype=float)
     params = exotic_module.stellar_variability(
         {
             0: {'myfit': selected_fit, 'pos': [100, 200]},
             1: {'myfit': noisy_anchor_fit, 'pos': [300, 400]},
         },
-        DummyFit([1.0, 1.0, 1.0, 1.0]),
+        best_fit,
         [[100, 200], [300, 400]],
         {'ANCHOR': {'pos': [300, 400], 'mag': 12.0, 'error': 0.02, 'mag_band': 'g'}},
         [1],
@@ -1602,7 +2001,8 @@ def test_stellar_variability_uses_v_catalog_anchor_for_clearv(monkeypatch, tmp_p
     )
 
     assert len(params) == 3
-    assert params[0]['mag_band'] == 'V'
+    assert params[0]['mag_band'] == 'ClearV'
+    assert params[0]['catalog_mag_band'] == 'V'
     assert params[0]['cmag_err'] == pytest.approx(0.03)
 
 
@@ -2299,6 +2699,54 @@ def test_stellar_variability_ensemble_caps_at_five_by_target_color_and_magnitude
     assert limited_keys == {'comp1', 'comp2'}
 
 
+def test_stellar_variability_ensemble_uses_gaia_bp_rp_when_local_colors_are_missing(
+        monkeypatch):
+    calls = []
+
+    def fake_gaia_lookup(ra, dec, max_separation_arcsec):
+        calls.append((ra, dec, max_separation_arcsec))
+        return {
+            'color': 1.2 if ra == 10.0 else 1.25,
+            'label': 'BP-RP',
+        }
+
+    monkeypatch.setattr(exotic_module, 'nextastro_gaia_bp_rp_for_coordinate', fake_gaia_lookup)
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        [{
+            'key': 'comp1',
+            'comp_index': 0,
+            'label': 'Comp 1',
+            'position': [10, 20],
+            'overexposure_rejected_count': 0,
+        }],
+        {
+            'NextAstro-1': {
+                'pos': [10, 20],
+                'mag': 12.1,
+                'error': 0.01,
+                'mag_band': 'V',
+                'catalog_row': {'ra': 11.0, 'dec': 20.0, 'Vmag': 12.1},
+            },
+        },
+        {'comp1': np.full(8, 1000.0)},
+        observed_filter='V',
+        target_catalog_match={
+            'mag': 12.0,
+            'error': 0.01,
+            'mag_band': 'V',
+            'catalog_row': {'ra': 10.0, 'dec': 20.0, 'Vmag': 12.0},
+        },
+        min_members=1,
+        max_members=1,
+    )
+
+    assert selection['target_catalog_profile']['color_label'] == 'BP-RP'
+    assert selection['target_catalog_profile']['color'] == pytest.approx(1.2)
+    assert selection['members'][0]['color_label'] == 'BP-RP'
+    assert selection['members'][0]['color_delta'] == pytest.approx(0.05)
+    assert calls == [(10.0, 20.0, 2.0), (11.0, 20.0, 2.0)]
+
+
 def test_stellar_variability_ensemble_rejects_duplicate_catalog_sources():
     frame_count = 8
     ranked_summaries = [
@@ -2389,6 +2837,7 @@ def test_discover_fortuitous_vsx_variables_filters_on_count_rate_error_and_class
     assert variables[0]['category'] == 'optimal_variables'
     assert variables[0]['period_days'] == pytest.approx(5.0)
     assert variables[0]['amplitude_mag'] == pytest.approx(0.5)
+    assert exotic_module.fortuitous_variable_category(20.0, 0.2) == 'normal'
 
 
 def test_fortuitous_reference_error_estimate_includes_sky_noise(monkeypatch):
@@ -2498,13 +2947,15 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
         fit,
         tmp_path,
         'Target Star',
-        observed_filter='V',
+        observed_filter='MObs CV',
     )
 
     assert len(params) == 2
     assert [row['time'] for row in params] == pytest.approx([2460000.105, 2460000.205])
     assert params[0]['cname'] == 'ENSEMBLE (2 stars)'
     assert params[0]['cmag'] is None
+    assert params[0]['mag_band'] == 'ClearV'
+    assert params[0]['catalog_mag_band'] == 'V'
     assert params[0]['ensemble_member_labels'] == ['C1', 'C2']
     assert params[0]['ensemble_member_catalog_errors'] == [0.01, 0.011]
     assert params[0]['ensemble_member_ra_degs'] == [10.1, 10.2]
@@ -2715,16 +3166,16 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert results[0]['target_overexposure_rejected_frame_count'] == 2
     assert results[0]['output_magnitude_error_rejected_frame_count'] == 1
     assert results[0]['point_count'] == frame_count - 3
-    variable_dir = tmp_path / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX'
+    variable_dir = tmp_path / 'variables' / 'optimal_variables' / 'SyntheticVSX'
     assert next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).is_file()
     second_variable_dir = (
-        tmp_path / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX2'
+        tmp_path / 'variables' / 'optimal_variables' / 'SyntheticVSX2'
     )
     assert next(second_variable_dir.glob('AID_AAVSO_SyntheticVSX2_2024-01-02.txt')).is_file()
     assert next(variable_dir.glob('EnsembleSelection_SyntheticVSX_2024-01-02.json')).is_file()
     assert next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv')).is_file()
     combined_aid_path = (
-        tmp_path / 'fortuitous_variables' / 'AID_AAVSO_FortuitousVariables_2024-01-02.txt'
+        tmp_path / 'variables' / 'AID_AAVSO_FortuitousVariables_2024-01-02.txt'
     )
     combined_aid_text = combined_aid_path.read_text(encoding='utf-8')
     combined_aid_rows = [
@@ -2739,7 +3190,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
         '000-AAA-002',
     }
     manifest = json.loads(
-        next((tmp_path / 'fortuitous_variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
+        next((tmp_path / 'variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
             encoding='utf-8'
         )
     )
@@ -2805,7 +3256,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert single_results[0]['comparison_member_count'] == 1
     assert single_results[0]['comparison_label'] == 'C2'
     single_dir = (
-        single_root / 'fortuitous_variables' / 'optimal_variables' / 'VSX_SyntheticVSX'
+        single_root / 'variables' / 'optimal_variables' / 'SyntheticVSX'
     )
     assert not list(single_dir.glob('EnsembleSelection_*.json'))
     single_csv = next(single_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv'))
@@ -2822,6 +3273,35 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
         if line and not line.startswith('#')
     )
     assert single_aid_row.split(',')[7] == 'C2'
+
+    failed_root = tmp_path / 'failed'
+    failed_results = exotic_module.process_fortuitous_variables(
+        [variable],
+        comparison_calibration,
+        {},
+        times,
+        times,
+        np.linspace(1.1, 1.3, frame_count),
+        psf_data,
+        aper_data,
+        {**info_dict, 'save': str(failed_root)},
+        comp_overexposed_masks={'comp3': variable_overexposed},
+        exposure_times_seconds=np.full(frame_count, 60.0),
+        observed_filter='V',
+    )
+
+    assert failed_results[0]['status'] == 'skipped'
+    assert failed_results[0]['output_directory'] is None
+    assert not (failed_root / 'variables' / 'optimal_variables' / 'SyntheticVSX').exists()
+    failed_manifest = json.loads(
+        next((failed_root / 'variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert failed_manifest['variables'][0]['status'] == 'skipped'
+    assert 'fewer than 1 independently calibrated comparison member' in (
+        failed_manifest['variables'][0]['reason']
+    )
 
 
 def test_stellar_variability_selector_uses_calibrated_ensemble_by_default():

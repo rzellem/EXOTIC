@@ -157,7 +157,7 @@ def stellar_variability_reference_summary(vsp_param):
         return "na"
 
     cname = vsp_param.get('cname', 'na')
-    band = vsp_param.get('mag_band') or 'V'
+    band = vsp_param.get('catalog_mag_band') or vsp_param.get('mag_band') or 'V'
     if vsp_param.get('ensemble_reference'):
         member_count = int(vsp_param.get('ensemble_member_count', 0) or 0)
         labels = vsp_param.get('ensemble_member_labels') or []
@@ -226,7 +226,8 @@ def aid_comparison_metadata(vsp_param):
         'catalog_match_separation_arcsec': vsp_param.get('separation_arcsec'),
         'derived_catalog_reference': bool(vsp_param.get('derived_catalog_reference', False)),
         'derived_reference_anchor_count': vsp_param.get('derived_reference_anchor_count'),
-        'magnitude_band': vsp_param.get('mag_band'),
+        'magnitude_band': vsp_param.get('catalog_mag_band') or vsp_param.get('mag_band'),
+        'reported_measurement_band': vsp_param.get('mag_band'),
         'apparent_magnitude': rounded_magnitude_value(vsp_param.get('cmag')),
         'apparent_magnitude_error': rounded_magnitude_error(vsp_param.get('cmag_err')),
         'ensemble_reference': bool(vsp_param.get('ensemble_reference', False)),

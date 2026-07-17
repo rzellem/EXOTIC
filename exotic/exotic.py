@@ -407,6 +407,8 @@ NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS = 10
 NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 NEXTASTRO_PHOTOMETRY_API_URL = 'https://photometry.nextastro.org'
 NEXTASTRO_VSX_QUERY_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/vsx_query'
+NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/single_object'
+NEXTASTRO_PHOTOMETRY_OBJECTS_QUERY_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/objects_query'
 NEXTASTRO_VSX_QUERY_LIMIT = 200000
 NEXTASTRO_PHOTOMETRY_COLUMNS = (
     'id', 'source_id', 'ra', 'dec',
@@ -15772,6 +15774,192 @@ def nextastro_photometry_cone_query(ra, dec, radius_arcsec, columns=None):
     return body
 
 
+def _validate_nextastro_object_match(result, context):
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"NextAstro photometry catalog returned an invalid {context} result."
+        )
+    match = result.get('match')
+    separation = result.get('separation_arcsec')
+    if match is not None and not isinstance(match, dict):
+        raise RuntimeError(
+            f"NextAstro photometry catalog returned an invalid {context} match."
+        )
+    if match is None:
+        if separation is not None:
+            raise RuntimeError(
+                f"NextAstro photometry catalog returned a separation without a {context} match."
+            )
+        return
+    if _finite_float(separation) is None or float(separation) < 0:
+        raise RuntimeError(
+            f"NextAstro photometry catalog returned an invalid {context} separation."
+        )
+
+
+@retry(
+    stop=stop_after_attempt(NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS),
+    wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
+    retry=retry_if_exception(should_retry_nextastro_variability_error),
+)
+def nextastro_photometry_single_object_query(ra, dec, radius_arcsec, columns=None):
+    payload = {
+        'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
+        'ra': float(ra),
+        'dec': float(dec),
+        'radius_arcsec': float(radius_arcsec),
+    }
+    log_info(f"NextAstro single-object photometry request JSON: {json.dumps(payload)}")
+    result = requests.post(
+        NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL,
+        json=payload,
+        timeout=30,
+    )
+    if result.status_code != 200:
+        raise RuntimeError(
+            f"NextAstro single-object photometry lookup returned HTTP {result.status_code}."
+        )
+
+    body = result.json()
+    if not isinstance(body, dict) or not isinstance(body.get('columns'), list):
+        raise RuntimeError(
+            "NextAstro single-object photometry lookup returned an unexpected response format."
+        )
+    _validate_nextastro_object_match(body, 'single-object')
+    log_info(
+        "NextAstro single-object photometry response JSON: "
+        f"{json.dumps({'matched': body.get('match') is not None, 'columns': body.get('columns')})}"
+    )
+    return body
+
+
+@retry(
+    stop=stop_after_attempt(NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS),
+    wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
+    retry=retry_if_exception(should_retry_nextastro_variability_error),
+)
+def nextastro_photometry_objects_query(coordinates, radius_arcsec, columns=None):
+    objects = [
+        {'key': str(index), 'ra': float(ra), 'dec': float(dec)}
+        for index, (ra, dec) in enumerate(coordinates)
+    ]
+    if not objects:
+        return {
+            'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
+            'count': 0,
+            'results': [],
+        }
+    payload = {
+        'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
+        'objects': objects,
+        'radius_arcsec': float(radius_arcsec),
+    }
+    log_info(
+        "NextAstro multi-object photometry request JSON: "
+        f"{json.dumps({'objects': objects, 'radius_arcsec': payload['radius_arcsec']})}"
+    )
+    result = requests.post(
+        NEXTASTRO_PHOTOMETRY_OBJECTS_QUERY_URL,
+        json=payload,
+        timeout=30,
+    )
+    if result.status_code != 200:
+        raise RuntimeError(
+            f"NextAstro multi-object photometry lookup returned HTTP {result.status_code}."
+        )
+
+    body = result.json()
+    results = body.get('results') if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get('columns'), list)
+        or not isinstance(body.get('count'), int)
+        or not isinstance(results, list)
+        or len(results) != len(objects)
+    ):
+        raise RuntimeError(
+            "NextAstro multi-object photometry lookup returned an unexpected response format."
+        )
+    for index, (requested, object_result) in enumerate(zip(objects, results)):
+        _validate_nextastro_object_match(object_result, f'multi-object #{index + 1}')
+        if object_result.get('key') != requested['key']:
+            raise RuntimeError(
+                "NextAstro multi-object photometry lookup returned results out of order."
+            )
+        response_ra = _finite_float(object_result.get('ra'))
+        response_dec = _finite_float(object_result.get('dec'))
+        if (
+            response_ra is None
+            or response_dec is None
+            or sky_separation_arcsec(
+                requested['ra'], requested['dec'], response_ra, response_dec
+            ) > 0.01
+        ):
+            raise RuntimeError(
+                "NextAstro multi-object photometry lookup returned mismatched coordinates."
+            )
+    matched_count = sum(item.get('match') is not None for item in results)
+    if body['count'] != matched_count:
+        raise RuntimeError(
+            "NextAstro multi-object photometry lookup returned an inconsistent match count."
+        )
+    log_info(
+        "NextAstro multi-object photometry response JSON: "
+        f"{json.dumps({'count': body['count'], 'requested': len(objects), 'columns': body['columns']})}"
+    )
+    return body
+
+
+def nextastro_photometry_match_from_object_result(
+        object_result,
+        ra,
+        dec,
+        obs_filter,
+        radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    if not isinstance(object_result, dict) or object_result.get('match') is None:
+        return None
+    return nextastro_photometry_catalog_match(
+        {
+            'row_format': 'objects',
+            'rows': [object_result['match']],
+        },
+        ra,
+        dec,
+        obs_filter,
+        max_separation_arcsec=radius_arcsec,
+    )
+
+
+def nextastro_photometry_for_coordinates(
+        coordinates,
+        obs_filter,
+        radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
+    coordinates = list(coordinates)
+    if not coordinates:
+        return []
+    if len(coordinates) == 1:
+        ra, dec = coordinates[0]
+        return [
+            nextastro_photometry_for_coordinate(
+                ra,
+                dec,
+                obs_filter,
+                radius_arcsec=radius_arcsec,
+            )
+        ]
+    response = nextastro_photometry_objects_query(coordinates, radius_arcsec)
+    return [
+        nextastro_photometry_match_from_object_result(
+            object_result,
+            ra,
+            dec,
+            obs_filter,
+            radius_arcsec=radius_arcsec,
+        )
+        for (ra, dec), object_result in zip(coordinates, response['results'])
+    ]
+
+
 def nextastro_photometry_catalog_for_wcs(wcs_file, axis, img_scale, obs_filter):
     if not wcs_file or img_scale is None:
         return None
@@ -15792,13 +15980,17 @@ def nextastro_photometry_catalog_for_wcs(wcs_file, axis, img_scale, obs_filter):
 
 def nextastro_photometry_for_coordinate(ra, dec, obs_filter,
                                         radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
-    catalog_response = nextastro_photometry_cone_query(ra, dec, radius_arcsec)
-    return nextastro_photometry_catalog_match(
-        catalog_response,
+    object_result = nextastro_photometry_single_object_query(
+        ra,
+        dec,
+        radius_arcsec,
+    )
+    return nextastro_photometry_match_from_object_result(
+        object_result,
         ra,
         dec,
         obs_filter,
-        max_separation_arcsec=radius_arcsec,
+        radius_arcsec=radius_arcsec,
     )
 
 
@@ -16662,7 +16854,7 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
         if (identity := calibration_catalog_identity(value, label)) is not None
     }
 
-    added_count = 0
+    candidates = []
     for index, (comp_pos, comp_radec) in enumerate(zip(comp_stars, comp_ra_dec)):
         if tuple(comp_pos) in existing_positions:
             continue
@@ -16674,17 +16866,44 @@ def merge_nextastro_calibration_stars(comp_stars, comp_ra_dec, obs_filter, exist
         match = None
         if field_catalog is not None:
             match = nextastro_photometry_catalog_match(field_catalog, comp_ra, comp_dec, obs_filter)
+        candidates.append({
+            'index': index,
+            'comp_pos': comp_pos,
+            'ra': comp_ra,
+            'dec': comp_dec,
+            'match': match,
+        })
+
+    unresolved = [candidate for candidate in candidates if candidate['match'] is None]
+    remote_lookup_failed = False
+    if unresolved:
+        try:
+            remote_matches = nextastro_photometry_for_coordinates(
+                [(candidate['ra'], candidate['dec']) for candidate in unresolved],
+                obs_filter,
+            )
+            for candidate, match in zip(unresolved, remote_matches):
+                candidate['match'] = match
+        except Exception as exc:
+            remote_lookup_failed = True
+            log_info(
+                "Warning: NextAstro object photometry catalog lookup failed for "
+                f"{len(unresolved)} comparison star(s) ({describe_retry_exception(exc)}).",
+                warn=True,
+            )
+
+    added_count = 0
+    for candidate in candidates:
+        index = candidate['index']
+        comp_pos = candidate['comp_pos']
+        comp_ra = candidate['ra']
+        comp_dec = candidate['dec']
+        match = candidate['match']
+        if tuple(comp_pos) in existing_positions:
+            continue
         if match is None:
-            try:
-                match = nextastro_photometry_for_coordinate(comp_ra, comp_dec, obs_filter)
-            except Exception as exc:
-                log_info(
-                    f"Warning: NextAstro photometry catalog lookup failed for comparison star #{index + 1} "
-                    f"({describe_retry_exception(exc)}).",
-                    warn=True,
-                )
+            if remote_lookup_failed:
                 continue
-        if match is None:
             log_info(
                 f"Warning: NextAstro photometry catalog did not find a usable magnitude for "
                 f"comparison star #{index + 1}.",
@@ -30687,7 +30906,7 @@ def _main_impl():
                 except Exception as exc:
                     log_info(
                         "\nWarning: NextAstro full-field photometry catalog lookup failed "
-                        f"({describe_retry_exception(exc)}). Will try per-comparison catalog lookups.",
+                        f"({describe_retry_exception(exc)}). Will try a batched comparison-star lookup.",
                         warn=True,
                     )
                 if nextastro_field_catalog is not None and ra_dec_tar is not None:

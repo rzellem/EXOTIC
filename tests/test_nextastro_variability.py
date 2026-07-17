@@ -574,6 +574,167 @@ def test_nextastro_catalog_match_uses_relaxed_error_only_as_bv_fallback():
     assert rejected_v is None
 
 
+def test_nextastro_photometry_for_coordinate_uses_single_object_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured['url'] = url
+        captured['json'] = json
+        captured['timeout'] = timeout
+        return DummyResponse({
+            'columns': list(exotic_module.NEXTASTRO_PHOTOMETRY_COLUMNS),
+            'match': {
+                'id': 9,
+                'source_id': 12345,
+                'ra': 10.00001,
+                'dec': -20.00001,
+                'Vmag': 11.2,
+                'err_Vmag': 0.03,
+            },
+            'separation_arcsec': 0.05,
+        })
+
+    monkeypatch.setattr(exotic_module.requests, 'post', fake_post)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    match = exotic_module.nextastro_photometry_for_coordinate(10.0, -20.0, 'V')
+
+    assert captured['url'] == 'https://photometry.nextastro.org/single_object'
+    assert captured['json']['ra'] == pytest.approx(10.0)
+    assert captured['json']['dec'] == pytest.approx(-20.0)
+    assert captured['json']['radius_arcsec'] == pytest.approx(2.0)
+    assert captured['json']['columns'] == list(exotic_module.NEXTASTRO_PHOTOMETRY_COLUMNS)
+    assert captured['timeout'] == 30
+    assert match['source_id'] == 12345
+    assert match['mag'] == pytest.approx(11.2)
+    assert match['mag_band'] == 'V'
+
+
+def test_nextastro_photometry_for_coordinates_uses_objects_query_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured['url'] = url
+        captured['json'] = json
+        captured['timeout'] = timeout
+        return DummyResponse({
+            'columns': list(exotic_module.NEXTASTRO_PHOTOMETRY_COLUMNS),
+            'count': 1,
+            'results': [
+                {
+                    'key': '0',
+                    'ra': 10.0,
+                    'dec': -20.0,
+                    'match': {
+                        'id': 9,
+                        'source_id': 12345,
+                        'ra': 10.00001,
+                        'dec': -20.00001,
+                        'Vmag': 11.2,
+                        'err_Vmag': 0.03,
+                    },
+                    'separation_arcsec': 0.05,
+                },
+                {
+                    'key': '1',
+                    'ra': 11.0,
+                    'dec': -21.0,
+                    'match': None,
+                    'separation_arcsec': None,
+                },
+            ],
+        })
+
+    monkeypatch.setattr(exotic_module.requests, 'post', fake_post)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    matches = exotic_module.nextastro_photometry_for_coordinates(
+        [(10.0, -20.0), (11.0, -21.0)],
+        'V',
+    )
+
+    assert captured['url'] == 'https://photometry.nextastro.org/objects_query'
+    assert captured['json']['objects'] == [
+        {'key': '0', 'ra': 10.0, 'dec': -20.0},
+        {'key': '1', 'ra': 11.0, 'dec': -21.0},
+    ]
+    assert captured['json']['radius_arcsec'] == pytest.approx(2.0)
+    assert captured['timeout'] == 30
+    assert matches[0]['source_id'] == 12345
+    assert matches[0]['mag_band'] == 'V'
+    assert matches[1] is None
+
+
+def test_nextastro_photometry_for_coordinates_routes_single_target_to_single_object(monkeypatch):
+    calls = []
+    expected_match = {'source_id': 12345, 'mag': 11.2, 'error': 0.03, 'mag_band': 'V'}
+
+    def fake_single(ra, dec, obs_filter, radius_arcsec=2.0):
+        calls.append((ra, dec, obs_filter, radius_arcsec))
+        return expected_match
+
+    monkeypatch.setattr(exotic_module, 'nextastro_photometry_for_coordinate', fake_single)
+    monkeypatch.setattr(
+        exotic_module,
+        'nextastro_photometry_objects_query',
+        lambda *args, **kwargs: pytest.fail('one target should not use /objects_query'),
+    )
+
+    matches = exotic_module.nextastro_photometry_for_coordinates([(10.0, -20.0)], 'V')
+
+    assert calls == [(10.0, -20.0, 'V', 2.0)]
+    assert matches == [expected_match]
+
+
+def test_merge_nextastro_calibration_stars_batches_missing_field_matches(monkeypatch):
+    calls = []
+
+    def fake_matches(coordinates, obs_filter, radius_arcsec=2.0):
+        calls.append((coordinates, obs_filter, radius_arcsec))
+        return [
+            {
+                'source_id': 101,
+                'id': 1,
+                'mag': 11.2,
+                'error': 0.03,
+                'mag_band': 'V',
+                'catalog_ra': 10.0,
+                'catalog_dec': -20.0,
+                'separation_arcsec': 0.1,
+                'catalog_row': {'source_id': 101, 'ra': 10.0, 'dec': -20.0},
+            },
+            {
+                'source_id': 202,
+                'id': 2,
+                'mag': 12.1,
+                'error': 0.04,
+                'mag_band': 'V',
+                'catalog_ra': 11.0,
+                'catalog_dec': -21.0,
+                'separation_arcsec': 0.2,
+                'catalog_row': {'source_id': 202, 'ra': 11.0, 'dec': -21.0},
+            },
+        ]
+
+    monkeypatch.setattr(
+        exotic_module,
+        'nextastro_photometry_for_coordinates',
+        fake_matches,
+    )
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    calibration_stars = exotic_module.merge_nextastro_calibration_stars(
+        comp_stars=[[100, 200], [130, 230]],
+        comp_ra_dec=[(10.0, -20.0), (11.0, -21.0)],
+        obs_filter='V',
+        existing_comp_stars={},
+        field_catalog=None,
+    )
+
+    assert calls == [([(10.0, -20.0), (11.0, -21.0)], 'V', 2.0)]
+    assert list(calibration_stars) == ['NextAstro-101', 'NextAstro-202']
+
+
 def test_merge_nextastro_calibration_stars_adds_non_vsp_metadata():
     catalog = {
         'columns': ['id', 'source_id', 'ra', 'dec', 'Vmag', 'err_Vmag'],

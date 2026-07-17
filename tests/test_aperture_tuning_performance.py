@@ -56,6 +56,36 @@ def test_fits_header_memmap_guard_rejects_scaled_images():
     assert not exotic_module.fits_header_supports_memmap({"BZERO": 32768})
 
 
+def test_missing_first_image_is_lazy_loaded_for_multiprocess_fov_plot(monkeypatch):
+    expected = np.arange(16, dtype=float).reshape(4, 4)
+    captured = {}
+
+    def fake_load(file_name, *args, **kwargs):
+        captured["file_name"] = file_name
+        captured["bad_pixel_reference"] = kwargs["bad_pixel_reference"]
+        return expected
+
+    monkeypatch.setattr(exotic_module, "load_calibrated_reduction_image", fake_load)
+
+    retained = exotic_module.ensure_first_reduction_image_for_fov(
+        None,
+        "first.fits",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        bad_pixel_reference="bad-pixel-map",
+    )
+
+    assert retained is expected
+    assert captured == {
+        "file_name": "first.fits",
+        "bad_pixel_reference": "bad-pixel-map",
+    }
+
+
 def test_alignment_worker_memmap_path_skips_full_frame_calibration(tmp_path, monkeypatch):
     frame_path = tmp_path / "frame.fits"
     expected = np.arange(100, dtype=np.float32).reshape(10, 10)

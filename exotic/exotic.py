@@ -26038,6 +26038,25 @@ def load_calibrated_reduction_frame(file_name, generalDark, generalBias, general
     return image_header, image_data
 
 
+def ensure_first_reduction_image_for_fov(first_image, first_file_name,
+                                         generalDark, generalBias, generalFlat,
+                                         demosaic_fmt, demosaic_out, demosaic_mult,
+                                         bad_pixel_reference=None):
+    """Lazily load the first calibrated frame when multiprocessing did not retain it."""
+    if first_image is not None:
+        return first_image
+    return load_calibrated_reduction_image(
+        first_file_name,
+        generalDark,
+        generalBias,
+        generalFlat,
+        demosaic_fmt,
+        demosaic_out,
+        demosaic_mult,
+        bad_pixel_reference=bad_pixel_reference,
+    )
+
+
 def evenly_spaced_aperture_tuning_indices(frame_count, max_frames=APERTURE_AUTOTUNE_MAX_FRAMES,
                                           min_frames=APERTURE_AUTOTUNE_MIN_FRAMES):
     """Select representative frames from the beginning through the end of a run."""
@@ -31459,6 +31478,7 @@ def _main_impl():
                     "neighborhoods will be paged in."
                 )
             initial_photometry_start = perf_counter()
+            firstImage = None
             for i, fileName in enumerate(inputfiles):
                 plateStatus.setCurrentFilename(fileName)
                 frame_uses_memmap = use_memmap_initial_photometry
@@ -33359,6 +33379,17 @@ def _main_impl():
                 and np.isfinite(centroid_positions['y_ref'][0])
             )
             if reference_centroid_available:
+                firstImage = ensure_first_reduction_image_for_fov(
+                    firstImage,
+                    inputfiles[0],
+                    generalDark,
+                    generalBias,
+                    generalFlat,
+                    demosaic_fmt,
+                    demosaic_out,
+                    demosaic_mult,
+                    bad_pixel_reference=bad_pixel_reference,
+                )
                 plot_fov(fov_aperture, fov_annulus, sigma_display,
                          centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
                          centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],

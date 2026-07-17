@@ -6534,6 +6534,32 @@ def ars_range_restriction_percentage_for_prior(prior):
     return percentage
 
 
+def ars_initial_range_percentage_for_prior(
+    prior,
+    sigma_multiplier=INITIAL_ARS_BOUND_SIGMA_MULTIPLIER,
+    fallback_relative_half_width=INITIAL_ARS_BOUND_FALLBACK_RELATIVE_HALF_WIDTH,
+):
+    base_percentage = ars_range_restriction_percentage_for_prior(prior)
+    if not isinstance(prior, dict):
+        return float(base_percentage)
+
+    try:
+        ars = float(prior.get('ars'))
+        ars_unc = float(prior.get('ars_unc'))
+        sigma_multiplier = float(sigma_multiplier)
+    except (TypeError, ValueError):
+        ars = np.nan
+        ars_unc = np.nan
+        sigma_multiplier = INITIAL_ARS_BOUND_SIGMA_MULTIPLIER
+
+    if np.isfinite(ars) and ars > ARS_SEARCH_BOUND_MIN and np.isfinite(ars_unc) and ars_unc > 0:
+        uncertainty_percentage = 100.0 * sigma_multiplier * ars_unc / ars
+    else:
+        uncertainty_percentage = 100.0 * float(fallback_relative_half_width)
+
+    return float(max(base_percentage, uncertainty_percentage))
+
+
 def ars_posterior_retry_limit_for_prior(prior, requested_max_retries):
     try:
         requested_max_retries = int(max(0, requested_max_retries))
@@ -6560,7 +6586,7 @@ def configured_prior_centered_bounds_for_key(key, prior):
             return None
         return prior_centered_parameter_bounds(
             prior.get('ars'),
-            ars_range_restriction_percentage_for_prior(prior),
+            ars_initial_range_percentage_for_prior(prior),
             ARS_SEARCH_BOUND_MIN,
         )
     return None
@@ -6586,10 +6612,12 @@ def intersect_parameter_bounds(bounds, restriction):
     return [float(lower_bound), float(upper_bound)]
 
 
-def apply_configured_prior_search_restrictions(bounds, prior):
+def apply_configured_prior_search_restrictions(bounds, prior, allow_ars_expansion=False):
     restricted = widen_rprs_bounds_to_data_uncertainty_window(bounds, prior)
     for key in ('rprs', 'ars'):
         if key not in restricted:
+            continue
+        if key == 'ars' and allow_ars_expansion:
             continue
         restriction = configured_prior_centered_bounds_for_key(key, prior)
         intersection = intersect_parameter_bounds(restricted[key], restriction)
@@ -6664,17 +6692,6 @@ def build_initial_ars_bounds(
     if not np.isfinite(ars) or ars <= ARS_SEARCH_BOUND_MIN:
         return [float(ARS_SEARCH_BOUND_MIN), float(ARS_SEARCH_BOUND_FALLBACK_MAX)]
 
-    if np.isfinite(ars_unc) and ars_unc > 0:
-        half_width = float(max(ARS_SEARCH_BOUND_MIN, sigma_multiplier * ars_unc))
-    else:
-        half_width = float(max(ARS_SEARCH_BOUND_MIN, fallback_relative_half_width * ars))
-
-    lower_bound = max(float(ARS_SEARCH_BOUND_MIN), float(ars - half_width))
-    upper_bound = float(ars + half_width)
-    if not np.isfinite(upper_bound) or upper_bound <= lower_bound:
-        upper_bound = float(lower_bound + max(np.finfo(float).eps, ARS_SEARCH_BOUND_MIN))
-
-    bounds = [float(lower_bound), float(upper_bound)]
     restriction_prior = (
         dict(search_restriction_prior)
         if isinstance(search_restriction_prior, dict)
@@ -6682,6 +6699,27 @@ def build_initial_ars_bounds(
     )
     restriction_prior['ars'] = ars
     restriction_prior['ars_unc'] = ars_unc
+
+    if np.isfinite(ars_unc) and ars_unc > 0:
+        half_width = float(max(ARS_SEARCH_BOUND_MIN, sigma_multiplier * ars_unc))
+    else:
+        half_width = float(max(ARS_SEARCH_BOUND_MIN, fallback_relative_half_width * ars))
+    if ARS_RANGE_RESTRICTION_ENABLED:
+        minimum_initial_half_width = (
+            ars * ars_initial_range_percentage_for_prior(
+                restriction_prior,
+                sigma_multiplier=sigma_multiplier,
+                fallback_relative_half_width=fallback_relative_half_width,
+            ) / 100.0
+        )
+        half_width = float(max(half_width, minimum_initial_half_width))
+
+    lower_bound = max(float(ARS_SEARCH_BOUND_MIN), float(ars - half_width))
+    upper_bound = float(ars + half_width)
+    if not np.isfinite(upper_bound) or upper_bound <= lower_bound:
+        upper_bound = float(lower_bound + max(np.finfo(float).eps, ARS_SEARCH_BOUND_MIN))
+
+    bounds = [float(lower_bound), float(upper_bound)]
     restricted_bounds = intersect_parameter_bounds(
         bounds,
         configured_prior_centered_bounds_for_key('ars', restriction_prior),
@@ -7189,9 +7227,18 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         else {}
     )
 
-    def build_fit(local_prior, local_bounds, fixed_parameter_errors_override=None):
+    def build_fit(
+        local_prior,
+        local_bounds,
+        fixed_parameter_errors_override=None,
+        allow_ars_expansion=False,
+    ):
         local_bounds = sanitize_retry_search_bounds(
-            apply_configured_prior_search_restrictions(local_bounds, restriction_reference_prior)
+            apply_configured_prior_search_restrictions(
+                local_bounds,
+                restriction_reference_prior,
+                allow_ars_expansion=allow_ars_expansion,
+            )
         )
         effective_fixed_parameter_errors = (
             dict(base_fixed_parameter_errors)
@@ -7276,6 +7323,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     retry_notes = {config['key']: None for config in retry_configs}
     latest_diagnostics = {config['key']: None for config in retry_configs}
     blocked_retry_keys = set()
+    ars_range_expansion_active = False
     fit = build_fit(current_prior, current_bounds)
 
     while True:
@@ -7349,6 +7397,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             continue
 
         previous_bounds = current_bounds.get(bounds_key)
+        allow_ars_expansion = ars_range_expansion_active or key == 'ars'
         clamped_bounds = retry_config['sanitize_bounds']({bounds_key: [new_lower, new_upper]}).get(
             bounds_key,
             [new_lower, new_upper],
@@ -7361,6 +7410,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         clamped_bounds = apply_configured_prior_search_restrictions(
             {bounds_key: clamped_bounds},
             restriction_reference_prior,
+            allow_ars_expansion=allow_ars_expansion,
         ).get(bounds_key, clamped_bounds)
         clamped_bounds = retry_config['sanitize_bounds']({bounds_key: clamped_bounds}).get(bounds_key, clamped_bounds)
         new_lower, new_upper = [float(value) for value in clamped_bounds]
@@ -7376,9 +7426,13 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
             if not expands_sampled_range:
                 maximum_bound = retry_config['max_bound']
-                restricted_bounds = configured_prior_centered_bounds_for_key(
-                    bounds_key,
-                    restriction_reference_prior,
+                restricted_bounds = (
+                    None
+                    if bounds_key == 'ars' and allow_ars_expansion
+                    else configured_prior_centered_bounds_for_key(
+                        bounds_key,
+                        restriction_reference_prior,
+                    )
                 )
                 if (
                     restricted_bounds is not None
@@ -7422,7 +7476,11 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         updated_bounds = clone_lightcurve_bounds(current_bounds)
         updated_bounds[bounds_key] = [new_lower, new_upper]
         updated_bounds = sanitize_retry_search_bounds(
-            apply_configured_prior_search_restrictions(updated_bounds, restriction_reference_prior)
+            apply_configured_prior_search_restrictions(
+                updated_bounds,
+                restriction_reference_prior,
+                allow_ars_expansion=allow_ars_expansion,
+            )
         )
 
         updated_prior = dict(current_prior)
@@ -7438,7 +7496,12 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
         current_prior = updated_prior
         current_bounds = updated_bounds
-        fit = build_fit(current_prior, current_bounds)
+        ars_range_expansion_active = allow_ars_expansion
+        fit = build_fit(
+            current_prior,
+            current_bounds,
+            allow_ars_expansion=ars_range_expansion_active,
+        )
 
     final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
     rprs_final_diagnostics = None
@@ -7497,6 +7560,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 fixed_prior,
                 fixed_bounds,
                 fixed_parameter_errors_override=fixed_error_override,
+                allow_ars_expansion=ars_range_expansion_active,
             )
             fallback_parameters = getattr(fallback_fit, 'parameters', None)
             if isinstance(fallback_parameters, dict):
@@ -7569,7 +7633,24 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         and ars_restriction_bounds is not None
         and bounds_are_close(current_bounds.get('ars'), ars_restriction_bounds)
     )
-    if ars_pinned_at_prior_restriction:
+    ars_retries_exhausted = (
+        isinstance(ars_final_diagnostics, dict)
+        and ars_final_diagnostics.get('clipped')
+        and 'ars' in current_bounds
+        and len(retry_histories['ars']) >= effective_max_ars_retries
+    )
+    ars_retry_blocked = (
+        isinstance(ars_final_diagnostics, dict)
+        and ars_final_diagnostics.get('clipped')
+        and 'ars' in current_bounds
+        and 'ars' in blocked_retry_keys
+    )
+    ars_prior_fallback_required = (
+        ars_pinned_at_prior_restriction
+        or ars_retries_exhausted
+        or ars_retry_blocked
+    )
+    if ars_prior_fallback_required:
         prior_ars = restriction_reference_prior.get(
             'ars',
             prior.get('ars') if isinstance(prior, dict) else np.nan,
@@ -7606,12 +7687,21 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             if np.isfinite(prior_ars_error) and prior_ars_error >= 0:
                 fixed_error_override['ars'] = prior_ars_error
 
+            if ars_retries_exhausted:
+                fallback_trigger = (
+                    f"after {len(retry_histories['ars'])} automatic range expansion(s)"
+                )
+            elif ars_retry_blocked:
+                fallback_trigger = "after the automatic range expansion could not widen the sampled bounds"
+            else:
+                fallback_trigger = (
+                    "at the edge of the initial prior-centered range "
+                    f"[{ars_restriction_bounds[0]:.6f}, {ars_restriction_bounds[1]:.6f}]"
+                )
             log_info(
                 "a/Rs posterior remains pinned against the "
-                f"{ars_final_diagnostics.get('edge', 'active')} edge of the configured "
-                f"prior-centered range [{ars_restriction_bounds[0]:.6f}, "
-                f"{ars_restriction_bounds[1]:.6f}]; rerunning UltraNest with a/Rs fixed "
-                f"to the input prior ({prior_ars:.6f})."
+                f"{ars_final_diagnostics.get('edge', 'active')} edge {fallback_trigger}; "
+                f"rerunning UltraNest with a/Rs fixed to the input prior ({prior_ars:.6f})."
             )
             fallback_fit = build_fit(
                 fixed_prior,
@@ -7639,9 +7729,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
             fallback_note = (
                 "Applied a/Rs prior fallback because the sampled posterior remained pinned against "
-                f"the {ars_final_diagnostics.get('edge', 'active')} edge of the configured "
-                f"prior-centered range [{ars_restriction_bounds[0]:.6f}, "
-                f"{ars_restriction_bounds[1]:.6f}]. EXOTIC reran UltraNest with a/Rs fixed "
+                f"the {ars_final_diagnostics.get('edge', 'active')} edge {fallback_trigger}. "
+                "EXOTIC reran UltraNest with a/Rs fixed "
                 f"to the input prior ({prior_ars:.6f})"
             )
             if np.isfinite(prior_ars_error) and prior_ars_error >= 0:
@@ -29999,8 +30088,9 @@ def _main_impl():
             log_info("Rp/R* pinned-posterior prior fallback disabled per optional_info setting.")
         if restrict_ars_range:
             log_info(
-                "a/Rs prior-centered search restriction enabled: "
-                f"+/- {restrict_ars_percentage:.1f}% around the input prior."
+                "a/Rs initial prior-centered search range enabled: at least "
+                f"+/- {restrict_ars_percentage:.1f}% around the input prior, widened when "
+                "five times the quoted a/Rs uncertainty is larger."
             )
         else:
             log_info("a/Rs prior-centered search restriction disabled.")
@@ -30169,7 +30259,7 @@ def _main_impl():
 
         target_search_restriction_prior = build_search_restriction_prior_from_planet_dict(pDict)
         if restrict_ars_range and is_toi_or_tic_target(target_search_restriction_prior):
-            effective_ars_percentage = ars_range_restriction_percentage_for_prior(
+            effective_ars_percentage = ars_initial_range_percentage_for_prior(
                 target_search_restriction_prior
             )
             effective_ars_retries = ars_posterior_retry_limit_for_prior(
@@ -30177,9 +30267,9 @@ def _main_impl():
                 ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
             )
             log_info(
-                "TOI/TIC a/Rs search policy enabled: the initial range uses five times the "
-                "quoted a/Rs uncertainty, the prior-centered ceiling is "
-                f"+/- {effective_ars_percentage:.1f}%, and edge-pinned posteriors may receive "
+                "TOI/TIC a/Rs search policy enabled: the initial half-width is the larger of "
+                f"30% and five times the quoted uncertainty ({effective_ars_percentage:.1f}% for this target), "
+                "and edge-pinned posteriors may expand beyond that initial range with "
                 f"up to {effective_ars_retries} automatic a/Rs refit(s)."
             )
 

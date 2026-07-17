@@ -7666,8 +7666,8 @@ def test_build_initial_ars_bounds_prefers_published_uncertainty_when_available(m
     monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", True)
     monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
 
-    assert build_initial_ars_bounds(15.0, 0.1) == pytest.approx([14.5, 15.5])
-    assert build_initial_ars_bounds(15.0, None) == pytest.approx([13.5, 16.5])
+    assert build_initial_ars_bounds(15.0, 0.1) == pytest.approx([13.5, 16.5])
+    assert build_initial_ars_bounds(15.0, None) == pytest.approx([11.25, 18.75])
 
     monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", False)
     assert build_initial_ars_bounds(15.0, None) == pytest.approx([11.25, 18.75])
@@ -7742,7 +7742,7 @@ def test_fit_lightcurve_skips_airmass_term_when_airmass_span_is_small(monkeypatc
 
     assert myfit is not None
     assert list(captured["bounds"])[:4] == ["rprs", "tmid", "ars", "inc"]
-    assert captured["bounds"]["ars"] == pytest.approx([14.5, 15.5])
+    assert captured["bounds"]["ars"] == pytest.approx([13.5, 16.5])
     assert "a2" not in captured["bounds"]
     assert myfit.airmass_fit_skipped is True
 

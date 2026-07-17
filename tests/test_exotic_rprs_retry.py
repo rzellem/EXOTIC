@@ -91,6 +91,11 @@ from exotic.exotic import (  # noqa: E402
     RPRS_SEARCH_BOUND_MAX,
     RPRS_SEARCH_BOUND_MIN,
     SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT,
+    TOI_TIC_ARS_POSTERIOR_MAX_RETRIES_DEFAULT,
+    TOI_TIC_ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+    ars_initial_range_percentage_for_prior,
+    ars_posterior_retry_limit_for_prior,
+    ars_range_restriction_percentage_for_prior,
     build_initial_ars_bounds,
     build_fast_ultranest_lightcurve_series,
     build_expected_transit_coverage_assessment,
@@ -104,6 +109,8 @@ from exotic.exotic import (  # noqa: E402
     configure_prior_rprs_fallback_on_pinned_posterior,
     configure_rprs_search_bound_max,
     configure_rprs_range_restriction,
+    configured_prior_centered_bounds_for_key,
+    is_toi_or_tic_target,
     should_use_legacy_psf_flux_mode,
     should_run_final_fit_phase_residual_clip,
     should_run_final_residual_rejection,
@@ -157,14 +164,92 @@ def test_build_initial_rprs_bounds_widens_prior_window_for_data_uncertainty(monk
     assert build_initial_rprs_bounds(0.1, rprs_data_uncertainty=0.02) == pytest.approx([0.04, 0.16])
 
 
-def test_build_initial_ars_bounds_restricts_fallback_window_to_prior_centered_range(monkeypatch):
+def test_build_initial_ars_bounds_uses_larger_of_percentage_and_uncertainty_window(monkeypatch):
     import exotic.exotic as exotic_module
 
     monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", True)
     monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_PERCENTAGE", 10.0)
 
-    assert build_initial_ars_bounds(15.0, None) == pytest.approx([13.5, 16.5])
-    assert build_initial_ars_bounds(15.0, 0.1) == pytest.approx([14.5, 15.5])
+    assert build_initial_ars_bounds(15.0, None) == pytest.approx([11.25, 18.75])
+    assert build_initial_ars_bounds(15.0, 0.1) == pytest.approx([13.5, 16.5])
+
+
+@pytest.mark.parametrize(
+    "target_name",
+    ["TOI-2969 b", "toi 2969.01", "TIC 123456789", "TIC-123456789"],
+)
+def test_toi_tic_target_detection_accepts_catalog_candidate_names(target_name):
+    assert is_toi_or_tic_target({"pName": target_name}) is True
+
+
+@pytest.mark.parametrize("target_name", ["WASP-194 b", "HAT-P-32 b", "TOIL-1 b", None])
+def test_toi_tic_target_detection_rejects_established_or_unrelated_names(target_name):
+    assert is_toi_or_tic_target({"pName": target_name}) is False
+
+
+def test_toi_tic_ars_policy_uses_thirty_percent_ceiling_and_more_retries(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(
+        exotic_module,
+        "ARS_RANGE_RESTRICTION_PERCENTAGE",
+        ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+    )
+    candidate_prior = {
+        "pName": "TOI-2969 b",
+        "sName": "TOI-2969",
+        "ars": 8.0,
+        "ars_unc": 0.4,
+    }
+    established_prior = {
+        "pName": "WASP-194 b",
+        "sName": "WASP-194",
+        "ars": 8.0,
+        "ars_unc": 0.4,
+    }
+
+    assert ars_range_restriction_percentage_for_prior(candidate_prior) == pytest.approx(
+        TOI_TIC_ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT
+    )
+    assert ars_initial_range_percentage_for_prior(candidate_prior) == pytest.approx(30.0)
+    assert configured_prior_centered_bounds_for_key("ars", candidate_prior) == pytest.approx([5.6, 10.4])
+    assert configured_prior_centered_bounds_for_key("ars", established_prior) == pytest.approx([6.0, 10.0])
+    assert build_initial_ars_bounds(
+        8.0,
+        0.4,
+        search_restriction_prior=candidate_prior,
+    ) == pytest.approx([5.6, 10.4])
+    assert build_initial_ars_bounds(
+        8.0,
+        0.4,
+        search_restriction_prior=established_prior,
+    ) == pytest.approx([6.0, 10.0])
+    high_uncertainty_candidate_prior = {
+        **candidate_prior,
+        "ars_unc": 0.8,
+    }
+    assert ars_initial_range_percentage_for_prior(high_uncertainty_candidate_prior) == pytest.approx(50.0)
+    assert build_initial_ars_bounds(
+        8.0,
+        0.8,
+        search_restriction_prior=high_uncertainty_candidate_prior,
+    ) == pytest.approx([4.0, 12.0])
+    assert ars_posterior_retry_limit_for_prior(candidate_prior, 5) == (
+        TOI_TIC_ARS_POSTERIOR_MAX_RETRIES_DEFAULT
+    )
+    assert ars_posterior_retry_limit_for_prior(established_prior, 5) == 5
+    assert ars_posterior_retry_limit_for_prior(candidate_prior, 2) == 2
+
+
+def test_toi_tic_ars_policy_preserves_explicit_nondefault_restriction(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_PERCENTAGE", 12.5)
+
+    assert ars_range_restriction_percentage_for_prior(
+        {"pName": "TIC 123456789", "ars": 8.0}
+    ) == pytest.approx(12.5)
 
 
 def test_build_initial_rprs_bounds_clamps_to_configured_search_ceiling(monkeypatch):
@@ -1708,6 +1793,88 @@ def test_ars_posterior_retry_expands_bounds_when_upper_edge_is_truncated(monkeyp
     assert fit.ars_posterior_refit_bounds == pytest.approx([12.60, 16.30])
 
 
+def test_toi_tic_ars_posterior_can_retry_beyond_established_target_limit(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "ARS_RANGE_RESTRICTION_ENABLED", True)
+    monkeypatch.setattr(
+        exotic_module,
+        "ARS_RANGE_RESTRICTION_PERCENTAGE",
+        ARS_RANGE_RESTRICTION_PERCENTAGE_DEFAULT,
+    )
+    captured_calls = []
+    proposed_bounds = [
+        [6.8, 13.2],
+        [6.6, 13.4],
+        [6.4, 13.6],
+        [6.2, 13.8],
+        [6.0, 14.0],
+        [5.8, 14.2],
+    ]
+
+    def fake_lc_fitter(
+        call_times,
+        call_flux,
+        call_fluxerr,
+        call_airmass,
+        call_prior,
+        call_bounds,
+        **kwargs,
+    ):
+        call_index = len(captured_calls)
+        captured_calls.append({
+            "prior": dict(call_prior),
+            "bounds": {key: list(value) for key, value in call_bounds.items()},
+        })
+        clipped = call_index < len(proposed_bounds)
+        ars_bounds = proposed_bounds[call_index] if clipped else list(call_bounds["ars"])
+        fit = types.SimpleNamespace(
+            parameters={"rprs": 0.1, "ars": 10.0, "tmid": 0.0, "inc": 89.0, "a2": 0.0},
+        )
+
+        def diagnostics(key):
+            if key == "rprs":
+                return {"clipped": False, "edge": None, "mode": 0.1, "std": 0.01, "bounds": [0.05, 0.15]}
+            return {
+                "clipped": clipped,
+                "edge": "upper" if clipped else None,
+                "mode": 10.0,
+                "std": 0.2,
+                "bounds": ars_bounds,
+            }
+
+        fit.get_parameter_posterior_recenter_diagnostics = diagnostics
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 7),
+        np.ones(7, dtype=float),
+        np.full(7, 0.01, dtype=float),
+        np.ones(7, dtype=float),
+        {"tmid": 0.0, "rprs": 0.1, "ars": 10.0, "inc": 89.0, "a2": 0.0},
+        {
+            "rprs": [0.05, 0.15],
+            "ars": [7.0, 13.0],
+            "tmid": [-0.01, 0.01],
+            "inc": [84.0, 90.0],
+            "a2": [-3.0, 3.0],
+        },
+        search_restriction_prior={
+            "pName": "TOI-2969 b",
+            "sName": "TOI-2969",
+            "ars": 10.0,
+            "ars_unc": 0.2,
+        },
+    )
+
+    assert len(captured_calls) == 7
+    assert captured_calls[0]["bounds"]["ars"] == pytest.approx([7.0, 13.0])
+    assert captured_calls[-1]["bounds"]["ars"] == pytest.approx([5.8, 14.2])
+    assert fit.ars_posterior_refit_count == 6
+
+
 def test_ars_posterior_pinned_at_configured_restriction_falls_back_to_prior(monkeypatch):
     import exotic.exotic as exotic_module
 
@@ -1784,15 +1951,16 @@ def test_ars_posterior_pinned_at_configured_restriction_falls_back_to_prior(monk
         },
     )
 
-    assert len(captured["calls"]) == 2
+    assert len(captured["calls"]) == 3
     assert captured["calls"][0]["bounds"]["ars"] == pytest.approx([9.0, 11.0])
-    assert "ars" not in captured["calls"][1]["bounds"]
-    assert captured["calls"][1]["prior"]["ars"] == pytest.approx(10.0)
-    assert captured["calls"][1]["fixed_parameter_errors"]["ars"] == pytest.approx(0.4)
+    assert captured["calls"][1]["bounds"]["ars"] == pytest.approx([9.0, 12.0])
+    assert "ars" not in captured["calls"][2]["bounds"]
+    assert captured["calls"][2]["prior"]["ars"] == pytest.approx(10.0)
+    assert captured["calls"][2]["fixed_parameter_errors"]["ars"] == pytest.approx(0.4)
     assert fit.parameters["ars"] == pytest.approx(10.0)
     assert fit.errors["ars"] == pytest.approx(0.4)
     assert fit.ars_prior_fallback_applied is True
-    assert "configured prior-centered range" in fit.ars_prior_fallback_note
+    assert "could not widen the sampled bounds" in fit.ars_prior_fallback_note
 
 
 def test_partial_coverage_suppresses_open_geometry_posterior_retries(monkeypatch):

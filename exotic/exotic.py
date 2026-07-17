@@ -419,6 +419,7 @@ NEXTASTRO_PHOTOMETRY_FIELD_PADDING_ARCSEC = 30.0
 NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC = 2.0
 CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX = 0.05
 CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX = 0.10
+VSP_COMPARISON_MATCH_TOLERANCE_PIXELS = 3.0
 REFERENCE_FALLBACK_COMPARISON_LIMIT = 10
 REFERENCE_FALLBACK_DETECTION_MAX_STARS = 60
 REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS = 12
@@ -14333,7 +14334,10 @@ def get_ra_dec(header, image_shape=None):
     xaxis = np.arange(width)
     yaxis = np.arange(height)
     x, y = np.meshgrid(xaxis, yaxis)
-    return wcs_header.all_pix2world(x, y, 1)
+    # Image arrays and every pixel coordinate used by EXOTIC are zero-based.
+    # Passing origin=1 here displaced the sky-coordinate grid by one pixel in
+    # both axes and made precise catalog matches fail on coarse image scales.
+    return wcs_header.all_pix2world(x, y, 0)
 
 
 def deg_to_pix(exp_ra, exp_dec, ra_list, dec_list):
@@ -17076,19 +17080,21 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
         image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
     return image_data
 
-def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None, user_targ_star=None):
+def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None,
+              user_targ_star=None, max_new_comp_stars=2):
     if user_comp_stars is None:
         user_comp_stars = []
+
+    try:
+        max_new_comp_stars = max(0, int(max_new_comp_stars))
+    except (TypeError, ValueError):
+        max_new_comp_stars = 2
 
     vsp_comp_stars_info = {}
     vsp_star_count = 0
     observed_filter = obs_filter
 
-    # Build combined list for comps and target - there are known cases when AAVsO comps have planets (XO-2 N)
-    # Plus, we don't want comp too close to target
-    targ_and_comp_stars = user_comp_stars[:]
-    if user_targ_star is not None:
-        targ_and_comp_stars.append(user_targ_star)
+    initial_user_comp_stars = [list(position) for position in user_comp_stars]
 
     wcs_hdr = search_wcs(file)
     fov = (img_scale * max(axis)) / 60
@@ -17104,49 +17110,203 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
 
     obs_filter = aavso_vsp_band_for_filter(obs_filter)
 
+    vsp_candidates = []
     if data['photometry']:
         for star in data['photometry']:
             ra_deg, dec_deg = radec_hours_to_degree(star['ra'], star['dec'])
             ra_pix, dec_pix = wcs_hdr.world_to_pixel_values(ra_deg, dec_deg)
 
-            if (ra_pix < axis[0] and dec_pix < axis[1]) and (ra_pix > 1 and dec_pix > 1):
-                vsp_star = [int(ra_pix.min()), int(dec_pix.min())]
-                exist, vsp_star = check_comp_star_exists(targ_and_comp_stars, vsp_star)
+            ra_pixel = float(np.asarray(ra_pix, dtype=float).reshape(-1)[0])
+            dec_pixel = float(np.asarray(dec_pix, dtype=float).reshape(-1)[0])
+            if not (
+                1 < ra_pixel < axis[0]
+                and 1 < dec_pixel < axis[1]
+                and obs_filter in [band['band'] for band in star['bands']]
+            ):
+                continue
+            star_info = next(band for band in star['bands'] if band['band'] == obs_filter)
+            usable_magnitude = usable_catalog_reference_magnitude(
+                star_info.get('mag'),
+                star_info.get('error'),
+            )
+            if usable_magnitude is None:
+                continue
+            star_mag, star_mag_error = usable_magnitude
+            vsp_candidates.append({
+                'label': star['auid'],
+                'pixel_position': [ra_pixel, dec_pixel],
+                'star': {
+                    'mag': star_mag,
+                    'error': star_mag_error,
+                    'ra': ra_deg,
+                    'dec': dec_deg,
+                    'catalog_ra': ra_deg,
+                    'catalog_dec': dec_deg,
+                    'mag_band': obs_filter,
+                    'observed_filter': observed_filter,
+                    'catalog_source': 'AAVSO VSP',
+                    'is_aavso_vsp': True,
+                },
+            })
 
-                if obs_filter in [band['band'] for band in star['bands']]:
-                    star_info = next(band for band in star['bands'] if band['band'] == obs_filter)
-                    usable_magnitude = usable_catalog_reference_magnitude(
-                        star_info.get('mag'),
-                        star_info.get('error'),
-                    )
-                    if usable_magnitude is None:
-                        continue
-                    star_mag, star_mag_error = usable_magnitude
+    # Match all supplied coordinates before applying the new-star cap. Greedy
+    # nearest-pair assignment makes the association one-to-one and prevents two
+    # nearby VSP sources from lending different magnitudes to the same measured star.
+    match_pairs = []
+    for candidate_index, candidate in enumerate(vsp_candidates):
+        for user_index, user_position in enumerate(initial_user_comp_stars):
+            distance = comparison_star_pixel_distance(
+                candidate['pixel_position'],
+                user_position,
+            )
+            if distance <= VSP_COMPARISON_MATCH_TOLERANCE_PIXELS:
+                match_pairs.append((distance, candidate_index, user_index))
+    matched_candidates = {}
+    matched_user_indices = set()
+    for _, candidate_index, user_index in sorted(match_pairs):
+        if candidate_index in matched_candidates or user_index in matched_user_indices:
+            continue
+        matched_candidates[candidate_index] = list(initial_user_comp_stars[user_index])
+        matched_user_indices.add(user_index)
 
-                    vsp_comp_stars_info[star['auid']] = {
-                        'pos': vsp_star,
-                        'mag': star_mag,
-                        'error': star_mag_error,
-                        'ra': ra_deg,
-                        'dec': dec_deg,
-                        'catalog_ra': ra_deg,
-                        'catalog_dec': dec_deg,
-                        'mag_band': obs_filter,
-                        'observed_filter': observed_filter,
-                        'catalog_source': 'AAVSO VSP',
-                        'is_aavso_vsp': True,
-                    }
+    occupied_positions = [*initial_user_comp_stars]
+    if user_targ_star is not None:
+        occupied_positions.append(list(user_targ_star))
+    matched_supplied_count = 0
+    for candidate_index, candidate in enumerate(vsp_candidates):
+        candidate_position = candidate['pixel_position']
+        if (
+            user_targ_star is not None
+            and comparison_star_pixel_distance(candidate_position, user_targ_star)
+            <= VSP_COMPARISON_MATCH_TOLERANCE_PIXELS
+        ):
+            continue
 
-                    if not exist:
-                        vsp_star_count = add_vsp_star(vsp_star_count, user_comp_stars, vsp_star)
+        if candidate_index in matched_candidates:
+            vsp_star = matched_candidates[candidate_index]
+            matched_supplied_count += 1
+        else:
+            # A candidate close to a supplied coordinate that was already assigned a
+            # nearer VSP source is ambiguous, so do not add it as a separate star.
+            if any(
+                comparison_star_pixel_distance(candidate_position, user_position)
+                <= VSP_COMPARISON_MATCH_TOLERANCE_PIXELS
+                for user_position in initial_user_comp_stars
+            ):
+                continue
+            if vsp_star_count >= max_new_comp_stars:
+                continue
+            vsp_star = [int(round(candidate_position[0])), int(round(candidate_position[1]))]
+            if any(
+                comparison_star_pixel_distance(vsp_star, occupied_position)
+                <= VSP_COMPARISON_MATCH_TOLERANCE_PIXELS
+                for occupied_position in occupied_positions
+            ):
+                continue
+            vsp_star_count = add_vsp_star(vsp_star_count, user_comp_stars, vsp_star)
+            occupied_positions.append(vsp_star)
 
-            if len(vsp_comp_stars_info) > 1:
-                break
+        vsp_comp_stars_info[candidate['label']] = {
+            **candidate['star'],
+            'pos': vsp_star,
+        }
 
-    if not vsp_star_count:
+    if not vsp_comp_stars_info:
         log_info("\nNo comparison stars were gathered from AAVSO.\n")
+    if matched_supplied_count:
+        log_info(
+            f"\nMatched {matched_supplied_count} supplied comparison star coordinate(s) "
+            "one-to-one with AAVSO VSP photometry.\n"
+        )
 
     return vsp_comp_stars_info, chart_id
+
+
+def catalog_calibration_is_usable_for_filter(star, observed_filter, max_error=None):
+    if not isinstance(star, dict):
+        return False
+    magnitude = _finite_float(star.get('mag'))
+    magnitude_error = normalized_magnitude_error(star.get('error'))
+    if (
+        not is_usable_apparent_magnitude(magnitude)
+        or magnitude_error is None
+        or catalog_band_priority(star.get('mag_band'), observed_filter) != 0
+    ):
+        return False
+    effective_max_error = _finite_float(max_error)
+    return effective_max_error is None or magnitude_error <= effective_max_error
+
+
+def merge_aavso_vsp_v_calibration_fallback(
+        file, axis, obs_filter, img_scale, calibration_stars, user_comp_stars,
+        user_targ_star=None, max_new_comp_stars=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
+    """Query VSP when a V-family observation has no usable direct V calibration.
+
+    Existing AAVSO VSP calibrations mean the field has already been queried. The
+    returned mapping contains the unified input-plus-VSP calibration pool, while
+    the second mapping contains only the VSP results from this fallback query.
+    """
+    unified_calibrations = dict(calibration_stars or {})
+    preferred_band = preferred_catalog_magnitude_band_for_filter(obs_filter)
+    if str(preferred_band or '').strip().upper() != 'V':
+        return unified_calibrations, {}, None, False
+
+    usable_direct_v = any(
+        star.get('catalog_source') == 'NextAstro photometry catalog'
+        and catalog_calibration_is_usable_for_filter(
+            star,
+            obs_filter,
+            max_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX,
+        )
+        for star in unified_calibrations.values()
+        if isinstance(star, dict)
+    )
+    if usable_direct_v:
+        return unified_calibrations, {}, None, False
+
+    usable_vsp_v = any(
+        (star.get('is_aavso_vsp') or star.get('catalog_source') == 'AAVSO VSP')
+        and catalog_calibration_is_usable_for_filter(
+            star,
+            obs_filter,
+            max_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX,
+        )
+        for star in unified_calibrations.values()
+        if isinstance(star, dict)
+    )
+    if usable_vsp_v:
+        return unified_calibrations, {}, None, False
+
+    log_info(
+        "No usable direct V-band comparison calibration was returned by the NextAstro "
+        "photometry server; querying AAVSO VSP for this V-family observation."
+    )
+    try:
+        vsp_calibrations, chart_id = vsp_query(
+            file,
+            axis,
+            obs_filter,
+            img_scale,
+            user_comp_stars=user_comp_stars,
+            user_targ_star=user_targ_star,
+            max_new_comp_stars=max_new_comp_stars,
+        )
+    except Exception as exc:
+        log_info(
+            "Warning: automatic AAVSO VSP V-band calibration fallback failed "
+            f"({describe_retry_exception(exc)}).",
+            warn=True,
+        )
+        return unified_calibrations, {}, None, True
+
+    for label, star in vsp_calibrations.items():
+        unified_calibrations[label] = star
+    if vsp_calibrations:
+        log_info(
+            f"Added {len(vsp_calibrations)} AAVSO VSP V-band calibration(s) to the "
+            "comparison-star calibration pool."
+        )
+    return unified_calibrations, vsp_calibrations, chart_id, True
 
 
 def add_vsp_star(vsp_star_count, user_comp_stars, vsp_star):
@@ -17156,32 +17316,43 @@ def add_vsp_star(vsp_star_count, user_comp_stars, vsp_star):
     return vsp_star_count + 1
 
 
-def check_comp_star_exists(user_stars, vsp_star, tol=10):
-    """Checks if a comparison star from VSP exists in the user-entered
-    comparison star list
+def comparison_star_pixel_distance(first_position, second_position):
+    try:
+        first = np.asarray(first_position, dtype=float).reshape(-1)
+        second = np.asarray(second_position, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return np.inf
+    if first.size < 2 or second.size < 2 or not np.all(np.isfinite([*first[:2], *second[:2]])):
+        return np.inf
+    return float(np.hypot(first[0] - second[0], first[1] - second[1]))
+
+
+def check_comp_star_exists(user_stars, vsp_star, tol=VSP_COMPARISON_MATCH_TOLERANCE_PIXELS):
+    """Return the nearest user-entered comparison within ``tol`` pixels.
 
     Parameters
     ----------
     user_stars : list
-        A header file that may include the airmass or altitude from when the image was taken
+        User-entered comparison-star pixel coordinates.
     vsp_star : list
-        Right Ascension
+        VSP star pixel coordinates.
     tol : float
-        Declination
+        Maximum Euclidean pixel separation.
 
     Returns
     -------
     bool
         True if VSP star exists in user entered stars, otherwise False
     list
-        Pixel coordinate of either the user entered star (exists), otherwise pixel coordinates
-        of VSP
+        The matching user coordinate, otherwise the original VSP coordinate.
     """
-    for user_star in user_stars:
-        pixel_distance = [abs(star1 - star2) for star1, star2 in zip(user_star, vsp_star)]
-
-        if all(i <= tol for i in pixel_distance):
-            return True, user_star
+    matches = [
+        (comparison_star_pixel_distance(user_star, vsp_star), user_star)
+        for user_star in user_stars
+    ]
+    matches = [match for match in matches if match[0] <= float(tol)]
+    if matches:
+        return True, min(matches, key=lambda match: match[0])[1]
     return False, vsp_star
 
 
@@ -30832,6 +31003,8 @@ def _main_impl():
             primary_target_catalog_match = None
             science_comp_stars = []
             fortuitous_ensemble_stars = []
+            fortuitous_auto_stars = []
+            fortuitous_auto_scan_performed = False
             fortuitous_variables = []
             fortuitous_calibration_stars = {}
 
@@ -31100,11 +31273,13 @@ def _main_impl():
                         # same brightest-first pool with the same count and saturation limit.
                         # Reuse it rather than performing an identical full-field image scan.
                         fortuitous_auto_stars = []
+                        fortuitous_auto_scan_performed = True
                         log_info(
                             "Reusing the stellar-variability target comparison pool for fortuitous "
                             "VSX targets; skipping a duplicate automatic source scan."
                         )
                     else:
+                        fortuitous_auto_scan_performed = True
                         fortuitous_comp_count = parse_automatic_calibration_selector_count(
                             exotic_infoDict.get('automatic_optimal_calibration_selector_count')
                         )
@@ -31169,6 +31344,79 @@ def _main_impl():
                     existing_comp_stars=vsp_comp_stars,
                     field_catalog=nextastro_field_catalog,
                 )
+                usable_science_nextastro_v = any(
+                    star.get('catalog_source') == 'NextAstro photometry catalog'
+                    and catalog_calibration_is_usable_for_filter(
+                        star,
+                        exotic_infoDict['filter'],
+                        max_error=CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX,
+                    )
+                    for star in vsp_comp_stars.values()
+                    if isinstance(star, dict)
+                )
+                if (
+                    str(
+                        preferred_catalog_magnitude_band_for_filter(exotic_infoDict['filter']) or ''
+                    ).upper() == 'V'
+                    and not usable_science_nextastro_v
+                    and not fortuitous_auto_scan_performed
+                ):
+                    fortuitous_auto_scan_performed = True
+                    fortuitous_comp_count = parse_automatic_calibration_selector_count(
+                        exotic_infoDict.get('automatic_optimal_calibration_selector_count')
+                    )
+                    fortuitous_auto_stars, _ = select_automatic_optimal_calibration_stars(
+                        reference_image,
+                        reference_image.shape,
+                        target_pixel=[exotic_UIprevTPX, exotic_UIprevTPY],
+                        ra_wcs=ra_wcs,
+                        dec_wcs=dec_wcs,
+                        obs_filter=exotic_infoDict['filter'],
+                        field_catalog=nextastro_field_catalog,
+                        count=fortuitous_comp_count,
+                        colour_term_metadata=colour_term_metadata_from_info(exotic_infoDict),
+                        brightest_first=True,
+                        saturation_threshold=fortuitous_saturation_threshold,
+                    )
+                    check_for_variable_stars(
+                        ra_wcs,
+                        dec_wcs,
+                        fortuitous_auto_stars,
+                        use_nextastro_variability_server=args.use_nextastro_variability_server,
+                    )
+                    fortuitous_auto_stars, automatic_variable_rejections = (
+                        filter_comparison_stars_against_fortuitous_variables(
+                            fortuitous_auto_stars,
+                            fortuitous_variables,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        )
+                    )
+                    for rejection in automatic_variable_rejections:
+                        log_info(
+                            "Removed automatic NextAstro V calibration candidate at "
+                            f"[{rejection['position'][0]:.1f}, {rejection['position'][1]:.1f}] because "
+                            f"the full-field VSX search identified {rejection['variable_name']} at the "
+                            f"same source ({rejection['distance_pixels']:.2f} pixel separation).",
+                            warn=True,
+                        )
+                    fortuitous_ensemble_stars, duplicate_messages = (
+                        merge_automatic_comparison_star_coords(
+                            science_comp_stars,
+                            fortuitous_auto_stars,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        )
+                    )
+                    for duplicate_message in duplicate_messages:
+                        log_info(duplicate_message)
+                    ensemble_ra_dec = build_comp_ra_dec(
+                        ra_wcs,
+                        dec_wcs,
+                        fortuitous_ensemble_stars,
+                    )
+                    log_info(
+                        "Full-field NextAstro V calibration search expanded the tracked comparison "
+                        f"pool to {len(fortuitous_ensemble_stars)} star(s) before considering AAVSO VSP."
+                    )
                 fortuitous_calibration_stars = merge_nextastro_calibration_stars(
                     fortuitous_ensemble_stars,
                     ensemble_ra_dec,
@@ -31176,6 +31424,77 @@ def _main_impl():
                     existing_comp_stars=vsp_comp_stars,
                     field_catalog=nextastro_field_catalog,
                 )
+                _, fallback_vsp_stars, fallback_chart_id, fallback_vsp_queried = (
+                    merge_aavso_vsp_v_calibration_fallback(
+                        wcs_file,
+                        [header['NAXIS1'], header['NAXIS2']],
+                        exotic_infoDict['filter'],
+                        img_scale,
+                        fortuitous_calibration_stars,
+                        science_comp_stars,
+                        user_targ_star=[exotic_UIprevTPX, exotic_UIprevTPY],
+                    )
+                )
+                if fallback_chart_id is not None:
+                    chart_id = fallback_chart_id
+                if fallback_vsp_queried and fallback_vsp_stars:
+                    fallback_vsp_stars = {
+                        label: star
+                        for label, star in fallback_vsp_stars.items()
+                        if fortuitous_variable_overlap(
+                            star.get('pos'),
+                            fortuitous_variables,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        ) is None
+                    }
+                    science_comp_stars, fallback_variable_rejections = (
+                        filter_comparison_stars_against_fortuitous_variables(
+                            science_comp_stars,
+                            fortuitous_variables,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        )
+                    )
+                    for rejection in fallback_variable_rejections:
+                        log_info(
+                            "Removed AAVSO VSP comparison star at "
+                            f"[{rejection['position'][0]:.1f}, {rejection['position'][1]:.1f}] because "
+                            f"the full-field VSX search identified {rejection['variable_name']} at the "
+                            f"same source ({rejection['distance_pixels']:.2f} pixel separation).",
+                            warn=True,
+                        )
+                    vsp_comp_stars.update(fallback_vsp_stars)
+                    fortuitous_ensemble_stars, fallback_duplicate_messages = (
+                        merge_automatic_comparison_star_coords(
+                            science_comp_stars,
+                            fortuitous_auto_stars,
+                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                        )
+                    )
+                    for duplicate_message in fallback_duplicate_messages:
+                        log_info(duplicate_message)
+                    ensemble_ra_dec = build_comp_ra_dec(
+                        ra_wcs,
+                        dec_wcs,
+                        fortuitous_ensemble_stars,
+                    )
+                    vsp_comp_stars = merge_nextastro_calibration_stars(
+                        science_comp_stars,
+                        ensemble_ra_dec[:len(science_comp_stars)],
+                        exotic_infoDict['filter'],
+                        existing_comp_stars=vsp_comp_stars,
+                        field_catalog=nextastro_field_catalog,
+                    )
+                    fortuitous_calibration_stars = merge_nextastro_calibration_stars(
+                        fortuitous_ensemble_stars,
+                        ensemble_ra_dec,
+                        exotic_infoDict['filter'],
+                        existing_comp_stars=vsp_comp_stars,
+                        field_catalog=nextastro_field_catalog,
+                    )
+                # The target variability plot can use any tracked, VSX-vetted
+                # catalog calibration, including full-field NextAstro candidates
+                # that were added for fortuitous-variable photometry.
+                vsp_comp_stars = dict(fortuitous_calibration_stars)
                 tracked_positions = [*fortuitous_ensemble_stars]
                 for variable in fortuitous_variables:
                     variable['tracking_key'] = f"comp{len(tracked_positions) + 1}"
@@ -33681,12 +34000,12 @@ def _main_impl():
                 )
             elif vsp_comp_stars:
                 if isinstance(bestCompStar, int):
-                    vsp_params = stellar_variability(ref_flux, best_fit_lc, science_comp_stars,
+                    vsp_params = stellar_variability(ref_flux, best_fit_lc, fortuitous_ensemble_stars,
                                                       vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
                                                       pDict['sName'],
                                                       observed_filter=exotic_infoDict.get('observed_filter',
                                                                                           exotic_infoDict.get('filter')),
-                                                      comp_ra_dec=ra_dec_wcs[:len(science_comp_stars)],
+                                                      comp_ra_dec=ra_dec_wcs[:len(fortuitous_ensemble_stars)],
                                                       field_catalog=nextastro_field_catalog,
                                                       reference_image=reference_image,
                                                       wcs_file=wcs_file)

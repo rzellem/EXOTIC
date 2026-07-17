@@ -844,6 +844,204 @@ def test_vsp_query_rejects_band_errors_over_limit(monkeypatch):
     assert user_comp_stars == [[40, 50]]
 
 
+def test_vsp_query_keeps_late_supplied_matches_after_new_star_limit(monkeypatch):
+    class DummyWCS:
+        def pixel_to_world_values(self, x_pixel, y_pixel):
+            return 10.0, 20.0
+
+        def world_to_pixel_values(self, ra_deg, dec_deg):
+            return np.array([ra_deg]), np.array([dec_deg])
+
+    payload = {
+        'chartid': 'X-LIMIT',
+        'photometry': [
+            {
+                'auid': 'NEW-1',
+                'ra': '20',
+                'dec': '20',
+                'bands': [{'band': 'V', 'mag': 11.0, 'error': 0.01}],
+            },
+            {
+                'auid': 'NEW-2',
+                'ra': '40',
+                'dec': '40',
+                'bands': [{'band': 'V', 'mag': 12.0, 'error': 0.01}],
+            },
+            {
+                'auid': 'SUPPLIED',
+                'ra': '80',
+                'dec': '80',
+                'bands': [{'band': 'V', 'mag': 13.0, 'error': 0.02}],
+            },
+        ],
+    }
+    user_comp_stars = [[80, 80]]
+
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda file: DummyWCS())
+    monkeypatch.setattr(
+        exotic_module,
+        'radec_hours_to_degree',
+        lambda ra, dec: (float(ra), float(dec)),
+    )
+    monkeypatch.setattr(exotic_module.requests, 'get', lambda url: DummyResponse(payload))
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    vsp_comp_stars, chart_id = exotic_module.vsp_query(
+        'frame.fits',
+        [100, 100],
+        'Clear',
+        1.0,
+        user_comp_stars=user_comp_stars,
+        max_new_comp_stars=1,
+    )
+
+    assert chart_id == 'X-LIMIT'
+    assert list(vsp_comp_stars) == ['NEW-1', 'SUPPLIED']
+    assert vsp_comp_stars['SUPPLIED']['pos'] == [80, 80]
+    assert user_comp_stars == [[80, 80], [20, 20]]
+
+
+def test_vsp_query_assigns_only_nearest_catalog_source_to_supplied_coordinate(monkeypatch):
+    class DummyWCS:
+        def pixel_to_world_values(self, x_pixel, y_pixel):
+            return 10.0, 20.0
+
+        def world_to_pixel_values(self, ra_deg, dec_deg):
+            return np.array([ra_deg]), np.array([dec_deg])
+
+    payload = {
+        'chartid': 'X-NEAREST',
+        'photometry': [
+            {
+                'auid': 'FARTHER',
+                'ra': '47',
+                'dec': '50',
+                'bands': [{'band': 'V', 'mag': 11.0, 'error': 0.01}],
+            },
+            {
+                'auid': 'NEAREST',
+                'ra': '51',
+                'dec': '50',
+                'bands': [{'band': 'V', 'mag': 12.0, 'error': 0.02}],
+            },
+        ],
+    }
+    user_comp_stars = [[50, 50]]
+
+    monkeypatch.setattr(exotic_module, 'search_wcs', lambda file: DummyWCS())
+    monkeypatch.setattr(
+        exotic_module,
+        'radec_hours_to_degree',
+        lambda ra, dec: (float(ra), float(dec)),
+    )
+    monkeypatch.setattr(exotic_module.requests, 'get', lambda url: DummyResponse(payload))
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    vsp_comp_stars, _ = exotic_module.vsp_query(
+        'frame.fits',
+        [100, 100],
+        'Clear',
+        1.0,
+        user_comp_stars=user_comp_stars,
+        max_new_comp_stars=0,
+    )
+
+    assert list(vsp_comp_stars) == ['NEAREST']
+    assert vsp_comp_stars['NEAREST']['pos'] == [50, 50]
+    assert user_comp_stars == [[50, 50]]
+
+
+def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(monkeypatch):
+    calls = []
+    supplied_positions = [[100, 200]]
+
+    def fake_vsp_query(file, axis, obs_filter, img_scale, **kwargs):
+        calls.append((file, axis, obs_filter, img_scale, kwargs))
+        kwargs['user_comp_stars'].append([300, 400])
+        return {
+            '000-BPW-929': {
+                'pos': [100, 200],
+                'mag': 11.85,
+                'error': 0.046,
+                'mag_band': 'V',
+                'catalog_source': 'AAVSO VSP',
+                'is_aavso_vsp': True,
+            },
+            '000-BMX-191': {
+                'pos': [300, 400],
+                'mag': 12.121,
+                'error': 0.005,
+                'mag_band': 'V',
+                'catalog_source': 'AAVSO VSP',
+                'is_aavso_vsp': True,
+            },
+        }, 'X42753ZU'
+
+    monkeypatch.setattr(exotic_module, 'vsp_query', fake_vsp_query)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    combined, fallback_stars, chart_id, queried = (
+        exotic_module.merge_aavso_vsp_v_calibration_fallback(
+            'frame.fits',
+            [512, 512],
+            'Clear',
+            1.2,
+            {
+                'NextAstro-g-only': {
+                    'pos': [100, 200],
+                    'mag': 11.7,
+                    'error': 0.01,
+                    'mag_band': 'g',
+                    'catalog_source': 'NextAstro photometry catalog',
+                },
+            },
+            supplied_positions,
+            user_targ_star=[250, 250],
+        )
+    )
+
+    assert queried is True
+    assert chart_id == 'X42753ZU'
+    assert len(calls) == 1
+    assert calls[0][2] == 'Clear'
+    assert calls[0][4]['max_new_comp_stars'] == 5
+    assert supplied_positions == [[100, 200], [300, 400]]
+    assert set(fallback_stars) == {'000-BPW-929', '000-BMX-191'}
+    assert set(combined) == {'NextAstro-g-only', '000-BPW-929', '000-BMX-191'}
+
+
+def test_clear_v_calibration_fallback_skips_vsp_when_nextastro_has_usable_v(monkeypatch):
+    def unexpected_vsp_query(*args, **kwargs):
+        raise AssertionError('VSP must not be queried when NextAstro supplied usable V')
+
+    monkeypatch.setattr(exotic_module, 'vsp_query', unexpected_vsp_query)
+
+    existing = {
+        'NextAstro-123': {
+            'pos': [100, 200],
+            'mag': 11.7,
+            'error': 0.02,
+            'mag_band': 'V',
+            'catalog_source': 'NextAstro photometry catalog',
+        },
+    }
+    combined, fallback_stars, chart_id, queried = (
+        exotic_module.merge_aavso_vsp_v_calibration_fallback(
+            'frame.fits',
+            [512, 512],
+            'Clear',
+            1.2,
+            existing,
+            [[100, 200]],
+        )
+    )
+
+    assert combined == existing
+    assert fallback_stars == {}
+    assert chart_id is None
+    assert queried is False
+
+
 def test_build_stellar_variability_params_records_nextastro_reference(monkeypatch, tmp_path):
     captured = {}
 
@@ -1235,6 +1433,63 @@ def test_derived_catalog_reference_skips_missing_anchor_fit():
 
     assert label is None
     assert star is None
+
+
+def test_derived_catalog_reference_ensembles_multiple_aavso_v_anchors():
+    class DummyFit:
+        def __init__(self, reference_curve):
+            reference_curve = np.asarray(reference_curve, dtype=float)
+            self.data = reference_curve
+            self.time = np.array([1.0, 2.0, 3.0], dtype=float)
+            self.transit = np.ones(3, dtype=float)
+            self.stellar_variability_target_flux = reference_curve * 1000.0
+            self.stellar_variability_comp_flux = np.full(3, 1000.0, dtype=float)
+            self.stellar_variability_target_flux_error = np.full(3, 2.0, dtype=float)
+            self.stellar_variability_comp_flux_error = np.full(3, 2.0, dtype=float)
+
+    selected_mag = 11.0
+    first_anchor_mag = 12.0
+    second_anchor_mag = 13.0
+    first_ratio = 10.0 ** ((first_anchor_mag - selected_mag) / 2.5)
+    second_ratio = 10.0 ** ((second_anchor_mag - selected_mag) / 2.5)
+
+    label, star = exotic_module.derived_catalog_reference_for_selected_comp(
+        {
+            0: {'myfit': DummyFit(np.ones(3)), 'pos': [10, 10]},
+            1: {'myfit': DummyFit(np.full(3, first_ratio)), 'pos': [20, 20]},
+            2: {'myfit': DummyFit(np.full(3, second_ratio)), 'pos': [30, 30]},
+        },
+        [[10, 10], [20, 20], [30, 30]],
+        {
+            'AAVSO-1': {
+                'pos': [20, 20],
+                'mag': first_anchor_mag,
+                'error': 0.02,
+                'mag_band': 'V',
+                'catalog_source': 'AAVSO VSP',
+                'is_aavso_vsp': True,
+            },
+            'AAVSO-2': {
+                'pos': [30, 30],
+                'mag': second_anchor_mag,
+                'error': 0.04,
+                'mag_band': 'V',
+                'catalog_source': 'AAVSO VSP',
+                'is_aavso_vsp': True,
+            },
+        },
+        [1, 2],
+        0,
+        observed_filter='Clear',
+    )
+
+    assert label == 'Derived Comp 1'
+    assert star['mag'] == pytest.approx(selected_mag)
+    assert star['error'] == pytest.approx((1.0 / (1.0 / 0.02 ** 2 + 1.0 / 0.04 ** 2)) ** 0.5)
+    assert star['mag_band'] == 'V'
+    assert star['derived_catalog_reference'] is True
+    assert star['derived_reference_anchor_count'] == 2
+    assert star['derived_reference_anchor_labels'] == ['AAVSO-1', 'AAVSO-2']
 
 
 def test_stellar_variability_rejects_g_catalog_anchor_for_clearv(monkeypatch, tmp_path):
@@ -1714,6 +1969,109 @@ def test_stellar_variability_ensemble_skips_cross_band_catalog_reference():
     assert selection['members'][0]['star']['mag_band'] == 'V'
     rejected = {item['key']: item['reason'] for item in selection['rejected']}
     assert rejected['comp1'] == 'no usable catalog calibration'
+
+
+def test_stellar_variability_ensemble_combines_nextastro_and_aavso_v_members():
+    frame_count = 8
+    ranked_summaries = [
+        {
+            'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+            'overexposure_rejected_count': 0,
+        },
+        {
+            'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+            'overexposure_rejected_count': 0,
+        },
+    ]
+    calibration_stars = {
+        'NextAstro-123': {
+            'pos': [10, 20],
+            'mag': 11.8,
+            'error': 0.02,
+            'mag_band': 'V',
+            'catalog_source': 'NextAstro photometry catalog',
+            'source_id': 123,
+        },
+        '000-BMX-191': {
+            'pos': [30, 40],
+            'mag': 12.121,
+            'error': 0.005,
+            'mag_band': 'V',
+            'catalog_source': 'AAVSO VSP',
+            'is_aavso_vsp': True,
+            'catalog_ra': 18.0,
+            'catalog_dec': 35.0,
+        },
+    }
+
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        {
+            'comp1': np.full(frame_count, 2000.0),
+            'comp2': np.full(frame_count, 1000.0),
+        },
+        observed_filter='Clear',
+    )
+
+    assert [member['key'] for member in selection['members']] == ['comp1', 'comp2']
+    assert [member['label'] for member in selection['members']] == [
+        'NextAstro-123',
+        '000-BMX-191',
+    ]
+    assert [member['star']['catalog_source'] for member in selection['members']] == [
+        'NextAstro photometry catalog',
+        'AAVSO VSP',
+    ]
+
+
+def test_stellar_variability_single_mode_can_select_aavso_v_fallback_member():
+    frame_count = 8
+    selection = exotic_module.select_stellar_variability_ensemble_members(
+        [
+            {
+                'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+                'overexposure_rejected_count': 0,
+            },
+            {
+                'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+                'overexposure_rejected_count': 0,
+            },
+        ],
+        {
+            '000-BPW-929': {
+                'pos': [10, 20],
+                'mag': 11.85,
+                'error': 0.046,
+                'mag_band': 'V',
+                'catalog_source': 'AAVSO VSP',
+                'is_aavso_vsp': True,
+                'catalog_ra': 18.0,
+                'catalog_dec': 35.0,
+            },
+            '000-BMX-191': {
+                'pos': [30, 40],
+                'mag': 12.121,
+                'error': 0.005,
+                'mag_band': 'V',
+                'catalog_source': 'AAVSO VSP',
+                'is_aavso_vsp': True,
+                'catalog_ra': 18.1,
+                'catalog_dec': 35.1,
+            },
+        },
+        {
+            'comp1': np.full(frame_count, 2000.0),
+            'comp2': np.full(frame_count, 1000.0),
+        },
+        observed_filter='Clear',
+        min_members=1,
+        max_members=1,
+    )
+
+    assert [member['key'] for member in selection['members']] == ['comp1']
+    assert selection['members'][0]['label'] == '000-BPW-929'
+    assert selection['members'][0]['star']['catalog_source'] == 'AAVSO VSP'
 
 
 def test_stellar_variability_rejects_comparison_that_steps_across_acquisition_gap():

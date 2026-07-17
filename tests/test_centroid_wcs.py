@@ -432,6 +432,25 @@ def test_get_ra_dec_uses_image_shape_when_header_lacks_naxis():
     assert dec_list.shape == (100, 120)
 
 
+def test_get_ra_dec_matches_zero_based_astropy_pixel_coordinates():
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [60.0, 50.0]
+    wcs.wcs.crval = [210.0, 54.0]
+    wcs.wcs.cdelt = np.array([-0.01, 0.01])
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    header = wcs.to_header()
+    header["NAXIS"] = 2
+    header["NAXIS1"] = 120
+    header["NAXIS2"] = 100
+
+    ra_list, dec_list = exotic_module.get_ra_dec(header)
+
+    for x_pixel, y_pixel in [(0, 0), (59, 49), (119, 99), (23, 71)]:
+        expected_ra, expected_dec = wcs.pixel_to_world_values(x_pixel, y_pixel)
+        assert ra_list[y_pixel, x_pixel] == pytest.approx(expected_ra, abs=1.0e-12)
+        assert dec_list[y_pixel, x_pixel] == pytest.approx(expected_dec, abs=1.0e-12)
+
+
 def test_get_first_image_header_skips_empty_primary_hdu(tmp_path):
     wcs_path = _write_extension_wcs_fits(tmp_path)
 

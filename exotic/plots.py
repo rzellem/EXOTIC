@@ -644,7 +644,9 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()
     output_dir = _working_artifacts_dir(save)
-    fig.savefig(output_dir / f"Stellar_Variability.png", bbox_inches="tight")
+    output_path = Path(save) / "Stellar_Variability.png"
+    fig.savefig(output_dir / "Stellar_Variability.png", bbox_inches="tight")
+    fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 
 

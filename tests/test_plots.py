@@ -356,6 +356,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
     )
     assert ylabels[-1] == "Magnitude (r)"
     assert (tmp_path / "working_artifacts" / "Stellar_Variability.png").exists()
+    assert (tmp_path / "Stellar_Variability.png").exists()
 
 
 def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp_path, monkeypatch):
@@ -459,6 +460,7 @@ def test_plot_stellar_variability_skips_over_30_measurements(tmp_path):
     )
 
     assert not (tmp_path / "working_artifacts" / "Stellar_Variability.png").exists()
+    assert not (tmp_path / "Stellar_Variability.png").exists()
 
 
 def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):

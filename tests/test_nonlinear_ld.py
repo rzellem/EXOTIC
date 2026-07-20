@@ -49,6 +49,29 @@ def test_nonlinear_ld_non_interactive_uses_neutral_cbb_name_without_prompt(monke
     assert info_dict["wl_max"] == 1000.0
 
 
+def test_nonlinear_ld_non_interactive_treats_cv_as_clearv_without_prompt(monkeypatch):
+    ld = exotic_module.LimbDarkening({})
+    monkeypatch.setattr(ld, "calculate_ld", lambda: None)
+    monkeypatch.setattr(
+        exotic_module,
+        "user_input",
+        lambda *_args, **_kwargs: pytest.fail("recognized CV filter must not prompt"),
+    )
+    info_dict = {
+        "filter": "CV",
+        "wl_min": None,
+        "wl_max": None,
+        "ld_uncertainties": "y",
+    }
+
+    exotic_module.nonlinear_ld(ld, info_dict, non_interactive_run=True)
+
+    assert info_dict["filter"] == "CV"
+    assert info_dict["filter_desc"] == "CV"
+    assert info_dict["wl_min"] == 350.0
+    assert info_dict["wl_max"] == 1000.0
+
+
 class UnrecognizedFilterLimbDarkening:
     fwhm_names_nonspecific = {}
 

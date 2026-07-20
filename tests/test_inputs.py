@@ -1598,8 +1598,16 @@ def test_lookup_aavso_filter_metadata_uses_c_alias_for_cv_filter() -> None:
     filter_metadata = inputs_module.lookup_aavso_filter_metadata("C")
 
     assert filter_metadata["name"] == "CV"
-    assert filter_metadata["desc"] == "MObs CV"
-    assert filter_metadata["fwhm"] == ("350.0", "850.0")
+    assert filter_metadata["desc"] == "CV"
+    assert filter_metadata["fwhm"] == ("350.0", "1000.0")
+
+
+def test_lookup_aavso_filter_metadata_interprets_cv_as_clearv() -> None:
+    filter_metadata = inputs_module.lookup_aavso_filter_metadata("CV")
+
+    assert filter_metadata["name"] == "CV"
+    assert filter_metadata["desc"] == "CV"
+    assert filter_metadata["fwhm"] == ("350.0", "1000.0")
 
 
 def test_lookup_aavso_filter_metadata_uses_luminosity_aliases_for_clearv_filter() -> None:
@@ -1607,7 +1615,7 @@ def test_lookup_aavso_filter_metadata_uses_luminosity_aliases_for_clearv_filter(
         filter_metadata = inputs_module.lookup_aavso_filter_metadata(alias)
 
         assert filter_metadata["name"] == "CV"
-        assert filter_metadata["desc"] == "ClearV"
+        assert filter_metadata["desc"] == "CV"
         assert filter_metadata["fwhm"] == ("350.0", "1000.0")
 
 
@@ -1640,9 +1648,9 @@ def test_parse_aavso_prereduced_overrides_uses_c_alias_for_cv_filter_lookup(tmp_
     overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
 
     assert overrides["filter"] == "C"
-    assert overrides["filter_desc"] == "MObs CV"
+    assert overrides["filter_desc"] == "CV"
     assert overrides["wl_min"] == "350.0"
-    assert overrides["wl_max"] == "850.0"
+    assert overrides["wl_max"] == "1000.0"
 
 
 def test_parse_aavso_prereduced_overrides_uses_luminosity_alias_for_clearv_lookup(tmp_path):
@@ -1657,7 +1665,7 @@ def test_parse_aavso_prereduced_overrides_uses_luminosity_alias_for_clearv_looku
     overrides = parse_aavso_prereduced_overrides(pre_reduced_file)
 
     assert overrides["filter"] == "Luminosity"
-    assert overrides["filter_desc"] == "ClearV"
+    assert overrides["filter_desc"] == "CV"
     assert overrides["wl_min"] == "350.0"
     assert overrides["wl_max"] == "1000.0"
 

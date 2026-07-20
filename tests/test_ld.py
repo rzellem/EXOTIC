@@ -75,7 +75,7 @@ def test_existing_standard_filter_alias_name() -> None:
 
     assert observed_filter == expected_filter
 
-def test_existing_mobs_standard_filter_name() -> None:
+def test_legacy_mobs_filter_name_maps_to_cv() -> None:
     observed_filter = {
         'filter': "MObs CV",
         'name': None,
@@ -84,17 +84,17 @@ def test_existing_mobs_standard_filter_name() -> None:
     }
 
     expected_filter = {
-        'filter': "MObs CV",
+        'filter': "CV",
         'name': 'CV',
         'wl_min': '350.0',
-        'wl_max': '850.0'
+        'wl_max': '1000.0'
     }
 
     setting_filter_values(observed_filter)
 
     assert observed_filter == expected_filter
 
-def test_custom_nonspecific_standard_filter_abbreviation_1() -> None:
+def test_cv_standard_filter_abbreviation_uses_clearv() -> None:
     observed_filter = {
         'filter': "CV",
         'name': None,
@@ -104,7 +104,13 @@ def test_custom_nonspecific_standard_filter_abbreviation_1() -> None:
 
     ld_obj = LimbDarkening(stellar_params)
 
-    assert ld_obj.check_standard(observed_filter) == False
+    assert ld_obj.check_standard(observed_filter) is True
+    assert observed_filter == {
+        'filter': "CV",
+        'name': "CV",
+        'wl_min': "350.0",
+        'wl_max': "1000.0",
+    }
 
 def test_custom_nonspecific_standard_filter_abbreviation_2() -> None:
     observed_filter = {
@@ -149,19 +155,19 @@ def test_existing_standard_filter_fwhm() -> None:
 
     assert observed_filter == expected_filter
 
-def test_existing_mobs_standard_filter_mobs() -> None:
+def test_existing_clearv_standard_filter_wavelengths() -> None:
     observed_filter = {
         'filter': None,
         'name': None,
         'wl_min': '350.0',
-        'wl_max': '850.0'
+        'wl_max': '1000.0'
     }
 
     expected_filter = {
-        'filter': "MObs CV",
+        'filter': "CV",
         'name': 'CV',
         'wl_min': '350.0',
-        'wl_max': '850.0'
+        'wl_max': '1000.0'
     }
 
     setting_filter_values(observed_filter)
@@ -293,9 +299,10 @@ def test_additional_standard_filter_aliases_in_filter_column() -> None:
         ("sy", "Stromgren y", "STY", "536.7", "559.3"),
         ("hb", "Stromgren Hbw", "STHBW", "481.5", "496.5"),
         ("zs", "PanSTARRS z-short", "ZS", "826.0", "920.0"),
-        ("clearV", "MObs CV", "CV", "350.0", "850.0"),
-        ("w", "MObs CV", "CV", "350.0", "850.0"),
-        ("pl", "MObs CV", "CV", "350.0", "850.0"),
+        ("CV", "CV", "CV", "350.0", "1000.0"),
+        ("clearV", "CV", "CV", "350.0", "1000.0"),
+        ("w", "CV", "CV", "350.0", "1000.0"),
+        ("pl", "CV", "CV", "350.0", "1000.0"),
         ("exo", "CBB", "CBB", "500.0", "1000.0"),
         ("Astrodon ExoPlanet-BB", "CBB", "CBB", "500.0", "1000.0"),
         ("Astrodon-Exo", "CBB", "CBB", "500.0", "1000.0"),

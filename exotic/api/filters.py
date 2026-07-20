@@ -48,9 +48,8 @@ __fwhm = {
         "PanSTARRS Y": {"name": "Y", "fwhm": ("946.4", "1054.4")},
         "PanSTARRS w": {"name": "N/A", "fwhm": ("404.2", "845.8")},
 
-        # MObs Clear Filter; Source(s): Martin Fowler
-        "MObs CV": {"name": "CV", "fwhm": ("350.0", "850.0")},
-        "ClearV": {"name": "CV", "fwhm": ("350.0", "1000.0")},
+        # ClearV filter
+        "CV": {"name": "CV", "fwhm": ("350.0", "1000.0")},
 
         # Clear with blue-blocking (CBB); wavelength source:
         # https://astrodon.com/products/astrodon-exo-planet-filter/
@@ -79,7 +78,7 @@ fwhm_alias = {
         "LCO Pan-STARRS Y": "PanSTARRS Y",
         "LCO Pan-STARRS w": "PanSTARRS w",
 
-        "Clear (unfiltered) reduced to V sequence": "MObs CV",
+        "Clear (unfiltered) reduced to V sequence": "CV",
         "Clear (unfiltered) reduced to R sequence": "Cousins R",
 
         "Clear with blue-blocking": "CBB",
@@ -108,15 +107,17 @@ fwhm_alias = {
         "sy": "Stromgren y",
         "hb": "Stromgren Hbw",
         "zs": "PanSTARRS z-short",
-        "clearV": "ClearV",
-        "C": "MObs CV",
-        "clear": "ClearV",
-        "lum": "ClearV",
-        "Lum": "ClearV",
-        "Luminosity": "ClearV",
-        "luminosity": "ClearV",
-        "w": "ClearV",
-        "pl": "ClearV",
+        "MObs CV": "CV",
+        "ClearV": "CV",
+        "clearV": "CV",
+        "C": "CV",
+        "clear": "CV",
+        "lum": "CV",
+        "Lum": "CV",
+        "Luminosity": "CV",
+        "luminosity": "CV",
+        "w": "CV",
+        "pl": "CV",
         "exo": "CBB",
 
         # OSC split-channel aliases
@@ -130,7 +131,6 @@ fwhm_alias = {
 # standard filters w/o precisely defined FWHM values
 fwhm_names_nonspecific = {
         'CR': "Clear (unfiltered) reduced to R sequence",
-        'CV': "Clear (unfiltered) reduced to V sequence",
         'TB': "DSLR Blue",
         'TG': "DSLR Green",
         'TR': "DSLR Red",

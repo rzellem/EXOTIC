@@ -31100,7 +31100,7 @@ def _main_impl():
                         exotic_infoDict['second_obs'] += ",MOBS"
                     else:
                         exotic_infoDict['second_obs'] = "MOBS"
-                    exotic_infoDict['filter'] = "MObs CV"
+                    exotic_infoDict['filter'] = "CV"
                     exotic_infoDict['elev'] = 1268
                     exotic_infoDict['lat'] = 31.675467
                     exotic_infoDict['long'] = -110.951376

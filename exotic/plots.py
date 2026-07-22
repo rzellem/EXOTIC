@@ -588,7 +588,7 @@ def _stellar_variability_reference_label(vsp_param, comparison_label):
         details.append(f"Label: {comparison_label}")
 
     if comp_ra is not None and comp_dec is not None:
-        details.extend((f"RA={comp_ra:.6f}", f"Dec={comp_dec:.6f}"))
+        details.extend((f"Comparison RA={comp_ra:.6f}", f"Dec={comp_dec:.6f}"))
 
     if not details and comparison_label:
         details.append(comparison_label)

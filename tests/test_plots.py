@@ -350,7 +350,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
     assert titles[-1] == (
         "Host Star\n"
         "Label: NextAstro-123\n"
-        "RA=10.100000\n"
+        "Comparison RA=10.100000\n"
         "Dec=-20.200000\n"
         "Original filter: CV | Comparison mag: r=12.345 +/- 0.067"
     )
@@ -397,7 +397,11 @@ def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp
         "000-BJX-718",
     )
 
-    assert "Label: 000-BJX-718\nRA=10.100000\nDec=-20.200000" in titles[-1]
+    assert (
+        "Label: 000-BJX-718\n"
+        "Comparison RA=10.100000\n"
+        "Dec=-20.200000"
+    ) in titles[-1]
     assert "Original filter: CV" in titles[-1]
     assert "Comparison mag: V=12.345 +/- 0.067" in titles[-1]
     assert ylabels[-1] == "Magnitude (ClearV)"
@@ -435,7 +439,7 @@ def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, m
 
     assert titles[-1] == (
         "Host Star\n"
-        "Label: NextAstro-123\nRA=10.100000\nDec=-20.200000\n"
+        "Label: NextAstro-123\nComparison RA=10.100000\nDec=-20.200000\n"
         "Original filter: MObs CV"
     )
     assert "99.99" not in titles[-1]

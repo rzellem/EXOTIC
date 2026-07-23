@@ -454,8 +454,8 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     }
     vsp_params = [{
         "time": 2450000.12345,
-        "mag": 12.34,
-        "mag_err": 0.05,
+        "mag": 12.34567,
+        "mag_err": 0.012345,
         "airmass": 1.234,
         "cname": "RA=10.1000000 Dec=-20.2000000",
         "cmag": 12.1,
@@ -488,7 +488,7 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert metadata["reported_measurement_band"] == "ClearV"
     assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
     assert "#DATE=BJD_TDB" in output_text
-    assert "HAT-P-32,2450000.12345,12.340,0.050,V,NO,STD" in output_text
+    assert "HAT-P-32,2450000.12345,12.3457,0.0123,V,NO,STD" in output_text
 
 
 def test_aid_output_records_calibrated_ensemble_members(tmp_path):
@@ -551,7 +551,7 @@ def test_aid_output_records_calibrated_ensemble_members(tmp_path):
     assert ensemble_metadata["members"][1]["label"] == "C2"
     assert ensemble_metadata["members"][1]["ra_deg"] == pytest.approx(10.2)
     assert ensemble_metadata["members"][1]["dec_deg"] == pytest.approx(-20.2)
-    assert "Target,2450000.12345,12.340,0.020,V,NO,STD,ENSEMBLE (2 stars),na" in output_text
+    assert "Target,2450000.12345,12.3400,0.0200,V,NO,STD,ENSEMBLE (2 stars),na" in output_text
 
 
 def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):
@@ -634,7 +634,7 @@ def test_aid_output_floors_reported_magnitude_errors(tmp_path):
     metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
 
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.001)
-    assert "HAT-P-32,2450000.12345,12.340,0.001,V,NO,STD" in output_text
+    assert "HAT-P-32,2450000.12345,12.3400,0.0010,V,NO,STD" in output_text
 
 
 def test_aid_output_skips_over_30_magnitude_rows(tmp_path):

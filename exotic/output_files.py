@@ -2457,10 +2457,10 @@ class AIDOutputFiles:
                 variable_name = default_variable_name
                 if use_row_names:
                     variable_name = vsp_p.get('_aid_name') or variable_name
-                mag = format_magnitude(vsp_p.get('mag'), default=None)
+                mag = format_magnitude(vsp_p.get('mag'), default=None, digits=4)
                 if mag is None:
                     continue
-                mag_err = format_magnitude_error(vsp_p.get('mag_err'))
+                mag_err = format_magnitude_error(vsp_p.get('mag_err'), digits=4)
                 cmag = format_magnitude(vsp_p.get('cmag'))
                 chart_id = self.chart_id or vsp_p.get('chart_id') or 'na'
                 f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"

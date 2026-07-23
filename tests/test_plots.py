@@ -124,10 +124,12 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
     captured_errorbar_y = []
     captured_xlabels = []
     captured_ylabels = []
+    inverted_axes = []
 
     original_errorbar = Axes.errorbar
     original_set_xlabel = Axes.set_xlabel
     original_set_ylabel = Axes.set_ylabel
+    original_invert_yaxis = Axes.invert_yaxis
 
     def spy_errorbar(self, x, y, *args, **kwargs):
         captured_errorbar_x.append(np.asarray(x, dtype=float))
@@ -142,9 +144,14 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
         captured_ylabels.append(ylabel)
         return original_set_ylabel(self, ylabel, *args, **kwargs)
 
+    def spy_invert_yaxis(self, *args, **kwargs):
+        inverted_axes.append(self)
+        return original_invert_yaxis(self, *args, **kwargs)
+
     monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
     monkeypatch.setattr(Axes, "set_xlabel", spy_set_xlabel)
     monkeypatch.setattr(Axes, "set_ylabel", spy_set_ylabel)
+    monkeypatch.setattr(Axes, "invert_yaxis", spy_invert_yaxis)
 
     plot_final_lightcurve(fit, np.ones(2), "Target", str(tmp_path), "2026-07-08")
 
@@ -153,6 +160,7 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
     assert captured_xlabels[-1] == "Time [BJD_TDB]"
     assert captured_xlabels[-1] != "Orbital Phase"
     assert captured_ylabels[-1] == "Magnitude (r)"
+    assert len(inverted_axes) == 1
     assert "O-C [%]" not in captured_ylabels
     assert (tmp_path / "FinalLightCurve_Target_2026-07-08.png").exists()
 
@@ -313,8 +321,10 @@ def test_plot_individual_comp_star_calibration_series_masks_rejected_frame_lines
 def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeypatch):
     titles = []
     ylabels = []
+    inverted_axes = []
     original_set_title = Axes.set_title
     original_set_ylabel = Axes.set_ylabel
+    original_invert_yaxis = Axes.invert_yaxis
 
     def spy_set_title(self, label, *args, **kwargs):
         titles.append(label)
@@ -324,8 +334,13 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         ylabels.append(label)
         return original_set_ylabel(self, label, *args, **kwargs)
 
+    def spy_invert_yaxis(self, *args, **kwargs):
+        inverted_axes.append(self)
+        return original_invert_yaxis(self, *args, **kwargs)
+
     monkeypatch.setattr(Axes, "set_title", spy_set_title)
     monkeypatch.setattr(Axes, "set_ylabel", spy_set_ylabel)
+    monkeypatch.setattr(Axes, "invert_yaxis", spy_invert_yaxis)
 
     plot_stellar_variability(
         [
@@ -355,6 +370,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         "Original filter: CV | Comparison mag: r=12.345 +/- 0.067"
     )
     assert ylabels[-1] == "Magnitude (r)"
+    assert len(inverted_axes) == 1
     assert (tmp_path / "working_artifacts" / "Stellar_Variability.png").exists()
     assert (tmp_path / "Stellar_Variability.png").exists()
 

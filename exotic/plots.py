@@ -641,6 +641,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
         title_lines.append(metadata_label)
     ax.set_title("\n".join(title_lines), fontsize=11)
     ax.set_ylabel(f"Magnitude ({band})")
+    ax.invert_yaxis()
     ax.set_xlabel("Time [JD]")
     fig.tight_layout()
     output_dir = _working_artifacts_dir(save)
@@ -1018,6 +1019,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
         )
         band = first_param.get('mag_band') or 'V'
         ax_lc.set_ylabel(f"Magnitude ({band})")
+        ax_lc.invert_yaxis()
         ax_lc.set_xlabel("Time [BJD_TDB]")
         f.tight_layout()
 

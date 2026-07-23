@@ -15549,7 +15549,10 @@ def reported_stellar_variability_band(observed_filter, fallback_band=None):
     """Keep the catalogue anchor band separate from the measured passband."""
     if observed_filter_uses_clear_v_calibration(observed_filter):
         return 'ClearV'
-    return fallback_band or observed_filter or 'V'
+    reported_band = fallback_band or observed_filter or 'V'
+    if str(reported_band).strip().lower() == 'r':
+        return 'rp'
+    return reported_band
 
 
 def nextastro_photometry_band_candidates(obs_filter):
@@ -27809,10 +27812,16 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
         zero_points.append(zero_point)
         zero_point_errors.append(zero_point_error)
 
+    selected_member_count = len(members or [])
     try:
-        required_members = max(1, int(minimum_members))
+        minimum_required_members = max(1, int(minimum_members))
     except (TypeError, ValueError):
-        required_members = STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
+        minimum_required_members = STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
+    # An ensemble has a fixed membership. Allowing the contributing subset to
+    # change from frame to frame changes the photometric zero point and can
+    # create false variability. Every selected member must therefore be valid
+    # for a frame, or that frame is rejected.
+    required_members = max(minimum_required_members, selected_member_count)
     member_text = "comparison star" if required_members == 1 else "comparison stars"
     empty = {
         'applied': False,
@@ -27975,9 +27984,11 @@ def save_stellar_variability_ensemble_selection_json(
         'ensemble': {
             'selection_rule': (
                 'After saturation, VSX, coverage, stability, and high catalog-error rejection, '
-                'use at most five stars ranked by joint catalog color and magnitude distance to the target.'
+                'use at most five stars ranked by joint catalog color and magnitude distance to the target; '
+                'retain a frame only when every selected ensemble member is valid.'
             ),
             'minimum_members': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+            'per_frame_required_members': len(members),
             'maximum_members': selection.get(
                 'member_limit', STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
             ),
@@ -28105,6 +28116,11 @@ def build_stellar_variability_ensemble_params_from_fit(
     member_magnitude_deltas = [member.get('magnitude_delta') for member in members]
     member_similarity_scores = [member.get('color_magnitude_similarity_score') for member in members]
     display_label = f"ENSEMBLE ({len(members)} stars)"
+    catalog_mag_band = preferred_catalog_magnitude_band_for_filter(observed_filter)
+    measurement_mag_band = reported_stellar_variability_band(
+        observed_filter,
+        fallback_band=catalog_mag_band,
+    )
     vsp_params = []
     for time_value, airmass_value, magnitude, magnitude_error in zip(
         times[valid],
@@ -28127,11 +28143,8 @@ def build_stellar_variability_ensemble_params_from_fit(
             'catalog_dec': None,
             'catalog_source': 'Calibrated comparison-star ensemble',
             'is_aavso_vsp': False,
-            'mag_band': reported_stellar_variability_band(
-                observed_filter,
-                fallback_band=observed_filter or 'V',
-            ),
-            'catalog_mag_band': preferred_catalog_magnitude_band_for_filter(observed_filter),
+            'mag_band': measurement_mag_band,
+            'catalog_mag_band': catalog_mag_band,
             'observed_filter': observed_filter,
             'ensemble_reference': True,
             'ensemble_member_count': len(members),
@@ -28368,8 +28381,8 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     times,
                     fit_mask,
                     note=(
-                        "Kept frames with a finite target measurement and at least two unsaturated, "
-                        "VSX-vetted, catalog-calibrated ensemble members."
+                        "Kept frames with a finite target measurement and every selected unsaturated, "
+                        "VSX-vetted, catalog-calibrated ensemble member."
                     ),
                 )
                 filter_diagnostics = []
@@ -28460,7 +28473,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'coverage_min_required_count': LIGHTCURVE_MIN_VALID_POINTS,
                         'coverage_rejected': False,
                         'ensemble_frame_rejected_count': int(np.count_nonzero(~fit_mask)),
-                        'ensemble_frame_required_valid_pairs': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+                        'ensemble_frame_required_valid_pairs': len(ensemble_members),
                         'ensemble_member_keys': [member['key'] for member in ensemble_members],
                     }
                     selected_result = {
@@ -28477,7 +28490,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'coverage_min_required_count': LIGHTCURVE_MIN_VALID_POINTS,
                         'coverage_rejected': False,
                         'ensemble_frame_rejected_count': ensemble_summary['ensemble_frame_rejected_count'],
-                        'ensemble_frame_required_valid_pairs': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+                        'ensemble_frame_required_valid_pairs': len(ensemble_members),
                         'ensemble_member_keys': ensemble_summary['ensemble_member_keys'],
                         'fit': fit_result,
                         'full_reduction_fit': fit_result,

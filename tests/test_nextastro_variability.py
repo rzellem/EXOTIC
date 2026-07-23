@@ -548,6 +548,10 @@ def test_reported_stellar_variability_band_distinguishes_clearv_from_catalog_v()
             observed_filter, 'V'
         ) == 'ClearV'
     assert exotic_module.reported_stellar_variability_band('bv', 'V') == 'V'
+    for observed_filter in ('R', 'SR', 'rp'):
+        assert exotic_module.reported_stellar_variability_band(
+            observed_filter, 'r'
+        ) == 'rp'
 
 
 def test_selected_comparison_direct_catalog_match_precedes_derived_fallback():
@@ -2911,6 +2915,62 @@ def test_calibrated_stellar_variability_ensemble_combines_catalog_zero_points():
     assert np.all(result['magnitude_error'] > 0)
 
 
+def test_calibrated_stellar_variability_ensemble_rejects_frame_missing_any_member():
+    frame_count = 7
+    target_flux = np.full(frame_count, 1000.0)
+    target_error = np.full(frame_count, 1.0)
+    comp_flux_map = {
+        'comp1': np.full(frame_count, 500.0),
+        'comp2': np.full(frame_count, 250.0),
+        'comp3': np.full(frame_count, 400.0),
+    }
+    comp_error_map = {
+        key: np.full(frame_count, 1.0)
+        for key in comp_flux_map
+    }
+    members = [
+        {
+            'key': 'comp1',
+            'magnitude': 12.0,
+            'magnitude_error': 0.01,
+            'summary': {'ensemble_frame_keep_mask': np.ones(frame_count, dtype=bool)},
+        },
+        {
+            'key': 'comp2',
+            'magnitude': 12.0 + 2.5 * np.log10(2.0),
+            'magnitude_error': 0.01,
+            'summary': {'ensemble_frame_keep_mask': np.ones(frame_count, dtype=bool)},
+        },
+        {
+            'key': 'comp3',
+            'magnitude': 12.0 + 2.5 * np.log10(1.25),
+            'magnitude_error': 0.01,
+            'summary': {
+                'ensemble_frame_keep_mask': np.array(
+                    [True, True, True, False, True, True, True],
+                    dtype=bool,
+                ),
+            },
+        },
+    ]
+
+    result = exotic_module.build_stellar_variability_calibrated_ensemble_series(
+        target_flux,
+        target_error,
+        comp_flux_map,
+        comp_error_map,
+        members,
+        minimum_members=2,
+    )
+
+    assert result['applied'] is True
+    assert result['valid_member_count'][3] == 2
+    assert np.isnan(result['magnitude'][3])
+    assert np.isnan(result['relative_flux'][3])
+    finite_indices = np.flatnonzero(np.isfinite(result['magnitude']))
+    np.testing.assert_array_equal(finite_indices, [0, 1, 2, 4, 5, 6])
+
+
 def test_build_stellar_variability_ensemble_params_preserves_member_metadata(monkeypatch, tmp_path):
     captured = {}
     monkeypatch.setattr(
@@ -2964,6 +3024,16 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
     assert params[0]['ensemble_members'][1]['dec_deg'] == pytest.approx(-20.2)
     assert fit.stellar_variability_params == params
     assert captured['label'] == 'ENSEMBLE (2 stars)'
+
+    r_params = exotic_module.build_stellar_variability_ensemble_params_from_fit(
+        fit,
+        tmp_path,
+        'Target Star',
+        observed_filter='R',
+    )
+
+    assert r_params[0]['mag_band'] == 'rp'
+    assert r_params[0]['catalog_mag_band'] == 'r'
 
 
 def test_stellar_variability_ensemble_selection_json_lists_color_and_magnitude(monkeypatch, tmp_path):
@@ -3024,6 +3094,8 @@ def test_stellar_variability_ensemble_selection_json_lists_color_and_magnitude(m
     payload = json.loads(output_path.read_text(encoding='utf-8'))
     assert payload['ensemble']['maximum_members'] == 5
     assert payload['ensemble']['member_count_before_five_star_limit'] == 6
+    assert payload['ensemble']['per_frame_required_members'] == 1
+    assert 'every selected ensemble member is valid' in payload['ensemble']['selection_rule']
     assert payload['target']['catalog_profile']['color'] == pytest.approx(0.5)
     assert payload['ensemble']['members'][0]['color_delta'] == pytest.approx(0.05)
     assert payload['ensemble']['members'][0]['magnitude_delta'] == pytest.approx(0.1)

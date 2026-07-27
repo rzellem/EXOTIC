@@ -211,6 +211,8 @@ class Inputs:
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'stellar_variability_only': False,
             'use_ensemble_photometry_for_stellar_variability': True,
+            'maximum_number_of_ensemble_comparisons_for_transit': 5,
+            'maximum_number_of_ensemble_comparisons_for_stellar_variability': 5,
             'photometer_fortuitous_variables': True,
             'use_single_comparison_for_fortuitous_variables': True,
             'use_nextastro_vsx_cache_first': False,
@@ -490,6 +492,14 @@ class Inputs:
                 'use_ensemble_photometry_for_stellar_variability',
                 'stellar_variability_use_ensemble',
                 'Use Ensemble Photometry for Stellar Variability? (y/n)',
+            ),
+            'maximum_number_of_ensemble_comparisons_for_transit': (
+                'maximum_number_of_ensemble_comparisons_for_transit',
+                'Maximum Number of Ensemble Comparisons for Transit',
+            ),
+            'maximum_number_of_ensemble_comparisons_for_stellar_variability': (
+                'maximum_number_of_ensemble_comparisons_for_stellar_variability',
+                'Maximum Number of Ensemble Comparisons for Stellar Variability',
             ),
             'photometer_fortuitous_variables': (
                 'photometer_fortuitous_variables',

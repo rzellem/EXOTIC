@@ -140,6 +140,47 @@ def test_comp_params_reads_stellar_variability_ensemble_opt_out(tmp_path):
     assert inputs.info_dict["use_ensemble_photometry_for_stellar_variability"] is False
 
 
+def test_comp_params_defaults_independent_ensemble_comparison_limits_to_five(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["maximum_number_of_ensemble_comparisons_for_transit"] == 5
+    assert (
+        inputs.info_dict["maximum_number_of_ensemble_comparisons_for_stellar_variability"]
+        == 5
+    )
+
+
+def test_comp_params_reads_different_transit_and_variability_ensemble_limits(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "maximum_number_of_ensemble_comparisons_for_transit": 250,
+            "maximum_number_of_ensemble_comparisons_for_stellar_variability": 125,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["maximum_number_of_ensemble_comparisons_for_transit"] == 250
+    assert (
+        inputs.info_dict["maximum_number_of_ensemble_comparisons_for_stellar_variability"]
+        == 125
+    )
+
+
 def test_comp_params_defaults_fortuitous_variable_photometry_to_true(tmp_path):
     init_data = {
         "user_info": {},

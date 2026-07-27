@@ -556,6 +556,12 @@ def create_inits_file(parameters, file_name):
             "Filter Minimum Wavelength (nm)": parameters.get("Filter Minimum Wavelength (nm)", None),
             "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None),
             "disable vertical flux normalization": parameters.get("disable vertical flux normalization", False),
+            "maximum_number_of_ensemble_comparisons_for_transit": parameters.get(
+                "maximum_number_of_ensemble_comparisons_for_transit", 5
+            ),
+            "maximum_number_of_ensemble_comparisons_for_stellar_variability": parameters.get(
+                "maximum_number_of_ensemble_comparisons_for_stellar_variability", 5
+            ),
             "require_comp_star": parameters.get("require_comp_star", "y")
         }
     }

@@ -383,6 +383,8 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "use_eebls_to_initialize_tmid_and_bounds": "y",
             "pick_comparison_by_eebls_snr": "y",
             "use_impactparameter_rather_than_inclination_to_fit": "y",
+            "maximum_number_of_ensemble_comparisons_for_transit": 5,
+            "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
             "use_adaptive_apertures": false,
             "gain_electrons_per_adu": null,
             "read_noise_electrons": null,

@@ -252,6 +252,7 @@ LIGHTCURVE_MIN_VALID_POINTS = 5
 STELLAR_VARIABILITY_ONLY_DEFAULT = False
 STELLAR_VARIABILITY_ENSEMBLE_DEFAULT = True
 STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS = 2
+TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT = 5
 STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS = 5
 STELLAR_VARIABILITY_APERTURE_ESTIMATION_MAX_COMPARISONS = 5
 STELLAR_VARIABILITY_ENSEMBLE_CALIBRATION_ERROR_SIGMA = 3.0
@@ -8535,6 +8536,43 @@ def should_use_ensemble_photometry_for_stellar_variability(config_value):
         config_value,
         STELLAR_VARIABILITY_ENSEMBLE_DEFAULT,
         'use_ensemble_photometry_for_stellar_variability',
+    )
+
+
+def parse_ensemble_comparison_limit(config_value, config_key, default_value):
+    if config_value is None or config_value == '':
+        return default_value
+    try:
+        count = int(float(config_value))
+    except (TypeError, ValueError):
+        log_info(
+            f"Warning: Invalid '{config_key}' value; defaulting to {default_value}.",
+            warn=True,
+        )
+        return default_value
+    if count < STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+        log_info(
+            f"'{config_key}' must be at least {STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS}; "
+            f"defaulting to {default_value}.",
+            warn=True,
+        )
+        return default_value
+    return count
+
+
+def parse_maximum_number_of_ensemble_comparisons_for_transit(config_value):
+    return parse_ensemble_comparison_limit(
+        config_value,
+        'maximum_number_of_ensemble_comparisons_for_transit',
+        TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT,
+    )
+
+
+def parse_maximum_number_of_ensemble_comparisons_for_stellar_variability(config_value):
+    return parse_ensemble_comparison_limit(
+        config_value,
+        'maximum_number_of_ensemble_comparisons_for_stellar_variability',
+        STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
     )
 
 
@@ -17504,7 +17542,8 @@ def catalog_calibration_is_usable_for_filter(star, observed_filter, max_error=No
 
 def merge_aavso_vsp_v_calibration_fallback(
         file, axis, obs_filter, img_scale, calibration_stars, user_comp_stars,
-        user_targ_star=None, max_new_comp_stars=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
+        user_targ_star=None,
+        max_new_comp_stars=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
     """Query VSP when a V-family observation has no usable direct V calibration.
 
     Existing AAVSO VSP calibrations mean the field has already been queried. The
@@ -27979,22 +28018,27 @@ def save_stellar_variability_ensemble_selection_json(
     metadata = dict(target_metadata or {})
     metadata.setdefault('name', target_name)
     metadata['catalog_profile'] = target_profile
+    maximum_members = selection.get(
+        'member_limit',
+        STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
+    )
+    prelimit_member_count = selection.get('prelimit_member_count', len(members))
     payload = {
         'target': metadata,
         'ensemble': {
             'selection_rule': (
                 'After saturation, VSX, coverage, stability, and high catalog-error rejection, '
-                'use at most five stars ranked by joint catalog color and magnitude distance to the target; '
+                f'use at most {maximum_members} stars ranked by joint catalog color and magnitude '
+                'distance to the target; '
                 'retain a frame only when every selected ensemble member is valid.'
             ),
             'minimum_members': STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
             'per_frame_required_members': len(members),
-            'maximum_members': selection.get(
-                'member_limit', STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
-            ),
-            'member_count_before_five_star_limit': selection.get(
-                'prelimit_member_count', len(members)
-            ),
+            'maximum_members': maximum_members,
+            'member_count_before_limit': prelimit_member_count,
+            # Retained for consumers of EnsembleSelection JSON written before
+            # Retained after the fixed five-member limit became configurable.
+            'member_count_before_five_star_limit': prelimit_member_count,
             'selected_member_count': len(members),
             'calibration_error_clip': selection.get(
                 'calibration_error_clip',
@@ -28192,6 +28236,8 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                                                exposure_times_seconds=None,
                                                gain_e_per_adu=None,
                                                use_ensemble_photometry=True,
+                                               maximum_number_of_ensemble_comparisons_for_stellar_variability=
+                                               STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
                                                calibration_stars=None,
                                                observed_filter=None,
                                                target_catalog_match=None):
@@ -28328,6 +28374,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
             comp_flux_map,
             observed_filter=observed_filter,
             target_catalog_match=target_catalog_match,
+            max_members=maximum_number_of_ensemble_comparisons_for_stellar_variability,
             times=times,
         )
         ensemble_members = member_selection['members']
@@ -28357,7 +28404,8 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
             if member_selection.get('prelimit_member_count', 0) > len(ensemble_members):
                 log_info(
                     "Stellar-variability ensemble had more than "
-                    f"{member_selection.get('member_limit')} usable stars; retained the five closest "
+                    f"{member_selection.get('member_limit')} usable stars; retained the configured maximum "
+                    f"of {len(ensemble_members)} closest "
                     "to the target in catalog color and magnitude."
                 )
             ensemble_series = build_stellar_variability_calibrated_ensemble_series(
@@ -29092,7 +29140,9 @@ def process_fortuitous_variables(
         comp_overexposed_masks=None,
         exposure_times_seconds=None,
         observed_filter=None,
-        use_single_comparison=USE_SINGLE_COMPARISON_FOR_FORTUITOUS_VARIABLES_DEFAULT):
+        use_single_comparison=USE_SINGLE_COMPARISON_FOR_FORTUITOUS_VARIABLES_DEFAULT,
+        maximum_number_of_ensemble_comparisons_for_stellar_variability=
+        STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
     if not variables or comparison_calibration is None:
         return []
     times = np.asarray(times, dtype=float)
@@ -29185,7 +29235,9 @@ def process_fortuitous_variables(
                 observed_filter=observed_filter,
                 target_catalog_match=variable.get('catalog_match'),
                 max_members=(
-                    1 if use_single_comparison else STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS
+                    1
+                    if use_single_comparison
+                    else maximum_number_of_ensemble_comparisons_for_stellar_variability
                 ),
                 min_members=required_comparison_members,
                 times=times,
@@ -29520,6 +29572,20 @@ def process_fortuitous_variables(
     return results
 
 
+def limited_ensemble_comparison_keys(
+        ranked_summaries,
+        maximum_number_of_ensemble_comparisons_for_transit):
+    ensemble_limit = parse_maximum_number_of_ensemble_comparisons_for_transit(
+        maximum_number_of_ensemble_comparisons_for_transit
+    )
+    keys = [
+        summary.get('key')
+        for summary in ranked_summaries or []
+        if summary.get('key')
+    ]
+    return keys[:ensemble_limit]
+
+
 def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
                                                  psf_data, aper_data, target_psf_flux,
                                                  psf_flux_data=None,
@@ -29546,6 +29612,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  planet_name=None,
                                                  observation_date=None,
                                                  use_ensemble_photometry_rather_than_single_comp=False,
+                                                 maximum_number_of_ensemble_comparisons_for_transit=
+                                                 TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT,
                                                  exposure_times_seconds=None,
                                                  gain_e_per_adu=None):
     ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
@@ -29614,7 +29682,13 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
 
     preflight_plans = []
     if use_ensemble_photometry_rather_than_single_comp:
-        active_keys = [summary.get('key') for summary in ranked_summaries if summary.get('key')]
+        ensemble_limit = parse_maximum_number_of_ensemble_comparisons_for_transit(
+            maximum_number_of_ensemble_comparisons_for_transit
+        )
+        active_keys = limited_ensemble_comparison_keys(
+            ranked_summaries,
+            ensemble_limit,
+        )
         if method == 'psf':
             comp_flux_map = {
                 summary['key']: psf_flux_series_from_rows(
@@ -29798,7 +29872,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             log_info(
                 "Ensemble comparison photometry enabled: target fit will use "
                 f"{len(member_keys)} non-rejected comparison star(s) as a median normalized ensemble "
-                "rather than fitting each comparison star independently."
+                "rather than fitting each comparison star independently "
+                f"(configured maximum={ensemble_limit})."
             )
         else:
             log_info(
@@ -30736,6 +30811,27 @@ def _main_impl():
                 )
             )
         )
+        use_ensemble_photometry_rather_than_single_comp = (
+            should_use_ensemble_photometry_rather_than_single_comp(
+                exotic_infoDict.get('use_ensemble_photometry_rather_than_single_comp', 'n')
+            )
+        )
+        maximum_number_of_ensemble_comparisons_for_transit = (
+            parse_maximum_number_of_ensemble_comparisons_for_transit(
+                exotic_infoDict.get(
+                    'maximum_number_of_ensemble_comparisons_for_transit',
+                    TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT,
+                )
+            )
+        )
+        maximum_number_of_ensemble_comparisons_for_stellar_variability = (
+            parse_maximum_number_of_ensemble_comparisons_for_stellar_variability(
+                exotic_infoDict.get(
+                    'maximum_number_of_ensemble_comparisons_for_stellar_variability',
+                    STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
+                )
+            )
+        )
         photometer_fortuitous_variables = should_photometer_fortuitous_variables(
             exotic_infoDict.get(
                 'photometer_fortuitous_variables',
@@ -31471,6 +31567,19 @@ def _main_impl():
                     automatic_comp_count = parse_automatic_calibration_selector_count(
                         exotic_infoDict.get('automatic_optimal_calibration_selector_count')
                     )
+                    if stellar_variability_ensemble_candidate_search:
+                        automatic_comp_count = max(
+                            automatic_comp_count,
+                            maximum_number_of_ensemble_comparisons_for_stellar_variability,
+                        )
+                    elif (
+                        automatic_calibration_selector_enabled
+                        and use_ensemble_photometry_rather_than_single_comp
+                    ):
+                        automatic_comp_count = max(
+                            automatic_comp_count,
+                            maximum_number_of_ensemble_comparisons_for_transit,
+                        )
                     ensemble_candidate_saturation_threshold = None
                     if stellar_variability_ensemble_candidate_search:
                         configured_candidate_saturation = parse_saturation_value(
@@ -31569,7 +31678,10 @@ def _main_impl():
                         )
                     else:
                         log_info(
-                            "Fortuitous-variable calibrated ensemble mode enabled per optional_info setting."
+                            "Fortuitous-variable calibrated ensemble mode enabled per optional_info setting; "
+                            "up to "
+                            f"{maximum_number_of_ensemble_comparisons_for_stellar_variability} "
+                            "comparisons will be used."
                         )
                     fortuitous_variables = discover_fortuitous_vsx_variables(
                         wcs_file,
@@ -31634,6 +31746,11 @@ def _main_impl():
                         fortuitous_comp_count = parse_automatic_calibration_selector_count(
                             exotic_infoDict.get('automatic_optimal_calibration_selector_count')
                         )
+                        if not use_single_comparison_for_fortuitous_variables:
+                            fortuitous_comp_count = max(
+                                fortuitous_comp_count,
+                                maximum_number_of_ensemble_comparisons_for_stellar_variability,
+                            )
                         fortuitous_auto_stars, _ = select_automatic_optimal_calibration_stars(
                             reference_image,
                             reference_image.shape,
@@ -31718,6 +31835,11 @@ def _main_impl():
                     fortuitous_comp_count = parse_automatic_calibration_selector_count(
                         exotic_infoDict.get('automatic_optimal_calibration_selector_count')
                     )
+                    if not use_single_comparison_for_fortuitous_variables:
+                        fortuitous_comp_count = max(
+                            fortuitous_comp_count,
+                            maximum_number_of_ensemble_comparisons_for_stellar_variability,
+                        )
                     fortuitous_auto_stars, _ = select_automatic_optimal_calibration_stars(
                         reference_image,
                         reference_image.shape,
@@ -31788,6 +31910,8 @@ def _main_impl():
                         fortuitous_calibration_stars,
                         science_comp_stars,
                         user_targ_star=[exotic_UIprevTPX, exotic_UIprevTPY],
+                        max_new_comp_stars=
+                        maximum_number_of_ensemble_comparisons_for_stellar_variability,
                     )
                 )
                 if fallback_chart_id is not None:
@@ -31939,9 +32063,6 @@ def _main_impl():
             fit_every_comparison_candidate = should_fit_lightcurve_to_every_comparison_candidate(
                 exotic_infoDict.get('fit_lightcurve_to_every_comparison_candidate', 'n')
             )
-            use_ensemble_photometry_rather_than_single_comp = should_use_ensemble_photometry_rather_than_single_comp(
-                exotic_infoDict.get('use_ensemble_photometry_rather_than_single_comp', 'n')
-            )
             use_deviation_from_expected_transit_in_qc = should_use_deviation_from_expected_transit_in_qc(
                 exotic_infoDict.get('use_deviation_from_expected_transit_in_qc', True)
             )
@@ -32018,14 +32139,18 @@ def _main_impl():
             if use_ensemble_photometry_rather_than_single_comp:
                 log_info(
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "
-                    "light curve will use non-rejected comparison stars as a combined reference."
+                    "light curve will use non-rejected comparison stars as a combined reference, up to "
+                    "maximum_number_of_ensemble_comparisons_for_transit="
+                    f"{maximum_number_of_ensemble_comparisons_for_transit}."
                 )
             if stellar_variability_only:
                 if use_ensemble_photometry_for_stellar_variability:
                     log_info(
                         "Stellar-variability calibrated ensemble enabled (default): EXOTIC will combine "
                         "bright, unsaturated, VSX-vetted comparison stars after clipping high catalog "
-                        "magnitude uncertainties."
+                        "magnitude uncertainties, up to "
+                        "maximum_number_of_ensemble_comparisons_for_stellar_variability="
+                        f"{maximum_number_of_ensemble_comparisons_for_stellar_variability}."
                     )
                 else:
                     log_info(
@@ -33155,6 +33280,8 @@ def _main_impl():
                         exotic_infoDict.get('filter'),
                     ),
                     use_single_comparison=use_single_comparison_for_fortuitous_variables,
+                    maximum_number_of_ensemble_comparisons_for_stellar_variability=
+                    maximum_number_of_ensemble_comparisons_for_stellar_variability,
                 )
 
             reduction_stage_timer.checkpoint("Aperture finalization and fortuitous-variable photometry")
@@ -33531,6 +33658,8 @@ def _main_impl():
                         exposure_times_seconds=exposure_times_seconds,
                         gain_e_per_adu=fallback_gain_e_per_adu,
                         use_ensemble_photometry=use_ensemble_photometry_for_stellar_variability,
+                        maximum_number_of_ensemble_comparisons_for_stellar_variability=
+                        maximum_number_of_ensemble_comparisons_for_stellar_variability,
                         calibration_stars=vsp_comp_stars,
                         observed_filter=exotic_infoDict.get(
                             'observed_filter',
@@ -33572,6 +33701,8 @@ def _main_impl():
                         observation_date=exotic_infoDict['date'],
                         use_ensemble_photometry_rather_than_single_comp=
                         use_ensemble_photometry_rather_than_single_comp,
+                        maximum_number_of_ensemble_comparisons_for_transit=
+                        maximum_number_of_ensemble_comparisons_for_transit,
                         exposure_times_seconds=exposure_times_seconds,
                         gain_e_per_adu=fallback_gain_e_per_adu,
                     )

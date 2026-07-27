@@ -2702,6 +2702,22 @@ def test_stellar_variability_ensemble_caps_at_five_by_target_color_and_magnitude
     }
     assert limited_keys == {'comp1', 'comp2'}
 
+    expanded_selection = exotic_module.select_stellar_variability_ensemble_members(
+        ranked_summaries,
+        calibration_stars,
+        comp_flux_map,
+        observed_filter='V',
+        target_catalog_match=target_match,
+        max_members=7,
+    )
+
+    assert expanded_selection['member_limit'] == 7
+    assert len(expanded_selection['members']) == 7
+    assert not any(
+        'closest to the target' in rejected['reason']
+        for rejected in expanded_selection['rejected']
+    )
+
 
 def test_stellar_variability_ensemble_uses_gaia_bp_rp_when_local_colors_are_missing(
         monkeypatch):
@@ -3231,6 +3247,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
         exposure_times_seconds=np.full(frame_count, 60.0),
         observed_filter='V',
         use_single_comparison=False,
+        maximum_number_of_ensemble_comparisons_for_stellar_variability=2,
     )
 
     assert results[0]['status'] == 'completed'
@@ -3444,6 +3461,7 @@ def test_stellar_variability_selector_uses_calibrated_ensemble_by_default():
         aper_data,
         target_flux,
         use_ensemble_photometry=True,
+        maximum_number_of_ensemble_comparisons_for_stellar_variability=2,
         calibration_stars=calibration_stars,
         observed_filter='V',
     )

@@ -9865,7 +9865,12 @@ def estimate_ephemeris_tmid_and_bounds(
         return summary
 
     phases = (valid_times - prior_tmid) / period
-    cycle_index = float(np.floor(phases).max())
+    # Select the transit epoch nearest the bulk of the data. floor(phases).max()
+    # picked the transit at-or-before the last valid frame, which reports Tmid one
+    # full period early whenever the true mid falls after the last surviving frame
+    # (ingress-only partial transits, the common fixed-window case); the periodic
+    # transit model then fits perfectly at the wrong epoch. See issue #1387.
+    cycle_index = float(np.round(np.median(phases)))
     tmid = float(prior_tmid + cycle_index * period)
     propagated_uncertainty = np.sqrt(midt_unc ** 2 + (cycle_index * per_unc) ** 2)
 

@@ -1848,6 +1848,35 @@ def test_estimate_ephemeris_tmid_and_bounds_keeps_wider_bounds_for_one_sided_run
     assert summary["half_width"] == pytest.approx(0.25 * prior["per"])
 
 
+def test_estimate_ephemeris_tmid_and_bounds_selects_nearest_epoch_for_ingress_only_runs():
+    # Regression for issue #1387: an ingress-only partial transit whose true mid
+    # falls minutes AFTER the last surviving frame. floor(phases).max() snapped to
+    # the previous cycle and reported Tmid one full period early; the epoch nearest
+    # the data is the correct one. Geometry taken from the 2026-07-27 TOI-1516 b
+    # MicroObservatory night that surfaced the bug (two independent reductions
+    # reported 2461246.93, one period before the actual night of the frames).
+    prior_tmid = 2458765.325
+    period = 2.056014
+    times = np.linspace(2461248.8938, 2461248.9847, 34)
+    expected_mid = prior_tmid + 1208 * period  # 2461248.9899, ~7 min after times.max()
+
+    summary = estimate_ephemeris_tmid_and_bounds(
+        times,
+        prior_tmid,
+        period,
+        midt_unc=0.00023,
+        per_unc=2.1e-6,
+        expected_duration=0.1177,
+        sigma_multiplier=25.0,
+    )
+
+    assert summary["cycle_index"] == pytest.approx(1208.0)
+    assert summary["tmid"] == pytest.approx(expected_mid, abs=1e-6)
+    # The search bounds must be able to reach the true mid.
+    assert summary["bounds"][0] <= expected_mid <= summary["bounds"][1]
+    assert summary["observations_bracket_expected_transit"] is False
+
+
 def test_is_adaptive_aperture_mode_enabled_parses_values():
     assert is_adaptive_aperture_mode_enabled(None) is False
     assert is_adaptive_aperture_mode_enabled("y") is True

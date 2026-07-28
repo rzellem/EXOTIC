@@ -1729,6 +1729,7 @@ def test_validate_ultranest_mpi_runtime_rejects_whole_program_mpi(monkeypatch):
         exotic_module.validate_ultranest_mpi_runtime()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="asserts Windows path semantics; os.path is posixpath elsewhere")
 def test_configure_windows_multiprocessing_main_spec_retargets_console_launcher(monkeypatch):
     import exotic.exotic as exotic_module
 
@@ -1787,6 +1788,7 @@ def test_configure_windows_multiprocessing_main_spec_preserves_regular_script(mo
     assert fake_main.__file__ == r"C:\work\run_exotic.py"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="asserts Windows path semantics; os.path is posixpath elsewhere")
 def test_windows_python_spawn_executable_falls_back_to_exec_prefix(monkeypatch):
     import exotic.exotic as exotic_module
 

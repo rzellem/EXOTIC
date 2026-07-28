@@ -28229,6 +28229,59 @@ def build_stellar_variability_ensemble_params_from_fit(
     return vsp_params
 
 
+def build_stellar_variability_params_from_photometry_selection(
+        selection,
+        calibration_stars,
+        save,
+        s_name,
+        observed_filter=None,
+        observation_date=None,
+        target_metadata=None):
+    selected_result = (selection or {}).get('selected_result')
+    if not selected_result or selected_result.get('fit') is None:
+        log_info(
+            "Warning: calibrated stellar-variability photometry did not select a usable "
+            "out-of-transit reference, so AID magnitude output could not be created.",
+            warn=True,
+        )
+        return []
+
+    selected_fit = selected_result['fit']
+    if selected_result.get('comp_index') is None:
+        return build_stellar_variability_ensemble_params_from_fit(
+            selected_fit,
+            save,
+            s_name,
+            observed_filter=observed_filter,
+            observation_date=observation_date,
+            target_metadata=target_metadata,
+        )
+
+    selected_position = selected_result.get('position')
+    calibration = stellar_variability_calibration_for_position(
+        calibration_stars,
+        selected_position,
+        observed_filter=observed_filter,
+    )
+    if calibration is None:
+        log_info(
+            "Warning: the fallback stellar-variability comparison star had no usable "
+            "same-band catalog calibration, so AID magnitude output could not be created.",
+            warn=True,
+        )
+        return []
+
+    return build_stellar_variability_params_from_fit(
+        selected_fit,
+        calibration['star'],
+        selected_position,
+        calibration['label'],
+        save,
+        s_name,
+        observed_filter=observed_filter,
+    )
+
+
 def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict, comparison_calibration,
                                                psf_data, aper_data, target_psf_flux,
                                                psf_flux_data=None,
@@ -33515,6 +33568,7 @@ def _main_impl():
             }
 
             comparison_calibration = None
+            stellar_variability_output_selection = None
             comparison_calibration = select_comparison_calibrated_photometry(
                 psf_data,
                 aper_data,
@@ -33711,6 +33765,39 @@ def _main_impl():
                         exposure_times_seconds=exposure_times_seconds,
                         gain_e_per_adu=fallback_gain_e_per_adu,
                     )
+                    if use_ensemble_photometry_for_stellar_variability and vsp_comp_stars:
+                        log_info(
+                            "Preparing an independent calibrated comparison-star ensemble for "
+                            "out-of-transit stellar-variability AID output."
+                        )
+                        stellar_variability_output_selection = select_stellar_variability_only_photometry(
+                            times,
+                            jd_times,
+                            airmass,
+                            pDict,
+                            comparison_calibration,
+                            psf_data,
+                            aper_data,
+                            tFlux,
+                            psf_flux_data=psf_flux_source,
+                            psf_noise_data=psf_noise_data if use_psf_photometry else None,
+                            plot_time_range=full_plot_time_range,
+                            use_adaptive_apertures=use_adaptive_apertures,
+                            adaptive_aperture_values=aperture_values,
+                            adaptive_annulus_values=annulus_values,
+                            fallback_sigma=sigma_display,
+                            exposure_times_seconds=exposure_times_seconds,
+                            gain_e_per_adu=fallback_gain_e_per_adu,
+                            use_ensemble_photometry=True,
+                            maximum_number_of_ensemble_comparisons_for_stellar_variability=
+                            maximum_number_of_ensemble_comparisons_for_stellar_variability,
+                            calibration_stars=vsp_comp_stars,
+                            observed_filter=exotic_infoDict.get(
+                                'observed_filter',
+                                exotic_infoDict.get('filter'),
+                            ),
+                            target_catalog_match=primary_target_catalog_match,
+                        )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
                 ]
@@ -34487,7 +34574,34 @@ def _main_impl():
             # Calculate the standard deviation of the normalized flux values
             # standardDev1 = np.std(goodFluxes)
 
-            if stellar_variability_only and bestCompStar == 'ensemble':
+            if stellar_variability_output_selection is not None:
+                try:
+                    vsp_params = build_stellar_variability_params_from_photometry_selection(
+                        stellar_variability_output_selection,
+                        vsp_comp_stars,
+                        exotic_infoDict['save'],
+                        pDict['sName'],
+                        observed_filter=exotic_infoDict.get(
+                            'observed_filter',
+                            exotic_infoDict.get('filter'),
+                        ),
+                        observation_date=exotic_infoDict.get('date'),
+                        target_metadata={
+                            'name': pDict.get('sName'),
+                            'ra_deg': None if ra_dec_tar is None else ra_dec_tar[0],
+                            'dec_deg': None if ra_dec_tar is None else ra_dec_tar[1],
+                            'pixel_position': [exotic_UIprevTPX, exotic_UIprevTPY],
+                        },
+                    )
+                except Exception as exc:
+                    log_info(
+                        "Warning: could not create calibrated ensemble stellar-variability "
+                        f"AID rows ({describe_retry_exception(exc)}).",
+                        warn=True,
+                    )
+                    vsp_params = []
+
+            if not vsp_params and stellar_variability_only and bestCompStar == 'ensemble':
                 vsp_params = build_stellar_variability_ensemble_params_from_fit(
                     best_fit_lc,
                     exotic_infoDict['save'],
@@ -34504,7 +34618,7 @@ def _main_impl():
                         'pixel_position': [exotic_UIprevTPX, exotic_UIprevTPY],
                     },
                 )
-            elif vsp_comp_stars:
+            elif not vsp_params and vsp_comp_stars:
                 if isinstance(bestCompStar, int):
                     vsp_params = stellar_variability(ref_flux, best_fit_lc, fortuitous_ensemble_stars,
                                                       vsp_comp_stars, vsp_num, bestCompStar - 1, exotic_infoDict['save'],
@@ -34517,7 +34631,7 @@ def _main_impl():
                                                       wcs_file=wcs_file,
                                                       catalog_match_radius_arcsec=
                                                       photometry_catalog_match_radius_arcsec)
-                else:
+                elif stellar_variability_output_selection is None:
                     log_info(
                         "Skipping AID magnitude output because no reference comparison star was selected.",
                         warn=True,

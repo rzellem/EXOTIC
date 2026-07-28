@@ -3393,7 +3393,8 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     )
 
 
-def test_stellar_variability_selector_uses_calibrated_ensemble_by_default():
+def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
     frame_count = 12
     times = np.linspace(10.2, 10.3, frame_count)
     target_flux = 1000.0 * (1.0 + np.linspace(-0.002, 0.002, frame_count))
@@ -3472,6 +3473,38 @@ def test_stellar_variability_selector_uses_calibrated_ensemble_by_default():
     assert selected['ensemble_member_keys'] == ['comp1', 'comp2']
     assert selected['fit'].stellar_variability_ensemble_members
     assert len(selected['fit'].stellar_variability_ensemble_magnitudes) == len(selected['fit'].time)
+
+    vsp_params = exotic_module.build_stellar_variability_params_from_photometry_selection(
+        result,
+        calibration_stars,
+        tmp_path,
+        'Synthetic',
+        observed_filter='V',
+        observation_date='2024-01-02',
+    )
+    aid_path = exotic_module.AIDOutputFiles(
+        selected['fit'],
+        {'sName': 'Synthetic', 'pName': 'Synthetic b'},
+        {
+            'save': tmp_path,
+            'date': '2024-01-02',
+            'aavso_num': 'TEST',
+            'camera': 'CCD',
+            'lat': 0.0,
+            'long': 0.0,
+            'elev': 0.0,
+            'filter': 'V',
+        },
+        'AUID-TEST',
+        None,
+        vsp_params,
+    ).aavso()
+
+    assert len(vsp_params) == frame_count
+    assert aid_path.is_file()
+    aid_text = aid_path.read_text(encoding='utf-8')
+    assert '#ENSEMBLE-COMPARISONS-XC=' in aid_text
+    assert 'AUID-TEST,' in aid_text
 
 
 def test_stellar_variability_selector_opt_out_restores_single_comp_selection():

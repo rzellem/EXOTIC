@@ -73,3 +73,28 @@ def test_invalid_target_coordinates_abort_when_archive_coordinates_unavailable(m
             non_interactive_run=True,
             target_name='Example b',
         )
+
+
+def test_convert_jd_to_bjd_coerces_sexagesimal_strings():
+    """Regression: with -ov -nea the main flow used to deliver sexagesimal
+    RA/Dec STRINGS to convert_jd_to_bjd. barycorrpy then raised TypeError and
+    the astropy fallback parsed "19:27:06.50" as 19.45 DEGREES instead of
+    19h27m = 291.78 degrees, silently shifting BJD_TDB by hundreds of seconds
+    (-538 s for these CoRoT-2 coordinates). String and numeric inputs must
+    produce the identical, correct conversion."""
+    site = {'lat': 31.68, 'long': -110.88, 'elev': 1268.0}
+    epochs = [2461222.65]
+
+    from_strings = exotic_module.convert_jd_to_bjd(
+        epochs, {'ra': '19:27:06.50', 'dec': '+01:23:01.5'}, site)
+    from_degrees = exotic_module.convert_jd_to_bjd(
+        epochs, {'ra': 291.777083, 'dec': 1.383750}, site)
+
+    import numpy as np
+    a = float(np.atleast_1d(from_strings)[0])
+    b = float(np.atleast_1d(from_degrees)[0])
+    assert a == pytest.approx(b, abs=1e-8)
+    # The correct value is ~ +522.5 s after the input JD_UTC (TDB-UTC ~ +69 s
+    # plus ~ +453 s light travel time for this geometry); the broken fallback
+    # produced a value ~16 s BEFORE it. Guard the sign and scale.
+    assert (a - epochs[0]) * 86400 == pytest.approx(522.5, abs=2.0)

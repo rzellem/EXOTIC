@@ -374,9 +374,17 @@ def transit_duration(values):
     if not np.isfinite(chord_sq) or chord_sq <= 0 or not np.isfinite(impact_scale) or impact_scale <= 0:
         return np.nan
 
-    argument = np.sqrt(chord_sq) / (impact_scale * sin_inc)
+    # The arcsin argument is normalized by a*sin(i) (NOT by the eccentricity-
+    # scaled planet-star separation), and the eccentric orbital-speed factor
+    # sqrt(1-e^2)/(1+e*sin(omega)) multiplies the whole duration — the same
+    # correction issue #1383 / PR #1384 applied to the three copies of this
+    # formula in exotic.py and transit QC; this fourth copy was missed. The
+    # broken form biased the ns duration prior, the QC duration score, and the
+    # exposure-smearing window for every eccentric target.
+    argument = np.sqrt(chord_sq) / (ars * sin_inc)
     argument = float(np.clip(argument, -1.0, 1.0))
-    duration = (period / np.pi) * np.arcsin(argument)
+    eccentric_speed_factor = np.sqrt(1.0 - ecc ** 2) / max(np.finfo(float).eps, 1.0 + ecc * np.sin(omega))
+    duration = (period / np.pi) * np.arcsin(argument) * eccentric_speed_factor
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
 
 

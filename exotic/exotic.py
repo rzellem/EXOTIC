@@ -7239,6 +7239,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         local_bounds,
         fixed_parameter_errors_override=None,
         allow_ars_expansion=False,
+        ultranest_warmstart_source=None,
     ):
         local_bounds = sanitize_retry_search_bounds(
             apply_configured_prior_search_restrictions(
@@ -7297,6 +7298,11 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             and callable_accepts_keyword(lc_fitter, 'ultranest_min_num_live_points')
         ):
             fit_kwargs['ultranest_min_num_live_points'] = ultranest_min_num_live_points
+        if (
+            ultranest_warmstart_source is not None
+            and callable_accepts_keyword(lc_fitter, 'ultranest_warmstart_source')
+        ):
+            fit_kwargs['ultranest_warmstart_source'] = ultranest_warmstart_source
         fit = lc_fitter(
             times,
             flux_values,
@@ -7420,10 +7426,40 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             allow_ars_expansion=allow_ars_expansion,
         ).get(bounds_key, clamped_bounds)
         clamped_bounds = retry_config['sanitize_bounds']({bounds_key: clamped_bounds}).get(bounds_key, clamped_bounds)
+        if previous_bounds is not None:
+            previous_lower, previous_upper = [
+                float(value)
+                for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]
+            ]
+            clamped_bounds = [
+                min(previous_lower, float(clamped_bounds[0])),
+                max(previous_upper, float(clamped_bounds[1])),
+            ]
+            clamped_bounds = retry_config['sanitize_bounds'](
+                {bounds_key: clamped_bounds}
+            ).get(bounds_key, clamped_bounds)
+            clamped_bounds = apply_configured_prior_search_restrictions(
+                {bounds_key: clamped_bounds},
+                restriction_reference_prior,
+                allow_ars_expansion=allow_ars_expansion,
+            ).get(bounds_key, clamped_bounds)
+            clamped_bounds = retry_config['sanitize_bounds'](
+                {bounds_key: clamped_bounds}
+            ).get(bounds_key, clamped_bounds)
         new_lower, new_upper = [float(value) for value in clamped_bounds]
         if previous_bounds is not None:
-            previous_lower, previous_upper = [float(value) for value in np.asarray(previous_bounds, dtype=float).reshape(-1)[:2]]
             clipped_edge = diagnostics.get('edge')
+            preserves_previous_range = (
+                new_lower <= previous_lower + 1e-12
+                and new_upper >= previous_upper - 1e-12
+            )
+            if not preserves_previous_range:
+                retry_notes[key] = (
+                    f"Skipped; the automatic {label} retry could not preserve the complete "
+                    "previous sampled range while expanding the prior."
+                )
+                blocked_retry_keys.add(key)
+                continue
             expands_sampled_range = retry_config.get('expands_bounds', normal_retry_expands)(
                 previous_bounds,
                 [new_lower, new_upper],
@@ -7504,11 +7540,28 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         current_prior = updated_prior
         current_bounds = updated_bounds
         ars_range_expansion_active = allow_ars_expansion
+        previous_fit = fit
         fit = build_fit(
             current_prior,
             current_bounds,
             allow_ars_expansion=ars_range_expansion_active,
+            ultranest_warmstart_source=previous_fit,
         )
+        warmstart_note = getattr(
+            fit,
+            'ultranest_expanded_prior_warmstart_note',
+            None,
+        )
+        if getattr(fit, 'ultranest_expanded_prior_warmstart_applied', False):
+            log_info(warmstart_note)
+        elif (
+            getattr(fit, 'ultranest_expanded_prior_warmstart_attempted', False)
+            and warmstart_note
+        ):
+            log_info(
+                f"Warning: expanded-prior UltraNest warm start was not used. {warmstart_note}",
+                warn=True,
+            )
 
     final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
     rprs_final_diagnostics = None

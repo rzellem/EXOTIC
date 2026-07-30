@@ -3926,11 +3926,11 @@ def test_fit_final_lightcurve_retries_nested_fit_when_rprs_posterior_is_clipped(
     assert len(captured["calls"]) == 2
     assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.0, 0.125])
     assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.158)
-    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.108, 0.208])
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.0, 0.208])
     assert fit.rprs_posterior_refit_applied is True
     assert fit.rprs_posterior_refit_count == 1
     assert fit.rprs_posterior_refit_edge == "upper"
-    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.108, 0.208])
+    assert fit.rprs_posterior_refit_bounds == pytest.approx([0.0, 0.208])
 
 
 def test_fit_final_lightcurve_carries_retry_bounds_into_oot_baseline_refit(monkeypatch):
@@ -4021,8 +4021,8 @@ def test_fit_final_lightcurve_carries_retry_bounds_into_oot_baseline_refit(monke
 
     assert len(captured["calls"]) == 3
     assert captured["calls"][0]["bounds"]["rprs"] == pytest.approx([0.0, 0.125])
-    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.108, 0.208])
-    assert captured["calls"][2]["bounds"]["rprs"] == pytest.approx([0.108, 0.208])
+    assert captured["calls"][1]["bounds"]["rprs"] == pytest.approx([0.0, 0.208])
+    assert captured["calls"][2]["bounds"]["rprs"] == pytest.approx([0.0, 0.208])
     assert np.allclose(captured["calls"][2]["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
     assert fit.oot_baseline_detrending_applied is True
 

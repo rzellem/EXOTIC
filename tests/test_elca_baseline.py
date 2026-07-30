@@ -68,6 +68,71 @@ def make_prior():
     }
 
 
+def make_expanded_prior_warmstart_source(
+    prior,
+    time,
+    data,
+    dataerr,
+    airmass,
+    sample_points,
+):
+    sample_points = np.asarray(sample_points, dtype=float)
+    sample_count = sample_points.shape[0]
+    return types.SimpleNamespace(
+        ns_type="ultranest",
+        bounds={
+            "rprs": [0.08, 0.12],
+            "tmid": [-0.005, 0.005],
+        },
+        sampled_keys=["rprs", "tmid"],
+        prior=prior.copy(),
+        time=np.asarray(time, dtype=float),
+        data=np.asarray(data, dtype=float),
+        dataerr=np.asarray(dataerr, dtype=float),
+        airmass=np.asarray(airmass, dtype=float),
+        exposure_times_days=None,
+        baseline_fit_mask=None,
+        duration_prior=None,
+        fixed_flux_baseline=False,
+        use_impactparameter_rather_than_inclination_to_fit=False,
+        results={
+            "weighted_samples": {
+                "points": sample_points,
+                "weights": np.full(sample_count, 1.0 / sample_count),
+                "logl": np.linspace(-5.0, -1.0, sample_count),
+            },
+        },
+    )
+
+
+def make_dummy_nested_result(sample_points, auxiliary=False):
+    sample_points = np.asarray(sample_points, dtype=float)
+    if auxiliary:
+        result_points = np.column_stack([
+            sample_points,
+            np.zeros(sample_points.shape[0], dtype=float),
+        ])
+    else:
+        result_points = sample_points
+    parameter_count = result_points.shape[1]
+    maximum_likelihood = np.zeros(parameter_count, dtype=float)
+    maximum_likelihood[0] = 0.1
+    return {
+        "maximum_likelihood": {"point": maximum_likelihood},
+        "posterior": {
+            "stdev": np.full(parameter_count, 0.001),
+            "errlo": np.full(parameter_count, -0.001),
+            "errup": np.full(parameter_count, 0.001),
+        },
+        "weighted_samples": {
+            "points": result_points,
+            "weights": np.full(result_points.shape[0], 1.0 / result_points.shape[0]),
+            "logl": np.linspace(-5.0, -1.0, result_points.shape[0]),
+        },
+        "samples": result_points.copy(),
+    }
+
+
 def test_lc_fitter_recovers_explicit_a0_baseline(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -915,6 +980,212 @@ def test_unit_cube_transform_vectorizes_simple_bounds(monkeypatch, tmp_path):
             [0.12, 87.75, -0.005],
         ]),
     )
+
+
+def test_unit_cube_inverse_maps_expanded_prior_samples_back_to_unit_cube(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = False
+    fit.prior = make_prior()
+    fit.bounds = {
+        "rprs": [0.05, 0.15],
+        "tmid": [-0.01, 0.01],
+    }
+
+    unit_points = np.array([
+        [0.30, 0.25],
+        [0.70, 0.75],
+    ])
+    sample_points = fit._sample_point_from_unit_cube(unit_points)
+
+    np.testing.assert_allclose(
+        fit._unit_cube_from_sample_points(sample_points),
+        unit_points,
+    )
+
+
+def test_expanded_prior_warmstart_uses_corrected_guarded_auxiliary_problem(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 81)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = elca.transit(time, prior)
+    source_points = np.column_stack([
+        np.linspace(0.085, 0.115, 64),
+        np.linspace(-0.004, 0.004, 64),
+    ])
+    source = make_expanded_prior_warmstart_source(
+        prior,
+        time,
+        data,
+        dataerr,
+        airmass,
+        source_points,
+    )
+    captured = {}
+
+    class DummySampler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            captured["sampler"] = self
+
+    def fake_run_reactive_sampler(sampler, *args, **kwargs):
+        unit_values = np.array([
+            [0.4, 0.6, 0.25],
+            [0.4, 0.6, 0.75],
+        ])
+        transformed = np.asarray(sampler.args[2](unit_values), dtype=float)
+        captured["transformed"] = transformed
+        captured["physical_loglike"] = np.asarray(
+            [
+                sampler.args[1](np.append(row[:2], 0.0))
+                for row in transformed
+            ],
+            dtype=float,
+        )
+        captured["corrected_loglike"] = np.asarray(
+            sampler.args[1](transformed),
+            dtype=float,
+        )
+        return make_dummy_nested_result(source_points, auxiliary=True)
+
+    monkeypatch.setattr(elca, "ReactiveNestedSampler", DummySampler)
+    monkeypatch.setattr(elca, "run_reactive_sampler", fake_run_reactive_sampler)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {
+            "rprs": [0.05, 0.15],
+            "tmid": [-0.005, 0.005],
+        },
+        mode="ns",
+        verbose=False,
+        use_impactparameter_rather_than_inclination_to_fit=False,
+        ultranest_warmstart_source=source,
+    )
+
+    assert captured["sampler"].args[0] == ["rprs", "tmid", "aux_logweight"]
+    np.testing.assert_allclose(captured["transformed"][0, :2], [0.09, 0.001])
+    assert np.all(np.isfinite(captured["transformed"]))
+    assert captured["transformed"][1, 0] > captured["transformed"][0, 0]
+    np.testing.assert_allclose(
+        captured["corrected_loglike"] - captured["physical_loglike"],
+        captured["transformed"][:, 2],
+    )
+    assert fit.ultranest_expanded_prior_warmstart_attempted is True
+    assert fit.ultranest_expanded_prior_warmstart_applied is True
+    assert fit.ultranest_expanded_prior_warmstart_expanded_keys == ["rprs"]
+    assert fit.ultranest_expanded_prior_warmstart_source_sample_count == 64
+    assert fit._get_triangle_plot_samples()[0].shape[1] == 2
+
+
+def test_expanded_prior_warmstart_failure_falls_back_to_clean_sampler(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 81)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = elca.transit(time, prior)
+    source_points = np.column_stack([
+        np.linspace(0.085, 0.115, 64),
+        np.linspace(-0.004, 0.004, 64),
+    ])
+    source = make_expanded_prior_warmstart_source(
+        prior,
+        time,
+        data,
+        dataerr,
+        airmass,
+        source_points,
+    )
+    samplers = []
+
+    class DummySampler:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            samplers.append(self)
+
+    def fake_run_reactive_sampler(sampler, *args, **kwargs):
+        if len(sampler.args[0]) == 3:
+            raise RuntimeError("synthetic corrected-warmstart failure")
+        return make_dummy_nested_result(source_points, auxiliary=False)
+
+    monkeypatch.setattr(elca, "ReactiveNestedSampler", DummySampler)
+    monkeypatch.setattr(elca, "run_reactive_sampler", fake_run_reactive_sampler)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {
+            "rprs": [0.05, 0.15],
+            "tmid": [-0.005, 0.005],
+        },
+        mode="ns",
+        verbose=False,
+        use_impactparameter_rather_than_inclination_to_fit=False,
+        ultranest_warmstart_source=source,
+    )
+
+    assert [sampler.args[0] for sampler in samplers] == [
+        ["rprs", "tmid", "aux_logweight"],
+        ["rprs", "tmid"],
+    ]
+    assert fit.ultranest_expanded_prior_warmstart_attempted is True
+    assert fit.ultranest_expanded_prior_warmstart_applied is False
+    assert "reran from the full expanded prior" in fit.ultranest_expanded_prior_warmstart_note
+    assert fit.parameters["rprs"] == pytest.approx(0.1)
+
+
+def test_expanded_prior_warmstart_restores_physical_likelihood_for_best_fit(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    results = {
+        "maximum_likelihood": {
+            "point": np.array([0.09, 0.0, 5.0]),
+            "logl": 5.0,
+        },
+        "weighted_samples": {
+            "points": np.array([
+                [0.09, 0.0, 5.0],
+                [0.11, 0.0, -5.0],
+            ]),
+            "logl": np.array([5.0, -5.0]),
+        },
+    }
+
+    def physical_loglike(points):
+        points = np.asarray(points, dtype=float)
+        return -((points[:, 0] - 0.11) / 0.01) ** 2
+
+    elca.lc_fitter._restore_expanded_prior_physical_likelihoods(
+        results,
+        physical_loglike,
+        2,
+    )
+
+    np.testing.assert_allclose(
+        results["weighted_samples"]["auxiliary_logl"],
+        np.array([5.0, -5.0]),
+    )
+    np.testing.assert_allclose(
+        results["weighted_samples"]["logl"],
+        np.array([-4.0, 0.0]),
+    )
+    assert results["weighted_samples"]["points"].shape == (2, 2)
+    assert results["weighted_samples"]["auxiliary_points"].shape == (2, 1)
+    assert results["maximum_likelihood"]["point"].shape == (2,)
+    assert results["maximum_likelihood"]["point"][0] == pytest.approx(0.11)
+    assert results["maximum_likelihood"]["logl"] == pytest.approx(0.0)
 
 
 def test_nested_fit_can_keep_inclination_parameterization_when_requested(monkeypatch, tmp_path):

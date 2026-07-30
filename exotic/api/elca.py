@@ -54,6 +54,7 @@ import numpy as np
 from scipy import spatial
 from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
+from scipy.special import ndtr, ndtri
 from ultranest import ReactiveNestedSampler
 
 try:
@@ -87,6 +88,9 @@ MIN_EXPOSURE_SMEARING_SECONDS = 1.0
 EXPOSURE_SMEARING_TRANSIT_WINDOW_PADDING_FACTOR = 2.0
 ULTRANEST_INFLATED_ERROR_REPLACEMENT_FACTOR = 3.0
 ULTRANEST_LOCAL_UNCERTAINTY_MAX_DELTA_CHI2 = 9.0
+ULTRANEST_EXPANDED_PRIOR_WARMSTART_FULL_PRIOR_FRACTION = 0.5
+ULTRANEST_EXPANDED_PRIOR_WARMSTART_MINIMUM_SAMPLE_COUNT = 32
+ULTRANEST_EXPANDED_PRIOR_WARMSTART_MAXIMUM_SAMPLE_COUNT = 20000
 
 def _pylightcurve_import_watchdog_seconds():
     try:
@@ -714,6 +718,7 @@ class lc_fitter(object):
         exposure_times_seconds=None,
         exposure_smearing_supersample=DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE,
         exposure_smearing_change_tolerance=DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE,
+        ultranest_warmstart_source=None,
     ):
         self.time = time
         self.data = data
@@ -738,6 +743,16 @@ class lc_fitter(object):
         )
         self.fixed_flux_baseline = bool(fixed_flux_baseline)
         self.ultranest_min_num_live_points = ultranest_min_num_live_points
+        self.ultranest_warmstart_source = ultranest_warmstart_source
+        self.ultranest_expanded_prior_warmstart_attempted = False
+        self.ultranest_expanded_prior_warmstart_applied = False
+        self.ultranest_expanded_prior_warmstart_note = None
+        self.ultranest_expanded_prior_warmstart_source_sample_count = 0
+        self.ultranest_expanded_prior_warmstart_effective_sample_size = 0.0
+        self.ultranest_expanded_prior_warmstart_expanded_keys = []
+        self.ultranest_expanded_prior_warmstart_full_prior_fraction = (
+            ULTRANEST_EXPANDED_PRIOR_WARMSTART_FULL_PRIOR_FRACTION
+        )
         self.exposure_times_days = normalize_exposure_times_seconds_to_days(
             exposure_times_seconds,
             np.asarray(time).shape,
@@ -1724,6 +1739,440 @@ class lc_fitter(object):
 
         return sample_point
 
+    def _unit_cube_from_sample_points(self, sample_points, bound_keys=None):
+        bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
+        points = np.asarray(sample_points, dtype=float)
+        scalar_input = points.ndim == 1
+        points_2d = np.atleast_2d(points)
+        if points_2d.shape[1] != len(bound_keys):
+            raise ValueError(
+                "Sample-point dimensionality does not match the expanded-prior bounds."
+            )
+
+        boundarray = np.array([self.bounds[key] for key in bound_keys], dtype=float)
+        widths = boundarray[:, 1] - boundarray[:, 0]
+        if (
+            not np.all(np.isfinite(boundarray))
+            or not np.all(np.isfinite(widths))
+            or np.any(widths <= 0)
+        ):
+            raise ValueError("Expanded-prior bounds are not finite and increasing.")
+
+        unit_points = (points_2d - boundarray[:, 0]) / widths
+        if self._uses_internal_impact_parameter() and 'inc' in bound_keys:
+            inc_index = bound_keys.index('inc')
+            upper_bounds = self._get_impact_parameter_upper_bounds_for_sample_points(
+                points_2d,
+                bound_keys,
+            )
+            valid_upper = np.isfinite(upper_bounds) & (upper_bounds > 0)
+            if not np.all(valid_upper):
+                raise ValueError(
+                    "Impact-parameter upper bounds are invalid for warm-start samples."
+                )
+            unit_points[:, inc_index] = points_2d[:, inc_index] / upper_bounds
+
+        return unit_points[0] if scalar_input else unit_points
+
+    @staticmethod
+    def _warmstart_values_match(left, right):
+        if left is None or right is None:
+            return left is None and right is None
+        if isinstance(left, dict) or isinstance(right, dict):
+            if not isinstance(left, dict) or not isinstance(right, dict):
+                return False
+            if set(left) != set(right):
+                return False
+            return all(
+                lc_fitter._warmstart_values_match(left[key], right[key])
+                for key in left
+            )
+        try:
+            left_array = np.asarray(left)
+            right_array = np.asarray(right)
+            if left_array.shape != right_array.shape:
+                return False
+            if (
+                np.issubdtype(left_array.dtype, np.number)
+                and np.issubdtype(right_array.dtype, np.number)
+            ):
+                return bool(np.array_equal(
+                    left_array.astype(float),
+                    right_array.astype(float),
+                    equal_nan=True,
+                ))
+            return bool(np.array_equal(left_array, right_array))
+        except (TypeError, ValueError):
+            return left == right
+
+    def _expanded_prior_warmstart_compatibility(self, source, bound_keys, sampled_keys):
+        if source is None:
+            return None, "No previous UltraNest fit was supplied."
+        if getattr(source, 'ns_type', None) != 'ultranest':
+            return None, "The previous fit is not an UltraNest result."
+
+        source_bound_keys = list(getattr(source, 'bounds', {}).keys())
+        source_sampled_keys = list(getattr(source, 'sampled_keys', []))
+        if source_bound_keys != list(bound_keys) or source_sampled_keys != list(sampled_keys):
+            return None, "The sampled parameterization changed between UltraNest fits."
+
+        expanded_keys = []
+        tolerance = 1e-12
+        for key in bound_keys:
+            try:
+                source_lower, source_upper = [
+                    float(value)
+                    for value in np.asarray(source.bounds[key], dtype=float).reshape(-1)[:2]
+                ]
+                target_lower, target_upper = [
+                    float(value)
+                    for value in np.asarray(self.bounds[key], dtype=float).reshape(-1)[:2]
+                ]
+            except (KeyError, TypeError, ValueError):
+                return None, f"The {key} bounds are unavailable for warm-start validation."
+            if (
+                target_lower > source_lower + tolerance
+                or target_upper < source_upper - tolerance
+            ):
+                return None, f"The {key} bounds contracted instead of forming a true superset."
+            if (
+                target_lower < source_lower - tolerance
+                or target_upper > source_upper + tolerance
+            ):
+                expanded_keys.append(key)
+
+        if not expanded_keys:
+            return None, "The prior bounds did not expand."
+
+        likelihood_attributes = (
+            'time',
+            'data',
+            'dataerr',
+            'airmass',
+            'exposure_times_days',
+            'baseline_fit_mask',
+            'duration_prior',
+            'fixed_flux_baseline',
+            'use_impactparameter_rather_than_inclination_to_fit',
+        )
+        for attribute_name in likelihood_attributes:
+            if not self._warmstart_values_match(
+                getattr(source, attribute_name, None),
+                getattr(self, attribute_name, None),
+            ):
+                return None, (
+                    f"The likelihood input {attribute_name} changed between UltraNest fits."
+                )
+
+        free_keys = set(bound_keys)
+        source_prior = getattr(source, 'prior', {})
+        if not isinstance(source_prior, dict) or not isinstance(self.prior, dict):
+            return None, "The fixed model parameters are unavailable for warm-start validation."
+        fixed_keys = (set(source_prior) | set(self.prior)) - free_keys
+        for key in fixed_keys:
+            if not self._warmstart_values_match(
+                source_prior.get(key),
+                self.prior.get(key),
+            ):
+                return None, f"The fixed model parameter {key} changed between UltraNest fits."
+
+        try:
+            weighted_samples = source.results['weighted_samples']
+            source_points = np.asarray(weighted_samples['points'], dtype=float)
+            source_weights = np.asarray(weighted_samples['weights'], dtype=float)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None, "The previous weighted posterior samples are unavailable."
+
+        parameter_count = len(sampled_keys)
+        if (
+            source_points.ndim != 2
+            or source_points.shape[1] < parameter_count
+            or source_weights.ndim != 1
+            or source_weights.shape[0] != source_points.shape[0]
+        ):
+            return None, "The previous weighted posterior sample arrays are malformed."
+
+        source_points = source_points[:, :parameter_count]
+        valid = (
+            np.all(np.isfinite(source_points), axis=1)
+            & np.isfinite(source_weights)
+            & (source_weights > 0)
+        )
+        source_points = source_points[valid]
+        source_weights = source_weights[valid]
+        minimum_count = max(
+            ULTRANEST_EXPANDED_PRIOR_WARMSTART_MINIMUM_SAMPLE_COUNT,
+            4 * max(1, parameter_count),
+        )
+        if source_points.shape[0] < minimum_count:
+            return None, (
+                f"Only {source_points.shape[0]} valid previous posterior samples are available; "
+                f"at least {minimum_count} are required."
+            )
+
+        weight_sum = float(np.sum(source_weights))
+        if not np.isfinite(weight_sum) or weight_sum <= 0:
+            return None, "The previous posterior sample weights are invalid."
+        source_weights = source_weights / weight_sum
+        effective_sample_size = float(1.0 / np.sum(source_weights ** 2))
+        minimum_effective_count = max(16, 2 * max(1, parameter_count))
+        if not np.isfinite(effective_sample_size) or effective_sample_size < minimum_effective_count:
+            return None, (
+                f"The previous posterior effective sample size is only "
+                f"{effective_sample_size:.1f}; at least {minimum_effective_count} is required."
+            )
+
+        return {
+            'expanded_keys': expanded_keys,
+            'points': source_points,
+            'weights': source_weights,
+            'effective_sample_size': effective_sample_size,
+        }, None
+
+    @staticmethod
+    def _bounded_warmstart_posterior_sample(points, weights, maximum_count):
+        if points.shape[0] <= maximum_count:
+            return points, weights
+
+        cumulative = np.cumsum(weights)
+        cumulative[-1] = 1.0
+        quantiles = (np.arange(maximum_count, dtype=float) + 0.5) / maximum_count
+        selected = np.searchsorted(cumulative, quantiles, side='left')
+        selected = np.clip(selected, 0, points.shape[0] - 1)
+        return points[selected], np.full(maximum_count, 1.0 / maximum_count)
+
+    def _build_expanded_prior_warmstart_problem(
+        self,
+        bound_keys,
+        sampled_keys,
+        loglike,
+        prior_transform,
+    ):
+        source = getattr(self, 'ultranest_warmstart_source', None)
+        compatibility, reason = self._expanded_prior_warmstart_compatibility(
+            source,
+            bound_keys,
+            sampled_keys,
+        )
+        if compatibility is None:
+            return None, reason
+
+        points, weights = self._bounded_warmstart_posterior_sample(
+            compatibility['points'],
+            compatibility['weights'],
+            ULTRANEST_EXPANDED_PRIOR_WARMSTART_MAXIMUM_SAMPLE_COUNT,
+        )
+        unit_points = np.asarray(
+            self._unit_cube_from_sample_points(points, bound_keys),
+            dtype=float,
+        )
+        tolerance = 1e-10
+        inside = (
+            np.all(np.isfinite(unit_points), axis=1)
+            & np.all(unit_points >= -tolerance, axis=1)
+            & np.all(unit_points <= 1.0 + tolerance, axis=1)
+        )
+        unit_points = unit_points[inside]
+        weights = weights[inside]
+        if unit_points.shape[0] < ULTRANEST_EXPANDED_PRIOR_WARMSTART_MINIMUM_SAMPLE_COUNT:
+            return None, (
+                "Too few previous posterior samples remain inside the expanded prior."
+            )
+
+        weights = weights / np.sum(weights)
+        unit_points = np.clip(unit_points, 1e-12, 1.0 - 1e-12)
+        full_prior_fraction = float(np.clip(
+            ULTRANEST_EXPANDED_PRIOR_WARMSTART_FULL_PRIOR_FRACTION,
+            1e-6,
+            1.0 - 1e-6,
+        ))
+        parameter_count = len(sampled_keys)
+        weighted_mean = np.sum(unit_points * weights[:, None], axis=0)
+        weighted_variance = np.sum(
+            weights[:, None] * (unit_points - weighted_mean) ** 2,
+            axis=0,
+        )
+        # A modest scale floor avoids a singular hot proposal when the old
+        # posterior is extremely narrow. The 50% uniform component below is
+        # the stronger defense and guarantees full expanded-prior support.
+        hot_scale = np.clip(np.sqrt(np.maximum(weighted_variance, 0.0)), 0.02, 0.5)
+        hot_mean = np.clip(weighted_mean, 1e-8, 1.0 - 1e-8)
+        hot_alpha = -hot_mean / hot_scale
+        hot_beta = (1.0 - hot_mean) / hot_scale
+        hot_cdf_lower = ndtr(hot_alpha)
+        hot_cdf_width = np.maximum(
+            ndtr(hot_beta) - hot_cdf_lower,
+            np.finfo(float).tiny,
+        )
+        log_hot_normalization = np.log(hot_cdf_width)
+        log_two_pi_half = 0.5 * np.log(2.0 * np.pi)
+        log_full_fraction = np.log(full_prior_fraction)
+        log_hot_fraction = np.log1p(-full_prior_fraction)
+
+        def hot_transform(unit_values):
+            probabilities = hot_cdf_lower + unit_values * hot_cdf_width
+            probabilities = np.clip(
+                probabilities,
+                np.finfo(float).eps,
+                1.0 - np.finfo(float).eps,
+            )
+            return np.clip(
+                hot_mean + hot_scale * ndtri(probabilities),
+                0.0,
+                1.0,
+            )
+
+        def hot_log_density(unit_values):
+            standardized = (unit_values - hot_mean) / hot_scale
+            return np.sum(
+                -0.5 * standardized ** 2
+                - np.log(hot_scale)
+                - log_two_pi_half
+                - log_hot_normalization,
+                axis=1,
+            )
+
+        # Defensive importance proposal:
+        #
+        #   q_mix(u) = f * Uniform(u) + (1-f) * q_hot(u)
+        #
+        # The latent selector samples one of those components, while every
+        # point receives the common correction pi(u)/q_mix(u). Unlike using a
+        # branch-specific correction, this remains evidence-correct even if
+        # nested sampling prunes the component that contributes negligibly in
+        # a particular likelihood region. Half of all proposal mass still
+        # comes directly from the complete expanded prior.
+        def defensive_transform(unit_values):
+            values = np.asarray(unit_values, dtype=float)
+            scalar_input = values.ndim == 1
+            values_2d = np.atleast_2d(values)
+            if values_2d.shape[1] != parameter_count + 1:
+                raise ValueError(
+                    "Expanded-prior warm-start unit points have the wrong dimensionality."
+                )
+
+            proposal_unit = np.empty(
+                (values_2d.shape[0], parameter_count),
+                dtype=float,
+            )
+            full_prior_mask = values_2d[:, -1] < full_prior_fraction
+            proposal_unit[full_prior_mask] = values_2d[
+                full_prior_mask, :parameter_count
+            ]
+            hot_mask = ~full_prior_mask
+            if np.any(hot_mask):
+                proposal_unit[hot_mask] = hot_transform(
+                    values_2d[hot_mask, :parameter_count]
+                )
+
+            log_q_hot = hot_log_density(proposal_unit)
+            log_q_mix = np.logaddexp(
+                log_full_fraction,
+                log_hot_fraction + log_q_hot,
+            )
+            transformed = np.empty(
+                (values_2d.shape[0], parameter_count + 1),
+                dtype=float,
+            )
+            transformed[:, :parameter_count] = prior_transform(proposal_unit)
+            transformed[:, -1] = -log_q_mix
+
+            return transformed[0] if scalar_input else transformed
+
+        def defensive_loglike(parameters):
+            values = np.asarray(parameters, dtype=float)
+            physical = values[..., :parameter_count]
+            correction = values[..., parameter_count]
+            return loglike(physical) + correction
+
+        self.ultranest_expanded_prior_warmstart_source_sample_count = int(
+            unit_points.shape[0]
+        )
+        self.ultranest_expanded_prior_warmstart_effective_sample_size = float(
+            compatibility['effective_sample_size']
+        )
+        self.ultranest_expanded_prior_warmstart_expanded_keys = list(
+            compatibility['expanded_keys']
+        )
+        return {
+            'param_names': list(sampled_keys) + ['aux_logweight'],
+            'loglike': defensive_loglike,
+            'transform': defensive_transform,
+            'vectorized': True,
+            'full_prior_fraction': full_prior_fraction,
+        }, None
+
+    @staticmethod
+    def _expanded_prior_warmstart_result_is_usable(results, parameter_count):
+        try:
+            maximum_likelihood = np.asarray(
+                results['maximum_likelihood']['point'],
+                dtype=float,
+            )
+            weighted_points = np.asarray(
+                results['weighted_samples']['points'],
+                dtype=float,
+            )
+            weighted_logl = np.asarray(
+                results['weighted_samples']['logl'],
+                dtype=float,
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return bool(
+            maximum_likelihood.ndim == 1
+            and maximum_likelihood.size >= parameter_count
+            and np.all(np.isfinite(maximum_likelihood[:parameter_count]))
+            and weighted_points.ndim == 2
+            and weighted_points.shape[0] > 0
+            and weighted_points.shape[1] >= parameter_count
+            and weighted_logl.shape == (weighted_points.shape[0],)
+            and np.any(np.isfinite(weighted_logl))
+        )
+
+    @staticmethod
+    def _restore_expanded_prior_physical_likelihoods(results, loglike, parameter_count):
+        weighted_samples = results['weighted_samples']
+        points = np.asarray(weighted_samples['points'], dtype=float)
+        auxiliary_logl = np.asarray(weighted_samples['logl'], dtype=float)
+        physical_logl = np.asarray(
+            loglike(points[:, :parameter_count]),
+            dtype=float,
+        )
+        if physical_logl.shape != (points.shape[0],) or not np.any(np.isfinite(physical_logl)):
+            raise ValueError(
+                "the corrected warm-start samples could not be evaluated under the physical likelihood"
+            )
+
+        weighted_samples['auxiliary_logl'] = auxiliary_logl.copy()
+        weighted_samples['logl'] = physical_logl
+        if points.shape[1] > parameter_count:
+            weighted_samples['auxiliary_points'] = points[:, parameter_count:].copy()
+        weighted_samples['points'] = points[:, :parameter_count].copy()
+        maximum_index = int(np.nanargmax(physical_logl))
+        maximum_likelihood = results.setdefault('maximum_likelihood', {})
+        # The auxiliary likelihood contains a proposal correction and is not
+        # the physical maximum-likelihood criterion reported by EXOTIC.
+        maximum_likelihood['auxiliary_point'] = points[maximum_index].copy()
+        maximum_likelihood['point'] = points[maximum_index, :parameter_count].copy()
+        maximum_likelihood['logl'] = float(physical_logl[maximum_index])
+
+        equal_weight_samples = np.asarray(results.get('samples'), dtype=float)
+        if (
+            equal_weight_samples.ndim == 2
+            and equal_weight_samples.shape[1] >= parameter_count
+        ):
+            if equal_weight_samples.shape[1] > parameter_count:
+                results['auxiliary_samples'] = equal_weight_samples[:, parameter_count:].copy()
+            results['samples'] = equal_weight_samples[:, :parameter_count].copy()
+
+        posterior = results.get('posterior')
+        if isinstance(posterior, dict):
+            for key, value in list(posterior.items()):
+                value_array = np.asarray(value)
+                if value_array.ndim == 1 and value_array.size == points.shape[1]:
+                    posterior[key] = value_array[:parameter_count].copy()
+
     def _physical_values_from_sample_point(self, sample_point, bound_keys=None, sampled_keys=None):
         bound_keys = list(self.bounds.keys()) if bound_keys is None else list(bound_keys)
         sampled_keys = self._get_sampled_keys(bound_keys) if sampled_keys is None else list(sampled_keys)
@@ -1762,6 +2211,9 @@ class lc_fitter(object):
             return None, None
         if logl.shape[0] != points.shape[0]:
             return None, None
+        sampled_key_count = len(getattr(self, 'sampled_keys', []))
+        if sampled_key_count and points.shape[1] >= sampled_key_count:
+            points = points[:, :sampled_key_count]
         return points, logl
 
     def _loglike_neighborhood_uncertainty(self, parameter_index, center, minimum_count=8, points=None, logl=None):
@@ -2180,6 +2632,9 @@ class lc_fitter(object):
             weighted_samples = self.results['weighted_samples']
             points = np.asarray(weighted_samples['points'], dtype=float)
             logl = np.asarray(weighted_samples['logl'], dtype=float)
+            sampled_key_count = len(getattr(self, 'sampled_keys', []))
+            if sampled_key_count and points.shape[1] >= sampled_key_count:
+                points = points[:, :sampled_key_count]
             weights = self._get_triangle_plot_sample_weights(
                 weighted_samples.get('weights'),
                 points.shape[0],
@@ -2205,10 +2660,18 @@ class lc_fitter(object):
         return weights
 
     def get_parameter_posterior_samples(self, key):
+        sample_points = None
         try:
-            sample_points, _, _ = self._get_triangle_plot_samples()
+            equal_weight_samples = np.asarray(self.results.get('samples'), dtype=float)
+            if equal_weight_samples.ndim == 2 and equal_weight_samples.shape[0] > 0:
+                sample_points = equal_weight_samples
         except Exception:
-            return np.array([], dtype=float)
+            sample_points = None
+        if sample_points is None:
+            try:
+                sample_points, _, _ = self._get_triangle_plot_samples()
+            except Exception:
+                return np.array([], dtype=float)
 
         sample_points = np.asarray(sample_points, dtype=float)
         if sample_points.ndim != 2 or sample_points.shape[0] == 0:
@@ -3677,6 +4140,17 @@ class lc_fitter(object):
             run_kwargs=run_kwargs,
             verbose=self.verbose,
         )
+        if getattr(self, 'ultranest_expanded_prior_warmstart_applied', False):
+            if not self._expanded_prior_warmstart_result_is_usable(
+                self.results,
+                len(context['sampled_keys']),
+            ):
+                return False
+            self._restore_expanded_prior_physical_likelihoods(
+                self.results,
+                context['loglike'],
+                len(context['sampled_keys']),
+            )
         self._finalize_ultranest_fit_results(
             context['bound_keys'],
             context['sampled_keys'],
@@ -3916,17 +4390,82 @@ class lc_fitter(object):
             return sample_points
 
         self.ns_type = 'ultranest'
-        test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)
+        warmstart_problem, warmstart_skip_reason = self._build_expanded_prior_warmstart_problem(
+            bound_keys,
+            sampled_keys,
+            loglike,
+            prior_transform,
+        )
+        self.ultranest_expanded_prior_warmstart_attempted = (
+            getattr(self, 'ultranest_warmstart_source', None) is not None
+        )
+        if warmstart_problem is not None:
+            test = ReactiveNestedSampler(
+                warmstart_problem['param_names'],
+                warmstart_problem['loglike'],
+                warmstart_problem['transform'],
+                vectorized=warmstart_problem['vectorized'],
+            )
+            self.ultranest_expanded_prior_warmstart_applied = True
+            self.ultranest_expanded_prior_warmstart_note = (
+                "Applied a corrected expanded-prior UltraNest warm start using "
+                f"{self.ultranest_expanded_prior_warmstart_source_sample_count} previous "
+                "weighted posterior sample(s), with "
+                f"{100.0 * warmstart_problem['full_prior_fraction']:.0f}% of the auxiliary "
+                "prior reserved for direct exploration of the full expanded prior."
+            )
+        else:
+            test = ReactiveNestedSampler(sampled_keys, loglike, prior_transform, vectorized=True)
+            self.ultranest_expanded_prior_warmstart_applied = False
+            self.ultranest_expanded_prior_warmstart_note = warmstart_skip_reason
 
         run_kwargs = {"max_ncalls": int(self.max_ncalls)}
         if self.ultranest_min_num_live_points is not None:
             run_kwargs["min_num_live_points"] = int(self.ultranest_min_num_live_points)
 
-        self.results = run_reactive_sampler(
-            test,
-            run_kwargs=run_kwargs,
-            verbose=self.verbose,
-        )
+        try:
+            self.results = run_reactive_sampler(
+                test,
+                run_kwargs=run_kwargs,
+                verbose=self.verbose,
+            )
+            if (
+                warmstart_problem is not None
+                and not self._expanded_prior_warmstart_result_is_usable(
+                    self.results,
+                    len(sampled_keys),
+                )
+            ):
+                raise ValueError(
+                    "the corrected warm-start result did not contain usable posterior samples"
+                )
+            if warmstart_problem is not None:
+                self._restore_expanded_prior_physical_likelihoods(
+                    self.results,
+                    loglike,
+                    len(sampled_keys),
+                )
+        except Exception as exc:
+            if warmstart_problem is None:
+                raise
+            self.ultranest_expanded_prior_warmstart_applied = False
+            self.ultranest_expanded_prior_warmstart_note = (
+                "Corrected expanded-prior warm start failed; reran from the full expanded "
+                f"prior instead ({type(exc).__name__}: {exc})."
+            )
+            if self.verbose:
+                print(f"WARNING: {self.ultranest_expanded_prior_warmstart_note}")
+            test = ReactiveNestedSampler(
+                sampled_keys,
+                loglike,
+                prior_transform,
+                vectorized=True,
+            )
+            self.results = run_reactive_sampler(
+                test,
+                run_kwargs=run_kwargs,
+                verbose=self.verbose,
+            )
 
         if self.keep_ultranest_sampler:
             self._ultranest_resume_context = {
@@ -3934,6 +4473,7 @@ class lc_fitter(object):
                 'bound_keys': list(bound_keys),
                 'sampled_keys': list(sampled_keys),
                 'physical_from_sample_point': physical_from_sample_point,
+                'loglike': loglike,
             }
         else:
             self._ultranest_resume_context = None

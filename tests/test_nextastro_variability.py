@@ -1571,8 +1571,16 @@ def test_build_stellar_variability_params_uses_raw_ratio_and_per_exposure_errors
         expected_raw_magnitudes,
         atol=1.0e-10,
     )
+    np.testing.assert_allclose(
+        [row['differential_mag'] for row in params],
+        -2.5 * np.log10(detrended),
+        atol=1.0e-10,
+    )
     assert params[0]['mag'] != pytest.approx(target_mag)
     assert params[1]['mag_err'] == pytest.approx(expected_mag_error)
+    assert params[1]['differential_mag_err'] == pytest.approx(
+        np.sqrt(expected_mag_error ** 2 - comp_mag_error ** 2)
+    )
     assert params[1]['mag_err'] < 0.08
 
 
@@ -3017,7 +3025,16 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
     fit = types.SimpleNamespace(
         time=np.array([2460000.105, 2460000.205]),
         jd_times=np.array([2460000.1, 2460000.2]),
+        data=np.array([1.0, 1.1]),
+        dataerr=np.array([0.01, 0.011]),
         airmass=np.array([1.1, 1.2]),
+        airmass_model=np.ones(2),
+        transit=np.ones(2),
+        stellar_variability_only=True,
+        stellar_variability_target_flux=np.array([500.0, 550.0]),
+        stellar_variability_comp_flux=np.full(2, 1000.0),
+        stellar_variability_target_flux_error=np.full(2, 2.0),
+        stellar_variability_comp_flux_error=np.full(2, 3.0),
         stellar_variability_ensemble_magnitudes=np.array([12.30, 12.31]),
         stellar_variability_ensemble_magnitude_errors=np.array([0.01, 0.011]),
         stellar_variability_ensemble_members=[
@@ -3047,6 +3064,9 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
     assert params[0]['cmag'] is None
     assert params[0]['mag_band'] == 'ClearV'
     assert params[0]['catalog_mag_band'] == 'V'
+    assert params[0]['differential_mag'] == pytest.approx(-2.5 * np.log10(0.5))
+    assert params[1]['differential_mag'] == pytest.approx(-2.5 * np.log10(0.55))
+    assert params[0]['differential_mag_err'] > 0
     assert params[0]['ensemble_member_labels'] == ['C1', 'C2']
     assert params[0]['ensemble_member_catalog_errors'] == [0.01, 0.011]
     assert params[0]['ensemble_member_ra_degs'] == [10.1, 10.2]
@@ -3319,6 +3339,8 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     aid_text = next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).read_text(
         encoding='utf-8'
     )
+    assert '|DIFFMAG=' in aid_text
+    assert '|DIFFERR=' in aid_text
     ensemble_header = next(
         line for line in aid_text.splitlines()
         if line.startswith('#ENSEMBLE-COMPARISONS-XC=')
@@ -3330,9 +3352,12 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert ensemble_metadata['members'][1]['ra_deg'] == pytest.approx(10.2)
     assert ensemble_metadata['members'][1]['dec_deg'] == pytest.approx(-20.2)
     csv_path = next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv'))
+    csv_text = csv_path.read_text(encoding='utf-8')
+    assert 'Apparent Magnitude' in csv_text.splitlines()[0]
+    assert 'Differential Magnitude' in csv_text.splitlines()[0]
     exported_errors = [
         float(row.split(',')[3])
-        for row in csv_path.read_text(encoding='utf-8').splitlines()[1:]
+        for row in csv_text.splitlines()[1:]
         if row.strip()
     ]
     assert exported_errors

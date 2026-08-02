@@ -17,6 +17,7 @@ from exotic.output_files import (
     fit_empirical_transit_uncertainty,
     fit_impact_parameter_value_error,
     differential_magnitude_series_from_fit,
+    magnitude_series_from_fit,
     save_comp_star_calibration_summary,
     write_differential_magnitude_csv,
 )
@@ -272,6 +273,8 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
                 "time": 2461229.89899,
                 "mag": 13.7378,
                 "mag_err": 0.0042,
+                "differential_mag": 1.2378,
+                "differential_mag_err": 0.0021,
                 "mag_band": "r",
                 "airmass": 1.193135,
             },
@@ -279,6 +282,8 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
                 "time": 2461229.90109,
                 "mag": 13.7401,
                 "mag_err": 0.0044,
+                "differential_mag": 1.2401,
+                "differential_mag_err": 0.0022,
                 "mag_band": "r",
                 "airmass": 1.1984942,
             },
@@ -292,8 +297,9 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
     output_text = next((tmp_path / "working_artifacts").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
 
     assert "# FINAL STELLAR VARIABILITY TIMESERIES OF WASP-194" in output_text
-    assert "# BJD_TDB,Magnitude,Uncertainty,Band,Airmass" in output_text
-    assert "2461229.89899, 13.738, 0.004, r, 1.193135" in output_text
+    assert "Apparent Magnitude,Apparent Magnitude Uncertainty" in output_text
+    assert "Differential Magnitude,Differential Magnitude Uncertainty" in output_text
+    assert "2461229.89899, 13.738, 0.004, 1.237800, 0.002100, r, 1.193135" in output_text
     assert "Flux" not in output_text
 
 
@@ -317,9 +323,79 @@ def test_final_lightcurve_adds_transit_apparent_magnitude_columns_when_calibrate
 
     output_text = next((tmp_path / "working_artifacts").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
 
-    assert "Apparent Magnitude,Magnitude Uncertainty,Band" in output_text
-    assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, 13.740" in output_text
+    assert "Differential Magnitude,Differential Magnitude Uncertainty" in output_text
+    assert "Apparent Magnitude,Apparent Magnitude Uncertainty,Band" in output_text
+    assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, -0.000000, 0.001086, 13.740" in output_text
     assert output_text.rstrip().endswith(", r")
+
+
+def test_final_lightcurve_keeps_differential_magnitude_when_apparent_calibration_is_unavailable(tmp_path):
+    (tmp_path / "working_artifacts").mkdir()
+    fit = SimpleNamespace(
+        time=np.array([2461229.9]),
+        data=np.array([0.8]),
+        detrended=np.array([0.8]),
+        dataerr=np.array([0.008]),
+        airmass_model=np.ones(1),
+        transit=np.ones(1),
+    )
+    p_dict = {'pName': 'Uncalibrated b', 'sName': 'Uncalibrated'}
+    i_dict = {'save': str(tmp_path), 'date': '2026-07-08', 'filter': 'V'}
+
+    OutputFiles(fit, p_dict, i_dict, []).final_lightcurve(np.array([0.1]))
+
+    output_text = next(
+        (tmp_path / "working_artifacts").glob("FinalLightCurve_Uncalibratedb_2026-07-08.csv")
+    ).read_text()
+    expected_differential = -2.5 * np.log10(0.8)
+    assert f"{expected_differential:.6f}" in output_text
+    assert ", na, na, V" in output_text
+
+
+def test_magnitude_series_preserves_raw_ratio_for_later_apparent_recalibration():
+    target_flux = np.array([500.0, 550.0])
+    reference_flux = np.full(2, 1000.0)
+    target_error = np.full(2, 2.0)
+    reference_error = np.full(2, 3.0)
+    differential_mag = -2.5 * np.log10(target_flux / reference_flux)
+    magnitude_factor = 2.5 / np.log(10.0)
+    differential_error = magnitude_factor * np.sqrt(
+        (target_error / target_flux) ** 2
+        + (reference_error / reference_flux) ** 2
+    )
+    fit = SimpleNamespace(
+        time=np.array([2461229.9, 2461229.91]),
+        data=np.array([1.0, 1.1]),
+        dataerr=np.full(2, 0.001),
+        detrended=np.array([1.0, 1.1]),
+        airmass=np.array([1.1, 1.2]),
+        airmass_model=np.ones(2),
+        transit=np.ones(2),
+        stellar_variability_target_flux=target_flux,
+        stellar_variability_comp_flux=reference_flux,
+        stellar_variability_target_flux_error=target_error,
+        stellar_variability_comp_flux_error=reference_error,
+        stellar_variability_params=[{
+            "time": 2461229.9,
+            "mag": 12.0 + differential_mag[0],
+            "mag_err": np.hypot(0.02, differential_error[0]),
+            "differential_mag": differential_mag[0],
+            "differential_mag_err": differential_error[0],
+            "cmag": 12.0,
+            "cmag_err": 0.02,
+            "mag_band": "V",
+        }],
+    )
+
+    series = magnitude_series_from_fit(fit, apply_airmass_correction=False)
+
+    np.testing.assert_allclose(series['differential_magnitude'], differential_mag)
+    np.testing.assert_allclose(series['differential_magnitude_error'], differential_error)
+    np.testing.assert_allclose(series['apparent_magnitude'], 12.0 + differential_mag)
+    np.testing.assert_allclose(
+        series['apparent_magnitude_error'],
+        np.hypot(0.02, differential_error),
+    )
 
 
 def aavso_json_header(output_text, header_name):
@@ -357,6 +433,24 @@ def test_observable_depth_is_separate_from_area_depth_for_grazing_geometry():
 
 def test_aavso_output_includes_observatory_location_headers(tmp_path):
     fit = DummyFit()
+    fit.stellar_variability_target_flux = np.array([500.0])
+    fit.stellar_variability_comp_flux = np.array([1000.0])
+    fit.stellar_variability_target_flux_error = np.array([2.0])
+    fit.stellar_variability_comp_flux_error = np.array([3.0])
+    differential_mag = float(-2.5 * np.log10(0.5))
+    differential_error = float(
+        (2.5 / np.log(10.0)) * np.hypot(2.0 / 500.0, 3.0 / 1000.0)
+    )
+    fit.stellar_variability_params = [{
+        "time": fit.time[0],
+        "mag": 12.0 + differential_mag,
+        "mag_err": np.hypot(0.02, differential_error),
+        "differential_mag": differential_mag,
+        "differential_mag_err": differential_error,
+        "cmag": 12.0,
+        "cmag_err": 0.02,
+        "mag_band": "V",
+    }]
     p_dict = {
         "pName": "HAT-P-32 b",
         "sName": "HAT-P-32",
@@ -413,6 +507,16 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
     assert "#GAIADIST=245.7" in output_text
     assert "#GAIAPMRA=14.25" in output_text
     assert "#GAIAPMDEC=-9.5" in output_text
+    magnitude_fields = aavso_json_header(output_text, "MAGNITUDE_FIELDS-XC")
+    magnitude_row = aavso_json_header(output_text, "MAGNITUDE-XC")
+    assert magnitude_fields["apparent_calibrated"] is True
+    assert magnitude_fields["differential_magnitude"].startswith("target minus")
+    assert magnitude_row["differential_magnitude"] == pytest.approx(differential_mag)
+    assert magnitude_row["differential_magnitude_error"] == pytest.approx(differential_error)
+    assert magnitude_row["apparent_magnitude"] == pytest.approx(12.0 + differential_mag)
+    assert magnitude_row["apparent_magnitude_error"] == pytest.approx(
+        np.hypot(0.02, differential_error)
+    )
 
 
 def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
@@ -469,6 +573,12 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
     assert "#GAIADIST=" not in output_text
     assert "#GAIAPMRA=" not in output_text
     assert "#GAIAPMDEC=" not in output_text
+    magnitude_fields = aavso_json_header(output_text, "MAGNITUDE_FIELDS-XC")
+    magnitude_row = aavso_json_header(output_text, "MAGNITUDE-XC")
+    assert magnitude_fields["apparent_calibrated"] is False
+    assert magnitude_row["differential_magnitude"] == pytest.approx(0.0)
+    assert magnitude_row["apparent_magnitude"] is None
+    assert magnitude_row["apparent_magnitude_error"] is None
 
 
 def test_aid_comparison_coordinate_headers_index_unique_comparisons_on_separate_lines():
@@ -511,6 +621,8 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
         "time": 2450000.12345,
         "mag": 12.34567,
         "mag_err": 0.012345,
+        "differential_mag": 0.24567,
+        "differential_mag_err": 0.006789,
         "airmass": 1.234,
         "cname": "RA=10.1000000 Dec=-20.2000000",
         "cmag": 12.1,
@@ -544,6 +656,10 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
     assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.3457,0.0123,V,NO,STD" in output_text
+    assert "|DIFFMAG=0.245670|DIFFERR=0.006789" in output_text
+    magnitude_fields = aavso_json_header(output_text, "MAGNITUDE_FIELDS-XC")
+    assert magnitude_fields["apparent_magnitude"] == "MAG"
+    assert magnitude_fields["differential_magnitude"] == "NOTES subfield DIFFMAG"
 
 
 def test_aid_output_records_calibrated_ensemble_members(tmp_path):
@@ -563,6 +679,8 @@ def test_aid_output_records_calibrated_ensemble_members(tmp_path):
         "time": 2450000.12345,
         "mag": 12.34,
         "mag_err": 0.02,
+        "differential_mag": 1.234567,
+        "differential_mag_err": 0.00789,
         "airmass": 1.234,
         "cname": "ENSEMBLE (2 stars)",
         "cmag": None,
@@ -607,6 +725,7 @@ def test_aid_output_records_calibrated_ensemble_members(tmp_path):
     assert ensemble_metadata["members"][1]["ra_deg"] == pytest.approx(10.2)
     assert ensemble_metadata["members"][1]["dec_deg"] == pytest.approx(-20.2)
     assert "Target,2450000.12345,12.3400,0.0200,V,NO,STD,ENSEMBLE (2 stars),na" in output_text
+    assert "|DIFFMAG=1.234567|DIFFERR=0.007890" in output_text
 
 
 def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):

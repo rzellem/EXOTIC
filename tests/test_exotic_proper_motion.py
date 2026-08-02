@@ -131,6 +131,7 @@ from exotic.exotic import (
     alignment_candidate_quality_score,
     aperture_estimation_comparison_stars,
     aperture_frame_sigma_from_psf_data,
+    build_tracked_comparison_pool,
     collapse_aperture_data_to_selected_grid_cell,
     ensure_lightcurve_fit_failure_reason,
     evaluate_lightcurve_candidate,
@@ -1520,6 +1521,78 @@ def test_transit_ensemble_fit_uses_configured_maximum(monkeypatch):
     assert captured['active_keys'] == [
         f'comp{index}' for index in range(1, 10)
     ]
+
+
+def test_exact_transit_ensemble_uses_every_supplied_comparison(monkeypatch):
+    frame_count = 6
+    quality_mask = np.ones(frame_count, dtype=bool)
+    comparison_calibration = {
+        'method': 'aperture',
+        'a': 0,
+        'an': 0,
+        'aper': 5.0,
+        'annulus': 12.0,
+        'comp_summaries': [
+            {
+                'key': f'comp{index}',
+                'comp_index': index - 1,
+                'aggregate_score': index / 1000.0,
+                'coverage_rejected': False,
+                'suitability_outlier_rejected': False,
+                'psf_quality_keep_mask': quality_mask,
+            }
+            for index in range(1, 6)
+        ],
+    }
+    aper_data = {
+        'target': np.full((frame_count, 1, 1), 1000.0),
+        **{
+            f'comp{index}': np.full((frame_count, 1, 1), 100.0 + index)
+            for index in range(1, 6)
+        },
+    }
+    captured = {}
+
+    def capture_active_keys(comp_flux_map, active_keys, validity_mask_func):
+        captured['active_keys'] = list(active_keys)
+        raise RuntimeError('captured exact transit ensemble')
+
+    monkeypatch.setattr(
+        'exotic.exotic.build_absolute_comp_ensemble_flux',
+        capture_active_keys,
+    )
+
+    with pytest.raises(RuntimeError, match='captured exact transit ensemble'):
+        fit_ranked_comparison_calibration_candidates(
+            np.linspace(0.0, 0.05, frame_count),
+            np.linspace(2460000.0, 2460000.05, frame_count),
+            np.linspace(1.0, 1.2, frame_count),
+            ld=[0.1, 0.1, 0.1, 0.1],
+            p_dict={},
+            comparison_calibration=comparison_calibration,
+            psf_data={},
+            aper_data=aper_data,
+            target_psf_flux=np.ones(frame_count),
+            use_ensemble_photometry_rather_than_single_comp=True,
+            maximum_number_of_ensemble_comparisons_for_transit=1,
+            use_exactly_the_comps_provided=True,
+        )
+
+    assert captured['active_keys'] == [f'comp{index}' for index in range(1, 6)]
+
+
+def test_exact_comparison_mode_does_not_expand_tracked_pool():
+    supplied = [[10.0, 20.0], [30.0, 40.0]]
+    automatic = [[50.0, 60.0], [70.0, 80.0]]
+
+    tracked, messages = build_tracked_comparison_pool(
+        supplied,
+        automatic,
+        use_exactly_the_comps_provided=True,
+    )
+
+    assert tracked == supplied
+    assert messages == []
 
 
 def test_fortuitous_variable_photometry_config_defaults_on_and_supports_opt_out():

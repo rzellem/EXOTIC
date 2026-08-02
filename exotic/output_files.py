@@ -104,12 +104,41 @@ def finite_float(value, default=np.nan):
 
 def apparent_magnitude_calibration_from_vsp_params(vsp_params):
     rows = []
+    zero_points = []
+    zero_point_errors = []
     for vsp_p in vsp_params or []:
         mag = finite_float(vsp_p.get('mag'))
         mag_err = normalized_magnitude_error(vsp_p.get('mag_err'))
         if not np.isfinite(mag) or mag_err is None:
             continue
         rows.append((mag, mag_err, vsp_p.get('mag_band') or 'V'))
+
+        differential_mag, differential_err = differential_magnitude_from_vsp_param(
+            vsp_p
+        )
+        if np.isfinite(differential_mag):
+            comparison_mag = finite_float(vsp_p.get('cmag'))
+            comparison_mag_err = normalized_magnitude_error(vsp_p.get('cmag_err'))
+            zero_points.append(
+                comparison_mag if np.isfinite(comparison_mag) else mag - differential_mag
+            )
+            if comparison_mag_err is not None:
+                zero_point_errors.append(comparison_mag_err)
+            elif np.isfinite(differential_err):
+                zero_point_errors.append(
+                    np.sqrt(max(mag_err ** 2 - differential_err ** 2, 0.0))
+                )
+            else:
+                zero_point_errors.append(mag_err)
+            continue
+
+        comparison_mag = finite_float(vsp_p.get('cmag'))
+        comparison_mag_err = normalized_magnitude_error(vsp_p.get('cmag_err'))
+        if np.isfinite(comparison_mag):
+            zero_points.append(comparison_mag)
+            zero_point_errors.append(
+                comparison_mag_err if comparison_mag_err is not None else mag_err
+            )
 
     if not rows:
         return None
@@ -120,7 +149,49 @@ def apparent_magnitude_calibration_from_vsp_params(vsp_params):
         'baseline_magnitude': float(np.nanmedian(magnitudes)),
         'baseline_error': float(np.nanmedian(magnitude_errors)),
         'band': rows[0][2],
+        'zero_point_magnitude': (
+            float(np.nanmedian(zero_points)) if zero_points else np.nan
+        ),
+        'zero_point_error': (
+            float(np.nanmedian(zero_point_errors)) if zero_point_errors else np.nan
+        ),
     }
+
+
+def differential_magnitude_from_vsp_param(vsp_param):
+    """Return target-minus-reference magnitude and its flux-only uncertainty."""
+    differential_mag = finite_float(
+        vsp_param.get(
+            'differential_mag',
+            vsp_param.get('differential_magnitude'),
+        )
+    )
+    differential_err = finite_float(
+        vsp_param.get(
+            'differential_mag_err',
+            vsp_param.get('differential_magnitude_error'),
+        )
+    )
+    if np.isfinite(differential_err) and differential_err < 0:
+        differential_err = np.nan
+
+    if np.isfinite(differential_mag):
+        return differential_mag, differential_err
+
+    apparent_mag = finite_float(vsp_param.get('mag'))
+    comparison_mag = finite_float(vsp_param.get('cmag'))
+    if not (np.isfinite(apparent_mag) and np.isfinite(comparison_mag)):
+        return np.nan, np.nan
+
+    apparent_err = normalized_magnitude_error(vsp_param.get('mag_err'))
+    comparison_err = normalized_magnitude_error(vsp_param.get('cmag_err'))
+    if apparent_err is not None and comparison_err is not None:
+        differential_err = np.sqrt(max(apparent_err ** 2 - comparison_err ** 2, 0.0))
+    elif apparent_err is not None:
+        differential_err = apparent_err
+    else:
+        differential_err = np.nan
+    return apparent_mag - comparison_mag, differential_err
 
 
 def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
@@ -133,7 +204,10 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
     Stellar-variability fits intentionally remain uncorrected for airmass so a
     real time-dependent stellar signal is not fitted away.
     """
-    fit_data = np.asarray(getattr(fit, 'data', []), dtype=float).reshape(-1)
+    fit_data = np.asarray(
+        getattr(fit, 'data', getattr(fit, 'detrended', [])),
+        dtype=float,
+    ).reshape(-1)
     fit_times = np.asarray(
         getattr(fit, 'time', getattr(fit, 'jd_times', [])),
         dtype=float,
@@ -260,7 +334,117 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
         'magnitude_error': differential_error[keep],
         'source_mask': keep,
         'airmass_corrected': apply_airmass_correction,
+        'has_raw_photometry': has_raw_photometry,
     }
+
+
+def magnitude_series_from_fit(fit, out_of_transit_only=False,
+                              apply_airmass_correction=None):
+    """Return aligned differential and, when calibrated, apparent magnitudes."""
+    fit_data = np.asarray(
+        getattr(fit, 'data', getattr(fit, 'detrended', [])),
+        dtype=float,
+    ).reshape(-1)
+    result = {
+        'differential_magnitude': np.full(fit_data.shape, np.nan, dtype=float),
+        'differential_magnitude_error': np.full(fit_data.shape, np.nan, dtype=float),
+        'apparent_magnitude': np.full(fit_data.shape, np.nan, dtype=float),
+        'apparent_magnitude_error': np.full(fit_data.shape, np.nan, dtype=float),
+        'band': None,
+        'airmass_corrected': False,
+        'has_raw_photometry': False,
+        'apparent_calibrated': False,
+    }
+    series = differential_magnitude_series_from_fit(
+        fit,
+        out_of_transit_only=out_of_transit_only,
+        apply_airmass_correction=apply_airmass_correction,
+    )
+    if series is None:
+        return result
+
+    source_mask = np.asarray(series['source_mask'], dtype=bool)
+    if source_mask.shape != fit_data.shape:
+        return result
+    result['differential_magnitude'][source_mask] = series['magnitude']
+    result['differential_magnitude_error'][source_mask] = series['magnitude_error']
+    result['airmass_corrected'] = bool(series['airmass_corrected'])
+    result['has_raw_photometry'] = bool(series['has_raw_photometry'])
+
+    calibration = apparent_magnitude_calibration_from_vsp_params(
+        getattr(fit, 'stellar_variability_params', None)
+    )
+    if calibration is None:
+        return result
+
+    magnitude_offset = np.nan
+    calibration_error = calibration['baseline_error']
+    if np.isfinite(calibration['zero_point_error']):
+        calibration_error = calibration['zero_point_error']
+
+    differential_magnitude = result['differential_magnitude']
+    differential_error = result['differential_magnitude_error']
+    fit_times = np.asarray(
+        getattr(fit, 'time', getattr(fit, 'jd_times', [])),
+        dtype=float,
+    ).reshape(-1)
+    matched_offsets = []
+    if result['has_raw_photometry'] and fit_times.shape == differential_magnitude.shape:
+        for vsp_param in getattr(fit, 'stellar_variability_params', None) or []:
+            apparent_mag = finite_float(vsp_param.get('mag'))
+            apparent_time = finite_float(vsp_param.get('time'))
+            if not (np.isfinite(apparent_mag) and np.isfinite(apparent_time)):
+                continue
+            matches = np.flatnonzero(np.isclose(
+                fit_times,
+                apparent_time,
+                rtol=0.0,
+                atol=1.0e-7,
+            ))
+            if matches.size == 0:
+                continue
+            matched_differential = differential_magnitude[matches[0]]
+            if np.isfinite(matched_differential):
+                matched_offsets.append(apparent_mag - matched_differential)
+    if not result['has_raw_photometry']:
+        magnitude_offset = calibration['baseline_magnitude']
+    elif matched_offsets:
+        magnitude_offset = float(np.nanmedian(matched_offsets))
+    else:
+        reference_mask = np.isfinite(differential_magnitude)
+        transit_model = np.asarray(
+            getattr(fit, 'transit', np.ones(fit_data.shape)),
+            dtype=float,
+        ).reshape(-1)
+        if transit_model.shape == fit_data.shape and np.any(transit_model == 1):
+            reference_mask &= transit_model == 1
+        if np.any(reference_mask):
+            magnitude_offset = (
+                calibration['baseline_magnitude']
+                - float(np.nanmedian(differential_magnitude[reference_mask]))
+            )
+    if not np.isfinite(magnitude_offset):
+        return result
+
+    finite_differential = np.isfinite(differential_magnitude)
+    result['apparent_magnitude'][finite_differential] = (
+        differential_magnitude[finite_differential] + magnitude_offset
+    )
+    if np.isfinite(calibration_error):
+        finite_error = finite_differential & np.isfinite(differential_error)
+        result['apparent_magnitude_error'][finite_error] = np.hypot(
+            differential_error[finite_error],
+            calibration_error,
+        )
+        missing_error = finite_differential & ~np.isfinite(differential_error)
+        result['apparent_magnitude_error'][missing_error] = calibration_error
+    else:
+        result['apparent_magnitude_error'][finite_differential] = (
+            differential_error[finite_differential]
+        )
+    result['band'] = calibration['band']
+    result['apparent_calibrated'] = True
+    return result
 
 
 def write_differential_magnitude_csv(fit, save, target_name, observation_date=None,
@@ -543,8 +727,8 @@ def prune_aavso_metadata(value):
     return aavso_json_safe(value)
 
 
-def format_aavso_json_header(name, payload):
-    payload = prune_aavso_metadata(payload)
+def format_aavso_json_header(name, payload, preserve_nulls=False):
+    payload = aavso_json_safe(payload) if preserve_nulls else prune_aavso_metadata(payload)
     if not payload:
         return ""
     return f"#{name}={dumps(payload, sort_keys=True)}\n"
@@ -1979,62 +2163,96 @@ class OutputFiles:
             with params_file.open('w') as f:
                 target_name = self.p_dict.get('sName', self.p_dict['pName'])
                 f.write(f"# FINAL STELLAR VARIABILITY TIMESERIES OF {target_name}\n")
-                f.write("# BJD_TDB,Magnitude,Uncertainty,Band,Airmass\n")
+                reference_label = (
+                    getattr(self.fit, 'stellar_variability_reference_label', None)
+                    or (vsp_params[0].get('cname') if vsp_params else None)
+                    or 'selected comparison reference'
+                )
+                f.write(f"# DIFFERENTIAL_MAGNITUDE_REFERENCE={reference_label}\n")
+                f.write("# DIFFERENTIAL_MAGNITUDE_AIRMASS_CORRECTED=NO\n")
+                f.write(
+                    "# BJD_TDB,Apparent Magnitude,Apparent Magnitude Uncertainty,"
+                    "Differential Magnitude,Differential Magnitude Uncertainty,Band,Airmass\n"
+                )
                 for vsp_p in vsp_params:
                     time_value = finite_float(vsp_p.get('time'))
                     mag_value = format_magnitude(vsp_p.get('mag'), default=None)
                     mag_error = format_magnitude_error(vsp_p.get('mag_err'), default=None)
                     if not np.isfinite(time_value) or mag_value is None or mag_error is None:
                         continue
+                    differential_mag, differential_error = differential_magnitude_from_vsp_param(
+                        vsp_p
+                    )
+                    differential_mag_text = format_magnitude(
+                        differential_mag,
+                        default="na",
+                        digits=6,
+                    )
+                    differential_error_text = format_magnitude_error(
+                        differential_error,
+                        default="na",
+                        digits=6,
+                    )
                     band = vsp_p.get('mag_band') or self.i_dict.get('filter') or 'V'
                     airmass = finite_float(vsp_p.get('airmass'))
                     airmass_text = f"{airmass}" if np.isfinite(airmass) else "na"
-                    f.write(f"{time_value}, {mag_value}, {mag_error}, {band}, {airmass_text}\n")
+                    f.write(
+                        f"{time_value}, {mag_value}, {mag_error}, {differential_mag_text}, "
+                        f"{differential_error_text}, {band}, {airmass_text}\n"
+                    )
             return
 
-        magnitude_calibration = apparent_magnitude_calibration_from_vsp_params(
-            getattr(self.fit, 'stellar_variability_params', None)
-        )
+        magnitude_series = magnitude_series_from_fit(self.fit)
+        band = magnitude_series['band'] or self.i_dict.get('filter') or 'na'
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
-            if magnitude_calibration is None:
-                f.write("# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass\n")
-            else:
-                f.write(
-                    "# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass,"
-                    "Apparent Magnitude,Magnitude Uncertainty,Band\n"
-                )
+            reference_label = (
+                getattr(self.fit, 'differential_magnitude_reference_label', None)
+                or getattr(self.fit, 'stellar_variability_reference_label', None)
+                or 'selected comparison reference'
+            )
+            f.write(f"# DIFFERENTIAL_MAGNITUDE_REFERENCE={reference_label}\n")
+            f.write(
+                "# DIFFERENTIAL_MAGNITUDE_AIRMASS_CORRECTED="
+                f"{'YES' if magnitude_series['airmass_corrected'] else 'NO'}\n"
+            )
+            f.write(
+                "# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass,"
+                "Differential Magnitude,Differential Magnitude Uncertainty,"
+                "Apparent Magnitude,Apparent Magnitude Uncertainty,Band\n"
+            )
 
-            for bjd, phase, flux, fluxerr, model, am in zip(self.fit.time, phase, self.fit.detrended,
-                                                            self.fit.dataerr / self.fit.airmass_model,
-                                                            self.fit.transit, self.fit.airmass_model):
+            for row_index, (bjd, phase, flux, fluxerr, model, am) in enumerate(zip(
+                    self.fit.time,
+                    phase,
+                    self.fit.detrended,
+                    self.fit.dataerr / self.fit.airmass_model,
+                    self.fit.transit,
+                    self.fit.airmass_model)):
                 row = f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}"
-                if magnitude_calibration is not None:
-                    flux_value = finite_float(flux)
-                    flux_error = finite_float(fluxerr)
-                    if np.isfinite(flux_value) and flux_value > 0:
-                        apparent_mag = (
-                            magnitude_calibration['baseline_magnitude']
-                            - (2.5 * np.log10(flux_value))
-                        )
-                        if np.isfinite(flux_error) and flux_error >= 0:
-                            flux_mag_error = abs(2.5 * flux_error / (flux_value * np.log(10)))
-                            apparent_mag_error = (
-                                magnitude_calibration['baseline_error'] ** 2
-                                + flux_mag_error ** 2
-                            ) ** 0.5
-                        else:
-                            apparent_mag_error = magnitude_calibration['baseline_error']
-                        mag_text = format_magnitude(apparent_mag, default="na")
-                        mag_error_text = format_magnitude_error(apparent_mag_error, default="na")
-                    else:
-                        mag_text = "na"
-                        mag_error_text = "na"
-                    row = (
-                        f"{row}, {mag_text}, {mag_error_text}, "
-                        f"{magnitude_calibration['band']}"
-                    )
+                differential_mag_text = format_magnitude(
+                    magnitude_series['differential_magnitude'][row_index],
+                    default="na",
+                    digits=6,
+                )
+                differential_error_text = format_magnitude_error(
+                    magnitude_series['differential_magnitude_error'][row_index],
+                    default="na",
+                    digits=6,
+                )
+                apparent_mag_text = format_magnitude(
+                    magnitude_series['apparent_magnitude'][row_index],
+                    default="na",
+                )
+                apparent_error_text = format_magnitude_error(
+                    magnitude_series['apparent_magnitude_error'][row_index],
+                    default="na",
+                )
+                row = (
+                    f"{row}, {differential_mag_text}, {differential_error_text}, "
+                    f"{apparent_mag_text}, {apparent_error_text}, {band}"
+                )
                 f.write(f"{row}\n")
 
     def differential_magnitude(self):
@@ -2534,6 +2752,7 @@ class OutputFiles:
         frame_filtering_metadata = build_aavso_frame_filtering_metadata(self.fit, frame_filtering_info)
         astrometry_metadata = build_aavso_astrometry_metadata(astrometry_info, comp_star)
         bad_pixel_metadata = build_aavso_bad_pixel_metadata(bad_pixel_info)
+        magnitude_series = magnitude_series_from_fit(self.fit)
         obs_name = format_aavso_header_value(self.i_dict.get('obs_name'))
         obs_name_header = f"#OBSNAME={obs_name}\n" if obs_name else ""
         gaia_dist = format_aavso_header_value(self.p_dict.get('dist'))
@@ -2600,6 +2819,41 @@ class OutputFiles:
             f.write(format_aavso_json_header("FRAME_FILTERING-XC", frame_filtering_metadata))
             f.write(format_aavso_json_header("ASTROMETRY-XC", astrometry_metadata))
             f.write(format_aavso_json_header("BAD_PIXEL-XC", bad_pixel_metadata))
+            f.write(format_aavso_json_header("MAGNITUDE_FIELDS-XC", {
+                'apparent_magnitude': 'catalogue-calibrated target magnitude',
+                'apparent_magnitude_error': 'flux and catalogue calibration uncertainty',
+                'differential_magnitude': (
+                    'target minus selected comparison reference; '
+                    '-2.5 log10(target_flux/reference_flux)'
+                ),
+                'differential_magnitude_error': 'flux-only uncertainty',
+                'per_point_header': 'MAGNITUDE-XC',
+                'band': magnitude_series['band'] or self.i_dict.get('filter'),
+                'airmass_corrected': magnitude_series['airmass_corrected'],
+                'apparent_calibrated': magnitude_series['apparent_calibrated'],
+                'comparison_reference': (
+                    getattr(self.fit, 'differential_magnitude_reference_label', None)
+                    or getattr(self.fit, 'stellar_variability_reference_label', None)
+                    or 'selected comparison reference'
+                ),
+            }))
+            for magnitude_index in range(0, len(self.fit.time)):
+                f.write(format_aavso_json_header("MAGNITUDE-XC", {
+                    'date_bjd_tdb': finite_float(self.fit.time[magnitude_index]),
+                    'differential_magnitude': finite_float(
+                        magnitude_series['differential_magnitude'][magnitude_index]
+                    ),
+                    'differential_magnitude_error': finite_float(
+                        magnitude_series['differential_magnitude_error'][magnitude_index]
+                    ),
+                    'apparent_magnitude': finite_float(
+                        magnitude_series['apparent_magnitude'][magnitude_index]
+                    ),
+                    'apparent_magnitude_error': finite_float(
+                        magnitude_series['apparent_magnitude_error'][magnitude_index]
+                    ),
+                    'band': magnitude_series['band'] or self.i_dict.get('filter'),
+                }, preserve_nulls=True))
 
             if epw_md5:
                 f.write(f"#EPW_MD5-XC={dumps({'epw_checkout_md5': epw_md5})}\n")
@@ -2651,6 +2905,14 @@ class AIDOutputFiles:
         first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
         comparison_metadata = aid_comparison_metadata(first_vsp_param)
         ensemble_comparison_metadata = aid_ensemble_comparison_metadata(first_vsp_param)
+        fallback_differential_series = differential_magnitude_series_from_fit(
+            self.fit,
+            apply_airmass_correction=False,
+        )
+        fallback_times = np.asarray(
+            [] if fallback_differential_series is None else fallback_differential_series['time'],
+            dtype=float,
+        )
         comparison_coordinate_headers = aid_comparison_coordinate_headers(
             self.vsp_params,
             indexed=use_row_names,
@@ -2684,6 +2946,17 @@ class AIDOutputFiles:
                     "ENSEMBLE-COMPARISONS-XC",
                     ensemble_comparison_metadata,
                 ))
+            f.write(format_aavso_json_header("MAGNITUDE_FIELDS-XC", {
+                'apparent_magnitude': 'MAG',
+                'apparent_magnitude_error': 'MERR',
+                'differential_magnitude': 'NOTES subfield DIFFMAG',
+                'differential_magnitude_error': 'NOTES subfield DIFFERR',
+                'differential_magnitude_definition': (
+                    'target minus selected comparison reference; '
+                    '-2.5 log10(target_flux/reference_flux)'
+                ),
+                'airmass_corrected': False,
+            }))
 
             f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
             for vsp_p in self.vsp_params:
@@ -2696,9 +2969,41 @@ class AIDOutputFiles:
                 mag_err = format_magnitude_error(vsp_p.get('mag_err'), digits=4)
                 cmag = format_magnitude(vsp_p.get('cmag'))
                 chart_id = self.chart_id or vsp_p.get('chart_id') or 'na'
+                differential_mag, differential_error = differential_magnitude_from_vsp_param(
+                    vsp_p
+                )
+                if not np.isfinite(differential_mag) and fallback_times.size:
+                    row_time = finite_float(vsp_p.get('time'))
+                    time_matches = np.flatnonzero(np.isclose(
+                        fallback_times,
+                        row_time,
+                        rtol=0.0,
+                        atol=5.0e-5,
+                    ))
+                    if time_matches.size:
+                        fallback_index = time_matches[0]
+                        differential_mag = fallback_differential_series['magnitude'][fallback_index]
+                        differential_error = (
+                            fallback_differential_series['magnitude_error'][fallback_index]
+                        )
+                differential_mag_text = format_magnitude(
+                    differential_mag,
+                    default=None,
+                    digits=6,
+                )
+                differential_error_text = format_magnitude_error(
+                    differential_error,
+                    default=None,
+                    digits=6,
+                )
+                notes = 'na'
+                if differential_mag_text is not None:
+                    notes = f"|DIFFMAG={differential_mag_text}"
+                    if differential_error_text is not None:
+                        notes += f"|DIFFERR={differential_error_text}"
                 f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"
                         f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{cmag},na,na,"
-                        f"{round(vsp_p['airmass'], 7)},na,{chart_id},na\n")
+                        f"{round(vsp_p['airmass'], 7)},na,{chart_id},{notes}\n")
         return params_file
 
     def aavso(self):

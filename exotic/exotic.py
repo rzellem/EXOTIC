@@ -157,6 +157,7 @@ try:  # output files
         OutputFiles,
         AIDOutputFiles,
         empirical_red_noise_error_scale,
+        differential_magnitude_series_from_fit,
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
         fit_parameter_model_data_uncertainty,
@@ -170,6 +171,7 @@ except ImportError:  # package import
         OutputFiles,
         AIDOutputFiles,
         empirical_red_noise_error_scale,
+        differential_magnitude_series_from_fit,
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
         fit_parameter_model_data_uncertainty,
@@ -21712,7 +21714,8 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     # detrending model could suppress the astrophysical signal.
     calibrated_ratio = raw_ratio
     with np.errstate(divide='ignore', invalid='ignore'):
-        target_mag = comp_mag - (2.5 * np.log10(calibrated_ratio))
+        differential_mag = -2.5 * np.log10(calibrated_ratio)
+        target_mag = comp_mag + differential_mag
         magnitude_factor = 2.5 / np.log(10.0)
         explicit_flux_error = magnitude_factor * np.sqrt(
             (target_flux_error / target_flux) ** 2
@@ -21752,17 +21755,21 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
 
     display_label = stellar_variability_label(comp_label, comp_star)
     vsp_params = []
-    for time_value, airmass_value, mag_value, mag_error_value in zip(
+    for time_value, airmass_value, mag_value, mag_error_value, differential_value, differential_error in zip(
         selected_times[valid],
         selected_airmass[valid],
         target_mag[valid],
         target_mag_error[valid],
+        differential_mag[valid],
+        flux_error[valid],
     ):
         vsp_params.append({
             'time': time_value,
             'airmass': airmass_value,
             'mag': mag_value,
             'mag_err': mag_error_value,
+            'differential_mag': differential_value,
+            'differential_mag_err': differential_error,
             'cname': display_label,
             'cmag': comp_mag,
             'cmag_err': comp_mag_error,
@@ -24326,6 +24333,20 @@ def merge_automatic_comparison_star_coords(primary_stars, additional_stars,
             continue
         merged.append(candidate)
     return merged, messages
+
+
+def build_tracked_comparison_pool(science_comp_stars, automatic_comp_stars,
+                                  use_exactly_the_comps_provided=False,
+                                  duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS):
+    """Build the tracked comparison pool without expanding an exact supplied set."""
+    supplied_stars = [list(position) for position in (science_comp_stars or [])]
+    if use_exactly_the_comps_provided:
+        return supplied_stars, []
+    return merge_automatic_comparison_star_coords(
+        supplied_stars,
+        automatic_comp_stars,
+        duplicate_radius_pixels=duplicate_radius_pixels,
+    )
 
 
 def fortuitous_variable_overlap(position, fortuitous_variables,
@@ -28283,13 +28304,32 @@ def save_stellar_variability_magnitude_csv(vsp_params, save, target_name, observ
     )
     with output_path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['BJD_TDB', 'Airmass', 'Magnitude', 'Magnitude Error', 'Filter', 'Comparison'])
+        writer.writerow([
+            'BJD_TDB',
+            'Airmass',
+            'Apparent Magnitude',
+            'Apparent Magnitude Error',
+            'Differential Magnitude',
+            'Differential Magnitude Error',
+            'Filter',
+            'Comparison',
+        ])
         for row in vsp_params:
+            differential_mag = row.get(
+                'differential_mag',
+                row.get('differential_magnitude'),
+            )
+            differential_mag_err = row.get(
+                'differential_mag_err',
+                row.get('differential_magnitude_error'),
+            )
             writer.writerow([
                 row.get('time'),
                 row.get('airmass'),
                 row.get('mag'),
                 row.get('mag_err'),
+                differential_mag,
+                differential_mag_err,
                 row.get('mag_band') or row.get('observed_filter'),
                 row.get('cname'),
             ])
@@ -28425,18 +28465,38 @@ def build_stellar_variability_ensemble_params_from_fit(
         observed_filter,
         fallback_band=catalog_mag_band,
     )
+    differential_magnitudes = np.full(times.shape, np.nan, dtype=float)
+    differential_magnitude_errors = np.full(times.shape, np.nan, dtype=float)
+    differential_series = differential_magnitude_series_from_fit(
+        lc_fit,
+        apply_airmass_correction=False,
+    )
+    if differential_series is not None:
+        differential_source_mask = np.asarray(
+            differential_series.get('source_mask', []),
+            dtype=bool,
+        )
+        if differential_source_mask.shape == times.shape:
+            differential_magnitudes[differential_source_mask] = differential_series['magnitude']
+            differential_magnitude_errors[differential_source_mask] = (
+                differential_series['magnitude_error']
+            )
     vsp_params = []
-    for time_value, airmass_value, magnitude, magnitude_error in zip(
+    for time_value, airmass_value, magnitude, magnitude_error, differential_mag, differential_mag_err in zip(
         times[valid],
         airmass[valid],
         magnitudes[valid],
         magnitude_errors[valid],
+        differential_magnitudes[valid],
+        differential_magnitude_errors[valid],
     ):
         vsp_params.append({
             'time': time_value,
             'airmass': airmass_value,
             'mag': magnitude,
             'mag_err': magnitude_error,
+            'differential_mag': differential_mag,
+            'differential_mag_err': differential_mag_err,
             'cname': display_label,
             'cmag': None,
             'cmag_err': None,
@@ -31495,6 +31555,11 @@ def _main_impl():
             list(coords) for coords in (exotic_infoDict.get('comp_stars_radec') or [])
         ]
         comparisons_supplied_as_radec = bool(provided_comparison_radec)
+        provided_comparison_pixels = (
+            []
+            if comparisons_supplied_as_radec
+            else [list(coords) for coords in (exotic_infoDict.get('comp_stars') or [])]
+        )
         provided_comparison_count = (
             len(provided_comparison_radec)
             if comparisons_supplied_as_radec
@@ -32156,6 +32221,9 @@ def _main_impl():
                             error=True,
                         )
                         return
+                    provided_comparison_pixels = [
+                        list(coords) for coords in exotic_infoDict['comp_stars']
+                    ]
                     plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
                     log_info(
                         f"Projected {len(exotic_infoDict['comp_stars'])} supplied comparison-star "
@@ -32454,7 +32522,15 @@ def _main_impl():
                             ) is None
                         }
 
-                    if stellar_variability_ensemble_candidate_search:
+                    if use_exactly_the_comps_provided:
+                        fortuitous_auto_stars = []
+                        fortuitous_auto_scan_performed = True
+                        log_info(
+                            "Exact supplied-comparison mode: fortuitous-variable photometry will reuse "
+                            "only the supplied comparison stars; skipping automatic comparison-pool "
+                            "expansion."
+                        )
+                    elif stellar_variability_ensemble_candidate_search:
                         # The stellar-variability target path just selected and VSX-vetted the
                         # same brightest-first pool with the same count and saturation limit.
                         # Reuse it rather than performing an identical full-field image scan.
@@ -32510,9 +32586,10 @@ def _main_impl():
                             warn=True,
                         )
                     fortuitous_ensemble_stars, fortuitous_duplicate_messages = (
-                        merge_automatic_comparison_star_coords(
+                        build_tracked_comparison_pool(
                             science_comp_stars,
                             fortuitous_auto_stars,
+                            use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                             duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
                         )
                     )
@@ -32553,6 +32630,7 @@ def _main_impl():
                     ).upper() == 'V'
                     and not usable_science_nextastro_v
                     and not fortuitous_auto_scan_performed
+                    and not use_exactly_the_comps_provided
                 ):
                     fortuitous_auto_scan_performed = True
                     fortuitous_comp_count = parse_automatic_calibration_selector_count(
@@ -32599,9 +32677,10 @@ def _main_impl():
                             warn=True,
                         )
                     fortuitous_ensemble_stars, duplicate_messages = (
-                        merge_automatic_comparison_star_coords(
+                        build_tracked_comparison_pool(
                             science_comp_stars,
                             fortuitous_auto_stars,
+                            use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                             duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
                         )
                     )
@@ -32888,6 +32967,23 @@ def _main_impl():
             if not pick_comparison_by_eebls_snr:
                 log_info("Comparison-star selection by EEBLS SNR disabled per optional_info setting.")
             if use_exactly_the_comps_provided:
+                exact_set_preserved = (
+                    len(science_comp_stars) == len(provided_comparison_pixels)
+                    and np.allclose(
+                        np.asarray(science_comp_stars, dtype=float),
+                        np.asarray(provided_comparison_pixels, dtype=float),
+                        rtol=0.0,
+                        atol=1e-9,
+                    )
+                )
+                if not exact_set_preserved:
+                    log_info(
+                        "Error: the supplied comparison-star set changed before photometry; "
+                        "exact-comparison mode will not continue with an added, removed, or "
+                        "substituted comparison.",
+                        error=True,
+                    )
+                    return
                 exact_mode = "single comparison" if len(science_comp_stars) == 1 else "fixed ensemble"
                 log_info(
                     "Exact supplied-comparison mode enabled: EXOTIC will use the "
@@ -32895,6 +32991,19 @@ def _main_impl():
                     "without automatic replacement, VSX rejection, stability vetting, ranking, or "
                     "ensemble-size limiting."
                 )
+                for comp_index, pixel_position in enumerate(science_comp_stars, start=1):
+                    if comparisons_supplied_as_radec:
+                        ra_deg, dec_deg = provided_comparison_radec[comp_index - 1]
+                        log_info(
+                            f"  Exact supplied comp #{comp_index}: "
+                            f"RA={ra_deg:.8f} deg, Dec={dec_deg:.8f} deg -> "
+                            f"pixels=[{pixel_position[0]:.3f}, {pixel_position[1]:.3f}]"
+                        )
+                    else:
+                        log_info(
+                            f"  Exact supplied comp #{comp_index}: "
+                            f"pixels=[{pixel_position[0]:.3f}, {pixel_position[1]:.3f}]"
+                        )
             elif use_ensemble_photometry_rather_than_single_comp:
                 log_info(
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "

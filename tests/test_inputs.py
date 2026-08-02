@@ -59,6 +59,30 @@ def test_comp_params_accepts_comparison_radec_without_pixel_coordinates(tmp_path
     assert np.allclose(inputs.info_dict["comp_stars_radec"], [[31.04125, 46.68972]])
 
 
+def test_comp_params_accepts_sexagesimal_comparison_radec_in_exact_mode(tmp_path):
+    init_data = {
+        "user_info": {
+            "Comparison Star(s) X & Y Pixel": [],
+            "Comparison Star(s) RA & Dec": [["18:37:32.87", "+18:45:39.4"]],
+        },
+        "optional_info": {
+            "use_exactly_the_comps_provided": True,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data), encoding="utf-8")
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert np.allclose(
+        inputs.info_dict["comp_stars_radec"],
+        [[279.3869583333, 18.7609444444]],
+    )
+    assert inputs.info_dict["use_exactly_the_comps_provided"] is True
+
+
 def test_comp_params_rejects_simultaneous_pixel_and_radec_comparisons(tmp_path):
     init_data = {
         "user_info": {
